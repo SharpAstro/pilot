@@ -11,10 +11,10 @@ internal sealed class NavControls<TSurface>(Renderer<TSurface> renderer) : Pixel
     /// <summary>Design units, as the rail's.</summary>
     public const float Height = 34f;
 
-    private static readonly RGBAColor32 RailBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 Hover = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x4a, 0x4d, 0x5a, 0xff);
+    private static RGBAColor32 RailBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 Hover => Palette.Current.RowHoverBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Faint => Palette.Current.NavControlsFaint;
 
     public Func<bool>? CanGoBack { get; set; }
 

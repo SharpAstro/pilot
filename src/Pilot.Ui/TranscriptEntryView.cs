@@ -13,34 +13,34 @@ namespace Pilot.Ui;
 /// </summary>
 internal sealed class TranscriptEntryView
 {
-    internal static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    internal static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    internal static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    internal static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    internal static readonly RGBAColor32 Prompt = new(0xf0, 0xb4, 0x3c, 0xff);
-    internal static readonly RGBAColor32 Tool = new(0x6f, 0x9b, 0xd8, 0xff);
-    internal static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
-    internal static readonly RGBAColor32 Ok = new(0x5c, 0xb8, 0x6e, 0xff);
-    internal static readonly RGBAColor32 Running = new(0xe8, 0xb0, 0x4a, 0xff);
-    internal static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
-    internal static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
+    internal static RGBAColor32 Bright => Palette.Current.Bright;
+    internal static RGBAColor32 Body => Palette.Current.Body;
+    internal static RGBAColor32 Dim => Palette.Current.Dim;
+    internal static RGBAColor32 Faint => Palette.Current.Faint;
+    internal static RGBAColor32 Prompt => Palette.Current.Held;
+    internal static RGBAColor32 Tool => Palette.Current.Landed;
+    internal static RGBAColor32 Failed => Palette.Current.Failed;
+    internal static RGBAColor32 Ok => Palette.Current.Ok;
+    internal static RGBAColor32 Running => Palette.Current.Running;
+    internal static RGBAColor32 Button => Palette.Current.Action;
+    internal static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
 
     // Unfolded command and output sit in a shaded block, on colours whose contrast against both the block and the pane's
     // ground stays above WCAG's 4.5:1 floor (the tests check it).
-    internal static readonly RGBAColor32 OutputShade = new(0x1e, 0x20, 0x2a, 0xff);
-    internal static readonly RGBAColor32 OutputText = new(0xd0, 0xd3, 0xde, 0xff);
-    internal static readonly RGBAColor32 OutputFailed = new(0xf0, 0x7a, 0x7a, 0xff);
+    internal static RGBAColor32 OutputShade => Palette.Current.OutputShade;
+    internal static RGBAColor32 OutputText => Palette.Current.OutputText;
+    internal static RGBAColor32 OutputFailed => Palette.Current.OutputFailed;
 
     // The assistant's words and a subagent's report as Markdown at full contrast: they are the body of the page, the tool
     // lines around them are the furniture. Its thinking is read as much as its words (what it is about to do and why), so
     // it is body text a step below them, not furniture: it was the faintest grey, below the tool lines (DE1, 2026-10-25).
-    internal static readonly Layout.MarkdownStyle Prose = new()
+    internal static Layout.MarkdownStyle Prose => new()
     {
-        Text = Bright, Strong = new(0xff, 0xff, 0xff, 0xff), Link = new(0x8f, 0xb8, 0xf0, 0xff), Muted = Body, Code = OutputText, CodeBackground = OutputShade,
+        Text = Bright, Strong = Palette.Current.Strong, Emphasis = Body, Link = Palette.Current.LinkSoft, Muted = Body, Code = OutputText, CodeBackground = OutputShade,
     };
-    internal static readonly Layout.MarkdownStyle Thought = new()
+    internal static Layout.MarkdownStyle Thought => new()
     {
-        Text = Body, Strong = Bright, Emphasis = Body, Code = OutputText, Link = new(0x8f, 0xb8, 0xf0, 0xff), Muted = Dim, CodeBackground = OutputShade,
+        Text = Body, Strong = Bright, Emphasis = Body, Code = OutputText, Link = Palette.Current.LinkSoft, Muted = Dim, CodeBackground = OutputShade,
     };
 
     // The label column: wide enough for a tool's name.
@@ -74,7 +74,7 @@ internal sealed class TranscriptEntryView
     private readonly HashSet<int> _expanded = [];
 
     // Each Markdown entry's tree, by its index and whether it is opened.
-    private readonly Dictionary<(int Index, bool Open), Layout.Node> _markdown = [];
+    private readonly Dictionary<(int Index, bool Open, bool Night), Layout.Node> _markdown = [];
 
     /// <summary>Called when what a click opened or closed changed: the owner redraws.</summary>
     public Action? Changed { get; set; }
@@ -357,11 +357,11 @@ internal sealed class TranscriptEntryView
         var all = entry.Text.ReplaceLineEndings("\n").Split('\n');
         var open = _expanded.Contains(entry.Index);
         // Parsed once per entry, folded or opened: the tree is rebuilt every frame, and a node is immutable.
-        if (!_markdown.TryGetValue((entry.Index, open), out var document))
+        if (!_markdown.TryGetValue((entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night)), out var document))
         {
             var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
             // A long word of it (a path, a check's name) is cut after its separators: Markdown wraps at white space only (PIL380).
-            _markdown[(entry.Index, open)] = document = SelectableTree.Of(Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true, selectable: false);
+            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = SelectableTree.Of(Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true, selectable: false);
         }
         yield return document;
         if (Fold(entry, all.Length, lines) is { } fold)

@@ -224,17 +224,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private const float Gutter = 14f;
 
-    private static readonly RGBAColor32 PanelBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 CardBg = new(0x1f, 0x21, 0x2b, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Ring = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 ForYou = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly RGBAColor32 Link = new(0x8a, 0xb4, 0xf8, 0xff);
-    private static readonly RGBAColor32 CardHover = new(0x2a, 0x2d, 0x3a, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2c, 0x35, 0x4a, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x3a, 0x46, 0x62, 0xff);
+    private static RGBAColor32 PanelBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 CardBg => Palette.Current.MenuBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Ring => Palette.Current.Held;
+    private static RGBAColor32 ForYou => Palette.Current.Landed;
+    private static RGBAColor32 Link => Palette.Current.Link;
+    private static RGBAColor32 CardHover => Palette.Current.CardHover;
+    private static RGBAColor32 Button => Palette.Current.Action;
+    private static RGBAColor32 ButtonHover => Palette.Current.ActionHover;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -273,6 +273,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
+    /// <summary>Called with the flight code and the leg name when a card's leg link is clicked: the window opens the flight's page at that leg.</summary>
+    public Action<string, string>? OnLeg { get; set; }
+
     /// <summary>Opens the watchtower's Remote Control link.</summary>
     public Action<string>? OnOpen { get; set; }
 
@@ -291,7 +294,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
     public string? Focus { get; set; }
 
-    private static readonly RGBAColor32 FocusBg = new(0x26, 0x33, 0x4a, 0xff);
+    private static RGBAColor32 FocusBg => Palette.Current.RowFocusBg;
 
     // A card about the focused flight: about the flight itself, or one of its legs.
     private bool Focused(CardRow card) =>
@@ -303,7 +306,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
-    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
+    private static RGBAColor32 Live => Palette.Current.Flying;
 
     // The right-click menu of the links that leave the app: Copy URL.
     private readonly LinkMenu _links = new();
@@ -459,6 +462,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public void NoteWorking(string cardId, string? action) =>
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
 
+    // Cards whose detail fold is open, by id: swapped whole, as _working is.
+    private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+
+    private void ToggleDetail(string cardId) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Contains(cardId) ? open.Remove(cardId) : open.Add(cardId));
+
+    /// <summary>Whether card <paramref name="cardId"/>'s detail fold is open, for a test or a dump.</summary>
+    public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
+
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
     public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
 
@@ -485,6 +497,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     internal Layout.Node Build(CardsScreen screen)
     {
+        // Drop the fold state of cards that are gone.
+        var here = screen.Open.Concat(screen.Merged).Select(c => c.Id).ToHashSet();
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Any(id => !here.Contains(id)) ? open.Intersect(here) : open);
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
         blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
         blocks.Add(_waiting.Count == 0
@@ -550,10 +565,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// The held line's words: dim, but a step up from <see cref="Dim"/>, whose 3.9:1 on <see cref="CardHover"/> is short of 4.5:1 where the
     /// line, a click, is lit under the pointer. 6.6:1 on the panel and 5.1:1 on the hover.
     /// </summary>
-    private static readonly RGBAColor32 HeldText = new(0x9a, 0x9d, 0xac, 0xff);
+    private static RGBAColor32 HeldText => Palette.Current.HeldText;
 
     /// <summary>How many lines a node's held line may take: its counts are what it is for, so it wraps rather than hides them.</summary>
     internal const int HeldLines = 2;
+
+    /// <summary>How many lines a card's summary may take: none cut. It is the card's body, and the part that says what each choice does is its end.</summary>
+    internal const int SummaryLines = 0;
 
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
@@ -567,9 +585,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The width of the bar down a card's left edge, in its bin's colour.</summary>
     private const float AccentBar = 3f;
 
-    /// <summary>The cap on a card's detail: more for a card that offers a merge.</summary>
+    /// <summary>How many lines an overlap card's title may take: it names both flights, the shared files and the choice, which one clipped row loses.</summary>
+    internal const int OverlapTitleLines = 3;
+
+    /// <summary>The cap on a card's detail: more for a card that offers a merge, and for an overlap's, which says what each of its choices does.</summary>
     internal static int DetailLinesOf(CardRow card) =>
-        card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" ? MergeDetailLines : DetailLines;
+        card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" or CardKinds.Overlap ? MergeDetailLines : DetailLines;
 
     // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
     // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
@@ -580,8 +601,40 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
+    private static readonly char[] SentencePunctuation = ['\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?'];
+
+    /// <summary>
+    /// Whether <paramref name="word"/> names the leg: its <c>code/leg</c>, or its bare name right after the word "leg" ("Redo leg parser").
+    /// A bare name elsewhere is an ordinary word of the sentence ("The review of ..."), which the leg's name only happens to equal.
+    /// </summary>
+    private static bool NamesLeg(string word, string? previous, CardLeg leg)
+    {
+        var bare = word.Trim(SentencePunctuation);
+        return bare == leg.ToString() || (bare == leg.Leg && string.Equals(previous?.Trim(SentencePunctuation), "leg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Whether the text names the leg in a way <see cref="NamesLeg"/> links.</summary>
+    private static bool LegWord(string text, CardLeg leg)
+    {
+        string? previous = null;
+        foreach (var word in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (NamesLeg(word, previous, leg))
+            {
+                return true;
+            }
+            previous = word;
+        }
+        return false;
+    }
+
+    private Layout.Node LegLink(CardRow card, CardLeg leg, string text, float size) =>
+        Layout.Builder.Text(text, size, Link)
+            .BgHover(CardHover)
+            .Follows(new HitResult.ButtonHit($"card:{card.Id}:leg"), _ => OnLeg?.Invoke(leg.Code, leg.Leg));
+
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
-    internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
+    internal static string Titled(CardRow card) => card.Kind == "landed" ? Palette.Glyph("🛬", "✈") + " " + card.Title : card.Title;
 
     /// <summary>A card raised while the panel is held: a dot in its bin's colour, its title on hover, until the pointer leaves.</summary>
     private static Layout.Node Waiting(CardRow card) =>
@@ -593,6 +646,28 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false)
     {
         var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
+        var leg = CardLeg.Of(card);
+        // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
+        var linked = false;
+        Func<float, Func<string, Layout.Node?>> linker = size =>
+        {
+            string? previous = null;
+            return word =>
+        {
+            var before = previous;
+            previous = word;
+            if (linked || leg is not { } about || !NamesLeg(word, before, about))
+            {
+                return null;
+            }
+            linked = true;
+            // Always read as code/leg: a bare leg name in the node's sentence ("Redo leg parser ...") is shown with its flight, as the TUI has no hover to say which.
+            var shown = word.TrimEnd();
+            var bare = shown.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
+            var at = shown.IndexOf(bare, StringComparison.Ordinal);
+            return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
+            };
+        };
         var lines = new List<Layout.Node>
         {
             Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
@@ -604,17 +679,48 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     .BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
                     .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
-                : Whole(Layout.Builder.Text(Titled(card), 14f, Bright).RowH(22f), card.Title, card.Title.Length > TitleFits),
+                : card.Kind == CardKinds.Overlap
+                    // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
+                    ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
+                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                        card.Title, card.Title.Length > TitleFits),
         };
-        if (card.Detail is { Length: > 0 } detail)
+        if (card.Kind == CardKinds.Overlap)
         {
-            // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
-            var cap = DetailLinesOf(card);
-            // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
-            // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
-            // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-            lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
-                detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+            // A title of several lines is set off from the detail under it.
+            lines.Add(Layout.Builder.Spacer().RowH(4f));
+        }
+        // The summary is the card's body; the raw detail is folded under it. A card from an old node has no summary and shows its detail as before.
+        var summary = card.Summary is { Length: > 0 } said ? said : null;
+        if (summary is not null)
+        {
+            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
+        }
+        // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
+        if (leg is { } ofLeg && !linked)
+        {
+            lines.Add(LegLink(card, ofLeg, ofLeg.ToString(), 12f).RowH(20f));
+        }
+        if (card.Detail is { Length: > 0 } detail && detail != summary)
+        {
+            var unfolded = summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id);
+            if (summary is not null)
+            {
+                lines.Add(Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim)
+                    .BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id))
+                    .RowH(20f));
+            }
+            if (unfolded)
+            {
+                // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
+                var cap = DetailLinesOf(card);
+                // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
+                // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
+                // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
+                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                    detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
+            }
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
@@ -809,17 +915,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>What an armed Merge says in place of its verb: it is not pressed again, it is waited on.</summary>
     internal const string ArmedLabel = "Merging when checks pass";
 
-    /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words, <see cref="Bright"/>, are 8:1 on it.</summary>
-    internal static readonly RGBAColor32 ArmedBg = new(0x4a, 0x35, 0x7a, 0xff);
+    /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words are 4.5:1 or more on it in both palettes.</summary>
+    internal static RGBAColor32 ArmedBg => Palette.Current.ArmedBg;
 
-    internal static readonly RGBAColor32 ArmedText = Bright;
+    internal static RGBAColor32 ArmedText => Palette.Current.ArmedText;
 
     /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
     {
-        ChoiceStatus.Passing or ChoiceStatus.Merged => (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x23, 0x74, 0x4c, 0xff)),
-        ChoiceStatus.Pending => (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x78, 0x5c, 0x20, 0xff)),
-        ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (new RGBAColor32(0x7a, 0x28, 0x28, 0xff), new RGBAColor32(0x96, 0x32, 0x32, 0xff)),
+        ChoiceStatus.Passing or ChoiceStatus.Merged => (Palette.Current.PassTint, Palette.Current.PassTintHover),
+        ChoiceStatus.Pending => (Palette.Current.PendTint, Palette.Current.PendTintHover),
+        ChoiceStatus.Failing or ChoiceStatus.Conflicting or ChoiceStatus.Behind or ChoiceStatus.Blocked or ChoiceStatus.ChangesRequested => (Palette.Current.FailTint, Palette.Current.FailTintHover),
         ChoiceStatus.Armed or ChoiceStatus.Queued => (ArmedBg, ArmedBg),
         _ => null,
     };

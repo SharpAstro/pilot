@@ -39,9 +39,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private const float AskTextMinHeight = 40f;
     private const float AskMinHeight = 2 * AskPadY + AskTextMinHeight + ChoiceGap + 2 * ChoiceHeight + ChoiceLineGap;
 
-    private static readonly RGBAColor32 PageBg = TranscriptPane.Ground;
-    private static readonly RGBAColor32 FootBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+    private static RGBAColor32 PageBg => TranscriptPane.Ground;
+    private static RGBAColor32 FootBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 Marked => Palette.Current.Marked;
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
@@ -202,6 +202,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The ? card and the update light, in the top bar.</summary>
     public AboutCard? About { get; set; }
@@ -402,6 +405,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     public void Render(RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(), bounds);
     }
@@ -409,6 +413,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree()
     {
+        Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
         _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";
@@ -455,7 +460,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             Buttons = buttons,
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
@@ -622,7 +627,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
-        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, focusOnOpen: true).RowH(30f));
+        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, Palette.Input, focusOnOpen: true).RowH(30f));
         rows.Add(Layout.Builder.Text(before.Count > 0 ? $"{before.Count + 1} lines · Enter sends · Backspace on an empty line goes back" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }

@@ -17,9 +17,9 @@ internal sealed class TranscriptPane
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
 
     /// <summary>The pane's background: the Sessions page's ground, which the transcript is drawn on.</summary>
-    internal static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
+    internal static RGBAColor32 Ground => Palette.Current.Ground;
 
-    private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
+    private static RGBAColor32 Marked => Palette.Current.Marked;
 
     private const int TitleLines = 2;
 

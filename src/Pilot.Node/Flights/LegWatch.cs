@@ -133,8 +133,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     string.Create(inv, $"{worker.SpendWeighted:N0} of {budget:N0} weighted tokens; it keeps working until you choose"),
                     [
                         new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
-                        new CardChoice { Label = $"Redo leg {leg.Name}", Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
-                    ]);
+                        new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
+                    ],
+                    summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
             }
 
             switch (worker.State)
@@ -210,13 +211,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             // Nothing to do yet but say so: the card is the controller's to resume sooner (extra usage) or go around.
             state.RaiseCard(CardBin.ForYou, Stopped, Subject(leg), $"{Name(leg)}'s worker hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
-                $"{error}; the node resumes it {ResetMargin.TotalMinutes:0} minutes after the limit resets", Choices(leg, worker, resumeLabel: "Resume now"));
+                $"{error}; the node resumes it {ResetMargin.TotalMinutes:0} minutes after the limit resets", Choices(leg, worker, resumeLabel: "Resume now"),
+                summary: $"The worker of {Name(leg)} hit the usage limit. The node resumes it at {resets.ToLocalTime():HH:mm}, after the window resets; Resume now does it sooner, {Verbs.RedoLeg(leg.Name)} starts a fresh worker.");
             return;
         }
         if (_resumedAfter.TryGetValue(job, out var done) && done >= resets)
         {
             // Resumed for this reset already and stopped again on the same one: the resume did not take.
-            Ring(leg, Stopped, $"{Name(leg)}'s worker is still stopped after its limit reset", $"{error}; resumed once at {done.ToLocalTime():HH:mm} to no effect", worker);
+            Ring(leg, Stopped, $"{Name(leg)}'s worker is still stopped after its limit reset", $"{error}; resumed once at {done.ToLocalTime():HH:mm} to no effect", worker,
+                lead: $"The worker of {Name(leg)} is still stopped after its usage limit reset, though it was resumed once.");
             return;
         }
 
@@ -229,7 +232,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Stopped, $"{Name(leg)}'s worker could not be resumed after its limit reset", result.Error, worker);
+            Ring(leg, Stopped, $"{Name(leg)}'s worker could not be resumed after its limit reset", result.Error, worker,
+                lead: $"The worker of {Name(leg)} could not be resumed after its usage limit reset.");
         }
     }
 
@@ -343,7 +347,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [
                     new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
                     new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
-                ]);
+                ],
+                summary: $"The validation of {leg.Flight}/{leg.Name} stalled. Go anyway starts the leg without it; Remove leg drops the leg.");
             }
         }
     }
@@ -442,7 +447,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
         }
         state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
-            [new CardChoice { Label = "Review again", Verb = again, Target = subject }]);
+            [new CardChoice { Label = "Review again", Verb = again, Target = subject }],
+            summary: $"The review of {name} stalled. Review again starts it afresh.");
     }
 
     // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.
@@ -542,8 +548,32 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private Task<CommandResult> SayAsync(string sessionId, string text, CancellationToken cancellationToken) =>
         run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [text], Who = Who }, cancellationToken);
 
-    private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null) =>
-        state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume"));
+    private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null)
+    {
+        var choices = Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume");
+        state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, choices, summary: RingSummary(leg, kind, choices, lead));
+    }
+
+    /// <summary>
+    /// What a stall ring says, built from the kind and the choices the card really carries: Resume or Nudge is named only when
+    /// the card has one (a waiting or missing worker gets the redo alone), and the redo is always named as the card words it.
+    /// </summary>
+    internal static string RingSummary(LegRow leg, string kind, IReadOnlyList<CardChoice> choices, string? lead = null)
+    {
+        var what = Name(leg);
+        var say = choices.FirstOrDefault(c => c.Verb == Verbs.Say)?.Label;
+        var redo = choices.FirstOrDefault(c => c.Verb == Verbs.GoAround)?.Label ?? Verbs.RedoLeg(leg.Name);
+        var then = say is null ? $"{redo} starts a fresh worker." : $"{say} carries it on; {redo} starts a fresh worker.";
+        return kind switch
+        {
+            Stopped => $"{lead ?? $"The worker of {what} was stopped by the API and no reset time is known."} {then}",
+            Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session; {redo} starts a fresh worker.",
+            Failed => $"The worker of {what} failed. {then}",
+            Missing => $"The worker of {what} never showed up. {then}",
+            Idle => $"The worker of {what} stopped with its leg unfinished. {then}",
+            _ => $"The worker of {what} stalled. {then}",
+        };
+    }
 
     /// <summary>
     /// A resume (or nudge) when there is a worker to say it to, and a go-around, which starts a fresh one; a waiting
@@ -553,7 +583,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var goAround = new CardChoice
         {
-            Label = $"Redo leg {leg.Name}",
+            Label = Verbs.RedoLeg(leg.Name),
             Verb = Verbs.GoAround,
             Target = Subject(leg),
             Args = [$"the last worker stalled ({worker?.ApiError ?? worker?.State.ToString().ToLowerInvariant() ?? "never showed up"})"],

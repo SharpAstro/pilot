@@ -131,6 +131,45 @@ public sealed class SummaryCardTests
         words.ShouldNotContain("**");
     }
 
+    // DE1's Home, 2026-10-28: a bullet that wrapped to three lines was measured as two, and its last line sat under the next
+    // bullet ("SE1, TIA1821 card c1523" over "and run"). The stack measure of DIR.Lib#169; held here at the widths and DPIs it showed.
+    private const string Long = "## Needs you\n"
+        + "- **SE1, TIA1821 (dir-lib-nav) failed:** a PreToolUse hook refuses the direct push of 497a4f8 to DIR.Lib main. Allow that push or a DIR.Lib branch route, then steps 7 and 8 (nuget release, tianwen pins) and run.\n"
+        + "- **SE1, TIA1821 card c1523:** choose the next leg. The planned choice is \"Start pilot-onto-shared\".\n"
+        + "- **SE1, PIL252:** PR #399 conflicts with main, and the review asks for a rebase and a rerun of all four legs' checks. The pr-links leg's check failed; the records truncate the output.\n"
+        + "- **DE1, PIL395 card c1618:** choose \"Start base-merged-in\" to begin the held flight. It waits behind PIL353.\n"
+        + "- **DE1, card c1106:** GitHub refused to queue SharpAstro/pilot#354 because a conversation is unresolved. Choose \"Merge\" once it is resolved.\n\n"
+        + "## Where it is\n"
+        + "SE1: TIA1821's shared Back/Forward pieces are built in DIR.Lib as 497a4f8 (27 new tests, Release suite green) but not pushed. PIL252's PR #399 needs a rebase, and its pr-links leg is flying after one go-around.";
+
+    [Theory]
+    [InlineData(2000u, 1100u, 1f)]
+    [InlineData(1280u, 1100u, 1f)]
+    [InlineData(2000u, 1400u, 1.5f)]
+    [InlineData(1100u, 1400u, 1.25f)]
+    public void ALongSummarysLinesNeverDrawOverEachOther(uint width, uint height, float dpi)
+    {
+        using var window = new Window(width, height);
+        window.Chrome.Summaries.Shelf = Shelf([Here], (Here, Row(SummaryRow.FleetScope, Long)));
+
+        var arranged = Layout.Engine.Arrange(window.Chrome.Home.Tree(Home()), new Rect<float>(0, 0, width, height),
+            new PixelMeasureContext<RgbaImage>(window.Renderer, SessionsCapture.FontPath, dpi));
+        var texts = arranged
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } } && a.Bounds.Height > 0f)
+            .Select(a => (Text: ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds))
+            .ToList();
+        texts.ShouldContain(t => t.Text.Trim() == "run.");
+        for (var i = 0; i < texts.Count; i++)
+        {
+            for (var j = i + 1; j < texts.Count; j++)
+            {
+                var (a, b) = (texts[i].Bounds, texts[j].Bounds);
+                var overlap = a.X < b.X + b.Width - 0.5f && b.X < a.X + a.Width - 0.5f && a.Y < b.Y + b.Height - 0.5f && b.Y < a.Y + a.Height - 0.5f;
+                overlap.ShouldBeFalse($"'{texts[i].Text}' {a} is drawn over '{texts[j].Text}' {b} at {width} wide, DPI {dpi}");
+            }
+        }
+    }
+
     [Fact]
     public void ItSaysWhenItWasMadeAndWhatItUsed()
     {
@@ -339,7 +378,7 @@ public sealed class SummaryCardTests
     [Fact]
     public void EveryColourPairOnTheCardMeetsTheContrastFloorOnWhatItIsDrawnOn()
     {
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         var style = SummaryCard.Style(p);
 
         // Body, headings, links and code on the card's panel; the status and the labels too.

@@ -375,12 +375,37 @@ public static class Verbs
     public const string Planned = "planned";
 
     /// <summary>
-    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; &lt;why…&gt;</c>: the planner found the flight to look like part of another.
-    /// A pair not asked before is recorded pending and rings one card (<c>Fold</c> or <c>Plan separately</c>); the flight's
+    /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: the planner's overlap check across nodes. Compares the files the flight's legs will
+    /// change with every other not-landed flight of the repo on this node and on each reachable peer (its pushed branch's changed files
+    /// against its base) and with every open PR, and answers a line per flight or PR: the shared files and fold, connect or parallel
+    /// (<c>unknown</c> for one whose branch is not pushed or whose node could not be reached). Reads only; changes nothing.
+    /// </summary>
+    public const string Touches = "touches";
+
+    /// <summary>
+    /// <c>overlap flight/&lt;code&gt; &lt;other&gt; [file=&lt;path&gt;…] &lt;why…&gt;</c>: the planner found the flight to look like part of another
+    /// (which may fly on another node), and names the files both change (<c>file=</c>, as <c>touches</c> said them).
+    /// A pair not asked before is recorded pending and rings one card naming both flights, the shared files and the choice
+    /// (<c>Fold into</c>, <c>Connect to</c> or <c>Plan in parallel</c>; no fold into a flight of another node); the flight's
     /// <c>plan-leg</c> and <c>planned</c> are refused while it waits, and the planner is told to end its turn, as it is
     /// started again with the answer. A pair answered already returns the answer with no new card.
     /// </summary>
     public const string Overlap = "overlap";
+
+    /// <summary>The prefix of an argument of <see cref="Overlap"/> that names a file both flights change: <c>file=src/Parser.cs</c>.</summary>
+    public const string OverlapFileArg = "file=";
+
+    /// <summary>
+    /// The prefix of an argument of <see cref="Overlap"/> that carries the pick <c>touches</c> made, <c>pick=fold</c> or <c>pick=connect</c>
+    /// (none is connect): the card's title says the choice the planner leans to. A flight of another node is never titled fold.
+    /// </summary>
+    public const string OverlapPickArg = "pick=";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that is part of the same goal as the other.</summary>
+    public const string OverlapPickFold = "fold";
+
+    /// <summary>The pick <c>pick=</c> carries for a flight that depends on the other, and the default.</summary>
+    public const string OverlapPickConnect = "connect";
 
     /// <summary>
     /// <c>fold flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight is part of the other. Records it, closes the
@@ -395,6 +420,13 @@ public static class Verbs
     /// card, stops the waiting planner and starts a fresh one told the answer.
     /// </summary>
     public const string Separate = "separate";
+
+    /// <summary>
+    /// <c>connect-overlap flight/&lt;code&gt; &lt;other&gt;</c>: the answer that the flight waits for the other (which may fly on another
+    /// node). Records it, closes the card, connects the flight (<c>connect</c>: held until the other has landed), stops the waiting
+    /// planner and starts a fresh one told the answer.
+    /// </summary>
+    public const string ConnectOverlap = "connect-overlap";
 
     /// <summary>
     /// <c>stop session/&lt;id&gt;</c>: stops a running background session (<c>claude stop</c>); its row ends. An interactive
@@ -446,6 +478,9 @@ public static class Verbs
 
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
+
+    /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
+    public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";

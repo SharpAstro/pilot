@@ -17,6 +17,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
 
     private const int MaxRemembered = 2000;
 
+    /// <summary>How long the command route waits for a command before it answers queued (Waiting); under the CLI's own deadline, so its client hears the node, not its own timeout.</summary>
+    public TimeSpan ReplyDeadline { get; set; } = TimeSpan.FromSeconds(90);
+
     private readonly Lock _seenGate = new Lock();
     private readonly Dictionary<string, Seen> _seen = [];
 

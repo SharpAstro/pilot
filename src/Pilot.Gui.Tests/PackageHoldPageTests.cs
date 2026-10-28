@@ -108,7 +108,7 @@ public sealed class PackageHoldPageTests
     [Fact]
     public void HeldTextMeetsTheContrastFloorOnEveryBackgroundItIsDrawnOn()
     {
-        var p = FlightsPalette.Standard;
+        var p = Palette.Standard;
         foreach (var (name, bg) in new[] { ("ground", p.Ground), ("panel", p.PanelBg), ("alt row", p.RowAltBg), ("hover row", p.RowHoverBg), ("focus row", p.RowFocusBg), ("header", p.HeaderBg) })
         {
             Contrast(p.Held, bg).ShouldBeGreaterThanOrEqualTo(4.5, name);

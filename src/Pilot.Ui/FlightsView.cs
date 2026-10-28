@@ -206,7 +206,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         }
         if ((flying ?? failed) is { } stuck)
         {
-            actions.Add(new FlightAction($"Redo leg {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
+            actions.Add(new FlightAction(Verbs.RedoLeg(stuck.Name), Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
         }
         var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
         if (allDone && (flight.PullRequest is null || flight.Review is null))
@@ -265,20 +265,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
 
     // The colours come from the palette of the view shown, so night repaints the same builders.
-    private FlightsPalette P => Mode == FlightsViewMode.Night && CanvasAvailable ? FlightsPalette.Night : FlightsPalette.Standard;
-    private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
-
-    private static TextInputColors NightInput(FlightsPalette n) => new()
-    {
-        Background = n.RowAltBg,
-        BackgroundActive = n.HeaderBg,
-        Border = n.Faint,
-        BorderActive = n.Dim,
-        Text = n.Bright,
-        Placeholder = n.Dim,
-        Cursor = n.Held,
-        Selection = n.RowFocusBg,
-    };
+    private Palette P => Night?.Palette ?? Palette.Standard;
+    private Palette? NightOrNull => ReferenceEquals(P, Palette.Night) ? P : null;
 
     private RGBAColor32 Ground => P.Ground;
     private RGBAColor32 HeaderBg => P.HeaderBg;
@@ -366,6 +354,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -547,14 +538,21 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
-        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
             DrawSelection(fill);
         });
+        _arranged = arranged;
+        // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
+        if (RevealLeg(arranged))
+        {
+            Render(screen, bounds);
+        }
     }
 
     /// <summary>
@@ -563,6 +561,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
     {
+        Palette.Use(Night);
         // In play, the landed are left out of the table; an open flight's page still finds its flight among them.
         var whole = screen;
         // A flight a jump opened is shown too, until its page is shut and the selection has moved off it.
@@ -659,7 +658,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var action = asking.Action;
         yield return Layout.Builder.HStack(
                 Layout.Builder.Text(action.WhyPrompt ?? "why?", 12f, Dim).WAuto(),
-                Layout.Builder.TextInput(WhyInput, 14f, NightOrNull is { } n ? NightInput(n) : null, focusOnOpen: true).WStar(),
+                Layout.Builder.TextInput(WhyInput, 14f, Palette.Input, focusOnOpen: true).WStar(),
                 Layout.Builder.Text("Enter sends · Esc cancels", 11f, Faint).WAuto())
             .WithGap(10f)
             .RowH(WhyRowHeight);
@@ -902,7 +901,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var lines = new List<Layout.Node>();
         if (Maintenance)
         {
-            lines.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
+            lines.Add(Layout.Builder.Text(MaintenanceNotice.LineFor(P), 12f, Held).RowH(20f));
         }
         if (Lan is { Quiet: false } lan)
         {
@@ -916,7 +915,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
             Lines = lines,
-        }, new TopBarParts(Nodes, Play, Autopilot, About, NightOrNull));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
     }
 
     private Layout.Node Main(FlightsScreen screen)
@@ -943,7 +942,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         return Layout.Builder.VStack(
-                Table.Header(columns, Scale),
+                Table.Header(columns, Scale, NightOrNull),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();

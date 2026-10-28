@@ -38,8 +38,8 @@ internal sealed record PageHeader(string Title)
 /// <param name="Play">The In play / Everything choice, on the pages that use it; null shows no pills.</param>
 /// <param name="Autopilot">The Autopilot switch.</param>
 /// <param name="About">The ? card, and the update light before it.</param>
-/// <param name="Night">Flights' palette while that view is shown, else null.</param>
-internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, FlightsPalette? Night = null);
+/// <param name="Night">The Night switch, whose state paints the bar on every page.</param>
+internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null);
 
 /// <summary>
 /// The one top bar every page shows, Home included (#231): <b>pilot v2</b> and the page's name, then the node pills and the In
@@ -61,8 +61,8 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
-    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
-    public const float SharedReserve = 290f;
+    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, Night, the update light and ?, with their gaps.</summary>
+    public const float SharedReserve = 370f;
 
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
@@ -73,27 +73,32 @@ internal static class TopBar
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
-        var palette = parts.Night ?? FlightsPalette.Standard;
+        var night = parts.Night?.Palette;
+        var palette = night ?? Palette.Standard;
         var items = new List<Layout.Node>
         {
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
             Layout.Builder.Text(page.Title, 20f, palette.Dim, TextAlign.Near, TextAlign.Far).WAuto(),
         };
-        items.AddRange(parts.Nodes?.Pills(parts.Night) ?? []);
-        items.AddRange(parts.Play?.Pills(parts.Night) ?? []);
+        items.AddRange(parts.Nodes?.Pills(night) ?? []);
+        items.AddRange(parts.Play?.Pills(night) ?? []);
         if (!string.IsNullOrEmpty(page.Counts))
         {
-            items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, parts.Night));
+            items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
         var shared = new List<Layout.Node>();
         if (parts.Autopilot is { } autopilot)
         {
-            shared.Add(autopilot.Button(parts.Night));
+            shared.Add(autopilot.Button(night));
+        }
+        if (parts.Night is { } nightSwitch)
+        {
+            shared.Add(nightSwitch.Button());
         }
         if (parts.About is { } about)
         {
-            shared.Add(about.Button(parts.Night));
+            shared.Add(about.Button(night));
         }
 
         // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so

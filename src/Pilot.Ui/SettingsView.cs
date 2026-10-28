@@ -35,20 +35,20 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float TitleWidth = 230f;
     private const float FixWidth = 200f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Ok = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Todo = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Optional = new(0x6a, 0x6d, 0x7a, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
-    private static readonly RGBAColor32 Chosen = new(0x2f, 0x5f, 0xa8, 0xff);
-    private static readonly RGBAColor32 FieldBg = new(0x1f, 0x21, 0x2b, 0xff);
+    private static RGBAColor32 Ground => Palette.Current.Ground;
+    private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
+    private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    private static RGBAColor32 Ok => Palette.Current.Flying;
+    private static RGBAColor32 Todo => Palette.Current.Held;
+    private static RGBAColor32 Optional => Palette.Current.Away;
+    private static RGBAColor32 Button => Palette.Current.Button;
+    private static RGBAColor32 ButtonHover => Palette.Current.ButtonHover;
+    private static RGBAColor32 Chosen => Palette.Current.Chosen;
+    private static RGBAColor32 FieldBg => Palette.Current.MenuBg;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly Dictionary<string, TextInputState> _fields = new(StringComparer.Ordinal);
@@ -115,6 +115,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the top bar shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -127,6 +130,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     public void Render(DateTimeOffset now, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(now), bounds);
     }
@@ -134,6 +138,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(DateTimeOffset now)
     {
+        Palette.Use(Night);
         _drawnAt = now;
         Read();
         var read = Volatile.Read(ref _read);
@@ -365,7 +370,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             Counts = page is null ? "" : Summary(page, checks),
             Source = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it"),
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     /// <summary>The header's counts: the setup steps left only once the checks are known, then what is saved for the next start.</summary>
     internal static string Summary(SettingsPage page, SetupChecks? checks)
@@ -758,7 +763,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             }
             return Task.CompletedTask;
         };
-        return Layout.Builder.TextInput(input, 13f).Bg(FieldBg);
+        return Layout.Builder.TextInput(input, 13f, Palette.Input).Bg(FieldBg);
     }
 
     private static string[] Roots(SettingRow setting) =>

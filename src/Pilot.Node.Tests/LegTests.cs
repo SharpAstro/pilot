@@ -100,6 +100,17 @@ internal sealed class FakeGitHub : IGitHub
             : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
     }
 
+    /// <summary>The files each open PR changes, by number; a PR with none listed changes none.</summary>
+    public Dictionary<int, string[]> PrFiles { get; } = [];
+
+    /// <summary>PR numbers whose file listing fails, as a gh that could not read them.</summary>
+    public HashSet<int> PrFilesFail { get; } = [];
+
+    public Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        PrFilesFail.Contains(number)
+            ? Task.FromException<string[]>(new FlightException($"gh could not list the files of PR #{number}: offline"))
+            : Task.FromResult(PrFiles.TryGetValue(number, out var files) ? files : []);
+
     public Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken) =>
         OpenPrsFail.Contains(repoPath)
             ? Task.FromException<int[]>(new FlightException("gh could not list the PRs: offline"))

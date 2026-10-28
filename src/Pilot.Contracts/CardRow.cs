@@ -24,8 +24,11 @@ public sealed record CardRow
     /// <summary>The card in a line: <c>TIA1611's PR #63 is ready to merge</c>.</summary>
     public required string Title { get; init; }
 
-    /// <summary>What else the person needs to decide, in a few lines; null when the title says it all.</summary>
+    /// <summary>What else the person needs to decide, in a few lines; null when the title says it all. The raw text, a log if need be.</summary>
     public string? Detail { get; init; }
+
+    /// <summary>One or two plain sentences: what happened and what the choices do, no log. Detail stays the raw text; null only on a card an older node wrote.</summary>
+    public string? Summary { get; init; }
 
     /// <summary>What can be done about it, each a command the node runs when the card is answered with it.</summary>
     public CardChoice[] Choices { get; init => field = value ?? []; } = [];
@@ -88,6 +91,12 @@ public static class CardKinds
     /// when the session stops waiting or its process is gone.
     /// </summary>
     public const string SessionWaiting = "session-waiting";
+
+    /// <summary>
+    /// A flight found to overlap another (on this node or another): its title names both flights, the files they share and the choice,
+    /// and its buttons are Fold into, Connect to and Plan in parallel. Its title and detail are what it is for, so a panel wraps them.
+    /// </summary>
+    public const string Overlap = "overlap";
 
     /// <summary>The node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>): one For-you card about it, its text kept up to date, closed when it calms down.</summary>
     public const string WatchtowerChurning = "watchtower-churning";
