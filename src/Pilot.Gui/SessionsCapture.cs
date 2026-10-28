@@ -90,7 +90,7 @@ internal static class SessionsCapture
             // A drag as the window gets one: a press at the start of the first run, a move to the end of the last, a release.
             // The selection is only offered where a copy has somewhere to go, so a capture's goes nowhere.
             chrome.Flights.CopyText = _ => { };
-            chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+            chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
             var (from, to) = select.Split('|') is [var a, var b] ? (a.Trim(), b.Trim()) : (select.Trim(), select.Trim());
             var runs = chrome.Flights.SelectableTextRegions.ToArray();
             var first = Array.FindIndex(runs, r => r.Text.StartsWith(from, StringComparison.Ordinal));
@@ -101,7 +101,7 @@ internal static class SessionsCapture
                 chrome.HandleInput(new InputEvent.MouseDown(start.X + 0.5f, start.Y + start.Height / 2f));
                 chrome.HandleInput(new InputEvent.MouseMove(end.X + end.Width - 0.5f, end.Y + end.Height / 2f, MouseButton.Left));
                 chrome.HandleInput(new InputEvent.MouseUp(end.X + end.Width - 0.5f, end.Y + end.Height / 2f));
-                chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+                chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
             }
         }
         return view;

@@ -693,6 +693,7 @@ JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapsh
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
 IReadOnlyList<MachineLine>? machines = null;
+PullRequestsScreen? pullRequests = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
@@ -800,12 +801,14 @@ loop.OnRender = () =>
             repos = pages.Repos;
             chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
+            pullRequests = pages.PullRequests;
             fleet = made.Item2;
         }
     }
 
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height), machines);
+    // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
