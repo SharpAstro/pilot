@@ -46,6 +46,12 @@ internal sealed class FlightCanvas
 
     public float Height { get; private init; }
 
+    /// <summary>Whether the canvas, with a gutter of <paramref name="gutter"/> either side, fits a page <paramref name="room"/> design units wide: it cannot scroll across, so a page it does not fit shows the grid.</summary>
+    public bool FitsIn(float room, float gutter) => Width + 2 * gutter <= room;
+
+    /// <summary>A card's width on a page <paramref name="room"/> design units wide with a gutter of <paramref name="gutter"/> either side: its own, or the page's less its gutters where the page is narrower.</summary>
+    public static float CardWidthIn(float room, float gutter) => Math.Min(CardWidth, Math.Max(0f, room - 2 * gutter));
+
     /// <summary>
     /// Every flight <paramref name="code"/> waits on or is waited on by, through any number of arrows, itself among them
     /// when it has any: what the canvas lights when its card is picked.

@@ -10,8 +10,8 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// Every page's arranged tree, with sample data, at the widths and DPIs the issue names: no text is drawn over other text,
 /// and none reaches past the scroll or the page that holds it (<see cref="TextOverlap"/>, the one check the live GUI reads too).
-/// A case that fails is skipped with its fault line (<see cref="PageTextOverlapSkips"/>), so the suite holds what is fixed
-/// and each skip names what is not: DIR.Lib#169's stack measure, or a layout of pilot's own (PIL380 page-fixes).
+/// A case that fails only for DIR.Lib's stack measure (#169, fixed in the sibling source, not yet in the pinned package) is
+/// skipped with its fault line (<see cref="PageTextOverlapSkips"/>); any other fault is the page's own layout and is fixed.
 /// </summary>
 public sealed class PageTextOverlapTests
 {
@@ -126,11 +126,15 @@ public sealed class PageTextOverlapTests
 
         // The cards panel takes its width off the page when it has cards, as the chrome decides it.
         var cards = data.Cards;
-        var panel = cards.HasAny ? CardsView<RgbaImage>.WidthIn(width / dpi) * dpi : 0f;
-        var pageWidth = width - RailWidth * dpi - panel;
+        var beside = width - RailWidth * dpi;
+        var panel = Math.Min(CardsView<RgbaImage>.Width * dpi, beside * CardsView<RgbaImage>.Share);
+        // The chrome drops a panel it cannot give its least; and without cards there is none.
+        panel = cards.HasAny && panel >= CardsView<RgbaImage>.MinWidth * dpi ? panel : 0f;
+        var pageWidth = beside - panel;
         Rect<float> PageRect() => new(0, 0, pageWidth, Height);
         // What Render hands the Flights page from its bounds: the room it has, in design units.
         chrome.Flights.PageWidth = pageWidth / dpi;
+        chrome.Sessions.Table.PageWidth = chrome.Flights.Table.PageWidth = chrome.Jobs.Table.PageWidth = chrome.Repos.Table.PageWidth = chrome.Fleet.Table.PageWidth = pageWidth / dpi;
 
         Layout.Node tree;
         Rect<float> rect = PageRect();
@@ -171,8 +175,9 @@ public sealed class PageTextOverlapTests
                 tree = await OpenChat(chrome, data);
                 break;
             case "cards panel":
+                // As narrow as the chrome ever draws it.
+                rect = new Rect<float>(0, 0, Math.Max(CardsView<RgbaImage>.MinWidth * dpi, Math.Min(CardsView<RgbaImage>.Width * dpi, beside * CardsView<RgbaImage>.Share)), Height);
                 tree = chrome.Cards.Tree(cards);
-                rect = new Rect<float>(0, 0, CardsView<RgbaImage>.WidthIn(width / dpi) * dpi, Height);
                 break;
             case "transcript":
                 tree = await OpenTranscript(chrome, data);

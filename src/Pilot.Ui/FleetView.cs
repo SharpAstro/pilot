@@ -359,7 +359,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorkWidth = 170f;
     private const float RingsWidth = 80f;
     private const float ButtonsWidth = 180f;
-    // What a window too narrow for the rest leaves the columns that cannot be dropped: their words end in an ellipsis.
+    // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis.
     private const float MachineMin = 70f;
     private const float RingsMin = 44f;
     private const float ButtonsMin = 70f;
@@ -426,6 +426,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void Render(FleetScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -482,7 +483,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             rows[i] = Row(screen.Lines[i], i);
         }
         return Layout.Builder.VStack(
-                Table.Header(Columns, Scale),
+                Table.Header(FitColumns, Scale),
                 Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
@@ -494,13 +495,16 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Shrinking("Node", MachineWidth, MachineMin),
-        ListColumn.Optional("Account and usage", AccountWidth),
-        ListColumn.Optional("Sessions", SessionsWidth),
+        ListColumn.Fixed("Node", MachineWidth, MachineMin),
+        ListColumn.Fixed("Account and usage", AccountWidth),
+        ListColumn.Fixed("Sessions", SessionsWidth),
         ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Shrinking("Rings", RingsWidth, RingsMin),
-        ListColumn.Shrinking("", ButtonsWidth, ButtonsMin),
+        ListColumn.Fixed("Rings", RingsWidth, RingsMin),
+        ListColumn.Fixed("", ButtonsWidth, ButtonsMin),
     ];
+
+    // The columns as the page can hold them (ListTable.Fit).
+    private IReadOnlyList<ListColumn> FitColumns => Table.Fit(Columns);
 
     private static float LastKnownUsageHeight(FleetLine line) => !line.Connected && line.Usage.Length > 0 ? 16f : 0f;
 
@@ -564,7 +568,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             ListTable.Top(Layout.Builder.Text(line.Rings == 0 ? "—" : $"{line.Rings} ringing", 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing)),
             Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
         };
-        var row = Table.Row(Columns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
+        var row = Table.Row(FitColumns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
             .RowH(RowHeightOf(line))
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)

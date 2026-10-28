@@ -89,11 +89,13 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;
 
-    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser") is most of the row, by its weight:
-    // the optional columns drop before it gives much of it up. Its floor is only what a window too narrow for anything else
-    // leaves; the name then ends in an ellipsis and the row's tooltip has the whole of it.
-    private const float SessionMin = 80f;
-    private const float SessionWeight = 6f;
+    // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
+    // before it gives any of it up. On a page too narrow for the table (ListTable.Fit) it keeps less, by its weight most of what there
+    // is, and the name then ends in an ellipsis, the row's tooltip having the whole of it.
+    private const float SessionMin = 200f;
+    private const float SessionSqueezedMin = 80f;
+    private const float SessionSqueezedWeight = 6f;
+    // What a page too narrow for the table leaves the State and Node columns, which cannot be dropped: their words end in an ellipsis.
     private const float StateMin = 64f;
     private const float NodeMin = 40f;
 
@@ -320,6 +322,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
@@ -667,7 +670,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Layout.Builder.Text(screen.Hidden is null ? "No sessions" : "No session in play: Everything, above, shows the ended", 16f, Dim, TextAlign.Center).Stretch();
         }
 
-        var columns = Columns();
+        var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(screen.Lines.Count);
         for (var i = 0; i < screen.Lines.Count; i++)
         {
@@ -693,17 +696,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Session", SessionMin, SessionWeight),
+            ListColumn.Star("Session", SessionMin, SessionSqueezedMin, SessionSqueezedWeight),
             ListColumn.Optional("Model", ModelWidth),
-            ListColumn.Optional("Context", ContextWidth),
+            ListColumn.Fixed("Context", ContextWidth),
             ListColumn.Optional("Last response", LastWidth),
-            ListColumn.Shrinking(StateTitle, StateWidth, StateMin),
+            ListColumn.Fixed(StateTitle, StateWidth, StateMin),
             ListColumn.Optional("Spend", SpendWidth),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
         {
-            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

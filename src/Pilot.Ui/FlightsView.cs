@@ -254,7 +254,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
-    // What a window too narrow for the rest leaves these two columns: their words end in an ellipsis, the row's tooltip has the whole.
+    // What a page too narrow for the table leaves these columns: their words end in an ellipsis, the row's tooltip has the whole.
     private const float CodeMin = 56f;
     private const float StateMin = 64f;
     private const float NodeMin = 40f;
@@ -300,9 +300,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // The panel without its buttons: what it was (168) less their row, and a row more while a why is asked under them.
     private const float DetailColumnsHeight = 124f;
-    // The panel's least height: its columns, its padding and three lines of buttons, which is as many as a narrow window wraps them
-    // to. Below it the panel is not shown.
-    private const float DetailHeight = DetailColumnsHeight + 16f + 3 * 28f + 2 * 6f;
+    // The panel's least height: some of its columns, its padding and a line of buttons. Below it the panel is not shown.
+    private const float DetailColumnsMinHeight = 40f;
+    private const float DetailHeight = DetailColumnsMinHeight + 16f + 28f;
+    private readonly ListScrollController _detailColumnsScroll = new() { Mode = ScrollBarMode.Interactive };
     // What the table keeps before the panel has any: the header row and a few flights.
     private const float BodyMinHeight = 140f;
     private const float DetailColumn = 380f;
@@ -547,7 +548,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
         BeginFrame();
-        PageWidth = Scale.ToDesignX(bounds.Width);
+        PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -820,7 +821,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var buttons = new List<Layout.Node> { Pill("Open flight", $"flight:{line.Code}:open", () => OpenDetail(line.Code)) };
         if (CanCommand && WatchOnly(line) is { } watchedNode)
         {
-            buttons.Add(WrappedProse.Of(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
+            buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
         }
@@ -834,15 +835,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
         // A why asked for sits under the buttons, the panel a row taller while it is there.
         var why = WhyRow(line).ToList();
-        // The columns keep their height (what the panel was, less its buttons' row) unless they have more lines than it holds; the
-        // buttons flow onto lines of their own where the page is narrower than they are, and the panel takes the height of both.
-        var columnsHeight = Math.Max(DetailColumnsHeight, Math.Max(legs.Count, artifacts.Count) * 20f);
+        // The columns are at least what the panel was (less its buttons' row), and more where they have more lines than that; they scroll
+        // in what the window leaves them, the buttons flow onto lines of their own where the page is narrower than they are, and the
+        // panel takes the height of both.
+        var columns = Layout.Builder.HStack(
+                Layout.Builder.VStack([.. legs]).WStar(1f, 0f, DetailColumn),
+                Layout.Builder.VStack([.. artifacts]).WStar(1f, 0f, DetailColumn))
+            .WithGap(24f)
+            .WStar().HAuto().HClamp(DetailColumnsHeight);
         return Layout.Builder.VStack([
-                Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. legs]).WStar(1f, 0f, DetailColumn),
-                        Layout.Builder.VStack([.. artifacts]).WStar(1f, 0f, DetailColumn))
-                    .WithGap(24f)
-                    .W(Layout.Sizing.Star()).HFixed(columnsHeight),
+                Layout.Builder.VStack(columns).WithScroll(_detailColumnsScroll).WStar().HStarUpToContent(1f, DetailColumnsMinHeight),
                 Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto(),
                 .. why])
             .Pad(Gutter, 8f)
@@ -933,7 +935,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked, screen.Lines.Any(l => l.Stale is not null));
+        var columns = Table.Fit(Columns(marked, screen.Lines.Any(l => l.Stale is not null)));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -956,17 +958,17 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Shrinking("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
+            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
             new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
             ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Shrinking("State", StateWidth, StateMin),
-            ListColumn.Optional("Legs", LegsWidth),
+            ListColumn.Fixed("State", StateWidth, StateMin),
+            ListColumn.Fixed("Legs", LegsWidth),
             ListColumn.Optional("Branch", BranchWidth),
             ListColumn.Optional("Sessions", SessionsWidth),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

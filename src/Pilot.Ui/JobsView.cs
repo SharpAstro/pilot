@@ -159,15 +159,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float StartedWidth = 110f;
     private const float TookWidth = 90f;
     private const float NodeWidth = 64f;
-    // What a window too narrow for the rest leaves the columns that cannot be dropped: their words end in an ellipsis.
+    // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis; and the command, which
+    // then takes most of the room, by its weight.
+    private const float CommandSqueezedWeight = 3f;
     private const float IdMin = 44f;
     private const float StateMin = 70f;
     private const float NodeMin = 40f;
     // Tall enough for the facts, the pid and a tree of TreeRows processes under it, so the panel does not grow when the tree arrives.
     private const float DetailHeight = 300f;
-    // The panel keeps its height while the window has the room; below DetailMinHeight it is not shown, and the table keeps
+    // The panel keeps its height while the window has the room; with less to give it, it is not shown, and the table keeps
     // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
-    private const float DetailMinHeight = 200f;
+    private const float DetailMinHeight = DetailHeight;
     private const float BodyMinHeight = 140f;
     private const float DetailWeight = 3f;
     private const float FactsColumn = 420f;
@@ -329,6 +331,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public void Render(JobsScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -531,7 +534,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked);
+        var columns = Table.Fit(Columns(marked));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -555,16 +558,16 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Shrinking("Job", IdWidth, IdMin),
-            ListColumn.Star("Command", 0f, 3f),
-            ListColumn.Optional("For", ForWidth),
-            ListColumn.Shrinking("State", StateWidth, StateMin),
+            ListColumn.Fixed("Job", IdWidth, IdMin),
+            ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight),
+            ListColumn.Fixed("For", ForWidth),
+            ListColumn.Fixed("State", StateWidth, StateMin),
             ListColumn.Optional("Started", StartedWidth),
             ListColumn.Optional("Took", TookWidth),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

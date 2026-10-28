@@ -378,7 +378,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     // How much of a label a chip shows before it ends in an ellipsis, so one chip is never wider than a narrow page; the brief on
     // hover has the whole of it.
-    private const int ChipFits = 24;
+    private const int ChipFits = 30;
 
     private Layout.Node Chip(HomeChip chip)
     {

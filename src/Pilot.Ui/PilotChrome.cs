@@ -743,11 +743,15 @@ internal sealed class PilotChrome<TSurface>
             _ => null,
         };
         var tree = ShowsCards
-            ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
-                Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.WidthIn(bounds.Width / DpiScale)))
+            ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth),
+                Layout.Builder.Fill(key: PageKey).W(Layout.Sizing.Star(1f - CardsView<TSurface>.Share)).H(Layout.Sizing.Star()),
+                Layout.Builder.Fill(key: CardsKey).W(Layout.Sizing.Star(CardsView<TSurface>.Share, 0f, CardsView<TSurface>.Width)).H(Layout.Sizing.Star())
+                    .CollapseBelow(CardsView<TSurface>.MinWidth))
             : Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch());
         var arranged = Layout.Engine.Arrange(tree.Stretch(), new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height),
             new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale));
+        // A panel the window had too little for was dropped from the arrangement: it is not drawn, and the page says so.
+        ShowsCards &= arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill { Key: CardsKey } });
         foreach (var leaf in arranged)
         {
             if (leaf.Node is not Layout.Node.Leaf { Content: Layout.Content.Fill { Key: { } key } })

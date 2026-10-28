@@ -17,10 +17,11 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorktreeRowHeight = 46f;
     private const float Gutter = 16f;
     private const float IndentWidth = 16f;
-    // The Repo column keeps most of the row by its weight while the window has the room, as it kept 190 units; its floor is what a
-    // window too narrow for anything else leaves it (its words then end in an ellipsis), and the Checkout and Node columns have theirs.
-    private const float NameMin = 80f;
-    private const float NameWeight = 6f;
+    // The Repo column keeps 190 units while the page has the room; on a page too narrow for the table (ListTable.Fit) it keeps what
+    // is left, by its weight most of it, and its words end in an ellipsis; the Checkout and Node columns have their floors too.
+    private const float NameMin = 190f;
+    private const float NameSqueezedMin = 80f;
+    private const float NameSqueezedWeight = 6f;
     private const float MainMin = 70f;
     private const float NodeMin = 40f;
 
@@ -172,6 +173,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     public void Render(ReposScreen screen, RectF32 bounds)
     {
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -268,7 +270,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             return Layout.Builder.Text(ShowAll ? "No repos under the node's roots" : "No tracked repos yet: a repo with a flight, a worktree or a flight's PR shows here; All repos lists the rest",
                 16f, Dim, TextAlign.Center).Stretch();
         }
-        var columns = Columns();
+        var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(lines.Count);
         for (var i = 0; i < lines.Count; i++)
         {
@@ -293,15 +295,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Repo · worktree", NameMin, NameWeight),
-            ListColumn.Shrinking("Checkout · diff", MainWidth, MainMin),
+            ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight),
+            ListColumn.Fixed("Checkout · diff", MainWidth, MainMin),
             ListColumn.Optional("Open PRs · session", PullsWidth),
             ListColumn.Optional("Worktrees · action", WorkWidth),
             ListColumn.Optional("Flight · PR", LinkWidth),
         };
         if (_marked)
         {
-            columns.Insert(1, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
+            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

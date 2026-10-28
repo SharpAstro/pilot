@@ -61,6 +61,9 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
+    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
+    public const float SharedReserve = 290f;
+
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
 
@@ -83,19 +86,23 @@ internal static class TopBar
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, parts.Night));
         }
         items.AddRange(page.Buttons);
+        var shared = new List<Layout.Node>();
         if (parts.Autopilot is { } autopilot)
         {
-            items.Add(autopilot.Button(parts.Night));
+            shared.Add(autopilot.Button(parts.Night));
         }
         if (parts.About is { } about)
         {
-            items.Add(about.Button(parts.Night));
+            shared.Add(about.Button(parts.Night));
         }
 
         // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
         // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
-        // of it (PIL380).
-        var rows = new List<Layout.Node> { FlowRow.Of(RowHeight, 12f, items) };
+        // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
+        // leaves it room on its first line.
+        var flow = FlowRow.Of(RowHeight, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(12f).WAuto().HFixed(RowHeight);
+        var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
         if (page.Source is { } source)
         {
             rows.Add(Layout.Builder.Text(source, 12f, palette.Dim).RowH(SourceHeight));

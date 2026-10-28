@@ -21,6 +21,15 @@ internal sealed class TranscriptPane
 
     private static readonly RGBAColor32 Marked = new(0x2a, 0x24, 0x18, 0xff);
 
+    private const int TitleLines = 2;
+
+    // The banner's words scroll in what is left; they keep at least this much.
+    private const float BannerMinHeight = 40f;
+    private readonly ListScrollController _bannerScroll = new() { Mode = ScrollBarMode.Interactive };
+
+    // The head's row: the Back pill's height, so the pill and the words beside it share a middle.
+    private const float HeadRowHeight = 28f;
+
     // The entries' colours, Markdown styles and spacing are the entry view's, shared with the Chat page; the tests reach them here.
     internal static RGBAColor32 OutputShade => TranscriptEntryView.OutputShade;
     internal static RGBAColor32 OutputText => TranscriptEntryView.OutputText;
@@ -256,9 +265,10 @@ internal sealed class TranscriptPane
         {
             Layout.Builder.Text("← Back", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
                 .Follows(new HitResult.ButtonHit("transcript:back"), _ => GoBack()),
-            Layout.Builder.Text(Title ?? "", 16f, Bright).WAuto(),
+            // At most two lines, the whole title on hover: a long session name took the page's height from its entries.
+            WrappedProse.Of(Title ?? "", 16f, Bright, TitleLines).WAuto().WithTooltip(Title ?? ""),
             Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),
-            Layout.Builder.Text(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WStar(),
+            WrappedProse.Of(problem is null ? shown : $"{shown} · {problem}", 12f, problem is null ? Dim : Failed).WAuto(),
         };
         // Jump to end: while the reader is up in its history, or held at a moment.
         if (_at is not null || !_scroll.IsFollowingEnd)
@@ -282,7 +292,8 @@ internal sealed class TranscriptPane
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
         // The banner is a row of the page, not of the list: it stays under the entries, whatever is scrolled.
         var banner = Banner(current, now ?? DateTimeOffset.UtcNow);
-        var top = Layout.Builder.HStack([.. head]).WithGap(12f).WStar();
+        // The head flows onto lines of its own where the pane is narrower than it is, as the top bar does.
+        var top = FlowRow.Of(HeadRowHeight, 12f, head);
         List<Layout.Node> page = _entries.Subagents.Count == 0 ? [top, list] : [top, Agents(), list];
         if (banner is not null)
         {
@@ -325,14 +336,16 @@ internal sealed class TranscriptPane
                     : "Remote Control is off: answer it in its terminal.", 12f, Dim));
             }
         }
+        // Its words scroll inside it where the pane leaves it less than they need (the entries above keep what they have), as the chat's
+        // question does, so a banner never runs past the window's foot.
         return Layout.Builder.HStack(
                 Layout.Builder.Spacer().Bg(line.Gone ? Failed : Prompt).WFixed(3f).HStar(),
-                Layout.Builder.VStack([.. body]).WithGap(4f).WStar())
+                Layout.Builder.VStack(Layout.Builder.VStack([.. body]).WithGap(4f).WStar().HAuto()).WithScroll(_bannerScroll).WStar().HStarUpToContent(1f, BannerMinHeight))
             .WithGap(8f)
             .Pad(8f, 6f)
             .Bg(Marked)
             .WStar()
-            .HAuto();
+            .HStarUpToContent(1f, BannerMinHeight + 12f);
     }
 
     /// <summary>

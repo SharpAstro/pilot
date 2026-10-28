@@ -12,8 +12,16 @@ internal static class FlowRow
     /// item that is a sentence is <see cref="WrappedProse"/>, which wraps within the row; anything else keeps its own width.
     /// </summary>
     public static Layout.Node Of(float rowHeight, float gap, IEnumerable<Layout.Node> items) =>
+        Of(rowHeight, gap, 0f, items);
+
+    /// <summary>
+    /// As above, with the first line leaving <paramref name="reserve"/> design units free at its end for a corner item standing over
+    /// it, the lines after it running the whole width beneath the corner.
+    /// </summary>
+    public static Layout.Node Of(float rowHeight, float gap, float reserve, IEnumerable<Layout.Node> items) =>
         Layout.Builder.WrapH([.. items.Select(item => Cell(item, rowHeight))])
             .WithGap(gap)
+            .WithFirstLineReserve(reserve)
             .WStar()
             .HAuto();
 
