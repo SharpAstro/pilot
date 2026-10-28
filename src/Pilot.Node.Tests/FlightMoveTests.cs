@@ -478,7 +478,7 @@ public sealed class FlightMoveTests : IDisposable
         _senderWorkers.Started.ShouldBeEmpty();
         // Moved, the flight on SE1 is no flying flight any sweep or leg verb takes up again.
         await _senderLegs.AdvanceAllAsync(Ct);
-        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error.ShouldContain("landed");
+        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error.ShouldNotBeNull().ShouldContain("landed");
         _senderWorkers.Started.ShouldBeEmpty();
         _peer.Sent.Count.ShouldBe(1);
     }
@@ -630,7 +630,7 @@ public sealed class FlightMoveTests : IDisposable
 
         moved.Ok.ShouldBeTrue(moved.Error);
         MovedAway();
-        _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind).Detail.ShouldNotContain("maintenance");
+        _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind).Detail.ShouldNotBeNull().ShouldNotContain("maintenance");
     }
 
     [Fact]
