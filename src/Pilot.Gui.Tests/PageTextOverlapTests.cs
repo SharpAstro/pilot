@@ -129,8 +129,10 @@ public sealed class PageTextOverlapTests
             chrome.ToggleCards();
             Frame();
         }
+        // Where the chrome draws no panel (none waiting, so nothing for the rail to cue either) there is nothing to check.
+        var panelDrawn = chrome.CardsBounds is not null;
         var shown = page == "cards panel"
-            ? chrome.CardsBounds ?? throw new InvalidOperationException($"the chrome draws no cards panel at {width} wide, DPI {dpi}")
+            ? chrome.CardsBounds ?? chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}")
             : chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}");
         var pageWidth = shown.Width;
         Rect<float> PageRect() => new(shown.X, shown.Y, shown.Width, shown.Height);
@@ -181,7 +183,7 @@ public sealed class PageTextOverlapTests
                 break;
             case "cards panel":
                 // As the chrome drew it: beside the page, or in the page's place where the rail's cue opened it.
-                tree = chrome.Cards.Tree(cards);
+                tree = panelDrawn ? chrome.Cards.Tree(cards) : Layout.Builder.Spacer();
                 break;
             case "transcript":
                 tree = await OpenTranscript(chrome, data);
