@@ -254,7 +254,7 @@ internal sealed partial class FlightsView<TSurface>
                 ? CardsView<TSurface>.Dead($"{choice.Label} …")
                 : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
         }
-        if (OnChatAboutCard is { } about)
+        if (OnChatAboutCard is { } about && WatchOnly(line) is null)
         {
             cells.Add(line.Stale is not null
                 ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel).WithTooltip(StaleWhy(line))

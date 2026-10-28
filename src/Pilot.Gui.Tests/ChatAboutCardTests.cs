@@ -112,6 +112,31 @@ public sealed class ChatAboutCardTests
         chrome.Chat.QuotedCard.ShouldBe(ready);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void TheFlightPageOfAnotherNodesFlightHasALiveChatButtonOnlyWithAGrant(bool canSteer, bool live)
+    {
+        var chrome = NewChrome(out var renderer);
+        using var _ = renderer;
+        chrome.Flights.CanCommand = true;
+        chrome.Flights.CanSteer = _ => canSteer;
+        var ready = new CardRow
+        {
+            Id = "c9", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/TIA1611", Title = "TIA1611's PR #7 is ready to merge",
+            At = Now, State = CardState.Open, Choices = [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1611", Args = ["abc1234"] }],
+        };
+        var line = FlightLine.Build([Flight()], [], Now, [])[0] with { Node = new NodeMark("se1", "http://se1", "SE1", Here: false) };
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.OpenDetail("TIA1611");
+
+        chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([line], "test", Now), CardsScreen.From([ready], [], Now), new RectF32(0, 0, 1280, 900));
+        var regions = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions);
+
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:chat-card" }).ShouldBe(live);
+    }
+
     private static FlightRow Flight() => new()
     {
         Code = "TIA1611", Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1611, Title = "Planets on the GPU", Branch = "flight/tia1611", Worktree = "/r/tianwen/.claude/worktrees/tia1611",
