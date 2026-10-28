@@ -713,8 +713,9 @@ public static class PilotCommand
 
         // the watchtower: tell it, restart it; and the cards it (or anyone) raises
         var tellText = Words("text", "What to tell it");
-        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText } },
-            (p, client, ct) => Send(client, Verbs.Tell, Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
+        var tellCard = new Option<string?>("--card") { Description = "A card's id (c12): tell the watchtower about that card, with its whole context ahead of your words" };
+        var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText }, Options = { tellCard } },
+            (p, client, ct) => Send(client, Verbs.Tell, p.GetValue(tellCard) is { Length: > 0 } cardId ? Verbs.CardTarget(cardId) : Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
         var restartWhy = Words("why", "Why, for its Handled line", required: false);
         var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
             (p, client, ct) => Send(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], who, ct));
