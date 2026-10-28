@@ -61,8 +61,8 @@ internal static class TopBar
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
 
-    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, Night, the update light and ?, with their gaps.</summary>
-    public const float SharedReserve = 370f;
+    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
+    public const float SharedReserve = 290f;
 
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
@@ -87,14 +87,15 @@ internal static class TopBar
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
+        // Night flows with the page's own buttons: the corner is as wide as the narrowest page leaves it room for, and no wider.
+        if (parts.Night is { } nightSwitch)
+        {
+            items.Add(nightSwitch.Button());
+        }
         var shared = new List<Layout.Node>();
         if (parts.Autopilot is { } autopilot)
         {
             shared.Add(autopilot.Button(night));
-        }
-        if (parts.Night is { } nightSwitch)
-        {
-            shared.Add(nightSwitch.Button());
         }
         if (parts.About is { } about)
         {
