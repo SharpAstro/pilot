@@ -92,6 +92,12 @@ public static class CardKinds
     /// </summary>
     public const string SessionWaiting = "session-waiting";
 
+    /// <summary>
+    /// A flight found to overlap another (on this node or another): its title names both flights, the files they share and the choice,
+    /// and its buttons are Fold into, Connect to and Plan in parallel. Its title and detail are what it is for, so a panel wraps them.
+    /// </summary>
+    public const string Overlap = "overlap";
+
     /// <summary>The node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>): one For-you card about it, its text kept up to date, closed when it calms down.</summary>
     public const string WatchtowerChurning = "watchtower-churning";
 

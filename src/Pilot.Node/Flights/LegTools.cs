@@ -368,6 +368,10 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken);
 
+    /// <summary>The paths PR <paramref name="number"/> changes, all of them (not the first page): what a planner's overlap check compares its own files with.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
@@ -1131,6 +1135,17 @@ public sealed class GhCli : IGitHub
                     : [],
             })
             .OrderByDescending(p => p.Number)];
+    }
+
+    public async Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        // The API, paginated: `gh pr view --json files` stops at the first 100 files, and a list cut short would read as no overlap.
+        var (exit, output, error) = await RunAsync(["api", "--paginate", $"repos/{{owner}}/{{repo}}/pulls/{number}/files?per_page=100", "--jq", ".[].filename"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the files of PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
 
     public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)

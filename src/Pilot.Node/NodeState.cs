@@ -509,10 +509,10 @@ public sealed class NodeState
         }
     }
 
-    // Record equality compares the connections, overlaps, folded-in and package-wait arrays by reference.
+    // Record equality compares the connections, peer connections, overlaps, folded-in and package-wait arrays by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
-        a with { Connections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
-        && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
+        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
+        && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.PeerConnections.SequenceEqual(b.PeerConnections) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
         && a.PackageWaits.SequenceEqual(b.PackageWaits);
 
     /// <summary>The jobs, newest first.</summary>

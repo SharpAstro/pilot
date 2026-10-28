@@ -22,12 +22,12 @@ internal sealed class AttachmentGallery
     private const string ThumbKey = "thumb:";
     private const string FullKey = "full:";
 
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Well = new(0x12, 0x13, 0x19, 0xff);
-    private static readonly RGBAColor32 WellHover = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 Scrim = new(0x0b, 0x0c, 0x10, 0xf4);
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Well => Palette.Current.Well;
+    private static RGBAColor32 WellHover => Palette.Current.RowHoverBg;
+    private static RGBAColor32 Scrim => Palette.Current.Scrim;
 
     private readonly Dictionary<string, AttachmentRef> _known = new(StringComparer.Ordinal);
 

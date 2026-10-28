@@ -855,6 +855,34 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ARebaseOntoTheDefaultWhenTheBaseIsNoBranchOnTheRemoteIsPushedWithTheLeaseAndNotMergedWithItsOldHead()
+    {
+        Git(Repo, "switch", "-q", "-c", "feat/landed");
+        File.WriteAllText(Path.Combine(Repo, "feature.txt"), "landed\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the feature");
+        Git(Repo, "switch", "-q", "main");
+        Git(Repo, "cherry-pick", "feat/landed");
+        Git(Repo, "push", "-q", "origin", "main");
+        var flight = await NewFlight("19", "parser");
+        Git(flight.Worktree, "reset", "-q", "--hard", "feat/landed");
+        _state.PutFlight(F("TIA19") with { Base = "feat/landed" });
+        await Fly(F("TIA19"), "parser");
+        // The branch is on the remote with the commits of the base that has since landed on main.
+        var branch = F("TIA19").Branch;
+        Git(F("TIA19").Worktree, "push", "-q", "-u", "origin", branch);
+
+        (await _legs.RebaseOntoBaseAsync("TIA19", Ct)).ShouldBeNull();
+
+        var wt = F("TIA19").Worktree;
+        var head = Git(wt, "rev-parse", "HEAD").Trim();
+        F("TIA19").Base.ShouldBe("origin/main");
+        Git(wt, "rev-parse", $"origin/{branch}").Trim().ShouldBe(head);
+        Git(wt, "rev-list", "--merges", "--count", $"origin/{branch}").Trim().ShouldBe("0");
+        Git(wt, "rev-list", "--count", "origin/main..HEAD").Trim().ShouldBe("1");
+    }
+
+    [Fact]
     public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndReviewedAfresh()
     {
         var flight = await NewFlight("6", "parser");
@@ -1332,9 +1360,9 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Theory]
-    [InlineData(UpdateWay.Rebase, "18", "was pushed by someone else")]
-    [InlineData(UpdateWay.Merge, "19", "has commits its head lacks")]
-    public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsNotLost(UpdateWay way, string number, string said)
+    [InlineData(UpdateWay.Rebase, "18")]
+    [InlineData(UpdateWay.Merge, "19")]
+    public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsTakenInNotLost(UpdateWay way, string number)
     {
         _github.UpdateWay = way;
         var flight = await NewFlight(number, "parser");
@@ -1360,8 +1388,13 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var result = await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed");
 
-        result.Error.ShouldNotBeNull().ShouldContain(said.Contains("someone else") ? "git could not push" : said);
-        Git(flight.Worktree, "ls-remote", "origin", branch).ShouldStartWith(theirs);
+        // Taken in before the update, so the push that follows carries it and no lease or fast-forward rule refuses it.
+        result.Error.ShouldBeNull();
+        var pushed = Git(flight.Worktree, "ls-remote", "origin", branch).Split('	')[0];
+        // A rebase replays the foreign commit under a new id: its file is what shows it was kept.
+        Git(flight.Worktree, "cat-file", "-e", $"{pushed}:elsewhere.txt");
+        Git(flight.Worktree, "merge-base", "--is-ancestor", "origin/main", pushed);
+        File.Exists(Path.Combine(flight.Worktree, "elsewhere.txt")).ShouldBeTrue();
     }
 
     private void MainMoves()
@@ -1463,7 +1496,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AMergeWayPushOfRewrittenPushedHistoryIsRefusedWhileTheLegStillFlies()
+    public async Task AMergeWayPushOfRewrittenPushedHistoryTakesTheRemotesCommitsInInsteadOfBeingRefused()
     {
         _github.UpdateWay = UpdateWay.Merge;
         var flight = await NewFlight("38", "parser");
@@ -1474,13 +1507,16 @@ public sealed class ReviewTests3 : ReviewTestsBase
         (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
         var worker = _state.Legs("TIA38").Single().Worker!;
 
-        // The worker amends a commit that is already pushed: the plain push would be refused after the leg is done.
+        // The worker amends a commit that is already pushed: the remote's old commit is merged in, so the plain push still goes up.
+        var old = Git(flight.Worktree, "rev-parse", "HEAD");
         File.WriteAllText(Path.Combine(flight.Worktree, "amended.txt"), "amended\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--amend", "-m", "amended");
 
-        (await Run(Verbs.FinishLeg, Verbs.LegTarget("TIA38", "parser"), worker, "done", "fixed")).Error.ShouldNotBeNull().ShouldContain("not an ancestor");
-        _state.Legs("TIA38").Single().State.ShouldBe(LegState.Flying);
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget("TIA38", "parser"), worker, "done", "fixed")).Error.ShouldBeNull();
+        var pushed = Git(flight.Worktree, "ls-remote", "origin", "flight/tia38").Split('	')[0];
+        Git(flight.Worktree, "merge-base", "--is-ancestor", old, pushed);
+        File.Exists(Path.Combine(flight.Worktree, "amended.txt")).ShouldBeTrue();
     }
 
     [Fact]

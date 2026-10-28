@@ -10,6 +10,9 @@ internal sealed record GuiSettings
 {
     /// <summary>The dragged column widths, design units: a page's name (<c>sessions</c>), then a column's title.</summary>
     public Dictionary<string, Dictionary<string, float>> Tables { get; init; } = [];
+
+    /// <summary>Whether the window is painted red on black (the header's Night switch).</summary>
+    public bool Night { get; init; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -33,10 +36,12 @@ internal sealed class GuiSettingsFile : IDisposable
     private ImmutableList<ListTable> _attached = [];
     private readonly Timer _pending;
     private int _dirty;
+    private volatile bool _night;
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night)
     {
         Path = path;
+        _night = night;
         _tables = tables.ToImmutableDictionary(t => t.Key, t => (IReadOnlyDictionary<string, float>)t.Value, StringComparer.Ordinal);
         _pending = new Timer(_ => Flush(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
@@ -52,10 +57,12 @@ internal sealed class GuiSettingsFile : IDisposable
     {
         path ??= DefaultPath;
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
+        var night = false;
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
+                night = settings.Night;
                 foreach (var (page, widths) in settings.Tables)
                 {
                     if (widths is not null)
@@ -68,8 +75,23 @@ internal sealed class GuiSettingsFile : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException or InvalidOperationException)
         {
             tables.Clear();
+            night = false;
         }
-        return new GuiSettingsFile(path, tables);
+        return new GuiSettingsFile(path, tables, night);
+    }
+
+    /// <summary>Whether the file says Night is on.</summary>
+    public bool Night => _night;
+
+    /// <summary>Gives <paramref name="night"/> the state this file holds, and keeps the file current: a toggle writes it, a moment later.</summary>
+    public void Attach(NightSwitch night)
+    {
+        night.On = _night;
+        night.Changed += on =>
+        {
+            _night = on;
+            Touch();
+        };
     }
 
     /// <summary>
@@ -98,7 +120,7 @@ internal sealed class GuiSettingsFile : IDisposable
         }
         ImmutableInterlocked.Update(ref _tables, held => held.SetItems(Volatile.Read(ref _attached).Select(t => KeyValuePair.Create(t.Page, t.Saved))));
         var json = JsonSerializer.Serialize(
-            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal) },
+            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night },
             GuiSettingsJsonContext.Default.GuiSettings);
 
         try
