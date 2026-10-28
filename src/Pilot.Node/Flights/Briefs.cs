@@ -60,7 +60,7 @@ public static class Briefs
         text.AppendLine("with messages that say what changed and why. Do not push, open a PR or merge: the controller lands the flight.");
         text.AppendLine("Leave nothing behind in the plane: every change is committed before you finish (the node refuses a done leg");
         text.AppendLine("whose plane holds files not committed), and scratch output goes outside the plane, never into it. Once your");
-        text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a go-around.");
+        text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a redo of the leg (a go-around).");
 
         var before = legs.Where(l => l.Order < leg.Order).ToList();
         if (before.Count > 0)
@@ -383,6 +383,9 @@ public static class Briefs
         text.AppendLine($"`{run} leg plan {flight.Code} <name> --goal \"…\" --done-when \"…\" --check \"<command>\" --item \"<step>\" --item \"<step>\"`");
         text.AppendLine("Name: lower-case letters, digits and dashes. Items are the worker's checklist, in order. Add --model or --effort");
         text.AppendLine("only when a leg needs more (or less) than the default.");
+        text.AppendLine("Every item is the worker's to do, so none pushes, opens or edits a PR, merges, releases or publishes: the node pushes the");
+        text.AppendLine("branch and opens the PR once the last leg is done, and a release follows its merge. A worker cannot tick such a step and fails");
+        text.AppendLine("the leg over it with the work done (TIA1853, twice on 2026-10-28). End a leg on its last commit and its check passing.");
         text.AppendLine("The check runs as written in pwsh on Windows (sh elsewhere): quote anything holding a |, as a test filter");
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
@@ -411,7 +414,7 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
-        text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
+        text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
@@ -737,12 +740,12 @@ public static class Briefs
         text.AppendLine("  (SE1's PIL294 work was lost to a push from DE1, 2026-10-27).");
         text.AppendLine();
         text.AppendLine("## What you may do");
-        text.AppendLine("- Answer a card, ring cards included, whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
+        text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
-        text.AppendLine("  refuses its dismissal from you, so answer it with a go-around, a resume or a nudge, or leave it open for them.");
+        text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");

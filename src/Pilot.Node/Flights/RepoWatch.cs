@@ -177,6 +177,21 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
                         return Array.Empty<int>();
                     });
                 }
+                // And put on where a flight of this node lacks it, its issue or its PR: flights made, or PRs opened, before the label
+                // existed (#322) never got it, and only the other node's PRs showed whose they were (DE1's #373 and #374, 2026-10-28).
+                var missing = flights.Where(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub)
+                    .SelectMany(f => (issues ?? []).Where(i => i.Number == f.Issue).Select(i => (i.Number, i.Labels))
+                        .Concat(prs.Where(p => p.Flight == f.Code).Select(p => (p.Number, p.Labels))))
+                    .Where(item => !item.Labels.Contains(own, StringComparer.OrdinalIgnoreCase)
+                        && !item.Labels.Any(l => l.StartsWith(PilotMarks.NodeLabelPrefix, StringComparison.Ordinal)));
+                foreach (var (number, _) in missing)
+                {
+                    await Ref("node label", async () =>
+                    {
+                        await github.AddIssueLabelAsync(repo.Path, number, own, cancellationToken);
+                        return Array.Empty<int>();
+                    });
+                }
             }
         }
 

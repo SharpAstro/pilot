@@ -543,6 +543,12 @@ internal sealed class PilotChrome<TSurface>
             Switch(PilotPage.Sessions, show);
             OpenTranscript(line, card.At);
         });
+        // A card about a leg: its name opens the flight's page, scrolled to that leg.
+        Cards.OnLeg = (code, leg) => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, show);
+            Flights.OpenDetail(code, leg);
+        });
         // A waiting session's card: Open shows its row on the Sessions page, selected, with no transcript over it.
         Cards.OnOpenSession = (_, line) => Navigate(() =>
         {
