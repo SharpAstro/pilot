@@ -93,6 +93,12 @@ public sealed record MachineProcess
     /// <summary>Its working set, in bytes.</summary>
     public required long MemoryBytes { get; init; }
 
+    /// <summary>How it was started, as the OS holds it (cut at a thousand characters); null where it cannot be read (another user's, a protected one, an older node).</summary>
+    public string? CommandLine { get; init; }
+
+    /// <summary>The folder it works in now; null where it cannot be read.</summary>
+    public string? WorkingDirectory { get; init; }
+
     /// <summary>Whose it is when the node started it or it is part of what the node started: a session's name, a job's id, or <c>watchtower</c>. Null for any other process.</summary>
     public string? Owner { get; init; }
 }

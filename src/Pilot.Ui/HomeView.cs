@@ -132,7 +132,8 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     private string ProcessDump(MachineLine line, MachineProcess p)
     {
         var owner = OwnerChip(line, p)?.Label ?? p.Owner;
-        return $"  {p.Name} · pid {p.Pid} · {MachineLine.Cpu(p)} · {MachineLine.Memory(p)}{(owner is null ? "" : $" · {owner}")}";
+        return $"  {p.Name} · pid {p.Pid} · {MachineLine.Cpu(p)} · {MachineLine.Memory(p)}{(owner is null ? "" : $" · {owner}")}"
+            + (p.WorkingDirectory is { } folder ? $" · in {folder}" : "");
     }
 
     /// <summary>The page as a dump writes it, for a capture and a test: a line for each shown node's machine, and one under it for each process.</summary>
@@ -280,10 +281,12 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float CpuWidth = 56f;
     private const float MemoryWidth = 72f;
     private const float OwnerWidth = 240f;
+    private const float FolderWidth = 240f;
     private const float ColumnGap = 12f;
 
-    // The process table stops here on a wide page, so a row's name and its figures are not a screen apart.
-    private const float TableMaxWidth = 960f;
+    // The process table stops here on a wide page, so a row's name and its figures are not a screen apart; wide enough that the
+    // working dir column (FolderWidth) still has its whole width beside the name.
+    private const float TableMaxWidth = 1200f;
 
     // A process's name and owner always carry their whole text on hover: a narrow window cuts even a short name with the column's ellipsis.
 
@@ -306,6 +309,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             blocks.Add(Layout.Builder.WrapH([.. line.Row.Gauges().Select(Gauge)]).WithGap(GaugeSpacing).WithLineGap(0f).WStar());
             blocks.Add(Layout.Builder.HStack(
                 Layout.Builder.Text("process", 11f, Dim).WStar().HStar(),
+                Folder(Layout.Builder.Text("working dir", 11f, Dim)),
                 Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
                 Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).WFixed(CpuWidth).HStar(),
                 Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).WFixed(MemoryWidth).HStar(),
@@ -336,8 +340,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process)
     {
         var name = Layout.Builder.Text(process.Name, 13f, Bright).WStar().HStar();
+        var folder = Layout.Builder.Text(MachineLine.Folder(process), 12f, Dim);
         return Layout.Builder.HStack(
-            name.WithTooltip($"{process.Name} (pid {process.Pid})"),
+            name.WithTooltip(MachineLine.Hover(process)),
+            Folder(process.WorkingDirectory is { } directory ? folder.WithTooltip(directory) : folder),
             Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
             Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).WFixed(CpuWidth).HStar(),
             Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).WFixed(MemoryWidth).HStar(),
@@ -345,6 +351,10 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .WithGap(ColumnGap)
             .RowH(ProcessRowHeight).WStar(1f, 0f, TableMaxWidth);
     }
+
+    // The folder column, the one a narrow window drops: its whole width while there is room, gone once it could have less, header
+    // and rows alike, so the name keeps the room it needs.
+    private static Layout.Node Folder(Layout.Node cell) => cell.HStar().WStar(1f, 0f, FolderWidth).CollapseBelow(FolderWidth);
 
     // The owner as its chip, which opens that session's or job's page as the chip above it does; the node's word when the page has
     // no such session or job any more (it ended since the sample), which opens nothing; empty for a process that is nobody's.
