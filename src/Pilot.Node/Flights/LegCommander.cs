@@ -78,7 +78,23 @@ public sealed partial class LegCommander(
         }
     }
 
+    // A merge holds its repo's turn in the queue until the command is done, whatever came of it.
     private async Task<CommandResult> RunQueuedAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RunQueuedCoreAsync(command, cancellationToken);
+        }
+        finally
+        {
+            if (command.Verb == Verbs.Merge && MergeCode(command) is { } code)
+            {
+                Leave(code);
+            }
+        }
+    }
+
+    private async Task<CommandResult> RunQueuedCoreAsync(CommandRequest command, CancellationToken cancellationToken, bool again = false)
     {
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
@@ -206,38 +222,57 @@ public sealed partial class LegCommander(
             await AdvanceAsync(FlightOf(command.Target), cancellationToken);
         }
 
-        // A merge refused as not mergeable is never left as a Merge button that refuses again: the card says it conflicts,
-        // and the plane has its base merged in and is reviewed afresh, which offers the merge again (SE1, 2026-10-24: a
-        // Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
-        if (error is not null && command.Verb == Verbs.Merge && Conflicts(error))
+        // A merge refused as not mergeable (conflicting, or behind its base) is never left as a Merge button that refuses again: the
+        // entry stays in the queue while the node brings the plane up to date, by plain git (the base merged in, a plain push). A
+        // clean merge alone keeps the passed review at the new head, and the merge goes on at it; any other change is reviewed afresh,
+        // and the entry waits for that review to pass. A merge that conflicts leaves the queue, and the watchtower resolves it in the plane
+        // (SE1, 2026-10-24: a Merge pressed over and over on #195 and #197, each refusal seen nowhere but a log).
+        if (error is not null && (command.Verb == Verbs.Merge && Conflicts(error) || command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error)))
         {
             var code = FlightOf(command.Target).Code;
-            MarkMerge(command.Target, ChoiceStatus.Conflicting);
-            error = await BringUpToDateAsync(code, cancellationToken) is { } why
-                ? $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}"
-                : $"{error}: it is being brought up to date with its base and reviewed afresh, and the merge is offered again once that passes";
-        }
-
-        // A merge of a PR behind its base is not sent on: the node brings it up to date (the merge-up way), pushes, and reviews it
-        // afresh, which offers the merge again.
-        if (error is not null && command.Verb is Verbs.Merge or Verbs.RerunChecks && Behind(error))
-        {
-            var code = FlightOf(command.Target).Code;
-            var updated = $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
-            if (await BringUpToDateAsync(code, cancellationToken) is { } why)
+            var conflicting = Conflicts(error);
+            if (conflicting)
             {
+                MarkMerge(command.Target, ChoiceStatus.Conflicting);
+            }
+            if (command.Verb == Verbs.Merge)
+            {
+                SetEntry(code, MergeEntryState.Updating, $"{error}: brought up to date with its base");
+            }
+            var (why, kept) = await BringUpToDateKeepingAsync(code, cancellationToken);
+            if (why is not null)
+            {
+                if (command.Verb == Verbs.Merge)
+                {
+                    DropMerge(code, why);
+                }
                 error = $"{error}; {why}{(!IsConflict(why) ? "" : await ConflictsAsync(code, why, cancellationToken) is { } notSent ? $" ({notSent})" : ": the watchtower is told to resolve it in the plane")}";
             }
-            else if (command.Who == "node" && command.Verb == Verbs.Merge)
+            else if (kept is not null && command.Verb == Verbs.Merge && !again)
             {
-                // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
-                made = updated;
-                error = null;
-                way = MergeWays.Updated;
+                // Its review carried over the clean merge of the base: the merge goes on at the new head, through the queue again.
+                return await RunQueuedCoreAsync(command with { Args = [kept, .. (command.Args ?? []).Skip(1)] }, cancellationToken, again: true);
             }
             else
             {
-                error = updated;
+                var updated = conflicting
+                    ? $"{error}: it is being brought up to date with its base and reviewed afresh, and the merge is offered again once that passes"
+                    : $"{error}, so the node brought it up to date with its base and it is reviewed afresh; the merge is offered again once that passes";
+                if (command.Verb == Verbs.Merge)
+                {
+                    SetEntry(code, MergeEntryState.Checks, "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true);
+                }
+                if (!conflicting && command.Who == "node" && command.Verb == Verbs.Merge)
+                {
+                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                    made = updated;
+                    error = null;
+                    way = MergeWays.Updated;
+                }
+                else
+                {
+                    error = updated;
+                }
             }
         }
 
@@ -274,7 +309,15 @@ public sealed partial class LegCommander(
     /// origin/&lt;base&gt;</c>), is pushed plain, and reviewed afresh, as the reviewed head is gone. Never a rebase and never a force push:
     /// SE1's PIL294 work was lost to one (2026-10-27). Null when that is under way; else why not (a merge that conflicts is aborted).
     /// </summary>
-    public async Task<string?> BringUpToDateAsync(string code, CancellationToken cancellationToken)
+    public async Task<string?> BringUpToDateAsync(string code, CancellationToken cancellationToken) =>
+        (await BringUpToDateKeepingAsync(code, cancellationToken)).Why;
+
+    /// <summary>
+    /// <see cref="BringUpToDateAsync"/>, saying also whether the passed review was kept: a head moved by a clean base merge alone
+    /// (nothing taken from the remote, nothing else changed) keeps its review, which is carried to the new head (<c>KeptHead</c>);
+    /// any other change is reviewed afresh.
+    /// </summary>
+    public async Task<(string? Why, string? KeptHead)> BringUpToDateKeepingAsync(string code, CancellationToken cancellationToken)
     {
         var launches = _launched.Value = [];
         try
@@ -287,7 +330,7 @@ public sealed partial class LegCommander(
         }
     }
 
-    private async Task<string?> BringUpToDateUnderLockAsync(string code, CancellationToken cancellationToken)
+    private async Task<(string? Why, string? KeptHead)> BringUpToDateUnderLockAsync(string code, CancellationToken cancellationToken)
     {
         // The flight is this update's while its git and GitHub calls are out (PIL338): a merge or open-pr under way on it is waited for,
         // without the lock, and the lock itself is let go for every call. A flight that changed meanwhile is the next look's to
@@ -297,15 +340,15 @@ public sealed partial class LegCommander(
         {
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
             {
-                return $"{code} is not a flying flight with a plane";
+                return ($"{code} is not a flying flight with a plane", null);
             }
             if ((await OffLockAsync(null, () => git.RunAsync(["status", "--porcelain"], flight.Worktree, cancellationToken))).Output.Trim().Length > 0)
             {
-                return $"{code}'s plane holds changes not committed, so the base is not merged in by itself";
+                return ($"{code}'s plane holds changes not committed, so the base is not merged in by itself", null);
             }
             if (Moved(flight) is not null)
             {
-                return null;
+                return (null, null);
             }
             // A merge armed on the head being replaced is let go, GitHub's auto-merge included: it would merge the updated head
             // before anyone has reviewed it, and the node's own update is no dropped merge to ring about.
@@ -319,17 +362,18 @@ public sealed partial class LegCommander(
                     }
                     catch (FlightException ex)
                     {
-                        return $"{code}'s PR #{armed} is armed with GitHub's auto-merge, which could not be turned off ({ex.Message}), so the base is not merged in: switch it off on the PR page";
+                        return ($"{code}'s PR #{armed} is armed with GitHub's auto-merge, which could not be turned off ({ex.Message}), so the base is not merged in: switch it off on the PR page", null);
                     }
                     if (Moved(flight) is not null)
                     {
-                        return null;
+                        return (null, null);
                     }
                 }
                 flight = Record(code, f => f with { MergeWhenGreen = null }) ?? flight;
             }
-            var (repaired, notUpdated) = await OffLockAsync(null, async Task<(FlightRow, string?)> () =>
+            var (repaired, notUpdated, kept) = await OffLockAsync(null, async Task<(FlightRow, string?, string?)> () =>
             {
+                var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
                 // Armed on GitHub by a hand the node did not see: the plane is not updated for a push that would be refused.
                 await EnsureNotArmedAsync(flight, cancellationToken);
                 await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
@@ -338,6 +382,9 @@ public sealed partial class LegCommander(
                 await TakeRemoteAsync(flight, cancellationToken);
                 // A base that is no branch on the remote is the remote's default first, as when its PR opened.
                 var repaired = await RepairBaseAsync(flight, cancellationToken);
+                // The passed review is kept when the plane is the head it read and only a clean base merge moves it (nothing taken from the remote).
+                var reviewed = flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read } && string.Equals(read, plane, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals((await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim(), plane, StringComparison.OrdinalIgnoreCase);
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to update.
                 if (!(await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {
@@ -345,28 +392,41 @@ public sealed partial class LegCommander(
                     if (!merge.Ok)
                     {
                         await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
-                        return (repaired, $"merging {repaired.Base} into {code} conflicts ({merge.Why}): merge the base into its plane by hand");
+                        return (repaired, $"merging {repaired.Base} into {code} conflicts ({merge.Why}): merge the base into its plane by hand", null);
                     }
                 }
                 await PushAsync(repaired, cancellationToken, brought: true);
-                return (repaired, null);
+                return (repaired, null, reviewed ? (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim() : null);
             });
             if (notUpdated is not null)
             {
-                return notUpdated;
+                return (notUpdated, null);
             }
             if (Moved(flight) is not null)
             {
-                return null;
+                return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
+            if (kept is { Length: > 0 })
+            {
+                // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the
+                // new head (its status and label are set again there), and its PR-ready card offers the merge at that head.
+                flight = Record(code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = kept, StatusState = null } : null })!;
+                await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
+                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                if (flight.PullRequest is not null)
+                {
+                    await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
+                }
+                return (null, kept);
+            }
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
-            return null;
+            return (null, null);
         }
         catch (FlightException ex)
         {
-            return ex.Message;
+            return (ex.Message, null);
         }
         finally
         {
@@ -1294,6 +1354,43 @@ public sealed partial class LegCommander(
     /// merged, and when it did not, where it stands (<see cref="MergeWays"/>) and the line the card shows for it.
     /// </summary>
     private async Task<(bool Merged, string? Made, string? Way)> MergeAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        // The merge is an entry in its repo's queue (MergeRow), never done on the spot: the node takes the repo's entries in order, one
+        // at a time, and the entry says where it stands. Only a flight that may merge at all (every leg done, review passed) gets one.
+        var (asked, askedHead, askedMethod) = Mergeable(command);
+        var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Autopilot
+            : asked.MergeWhenGreen[^1] == ArmedByAutopilot ? MergeBy.Autopilot : MergeBy.Armed;
+        Enqueue(asked, askedHead, askedMethod, by);
+        await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
+        try
+        {
+            var result = await MergeEntryAsync(command, cancellationToken);
+            if (result.Merged)
+            {
+                SetEntry(asked.Code, MergeEntryState.Merging, "merged: the flight lands");
+            }
+            else if (result.Way == MergeWays.Armed)
+            {
+                SetEntry(asked.Code, MergeEntryState.Checks, result.Made);
+            }
+            else
+            {
+                SetEntry(asked.Code, MergeEntryState.Merging, result.Made);
+            }
+            return result;
+        }
+        catch (FlightException ex)
+        {
+            // Not mergeable as it is (conflicting, behind its base) is the update's: the entry stays while the node brings it up to date.
+            if (!Conflicts(ex.Message) && !Behind(ex.Message))
+            {
+                DropMerge(asked.Code, ex.Message);
+            }
+            throw;
+        }
+    }
+
+    private async Task<(bool Merged, string? Made, string? Way)> MergeEntryAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, head, method) = Mergeable(command);
         // Every ask of GitHub and git is made with the lock let go (PIL338): the flight is this command's meanwhile, and what it
@@ -2229,6 +2326,8 @@ public sealed partial class LegCommander(
         // Unknown is treated as armed, as EnsureNotArmedAsync does: the disarm is no error when it was not on.
         var armedSaid = open ? await github.AutoMergeArmedAsync(flight.RepoPath, number, cancellationToken) : false;
         var armedOnGitHub = armedSaid != false;
+        // The entry in the node's merge queue goes with it, whatever else stands.
+        state.RemoveMerge(flight.Code);
         if (flight.MergeWhenGreen is null && !queued && !armedOnGitHub)
         {
             return;

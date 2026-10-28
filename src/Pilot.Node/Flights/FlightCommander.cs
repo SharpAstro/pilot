@@ -836,6 +836,10 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
         }) ?? flight;
+        if (foldedInto is null)
+        {
+            state.EndMerge(flight.Code, MergeEntryState.Merged, null);
+        }
 
         // The item is no longer flying here: its node label goes, unless another flight of this node (a suffixed second one)
         // is still on the same item. Landed already, so a failure is said, not a refusal.

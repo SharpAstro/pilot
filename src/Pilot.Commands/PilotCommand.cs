@@ -701,6 +701,13 @@ public static class PilotCommand
             }
             return 0;
         });
+        var mergesCommand = Action(new Command("merges", "The node's merge queue: a row per flight waiting to merge, per repo in order"), async (_, client, ct) =>
+        {
+            var merges = (await SnapshotAsync(client, ct)).Merges
+                .OrderBy(m => m.Open ? 0 : 1).ThenBy(m => m.Repo, StringComparer.Ordinal).ThenBy(m => m.Place ?? int.MaxValue).ThenByDescending(m => m.ChangedAt ?? m.AddedAt).Take(30).ToList();
+            await output.WriteAsync(merges.Count == 0 ? "No merges.\n" : string.Concat(merges.Select(m => MergeLine(m) + "\n")));
+            return 0;
+        });
         var jobId = Arg("job", "The job's id, as j3");
         var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
         {
@@ -1116,7 +1123,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1182,6 +1189,10 @@ public static class PilotCommand
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
         return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
     }
+
+    /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
+    internal static string MergeLine(MergeRow merge) =>
+        $"{merge.Flight}  {(merge.Pr is { } pr ? $"#{pr}" : "no PR")}  {merge.Repo}  {(merge.Place is { } place ? place.ToString(CultureInfo.InvariantCulture) : "-")}  {merge.Head[..Math.Min(8, merge.Head.Length)]}  {merge.State.ToString().ToLowerInvariant()}{(merge.Why is { } why ? $"  · {why}" : "")}";
 
     /// <summary>A duration as people write it: <c>90m</c>, <c>2h</c>, <c>45s</c>.</summary>
     internal static bool TryDuration(string text, out TimeSpan span)

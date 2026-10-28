@@ -422,6 +422,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
                 // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
                 state.PutFlight(flight with { MergeWhenGreen = null });
+                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {head[..Math.Min(8, head.Length)]}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
                     state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url,
@@ -462,6 +463,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
+            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {head[..Math.Min(8, head.Length)]}" : dropped);
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
                 ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
@@ -519,6 +521,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             state.PutFlight(now with { MergeWhenGreen = null });
         }
         var subject = Verbs.FlightTarget(flight.Code);
+        if (merge.Kind is not (MergeKinds.Conflicts or MergeKinds.Behind))
+        {
+            legs?.DropMerge(flight.Code, merge.Kind switch
+            {
+                MergeKinds.Ready => "GitHub's auto-merge was turned off",
+                MergeKinds.ChangesRequested => "a review asks for changes",
+                MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
+                _ => $"GitHub shows it as {merge.Kind}",
+            });
+        }
         if (legs is not null && ShowingMerge(subject) is { } card)
         {
             legs.ShowMergeState(card, merge, pr.Head);
@@ -547,6 +559,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await MergeWhenGreenAsync(cancellationToken);
+        if (legs is not null)
+        {
+            await legs.LookAtMergesAsync(cancellationToken);
+        }
         await LandMergedWithoutCardAsync(cancellationToken);
         await LookAtQueuesAsync(cancellationToken);
         if (legs is not null)
