@@ -1736,14 +1736,7 @@ public sealed partial class LegCommander(
 
     /// <summary>
     /// Fetches, then brings the plane's branch up to date with its base in the repo's way (merge where the queue squashes or
-    /// merges, rebase where it rebases), so CI never tests a branch already behind and a PR is not born conflicting. A conflict is
-    /// aborted, leaving the plane as it was, and refused with the way to resolve it said. Returns the way used.
-    /// </summary>
-    private async Task<UpdateWay> BringUpToDateAsync(FlightRow flight, CancellationToken cancellationToken, bool repaired = false)
-        => (await BringUpToDateLeasedAsync(flight, cancellationToken, repaired)).Way;
-
-    /// <summary>
-    /// <see cref="BringUpToDateAsync"/>, also giving the sha <c>origin/&lt;branch&gt;</c> had before the fetch (null when it had none):
+    /// merges, rebase where it rebases); a conflict is aborted and refused. Also gives the sha <c>origin/&lt;branch&gt;</c> had before the fetch (null when it had none):
     /// the push's lease names it, since a bare lease compares with the ref the fetch has just refreshed and always passes.
     /// </summary>
     private async Task<(UpdateWay Way, string? Pushed)> BringUpToDateLeasedAsync(FlightRow flight, CancellationToken cancellationToken, bool repaired = false)

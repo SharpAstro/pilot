@@ -1353,7 +1353,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(other, "checkout", "-q", branch);
         File.WriteAllText(Path.Combine(other, "elsewhere.txt"), "elsewhere\n");
         Git(other, "add", ".");
-        Git(other, "commit", "-q", "-m", "pushed from elsewhere");
+        Git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "pushed from elsewhere");
         Git(other, "push", "-q", "origin", branch);
         var theirs = Git(other, "rev-parse", "HEAD");
         MainMoves();
@@ -1475,7 +1475,12 @@ public sealed class ReviewTests3 : ReviewTestsBase
         // A post-merge hook that undoes the merge: the update claims to have run and the branch is still behind.
         var hooks = Path.Combine(Git(flight.Worktree, "rev-parse", "--git-common-dir").Trim(), "hooks");
         Directory.CreateDirectory(hooks);
-        File.WriteAllText(Path.Combine(hooks, "post-merge"), "#!/bin/sh\ngit reset -q --hard ORIG_HEAD\n");
+        var hook = Path.Combine(hooks, "post-merge");
+        File.WriteAllText(hook, "#!/bin/sh\ngit reset -q --hard ORIG_HEAD\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
 
         (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA39"), "controller")).Error.ShouldNotBeNull().ShouldContain("still behind");
 
