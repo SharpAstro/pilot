@@ -856,8 +856,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(OrgHeight)
-            .Bg(P.Button)
-            .BgHover(P.ButtonHover)
+            // Day: the button blue, set off from a repo's panel grey. Night: its header red, as dark as the rows' so the red ink on
+            // it reads as well as theirs (the button red would take it under 3:1).
+            .Bg(NightOrNull is { } night ? night.HeaderBg : P.Button)
+            .BgHover(NightOrNull is { } dark ? dark.RowHoverBg : P.ButtonHover)
             .Follows(new HitResult.ButtonHit($"prs:org:{org.Org}"), _ => ToggleOrg(org.Org))
             .WithTooltip(folded ? $"Show {org.Org}'s repos" : $"Fold {org.Org}'s repos away");
     }

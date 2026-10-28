@@ -987,6 +987,27 @@ public sealed class PullRequestsPageTests
     }
 
     [Fact]
+    public void AnOrgsHeaderReadsAsWellAsTheRowsDoInDayAndNight()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, page) = Chrome(renderer);
+        var day = Arrange(renderer, page, Screen());
+        var header = day.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "prs:org:SharpAstro" }).Node;
+        header.Background.ShouldNotBeNull();
+        // Day: body text on the org's blue at 4.5:1 or more, on its hover too.
+        Contrast(Palette.Standard.Body, header.Background!.Value).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(Palette.Standard.Body, Palette.Standard.ButtonHover).ShouldBeGreaterThanOrEqualTo(4.5);
+
+        // Night: no darker than the red the rows' ink is read on, never the button red that takes it under 3:1.
+        chrome.Night.On = true;
+        page.Night = chrome.Night;
+        var night = Arrange(renderer, page, Screen());
+        var dark = night.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "prs:org:SharpAstro" }).Node.Background!.Value;
+        dark.ShouldBe(Palette.Night.HeaderBg);
+        Contrast(Palette.Night.Bright, dark).ShouldBeGreaterThanOrEqualTo(3.0);
+    }
+
+    [Fact]
     public void TheKeyboardSkipsTheRowsOfAFoldedOrgAndSelectingAFoldedRepoShowsItsOrgToo()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
