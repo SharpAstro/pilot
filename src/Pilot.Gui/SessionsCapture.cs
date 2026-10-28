@@ -189,7 +189,7 @@ internal static class SessionsCapture
             {
                 text.Append("  could not be read: ").Append(error).Append('\n');
             }
-            if (org.Repos.Length == 0)
+            else if (org.Repos.Length == 0)
             {
                 text.Append("  no open pull requests\n");
             }

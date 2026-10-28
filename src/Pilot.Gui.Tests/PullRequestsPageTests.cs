@@ -987,6 +987,21 @@ public sealed class PullRequestsPageTests
     }
 
     [Fact]
+    public void TheCapturesRowsDumpListsEachOrgWithItsCountsAboveItsReposAndSaysWhatAnEmptyOrFailedOrgSays()
+    {
+        var dump = SessionsCapture.PullRequestsDump(Screen(RowWithEmptyAndFailedOrgs())).Split('\n');
+
+        dump[0].ShouldBe("SharpAstro  7 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
+        dump[1].ShouldBe("  SharpAstro/pilot  3");
+        dump[2].ShouldStartWith("    #252 Pull requests page: every open PR across the orgs | Ready | PIL252 | sebgod | review passed | updated 5m ago");
+        dump.ShouldContain("sebgod  1 open");
+        dump.ShouldContain("  sebgod/notes  1");
+        // The failed org says why, not also that it has none; the empty one says it has none.
+        dump[^4..].ShouldBe(["broken-org  0 open", $"  could not be read: {BrokenMessage}", "empty-org  0 open", "  no open pull requests"]);
+        SessionsCapture.PullRequestsDump(new PullRequestsScreen(null, "x", Now)).ShouldBe("the node has not read the pull requests yet");
+    }
+
+    [Fact]
     public void AnOrgsHeaderReadsAsWellAsTheRowsDoInDayAndNight()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
