@@ -140,8 +140,8 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (FlightMarks.PrState(flight) is { } prState)
         {
-            // The link's own height (20), so the two share one middle.
-            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
+            // Its cell is as tall as the link's, so the two share one middle.
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().Selectable());
         }
         // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
         head.Add(WrappedProse.Of(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, selectable: true).WAuto());
