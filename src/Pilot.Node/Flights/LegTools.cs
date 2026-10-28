@@ -1180,7 +1180,7 @@ public sealed class GhCli : IGitHub
                 var said = (error.Trim().Length > 0 ? error : output).Trim();
                 var message = $"gh could not search the PRs of {repos.Length} repos: {said}";
                 throw said.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
-                    ? new RateLimitedException(message, await GraphQlResetAsync(cancellationToken))
+                    ? new RateLimitedException(message, await ResetOfAsync(said, cancellationToken))
                     : new FlightException(message);
             }
             PullRequestSearch.Page read;
@@ -1190,7 +1190,7 @@ public sealed class GhCli : IGitHub
             }
             catch (RateLimitedException ex)
             {
-                throw new RateLimitedException(ex.Message, await GraphQlResetAsync(cancellationToken));
+                throw new RateLimitedException(ex.Message, await ResetOfAsync(ex.Message, cancellationToken));
             }
             prs.AddRange(read.PullRequests);
             cost += read.Cost;
@@ -1204,6 +1204,11 @@ public sealed class GhCli : IGitHub
         }
         return new PullRequestSearch.Read([.. prs], cost, remaining, resetAt);
     }
+
+    // A secondary limit is a short pause that has nothing to do with the hourly points, so its reset is unknown (the watch then waits
+    // PullRequestWatch.UnknownReset); only the primary limit comes back at the hourly reset.
+    private async Task<DateTimeOffset?> ResetOfAsync(string said, CancellationToken cancellationToken) =>
+        said.Contains("secondary", StringComparison.OrdinalIgnoreCase) ? null : await GraphQlResetAsync(cancellationToken);
 
     // When GraphQL's points come back: the rate-limit endpoint, which costs no point; null when it cannot say.
     private async Task<DateTimeOffset?> GraphQlResetAsync(CancellationToken cancellationToken)

@@ -956,7 +956,9 @@ public sealed class PullRequestsPageTests
         var arranged = Arrange(renderer, page, Screen());
 
         // A repo folded first, then its org.
-        ClickButton(arranged, "prs:group:SharpAstro/DIR.Lib");
+        // At the caret by the header's left edge: the repo's name further along is a link to GitHub.
+        var repoHeader = Button(arranged, "prs:group:SharpAstro/DIR.Lib");
+        ClickAt(arranged, repoHeader.X + 8f, repoHeader.Y + repoHeader.Height / 2f);
         page.IsFolded("SharpAstro/DIR.Lib").ShouldBeTrue();
         arranged = Arrange(renderer, page, Screen());
         Numbers(page).ShouldBe([252, 261, 258, 1799, 1820, 12]);

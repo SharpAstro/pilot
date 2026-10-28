@@ -70,7 +70,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     public static string[] TrackedRepos(RepoInfo[] catalog, FlightRow[] flights, PrReviewRow[] reviews) =>
     [
         .. catalog.Select(r => r.GitHub)
-            .Concat(flights.Select(f => RepoCatalog.GitHubOf(Path.Combine(f.RepoPath, ".git"))))
+            .Concat(flights.Select(f => f.RepoPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(p => RepoCatalog.GitHubOf(Path.Combine(p, ".git"))))
             .Concat(reviews.Select(r => r.Repo))
             .OfType<string>()
             .Where(r => OwnerOf(r) is not null)
