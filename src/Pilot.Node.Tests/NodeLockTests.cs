@@ -14,11 +14,14 @@ public sealed class NodeLockTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var error = new StringWriter();
+        var secondData = Path.Combine(node.Folder, "second");
 
-        var exit = await NodeCommandLine.RunAsync(["--node-socket", node.SocketPath, "--data", Path.Combine(node.Folder, "second")], Stream.Null, TextWriter.Null, error, Ct);
+        var exit = await NodeCommandLine.RunAsync(["--node-socket", node.SocketPath, "--data", secondData], Stream.Null, TextWriter.Null, error, Ct);
 
         exit.ShouldBe(NodeExitCodes.AlreadyRunning);
-        error.ToString().ShouldContain($"A pilot node is already running on {node.SocketPath} (pid {Environment.ProcessId}");
+        // The refusal is in the refused node's own log, not on stderr (pilot #416).
+        error.ToString().ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(secondData, "logs", "node.log")).ShouldContain($"A pilot node is already running on {node.SocketPath} (pid {Environment.ProcessId}");
         // The first node is untouched.
         (await node.Client.GetNodeAsync(Ct)).DataFolder.ShouldBe(node.Options.DataFolder);
     }

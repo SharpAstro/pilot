@@ -35,6 +35,9 @@ public interface INodeEventSink
 /// </remarks>
 public sealed class NodeState
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>How many of the latest deltas the node holds for a client resuming with <c>since</c>.</summary>
     public const int DefaultRetainedDeltas = 256;
 
@@ -130,14 +133,14 @@ public sealed class NodeState
                 return;
             }
 
-            Console.Error.WriteLine($"store: a snapshot could not be written, the journal is kept whole: {error.GetType().Name}: {error.Message}");
+            Error.WriteLine($"store: a snapshot could not be written, the journal is kept whole: {error.GetType().Name}: {error.Message}");
             RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, "The store could not write its snapshot",
                 $"{error.GetType().Name}: {error.Message}. Every change is still journaled and a restart loses nothing; the node tries again later.");
         }
         catch (Exception e)
         {
             // A store that cannot record the card either has nothing more to say here: the log line stands.
-            Console.Error.WriteLine($"store: the card for a snapshot outcome could not be kept: {e.Message}");
+            Error.WriteLine($"store: the card for a snapshot outcome could not be kept: {e.Message}");
         }
     }
 

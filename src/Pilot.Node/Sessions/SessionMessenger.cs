@@ -18,7 +18,7 @@ namespace Pilot.Node.Sessions;
 /// </summary>
 /// <remarks>
 /// Done outside <see cref="NodeState.Execute"/>, as a delivery takes seconds; its result goes on the stream when it is
-/// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's stderr: who, the target, the way and the
+/// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's log: who, the target, the way and the
 /// outcome, with how long it took.
 /// </remarks>
 public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log)

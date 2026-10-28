@@ -14,6 +14,12 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed class DetachedShell : IDisposable
 {
+    /// <summary>
+    /// Where the scope probe (a static, once per process) says what it would have said on stderr: the node's log (pilot #416),
+    /// nothing before a node sets it. The last node built in a process owns it.
+    /// </summary>
+    public static TextWriter Error { get; set; } = TextWriter.Null;
+
     private readonly string[] _files;
     private readonly Func<Process> _start;
 
@@ -191,13 +197,13 @@ public sealed class DetachedShell : IDisposable
                     works = probe.WaitForExit(10_000) && probe.ExitCode == 0;
                     if (!works)
                     {
-                        Console.Error.WriteLine($"jobs start without a systemd scope: systemd-run --user --scope failed: {(error.IsCompleted ? error.Result.Trim() : "no answer")}");
+                        Error.WriteLine($"jobs start without a systemd scope: systemd-run --user --scope failed: {(error.IsCompleted ? error.Result.Trim() : "no answer")}");
                     }
                 }
             }
             catch (Exception ex) when (ex is Win32Exception or IOException or InvalidOperationException)
             {
-                Console.Error.WriteLine($"jobs start without a systemd scope: {ex.Message}");
+                Error.WriteLine($"jobs start without a systemd scope: {ex.Message}");
             }
             return ScopeProbes[systemdRun] = works;
         }

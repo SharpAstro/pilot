@@ -73,6 +73,11 @@ curl --unix-socket <path> http://localhost/api/v1/node
   `journal.jsonl` (each change after it, appended and flushed; folded into a new snapshot every 4096), and
   `blackbox.jsonl` (one line per command: when, who, verb, target, and what became of it; never compacted). A restart,
   a crash included, carries on with the same stream, the same numbers and every record.
+- **Logs:** `logs/gui.log` (pilot-gui) and `logs/node.log` (pilot-node) in the pilot2 folder, a timestamp on each line,
+  each rolled to `<name>.1.log` at 4 MB (one old file is kept). Neither writes to stderr; only a catastrophic error the
+  log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
+  [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
+  each, under a heading with its path; it reads the files locally and needs no node.
 
 ## Install and update
 

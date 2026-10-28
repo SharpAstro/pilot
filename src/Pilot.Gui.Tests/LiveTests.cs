@@ -215,6 +215,21 @@ public sealed class GuiSayTests
         Live.Row("bbbb3333", "twin"),
     ];
 
+    [Fact]
+    public async Task SayAgainstANodeThatIsNotThereLogsItsErrorAndExitsOneWithNothingOnStdout()
+    {
+        var gone = Path.Combine(Path.GetTempPath(), "p2g-" + Guid.NewGuid().ToString("N")[..8] + ".sock");
+        using var client = new NodeClient(gone);
+        var output = new StringWriter();
+        var logged = new List<string>();
+
+        var exit = await GuiSay.RunAsync(client, "anyone", "hello", output, logged.Add, TestContext.Current.CancellationToken);
+
+        exit.ShouldBe(1);
+        output.ToString().ShouldBeEmpty();
+        logged.ShouldHaveSingleItem().ShouldContain("no node answers");
+    }
+
     [Theory]
     [InlineData("aaaa1111", "aaaa1111")]
     [InlineData("aaaa1111-0000-4000-8000-000000000000", "aaaa1111")]
