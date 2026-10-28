@@ -27,7 +27,7 @@ internal sealed record GuiOptions
     /// <summary>Render one frame on the CPU to this PNG (and a sibling <c>.rows.txt</c>), then exit without a window.</summary>
     public string? Capture { get; init; }
 
-    /// <summary>The page a capture shows: home, sessions, flights, repos, jobs, or chat.</summary>
+    /// <summary>The page a capture shows: home, sessions, flights, repos, prs, jobs, or chat.</summary>
     public PilotPage Page { get; init; } = PilotPage.Home;
 
     /// <summary>With <c>--page flights</c>: the flight whose page the capture opens, by code, as Enter on its row does in the window.</summary>
@@ -56,15 +56,19 @@ internal sealed record GuiOptions
     /// Parses <paramref name="args"/> on System.CommandLine, as tianwen's CLI does; on a mistake returns null and says
     /// what in <paramref name="error"/>, and for <c>--help</c> returns null with the help in <paramref name="error"/>.
     /// </summary>
-    public static GuiOptions? Parse(IReadOnlyList<string> args, out string? error)
+    public static GuiOptions? Parse(IReadOnlyList<string> args, out string? error) => Parse(args, out error, out _);
+
+    /// <summary>As <see cref="Parse(IReadOnlyList{string}, out string?)"/>; <paramref name="isHelp"/> tells the help text in <paramref name="error"/> from a mistake.</summary>
+    public static GuiOptions? Parse(IReadOnlyList<string> args, out string? error, out bool isHelp)
     {
+        isHelp = false;
         var snapshot = new Option<string?>("--snapshot") { Description = "A snapshot file to show instead of the live node" };
         var socket = new Option<string?>("--node-socket") { Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default" };
         var node = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them (pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
-        var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, jobs or chat" };
-        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "jobs", "chat");
+        var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, prs, jobs or chat" };
+        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat");
         var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
         var hover = new Option<string?>("--hover") { Description = "With --capture: show this region's hover text as due; a button's id (home:flight:PIL258) or a list row (flights:3)" };
         var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
@@ -89,6 +93,7 @@ internal sealed record GuiOptions
             var help = new StringWriter();
             parsed.Invoke(new InvocationConfiguration { Output = help });
             error = help.ToString();
+            isHelp = true;
             return null;
         }
         if (parsed.Errors.Count > 0)
@@ -107,7 +112,7 @@ internal sealed record GuiOptions
             Hover = parsed.GetValue(hover),
             View = parsed.GetValue(view) switch { "canvas" => FlightsViewMode.Canvas, "grid" => FlightsViewMode.Grid, "list" => FlightsViewMode.List, _ => null },
             Select = parsed.GetValue(select),
-            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
+            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
         };
         if (parsed.GetValue(size) is { } sizeText)
         {

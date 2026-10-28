@@ -32,7 +32,7 @@ internal static class ShutdownDrain
     /// Runs <paramref name="loop"/>, painting only its background, until <paramref name="drain"/> completes, the
     /// timeout passes, or the user closes again. Returns whether the drain completed.
     /// </summary>
-    public static bool PumpUntilComplete(SdlEventLoop loop, Task drain, TextWriter? log = null, TimeSpan? timeout = null)
+    public static bool PumpUntilComplete(SdlEventLoop loop, Task drain, Action<string>? log = null, TimeSpan? timeout = null)
     {
         ArgumentNullException.ThrowIfNull(loop);
         ArgumentNullException.ThrowIfNull(drain);
@@ -72,12 +72,12 @@ internal static class ShutdownDrain
         {
             if (drain.IsFaulted)
             {
-                log?.WriteLine($"pilot-gui: shutdown: background work faulted while draining: {drain.Exception?.GetBaseException().Message}");
+                log?.Invoke($"pilot-gui: shutdown: background work faulted while draining: {drain.Exception?.GetBaseException().Message}");
             }
             return true;
         }
 
-        log?.WriteLine($"pilot-gui: shutdown: background work did not finish within {budget.TotalSeconds:0}s; abandoning it.");
+        log?.Invoke($"pilot-gui: shutdown: background work did not finish within {budget.TotalSeconds:0}s; abandoning it.");
         return false;
     }
 }

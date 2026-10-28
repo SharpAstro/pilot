@@ -11,10 +11,32 @@ using static SDL3.SDL;
 // selected one. --snapshot shows a file instead (the bundled sample is the contract's); --say says one thing and
 // exits.
 ConsoleOutput.AttachToParent();
-
-if (GuiOptions.Parse(args, out var error) is not { } options)
+// gui.log (pilot #416): the window writes nothing to stderr; everything it would say is kept in
+// %LOCALAPPDATA%\pilot2\logs\gui.log, rolling at 4 MB. The --capture and --say one-shots log there too, and keep only their
+// result lines on stdout.
+var guiLog = new RollingLog("gui");
+// The one stderr use left: a line the log cannot take (RollingLog.Write says false when the file cannot be opened or
+// written), so a catastrophic error is never lost with the log it would have gone to.
+void LogLine(string line)
 {
-    Console.Error.WriteLine(error);
+    if (!guiLog.Write(line))
+    {
+        Console.Error.WriteLine(line);
+    }
+}
+
+AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
+
+if (GuiOptions.Parse(args, out var error, out var isHelp) is not { } options)
+{
+    if (isHelp)
+    {
+        // Help is a result, not an error: it goes to stdout.
+        Console.Out.Write(error);
+        return 0;
+    }
+
+    LogLine(error!);
     return 2;
 }
 
@@ -29,7 +51,7 @@ if (nodeTarget is not null)
     var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(nodeTarget, CancellationToken.None);
     if (unknown is not null)
     {
-        Console.Error.WriteLine($"pilot-gui: {unknown}");
+        LogLine($"pilot-gui: {unknown}");
         return 2;
     }
     remoteEndpoint = resolved is not null && NodeClient.IsEndpoint(resolved, out var endpoint) ? endpoint : null;
@@ -50,7 +72,7 @@ async Task EnsureNodeAsync()
     var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
     if (outcome != NodeLaunch.Found)
     {
-        Console.Error.WriteLine($"pilot-gui: {message}");
+        LogLine($"pilot-gui: {message}");
     }
 }
 
@@ -58,7 +80,7 @@ if (options.SayTo is { } sayTo)
 {
     await EnsureNodeAsync();
     using var oneShot = NewClient();
-    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, CancellationToken.None);
+    return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
 }
 
 SessionsScreen screen;
@@ -68,6 +90,7 @@ CardsScreen? capturedCards = null;
 JobsScreen? capturedJobs = null;
 ReposScreen? capturedRepos = null;
 MachineRow? capturedMachine = null;
+PullRequestsScreen? capturedPullRequests = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -77,7 +100,7 @@ if (options.Snapshot is { } snapshotFile)
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
     {
-        Console.Error.WriteLine($"pilot-gui: cannot read the snapshot {snapshotPath}: {ex.Message}");
+        LogLine($"pilot-gui: cannot read the snapshot {snapshotPath}: {ex.Message}");
         return 1;
     }
 
@@ -103,6 +126,7 @@ else if (options.Capture is not null)
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
+                capturedPullRequests = new PullRequestsScreen(live.PullRequests, screen.Source, now);
                 if (await oneShot.GetRepoStatusAsync(CancellationToken.None) is { Success: true, Response: { } read })
                 {
                     capturedRepos = new ReposScreen(RepoLine.Build(read,live.Flights, live.Sessions, live.Cards, live.Legs, now), screen.Source, now);
@@ -112,7 +136,7 @@ else if (options.Capture is not null)
     }
     catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException)
     {
-        Console.Error.WriteLine($"pilot-gui: no node answers on {socketPath} ({ex.Message}); start pilot-node, or pass --snapshot <file>");
+        LogLine($"pilot-gui: no node answers on {socketPath} ({ex.Message}); start pilot-node, or pass --snapshot <file>");
         return 1;
     }
 }
@@ -127,13 +151,14 @@ if (options.Capture is { } capturePath)
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
+    capturedPullRequests ??= snapshot is null ? null : new PullRequestsScreen(snapshot.PullRequests, screen.Source, snapshot.At);
     if (capturedRepos is null && snapshot is not null && File.Exists(SessionsCapture.ReposSamplePath))
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -174,13 +199,27 @@ var chrome = new PilotChrome<VulkanContext>(renderer, view, PlayFilter.DefaultFi
 
 using var cts = new CancellationTokenSource();
 // Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get
-// the same timestamps and routing. Warnings and worse go to stderr, beside the GUI's own pilot-gui: lines.
+// the same timestamps and routing. All of it goes to gui.log, beside the GUI's own pilot-gui: lines.
 using var loggerFactory = LoggerFactory.Create(logging => logging
-    .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; })
-    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning));
+    .AddProvider(new FileLoggerProvider(guiLog)));
 var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
+LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
+var frameTimer = new FrameTimer(LogLine);
+string WhatRendered()
+{
+    var what = chrome.Page.ToString();
+    if (chrome.Page == PilotPage.Flights && chrome.Flights.OpenCode is { } flight)
+    {
+        what += $", flight {flight}";
+    }
+    if (chrome.Sessions.Transcript.Line is { } transcript)
+    {
+        what += $", transcript {transcript.Row.Id}";
+    }
+    return what;
+}
 var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
 // The list pages' column widths a drag on a title's divider set: read from the GUI's own settings file, written back a
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
@@ -218,6 +257,10 @@ using var client = snapshot is null ? NewClient() : null;
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
+if (feed is not null)
+{
+    feed.Log = LogLine;
+}
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
 var fleetWatch = new FleetWatch();
@@ -354,7 +397,7 @@ if (feed is not null && client is not null && clients is not null)
             loop.RequestRedraw();
             return;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = GuiSay.Who }, cts.Token);
+        var result = await to.SendAsync(DashboardCommands.CardRequest(verb, card, args, GuiSay.Who), cts.Token);
         clients.NoteRefusal(chrome.Cards.NodeOf(card), result);
         // A refusal is said on the card the button is on, never only here: a Merge pressed again and again on a PR GitHub
         // would not merge showed nothing (SE1, 2026-10-24).
@@ -436,7 +479,7 @@ if (feed is not null && client is not null && clients is not null)
         }
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
         {
-            Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
+            LogLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
         }
     }, "watch the LAN");
     // The new-flight wizard reads the node's repos and issues, and its Create makes the flights through the node.
@@ -465,6 +508,27 @@ if (feed is not null && client is not null && clients is not null)
     };
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
+    // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
+    chrome.PullRequests.OnRefresh = async ct =>
+    {
+        var result = (await client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = GuiSay.Who }, ct)).Response;
+        if (result is not { Ok: true })
+        {
+            throw new InvalidOperationException(result?.Error ?? "the node did not answer");
+        }
+    };
+    chrome.PullRequests.Changed = loop.RequestRedraw;
+    // A row's Review is `pilot review pr` on this window's node; Merge and Go around are the flight's card's own buttons (chrome wires them).
+    chrome.PullRequests.OnReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Console.WriteLine($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
@@ -636,7 +700,7 @@ if (feed is not null && client is not null && clients is not null)
             var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
             if (outcome != NodeLaunch.Found)
             {
-                Console.Error.WriteLine($"pilot-gui: {message}");
+                LogLine($"pilot-gui: {message}");
             }
             if (outcome is NodeLaunch.NamedSocketSilent or NodeLaunch.NoNodeBinary or NodeLaunch.DidNotStart)
             {
@@ -670,13 +734,16 @@ JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapsh
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
 IReadOnlyList<MachineLine>? machines = null;
+PullRequestsScreen? pullRequests = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
+chrome.LinkPullRequests();
 // The Fleet page's "N waiting on you" opens those sessions on the Sessions page.
 chrome.LinkFleet();
 chrome.Repos.OnOpen = location => OpenAway(location);
+chrome.PullRequests.OnOpen = location => OpenAway(location);
 // The pages, built off the render thread: every node's rows merged, filtered and ordered, the Fleet page's summaries, and
 // the five-second look at who is in the fleet (a file read and the LAN). Each frame built them all, under each feed's lock,
 // so a burst of events (181 archived on DE1, 2026-10-24) kept frames at full cost back to back and the window stalled. Built
@@ -751,7 +818,8 @@ loop.OnResize = (w, h) =>
     height = (int)h;
     chrome.DpiScale = window.DisplayScale;
 };
-loop.OnRender = () =>
+loop.OnRender = () => frameTimer.Time(RenderFrame, WhatRendered);
+void RenderFrame()
 {
     // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
     if (tracker.ProcessCompletions(logger))
@@ -781,13 +849,15 @@ loop.OnRender = () =>
             repos = pages.Repos;
             chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
+            pullRequests = pages.PullRequests;
             fleet = made.Item2;
         }
     }
 
     var frameStarted = System.Diagnostics.Stopwatch.GetTimestamp();
     view.Ui.FrameId++;
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, new RectF32(0, 0, width, height), machines);
+    // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
@@ -799,7 +869,7 @@ loop.OnRender = () =>
         announced = view.SelectedId;
         Say($"pilot-gui: selected {screen.Lines[view.Selected].ToDumpLine()}");
     }
-};
+}
 loop.CheckNeedsRedraw = () =>
 {
     while (gate?.TryDequeue(out _) == true)
@@ -876,7 +946,7 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
-ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), Console.Error);
+ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), LogLine);
 if (restarting && Environment.ProcessPath is { } self)
 {
     // The gate first: held, the new window would hand off to this one and leave. The binary at this path is the new one,
@@ -900,7 +970,7 @@ async Task ShutDownAsync()
     }
     catch (TimeoutException)
     {
-        Console.Error.WriteLine($"pilot-gui: {tracker.PendingCount} background task(s) still running after 5 s; closing anyway");
+        LogLine($"pilot-gui: {tracker.PendingCount} background task(s) still running after 5 s; closing anyway");
     }
     if (chrome.Flights.Lan is { } lan)
     {

@@ -43,13 +43,27 @@ public static class NodeApp
         });
         // The host's own start and stop lines stay; a line per request does not, as every client polls and streams.
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+        // The node writes to logs/node.log and nowhere else (pilot #416): no console provider, and what was written to stderr
+        // goes to the same file through LogWriter. Stderr is left for a catastrophic error the log cannot take.
+        builder.Logging.ClearProviders();
+        var log = NodeLog(options);
+        var logWriter = new LogWriter(log);
+        builder.Logging.AddProvider(new FileLoggerProvider(log));
+        DetachedShell.Error = logWriter;
+        builder.Services.AddSingleton(log);
+        builder.Services.AddSingleton(logWriter);
+        // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
+        builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
         builder.Services.AddSingleton(services => new NodeState(
-            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas));
+            services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
+        {
+            Error = logWriter,
+        });
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
         var relayFolder = Path.Combine(options.DataFolder, "relay");
@@ -57,7 +71,7 @@ public static class NodeApp
         builder.Services.AddSingleton<HookBook>();
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton<IGit, GitCli>();
-        builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
@@ -66,10 +80,15 @@ public static class NodeApp
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
         builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddSingleton<PackageReleases>();
-        builder.Services.AddSingleton<PackageWatch>();
+        builder.Services.AddSingleton(services =>
+        {
+            var watch = ActivatorUtilities.CreateInstance<PackageWatch>(services);
+            watch.Error = logWriter;
+            return watch;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
         // A flight connected to a flight another node flies is held until that node says it landed.
-        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(services =>
         {
             var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
@@ -92,9 +111,21 @@ public static class NodeApp
         builder.Services.AddSingleton<RepoCatalog>();
         builder.Services.AddSingleton(services => new RepoWatch(
             services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
-            services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine });
+            services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>()) { Machine = options.Machine, Error = logWriter });
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
-        builder.Services.AddSingleton<RepoSync>();
+        builder.Services.AddSingleton(services =>
+        {
+            var watch = ActivatorUtilities.CreateInstance<PullRequestWatch>(services);
+            watch.Error = logWriter;
+            return watch;
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
+        builder.Services.AddSingleton(services =>
+        {
+            var sync = ActivatorUtilities.CreateInstance<RepoSync>(services);
+            sync.Error = logWriter;
+            return sync;
+        });
         builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
@@ -116,6 +147,7 @@ public static class NodeApp
         {
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
+            reviews.Error = logWriter;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
@@ -141,6 +173,7 @@ public static class NodeApp
             return new LegWatch(services.GetRequiredService<NodeState>(), commands.RunAsync, services.GetRequiredService<TimeProvider>())
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
+                Error = logWriter,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
@@ -155,6 +188,7 @@ public static class NodeApp
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                Error = logWriter,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
@@ -164,6 +198,7 @@ public static class NodeApp
         {
             Models = services.GetRequiredService<RoleModels>(),
             Gate = services.GetRequiredService<StartGate>(),
+            Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
         // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.
@@ -220,12 +255,18 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
-        builder.Services.AddSingleton<FlightAdvance>();
+        builder.Services.AddSingleton(services =>
+        {
+            var advance = ActivatorUtilities.CreateInstance<FlightAdvance>(services);
+            advance.Error = logWriter;
+            return advance;
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<FlightAdvance>());
         builder.Services.AddSingleton(services =>
         {
             var recheck = ActivatorUtilities.CreateInstance<PrRecheck>(services);
             recheck.Fleet = services.GetRequiredService<FlightCommander>().Fleet;
+            recheck.Error = logWriter;
             return recheck;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrRecheck>());
@@ -234,6 +275,7 @@ public static class NodeApp
         {
             var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
             checks.RerunFirst = true;
+            checks.Error = logWriter;
             return checks;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrChecks>());
@@ -281,7 +323,7 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
-            Console.Error));
+            logWriter));
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -291,6 +333,9 @@ public static class NodeApp
         MapRoutes(app);
         return app;
     }
+
+    /// <summary>The node's log: <c>logs/node.log</c> under its data folder, so a test node's lives in its temp folder.</summary>
+    public static RollingLog NodeLog(NodeOptions options) => new("node", folder: Path.Combine(options.DataFolder, "logs"));
 
     /// <summary>
     /// What a request from the LAN may do: watch (the node, the sessions, the event stream), ask for a grant and read its
@@ -587,4 +632,20 @@ public static class NodeApp
 
     private static IResult Refuse(string error) =>
         Results.Json(ResponseEnvelope<CommandResult>.Fail(error), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
+}
+
+/// <summary>Says the node's start (version, socket, data folder, LAN port) and its stop in <c>logs/node.log</c> (pilot #416).</summary>
+internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        log.Write($"pilot-node: start, version {FileJournal.RunningVersion}, socket {options.SocketPath}, data folder {options.DataFolder}, LAN {(options.Lan ? $"port {options.LanPort}" : "off")}");
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        log.Write("pilot-node: stop");
+        return Task.CompletedTask;
+    }
 }

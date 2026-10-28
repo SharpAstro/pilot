@@ -14,6 +14,9 @@ namespace Pilot.Node.Flights;
 /// </remarks>
 public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>The kinds of card the watch raises, all about a leg; the watch closes them when its worker works again.</summary>
     public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing];
 
@@ -96,7 +99,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             catch (Exception ex)
             {
                 // The watch must outlive anything one look throws: a dead watch is the silent derail itself.
-                await Console.Error.WriteLineAsync($"leg watch: one look failed, looking again: {ex.Message}");
+                await Error.WriteLineAsync($"leg watch: one look failed, looking again: {ex.Message}");
             }
         }
     }

@@ -48,7 +48,7 @@ public static class Briefs
     }
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null)
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -115,6 +115,11 @@ public static class Briefs
                 text.AppendLine($"An earlier worker flew this leg and was stopped: {why}");
             }
             text.AppendLine("You do not have its conversation, and do not need it: start from what the plane holds now.");
+            if (update is not null)
+            {
+                // The node pushes the branch after the last go-around and refuses one behind its base: it is brought up to date here, checked, then done.
+                text.AppendLine($"Before you say done, bring the branch up to date with its base, as the node says for this repo: {update}. Rerun the check after it, and say done only when it passes.");
+            }
             if (plane is not null)
             {
                 text.AppendLine();

@@ -22,6 +22,9 @@ namespace Pilot.Node.Flights;
 public sealed class PrReviews(
     NodeState state, IWorkerLauncher workers, IGitHub github, IGit git, Planes planes, RepoCatalog repos, NodeOptions options, TimeProvider time) : BackgroundService
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
@@ -442,7 +445,7 @@ public sealed class PrReviews(
                 catch (Exception ex)
                 {
                     // The periodic sweep ends a posted review all the same.
-                    await Console.Error.WriteLineAsync($"pr reviews: ending {subject} after its grace failed: {ex.Message}");
+                    await Error.WriteLineAsync($"pr reviews: ending {subject} after its grace failed: {ex.Message}");
                 }
             }, CancellationToken.None);
         }
@@ -1242,7 +1245,7 @@ public sealed class PrReviews(
             catch (Exception ex)
             {
                 // A sweep that failed once is tried again: a worktree left for good is what this is here to prevent.
-                await Console.Error.WriteLineAsync($"pr reviews: one sweep failed, sweeping again: {ex.Message}");
+                await Error.WriteLineAsync($"pr reviews: one sweep failed, sweeping again: {ex.Message}");
             }
         }
     }

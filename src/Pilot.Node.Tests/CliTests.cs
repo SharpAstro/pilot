@@ -89,6 +89,87 @@ public sealed class CliTests : IAsyncLifetime
         exit.ShouldBe(0, $"pilot {string.Join(' ', args)}: {output}{error}");
     }
 
+    private async Task<(int Exit, string Output)> Logs(string folder, params string[] args)
+    {
+        var before = RollingLog.FolderOverride;
+        RollingLog.FolderOverride = folder;
+        try
+        {
+            var (exit, output, _) = await Pilot(_root, ["logs", .. args]);
+            return (exit, output);
+        }
+        finally
+        {
+            RollingLog.FolderOverride = before;
+        }
+    }
+
+    private static string LogFolder(string root, string name = "logs") => Path.Combine(root, name);
+
+    private static void Seed(string folder, string file, int from, int count)
+    {
+        Directory.CreateDirectory(folder);
+        File.WriteAllLines(Path.Combine(folder, file), Enumerable.Range(from, count).Select(i => $"2026-10-28 10:00:00.000 line {i}"));
+    }
+
+    [Fact]
+    public async Task PilotLogsPrintsBothLogsUnderTheirPathsAndOneWhenNamed()
+    {
+        var folder = LogFolder(_root);
+        Seed(folder, "gui.log", 1, 3);
+        Seed(folder, "node.log", 1, 2);
+
+        var (exit, both) = await Logs(folder);
+        exit.ShouldBe(0);
+        both.ShouldContain($"== gui: {Path.Combine(folder, "gui.log")} ==");
+        both.ShouldContain($"== node: {Path.Combine(folder, "node.log")} ==");
+        both.ShouldContain("line 3");
+
+        var (_, gui) = await Logs(folder, "gui");
+        gui.ShouldContain("== gui:");
+        gui.ShouldNotContain("== node:");
+        var (_, node) = await Logs(folder, "node");
+        node.ShouldContain("== node:");
+        node.ShouldNotContain("== gui:");
+    }
+
+    [Fact]
+    public async Task PilotLogsTailTakesTheLastLinesAndReachesIntoTheRolledFile()
+    {
+        var folder = LogFolder(_root);
+        Seed(folder, "gui.log", 6, 6);
+        Seed(folder, "gui.1.log", 1, 5);
+
+        var (_, last) = await Logs(folder, "gui", "--tail", "2");
+        last.ShouldContain("line 11");
+        last.ShouldContain("line 10");
+        last.ShouldNotContain("line 9");
+
+        var (_, reaching) = await Logs(folder, "gui", "--tail", "7");
+        var lines = reaching.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).Select(l => l.TrimEnd('\r')).ToArray();
+        lines.Length.ShouldBe(7);
+        lines[0].ShouldEndWith("line 5");
+        lines[^1].ShouldEndWith("line 11");
+
+        // Within the current file the rolled one is not read.
+        (await Logs(folder, "gui", "--tail", "6")).Output.ShouldNotContain("line 5");
+    }
+
+    [Fact]
+    public async Task PilotLogsSaysAMissingLogAndExitsZero()
+    {
+        var folder = LogFolder(_root, "no-logs");
+        var (exit, output) = await Logs(folder, "gui");
+        exit.ShouldBe(0);
+        output.ShouldContain($"no gui log yet at {Path.Combine(folder, "gui.log")}");
+
+        Seed(folder, "node.log", 1, 1);
+        var (both, text) = await Logs(folder);
+        both.ShouldBe(0);
+        text.ShouldContain("no gui log yet at");
+        text.ShouldContain("== node:");
+    }
+
     [Fact]
     public async Task TheSessionsListShowsTheNodesCodeBeforeANameWithoutAMachinePrefix()
     {
@@ -647,5 +728,50 @@ public sealed class CliTests : IAsyncLifetime
         ReposMarkdown.Build([], all: false).ShouldBe(PilotCommand.Repos([], all: false));
         PilotCommand.Repos(rows, all: false).ShouldContain("PR #7 A|B is *ready*  flight/X1  X1  ready  checks passing  labels pilot node: SE1, bug");
         PilotCommand.Repos(rows, all: false).ShouldNotContain("draft  labels");
+    }
+
+    [Fact]
+    public void PullRequestsPrintGroupedByRepoWithTheirLabelsAsPlainTextAndAsMarkdownTables()
+    {
+        var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        PullRequestRow Pr(string repo, int number, string title, PullRequestKind kind, string label, bool needsMe, int hoursAgo) => new()
+        {
+            Repo = repo, Number = number, Title = title, Url = $"https://github.com/{repo}/pull/{number}", Kind = kind, Label = label, NeedsMe = needsMe,
+            Author = "sebgod", UpdatedAt = now.AddHours(-hoursAgo),
+        };
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro", "sebgod"], ReadAt = now.AddMinutes(-2),
+            PullRequests =
+            [
+                Pr("SharpAstro/tianwen", 3, "A|B is *wip*", PullRequestKind.ChecksRunning, "Checks running 4/7", false, 30),
+                Pr("SharpAstro/pilot", 7, "Ready one", PullRequestKind.Ready, "Ready", true, 3) with { Flight = "PIL7", Review = PullRequestReview.Passed, ReviewUrl = "https://github.com/SharpAstro/pilot/pull/7#issuecomment-1" },
+                Pr("sebgod/mercury", 9, "Old", PullRequestKind.Conflicts, "Conflicts", true, 24 * 400),
+            ],
+            Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline" }],
+        };
+
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
+        plain.ShouldContain("3 open · 1 ready · 1 checks running · 1 conflicts · read 2m ago");
+        plain.ShouldContain("SharpAstro/pilot  1\n    #7 Ready one  Ready  PIL7  sebgod  review passed  updated 3h ago");
+        plain.ShouldContain("    #3 A|B is *wip*  Checks running 4/7  sebgod  updated 1d ago");
+        plain.ShouldContain("updated 400d ago");
+        plain.ShouldContain("! sebgod: gh offline");
+        // The repo with the PR that most needs the person first: ready, then the conflict, then the running checks.
+        new[] { "SharpAstro/pilot  1", "sebgod/mercury  1", "SharpAstro/tianwen  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
+
+        var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now);
+        needsMe.ShouldNotContain("tianwen");
+        needsMe.ShouldContain("#9 Old");
+
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now);
+        markdown.ShouldContain("## [SharpAstro/pilot](https://github.com/SharpAstro/pilot) (1)");
+        markdown.ShouldContain("| Ready | [#7 Ready one](https://github.com/SharpAstro/pilot/pull/7) | PIL7 | sebgod | [passed](https://github.com/SharpAstro/pilot/pull/7#issuecomment-1) | 3h ago |");
+        markdown.ShouldContain(@"[#3 A\|B is \*wip\*]");
+        markdown.ShouldContain("- sebgod: gh offline");
+
+        PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
+        PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = now, PullRequests = [row.PullRequests[0]] }, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro.\n");
     }
 }

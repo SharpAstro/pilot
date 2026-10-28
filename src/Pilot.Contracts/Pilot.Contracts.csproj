@@ -9,6 +9,11 @@
     <RootNamespace>Pilot.Contracts</RootNamespace>
   </PropertyGroup>
 
+  <!-- The file logger provider both the GUI and the node log through (FileLogging.cs). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
   <!-- Where the socket is and how a client reaches it: the org's shared node pieces (SharpAstro/Node.Lib). -->
   <!--
     Node.Lib from the sibling clone when it is there, else the package, as the GUI takes DIR.Lib: see the GUI's project for

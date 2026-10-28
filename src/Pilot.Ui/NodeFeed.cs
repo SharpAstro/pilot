@@ -31,6 +31,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task? _run;
     private long _version;
+    private bool _everConnected;
     private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
     private readonly Func<CancellationToken, Task<NodeInfo>>? _nodeInfo;
     // The repos the node last read (GET /api/v1/repos/status), fetched only while the Repos page is shown or recently was.
@@ -49,7 +50,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -153,6 +154,9 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>Why there is no node, when the GUI could not start one: the header says it while it retries.</summary>
     public string? Problem { get; set; }
 
+    /// <summary>Where the feed says its connection changes (connected, dropped, resyncing, retrying); null says nothing.</summary>
+    public Action<string>? Log { get; set; }
+
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
     /// <summary>The node's jobs.</summary>
@@ -167,6 +171,12 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>The summaries the node has kept, one per scope (<see cref="SummaryRow.Scope"/>).</summary>
     public IReadOnlyList<SummaryRow> Summaries() => Volatile.Read(ref _view).Summaries;
+
+    /// <summary>
+    /// The PRs the node last read, which it streams as a row, so the Pull requests page needs no read of its own; null until
+    /// the node has read them (or when its clones have no org to read).
+    /// </summary>
+    public PullRequestsRow? PullRequests() => Volatile.Read(ref _view).PullRequests;
 
     /// <summary>The cards panel: the open cards and the latest handled lines.</summary>
     public CardsScreen Cards()
@@ -282,7 +292,6 @@ internal sealed class NodeFeed : IAsyncDisposable
                 // The mirror refused a delta out of order: start again from a snapshot rather than show a state the
                 // node never had.
                 _mirror = new NodeMirror();
-                Console.Error.WriteLine($"pilot-gui: resyncing with the node: {ex.Message}");
                 SetStatus($"resyncing with the node on {_socketPath}: {ex.Message}", connected: false);
                 continue;
             }
@@ -414,8 +423,16 @@ internal sealed class NodeFeed : IAsyncDisposable
         var usage = _mirror.Usage;
         var machine = _mirror.Machine;
         var stream = _mirror.Stream;
+        var wasDown = !Volatile.Read(ref _view).Connected;
+        if (wasDown)
+        {
+            Log?.Invoke($"pilot-gui: connected to the node on {_socketPath}{(_everConnected ? " (reconnected)" : "")}");
+            _everConnected = true;
+        }
+        var pullRequests = _mirror.PullRequests;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
+            PullRequests = pullRequests,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,
@@ -436,6 +453,11 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         // The first moment it is seen down: a node that stays down keeps the time it went, each retry only restates why.
         var at = _clock();
+        // Said once per outage, on the first failure: each retry only restates why.
+        if (!connected && Volatile.Read(ref _view).DownSince is null)
+        {
+            Log?.Invoke($"pilot-gui: no node: {status}");
+        }
         ImmutableInterlocked.Update(ref _view, view => view with { Status = status, Connected = connected, DownSince = connected ? null : view.DownSince ?? at });
         Interlocked.Increment(ref _version);
     }
