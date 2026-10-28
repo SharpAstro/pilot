@@ -1605,7 +1605,7 @@ public sealed partial class LegCommander(
                 rebasedOnto = true;
             }
             // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
-            await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
+            await PushAsync(repaired, repaired: repaired.Base != flight.Base || rebasedOnto, cancellationToken);
             var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
             if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
