@@ -11,6 +11,15 @@ using static SDL3.SDL;
 // selected one. --snapshot shows a file instead (the bundled sample is the contract's); --say says one thing and
 // exits.
 ConsoleOutput.AttachToParent();
+// gui.log (pilot #416): everything this window writes to stderr is kept in %LOCALAPPDATA%\pilot2\logs\gui.log too, rolling
+// at 4 MB. The --capture and --say one-shots do not write it: they run by the dozen in tests and scripts, and would
+// bury the window's own history (and the test runs would write to the user's real log).
+var isOneShot = args.Contains("--capture") || args.Contains("--say");
+var guiLog = isOneShot ? null : new RollingLog("gui");
+if (guiLog is not null)
+{
+    Console.SetError(new TeeWriter(Console.Error, guiLog) { });
+}
 
 if (GuiOptions.Parse(args, out var error) is not { } options)
 {
@@ -177,10 +186,26 @@ using var cts = new CancellationTokenSource();
 // the same timestamps and routing. Warnings and worse go to stderr, beside the GUI's own pilot-gui: lines.
 using var loggerFactory = LoggerFactory.Create(logging => logging
     .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; })
-    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning));
+    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning)
+    .AddProvider(guiLog is null ? Microsoft.Extensions.Logging.Abstractions.NullLoggerProvider.Instance : new FileLoggerProvider(guiLog)));
 var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
+Console.Error.WriteLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
+var frameTimer = new FrameTimer(line => Console.Error.WriteLine(line));
+string WhatRendered()
+{
+    var what = chrome.Page.ToString();
+    if (chrome.Page == PilotPage.Flights && chrome.Flights.OpenCode is { } flight)
+    {
+        what += $", flight {flight}";
+    }
+    if (chrome.Sessions.Transcript.Line is { } transcript)
+    {
+        what += $", transcript {transcript.Row.Id}";
+    }
+    return what;
+}
 var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
 // The list pages' column widths a drag on a title's divider set: read from the GUI's own settings file, written back a
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
@@ -218,6 +243,10 @@ using var client = snapshot is null ? NewClient() : null;
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
+if (feed is not null)
+{
+    feed.Log = line => Console.Error.WriteLine(line);
+}
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
 var fleetWatch = new FleetWatch();
@@ -744,7 +773,8 @@ loop.OnResize = (w, h) =>
     height = (int)h;
     chrome.DpiScale = window.DisplayScale;
 };
-loop.OnRender = () =>
+loop.OnRender = () => frameTimer.Time(RenderFrame, WhatRendered);
+void RenderFrame()
 {
     // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
     if (tracker.ProcessCompletions(logger))
@@ -790,7 +820,7 @@ loop.OnRender = () =>
         announced = view.SelectedId;
         Say($"pilot-gui: selected {screen.Lines[view.Selected].ToDumpLine()}");
     }
-};
+}
 loop.CheckNeedsRedraw = () =>
 {
     while (gate?.TryDequeue(out _) == true)
