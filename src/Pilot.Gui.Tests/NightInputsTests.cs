@@ -19,6 +19,29 @@ public sealed class NightInputsTests
         new() { Index = 1, Kind = TranscriptKind.Assistant, Text = "Started **PIL12** with *care* for [issue 12](https://example.org/12) and `pilot flight new`.", At = At.AddSeconds(9) },
     ];
 
+    [Theory]
+    [InlineData("🔴", "B!")]
+    [InlineData("🔄", "B~")]
+    [InlineData("🕓", "B…")]
+    [InlineData("📋", "B")]
+    public void TheJobsTabAtNightKeepsAMarkForWhatItsJobsAreDoing(string standard, string night)
+    {
+        PilotChrome<RgbaImage>.NightGlyph(PilotPage.Jobs, standard).ShouldBe(night);
+    }
+
+    [Fact]
+    public async Task ANightPageBuiltInAnotherFlowLeavesThisFlowsPaletteAlone()
+    {
+        var before = Palette.Current;
+        await Task.Run(() =>
+        {
+            Palette.Current = Palette.Night;
+            ReferenceEquals(Palette.Current, Palette.Night).ShouldBeTrue();
+        }, Ct);
+
+        ReferenceEquals(Palette.Current, before).ShouldBeTrue();
+    }
+
     private static string Folder()
     {
         var job = Environment.GetEnvironmentVariable("CLAUDE_JOB_DIR");

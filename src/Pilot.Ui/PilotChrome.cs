@@ -50,15 +50,6 @@ internal sealed class PilotChrome<TSurface>
     /// it is. The chords count down the rail, Ctrl+1 at the top: numbered by the enum, Chat and Repos (added later) sat at 8
     /// and 7 between 1 and 2, and the tooltip said a third number, the enum's (SE1, 2026-10-27).
     /// </summary>
-    /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn, the glyph itself where the UI face has it (the plane and the cog).</summary>
-    internal static string NightGlyph(PilotPage page, string glyph) => NightGlyphs.GetValueOrDefault(page, glyph);
-
-    private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
-    {
-        [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
-        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F",
-    };
-
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
@@ -70,6 +61,17 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
     ];
+
+    /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn (the Background tasks tab adds ! for a failed job, ~ for a running one, … for a waiting one), the glyph itself where the UI face has it (the plane and the cog).</summary>
+    internal static string NightGlyph(PilotPage page, string glyph) => page == PilotPage.Jobs
+        ? glyph switch { "🔴" => "B!", "🔄" => "B~", "🕓" => "B…", _ => "B" }
+        : NightGlyphs.GetValueOrDefault(page, glyph);
+
+    private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
+    {
+        [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F",
+    };
 
     /// <summary>
     /// The Background tasks page's glyph on the rail, and what it says on hover: a job that failed in play (the last

@@ -92,18 +92,18 @@ internal sealed record Palette(
     RGBAColor32 RailClose,
     RGBAColor32 RailDisabled)
 {
-    [ThreadStatic]
-    private static Palette? _current;
+    // Ambient per async flow, as DIR.Lib keeps its own: a test that sets it changes nothing for tests running beside it or after it.
+    private static readonly AsyncLocal<Palette?> _current = new();
 
     /// <summary>The palette the page being built paints with: set by each page and the chrome from the Night switch at the start of a build, read by the colour properties.</summary>
     public static Palette Current
     {
-        get => _current ?? Standard;
-        set => _current = value;
+        get => _current.Value ?? Standard;
+        set => _current.Value = value;
     }
 
     /// <summary>Makes the page about to be built paint with the window's palette: night while the switch is on, else the standard one.</summary>
-    public static void Use(NightSwitch? night) => _current = night?.Palette ?? Standard;
+    public static void Use(NightSwitch? night) => _current.Value = night?.Palette ?? Standard;
 
     /// <summary>The colours a text input paints with while Night is on, else null so the input keeps its own defaults.</summary>
     public static TextInputColors? Input => ReferenceEquals(Current, Night) ? _nightInput ??= NightInputColors() : null;
