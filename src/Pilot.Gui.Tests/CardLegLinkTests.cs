@@ -79,6 +79,42 @@ public sealed class CardLegLinkTests
         texts.ShouldContain(t => t.Contains("PIL355/parser"));
     }
 
+    private static string[] PaintedWords(CardRow card)
+    {
+        using var renderer = new RgbaImageRenderer(300, 1200);
+        var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var arranged = Layout.Engine.Arrange(view.Tree(CardsScreen.From([card])), new Rect<float>(0, 0, 300, 1200), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        return [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(x => x.Value)];
+    }
+
+    [Fact]
+    public void ALegNamedLikeAnOrdinaryWordLeavesThatWordPlainAndLinksOnlyItsName()
+    {
+        var card = new CardRow
+        {
+            Id = "c1", Bin = CardBin.Ring, Kind = "review-changes", Subject = "flight/PIL1/review", Title = "PIL1's review asks for changes",
+            Summary = "The review of PIL1/review asked for changes. Redo leg review sends a fresh worker to make them.",
+            At = Now, State = CardState.Open,
+        };
+
+        var words = PaintedWords(card).Select(w => w.Trim()).ToArray();
+
+        words.ShouldContain("The");
+        words.ShouldContain("review");
+        words.Count(w => w.Contains("PIL1/review")).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("pr-checks-failed", "The PR of PIL355 fails its checks. The node could not send the last leg back; redo it from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.", "this.")]
+    [InlineData("merge-failed", "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Re-run checks runs them again; Merge again tries once more as it is.", "is.")]
+    [InlineData("leg-stopped", "The worker of PIL355/parser hit the usage limit. It resumes when the window resets; nothing to do, and the leg keeps its place in the queue until then.", "then.")]
+    public void ALongSummaryIsShownWholeAtThePanelsWidth(string kind, string summary, string lastWord)
+    {
+        var card = new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = kind, Subject = "flight/PIL355/parser", Title = "A card", Summary = summary, At = Now, State = CardState.Open };
+
+        PaintedWords(card).Select(w => w.Trim()).ShouldContain(lastWord);
+    }
+
     [Fact]
     public void ACardAboutNoLegHasNoLegLink()
     {

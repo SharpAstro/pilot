@@ -545,10 +545,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>How many lines a node's held line may take: its counts are what it is for, so it wraps rather than hides them.</summary>
     internal const int HeldLines = 2;
 
-    /// <summary>How many lines a card's summary may take: one or two plain sentences.</summary>
-    internal const int SummaryLines = 3;
-
-    private const int SummaryFits = 120;
+    /// <summary>How many lines a card's summary may take: none cut. It is the card's body, and the part that says what each choice does is its end.</summary>
+    internal const int SummaryLines = 0;
 
     /// <summary>How many lines a card's detail may take before it is cut.</summary>
     internal const int DetailLines = 3;
@@ -575,13 +573,32 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
-    /// <summary>Whether a word of text is the leg's name, or its <c>code/leg</c>, with the punctuation a sentence puts round it.</summary>
-    private static bool LegWord(string text, CardLeg leg) =>
-        text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Any(w =>
+    private static readonly char[] SentencePunctuation = ['\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?'];
+
+    /// <summary>
+    /// Whether <paramref name="word"/> names the leg: its <c>code/leg</c>, or its bare name right after the word "leg" ("Redo leg parser").
+    /// A bare name elsewhere is an ordinary word of the sentence ("The review of ..."), which the leg's name only happens to equal.
+    /// </summary>
+    private static bool NamesLeg(string word, string? previous, CardLeg leg)
+    {
+        var bare = word.Trim(SentencePunctuation);
+        return bare == leg.ToString() || (bare == leg.Leg && string.Equals(previous?.Trim(SentencePunctuation), "leg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Whether the text names the leg in a way <see cref="NamesLeg"/> links.</summary>
+    private static bool LegWord(string text, CardLeg leg)
+    {
+        string? previous = null;
+        foreach (var word in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
         {
-            var bare = w.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
-            return bare == leg.Leg || bare == leg.ToString();
-        });
+            if (NamesLeg(word, previous, leg))
+            {
+                return true;
+            }
+            previous = word;
+        }
+        return false;
+    }
 
     private Layout.Node LegLink(CardRow card, CardLeg leg, string text, float size) =>
         Layout.Builder.Text(text, size, Link)
@@ -604,9 +621,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var leg = CardLeg.Of(card);
         // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
         var linked = false;
-        Func<float, Func<string, Layout.Node?>> linker = size => word =>
+        Func<float, Func<string, Layout.Node?>> linker = size =>
         {
-            if (linked || leg is not { } about || !LegWord(word, about))
+            string? previous = null;
+            return word =>
+        {
+            var before = previous;
+            previous = word;
+            if (linked || leg is not { } about || !NamesLeg(word, before, about))
             {
                 return null;
             }
@@ -616,6 +638,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             var bare = shown.Trim('\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?');
             var at = shown.IndexOf(bare, StringComparison.Ordinal);
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
+            };
         };
         var lines = new List<Layout.Node>
         {
@@ -635,7 +658,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, summary.Length > SummaryFits));
+            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
