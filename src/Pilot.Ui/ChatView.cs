@@ -91,6 +91,55 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     public Func<CardRow, NodeMark?, string, Task<string?>>? OnSendAboutCard { get; set; }
 
+    /// <summary>
+    /// Reads another node's chat feed, given that node: its client's chat route. Null leaves another node's chat unread
+    /// (<see cref="SwitchTo"/> then shows a problem rather than this node's feed).
+    /// </summary>
+    public Func<NodeMark, int, CancellationToken, Task<ChatPage>>? LoadOn { get; set; }
+
+    /// <summary>Says a message to another node's watchtower, given that node: null when it took it, else what it said in refusing it.</summary>
+    public Func<NodeMark, string, Task<string?>>? OnSendOn { get; set; }
+
+    // The node the conversation is with; null is this window's own. Swapped whole.
+    private NodeMark? _node;
+
+    /// <summary>The node whose watchtower the page talks to; null when it is this window's own node's.</summary>
+    public NodeMark? Node => Volatile.Read(ref _node);
+
+    /// <summary>
+    /// Points the page at <paramref name="node"/>'s watchtower (null, or this window's own: this node's): what is held, the
+    /// notices and a quoted card are dropped, and an open page reads that node's feed from its start.
+    /// </summary>
+    public void SwitchTo(NodeMark? node)
+    {
+        node = node is { Here: false } ? node : null;
+        if (Volatile.Read(ref _node)?.Where == node?.Where)
+        {
+            return;
+        }
+        var open = _following is not null;
+        Close();
+        Volatile.Write(ref _node, node);
+        Volatile.Write(ref _held, Held.Empty);
+        Volatile.Write(ref _notices, []);
+        Volatile.Write(ref _about, null);
+        _confirmRestart = false;
+        if (open)
+        {
+            Open();
+        }
+        Changed?.Invoke();
+    }
+
+    // What the page reads and sends through now: this node's, or the chosen node's.
+    private Func<int, CancellationToken, Task<ChatPage>>? CurrentLoad() => Node is { } node
+        ? (after, ct) => LoadOn is { } on ? on(node, after, ct) : throw new InvalidOperationException($"{node.Name}'s chat cannot be read from here")
+        : Load;
+
+    private Func<string, Task<string?>>? CurrentSend() => Node is { } node
+        ? (OnSendOn is { } on ? text => on(node, text) : null)
+        : OnSend;
+
     // The card the next message is about, quoted above the box until it goes or is dropped; swapped whole.
     private sealed record Quoted(CardRow Card, NodeMark? Node);
 
@@ -196,7 +245,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Starts following the feed (after what it already holds) until <see cref="Close"/>; does nothing while it already is.</summary>
     public void Open()
     {
-        if (_following is not null || Load is not { } load)
+        if (_following is not null || CurrentLoad() is not { } load)
         {
             return;
         }
@@ -269,7 +318,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     public Task SendAsync()
     {
-        if (_composer.IsEmpty || OnSend is null)
+        if (_composer.IsEmpty || CurrentSend() is null)
         {
             return Task.CompletedTask;
         }
@@ -284,7 +333,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     }
 
     /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
-    public Task SendAsync(string message) => OnSend is { } send ? SendAsync(message, send) : Task.CompletedTask;
+    public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
 
     private async Task SendAsync(string message, Func<string, Task<string?>> send)
     {
@@ -362,7 +411,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = "Message the watchtower";
+        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";
+        var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
         {
@@ -372,7 +422,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Changed?.Invoke();
             }));
         }
-        if (OnRestart is not null && Load is not null)
+        if (Node is not null)
+        {
+            buttons.Add(CardsView<TSurface>.HeaderPill("This node's watchtower", "chat:back", () => SwitchTo(null)));
+        }
+        else if (OnRestart is not null && Load is not null)
         {
             if (_confirmRestart)
             {
@@ -397,10 +451,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader("chat")
+        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "chat")
         {
             Buttons = buttons,
-            Source = held.Problem ?? (Load is null ? "not live" : "the conversation with the node's watchtower"),
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
         }, new TopBarParts(Nodes, null, Autopilot, About));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
@@ -414,7 +468,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         // the reply it ends, cutting its last lines, and scrolled away with the feed. Here it always shows, and the feed ends
         // above it.
         Layout.Node? asked = null;
-        if (OnSend is not null && held.Question is { Length: > 0 } question)
+        if (canSend && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
@@ -435,10 +489,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (Load is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
-        var page = OnSend is null
+        var page = !canSend
             ? Layout.Builder.VStack(list.HStar())
             : asked is null
                 ? Layout.Builder.VStack(list.HStar(), Foot())

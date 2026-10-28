@@ -195,10 +195,24 @@ chat.OnSendAboutCard = async (card, node, words) =>
     Redraw();
     return refused;
 };
+chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } page }
+    ? page
+    : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+chat.OnSendOn = async (node, text) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.TellAsync(to, text, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+// A card's Chat about this opens the chat of the node the card was raised on.
 cards.OnChatAbout = card =>
 {
+    var node = cards.NodeOf(card);
     chrome.Show(PilotPage.Chat);
-    chat.Attach(card, cards.NodeOf(card));
+    chat.SwitchTo(node);
+    chat.Attach(card, node);
 };
 flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
 chat.OnRestart = async () =>

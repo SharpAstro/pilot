@@ -788,6 +788,13 @@ at most) with a **Drop** to let it go. While one is held, Enter sends the words 
 told to that node's watchtower; a node with no grant is refused in the chat) and the card is dropped with the message; a
 choice button's answer never carries it.
 
+**Another node's card** points the page at that node (`ChatView.SwitchTo`, `Node`; null is this window's own): what is held
+is dropped and the page reads that node's chat feed from the start (`LoadOn`, its client through `FleetClients.For` with no
+grant needed to read), and typing goes through `OnSendOn` (that node's grant; no grant is refused in the chat's notices, and
+such a card has no live **Chat about this** button). The header then reads `watchtower · SE1` with a **This node's
+watchtower** pill back (`chat:back`) in place of New watchtower, which restarts this node's only. The rail's Chat, its chord
+and the panel's foot always open this node's chat. pilot-tui wires the same.
+
 The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, as the panel's box did): **Enter** sends,
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
 line, so `ChatComposer` keeps the lines before the one being typed and shows them above the field, read-only: Backspace
