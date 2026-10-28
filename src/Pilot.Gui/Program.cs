@@ -193,9 +193,11 @@ if (File.Exists(iconPath) && PngImageDecoder.TryDecodeRgba8(File.ReadAllBytes(ic
 window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
 using var renderer = new VkRenderer(context, (uint)width, (uint)height);
-var view = new SessionsView<VulkanContext>(renderer);
+// Every text measure is remembered by text, font and size, so a leaf costs a lookup, not a fit, in an unchanged frame.
+var memo = new MemoMeasureRenderer<VulkanContext>(renderer);
+var view = new SessionsView<VulkanContext>(memo);
 // The In play / Everything choice is kept in the user's GUI file, so a restart opens as the window was left.
-var chrome = new PilotChrome<VulkanContext>(renderer, view, PlayFilter.DefaultFile) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
+var chrome = new PilotChrome<VulkanContext>(memo, view, PlayFilter.DefaultFile) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
 
 using var cts = new CancellationTokenSource();
 // Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get
@@ -791,7 +793,7 @@ if (feed is not null)
                 chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
                 // The once-a-second look finds nothing new on an idle page: what was built reads as what is drawn, so no
                 // pages are published and no frame is asked. A row's own "ago" turning over shows as different text.
-                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now)))
+                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Settings)))
                 {
                     continue;
                 }

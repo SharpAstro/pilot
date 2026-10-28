@@ -100,4 +100,29 @@ public class FrameWatchTests
 
         log.Lines.ShouldBeEmpty();
     }
+
+    private static FleetPages PagesWith(DateTimeOffset waitingSince, DateTimeOffset asOf)
+    {
+        var row = new SessionRow
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "push-it", Kind = SessionKind.Interactive, Cwd = "/r/pilot",
+            Role = SessionRole.AdHoc, State = SessionState.Waiting, WaitingFor = "permission to use Bash", WaitingSince = waitingSince, StartedAt = waitingSince, ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0,
+        };
+        return new FleetPages(new SessionsScreen(SessionLine.Build([row], asOf), "test", asOf), new FlightsScreen([], "test", asOf), new JobsScreen([], "test", asOf), [], CardsScreen.From([]));
+    }
+
+    [Fact]
+    public void A_waiting_banner_turning_over_from_1m_to_2m_asks_for_a_frame()
+    {
+        var watch = new FrameWatch(new Capture());
+        var since = T0;
+        var fleet = new FleetScreen([], T0);
+        var at = (TimeSpan span) => FrameWatch.Fingerprint(PagesWith(since, T0 + span), fleet, T0 + span);
+
+        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeTrue();
+        // The rest of that minute (and its seconds of ago) is the same banner: no frame.
+        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeFalse();
+        // The banner reads "since 2 m" now: a frame.
+        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(121))).ShouldBeTrue();
+    }
 }

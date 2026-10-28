@@ -42,22 +42,26 @@ public sealed class RenderCostTests
         At = DateTimeOffset.UnixEpoch, State = CardState.Open,
     };
 
-    private static (int Calls, long Chars, CountingRenderer Renderer) SecondFrame(params CardRow[] cards)
+    private static (int Calls, long Chars, int FirstCalls) SecondFrame(params CardRow[] cards)
     {
         using var renderer = new CountingRenderer(1280, 800);
-        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var memo = new MemoMeasureRenderer<RgbaImage>(renderer);
+        var chrome = new PilotChrome<RgbaImage>(memo, new SessionsView<RgbaImage>(memo)) { FontPath = SessionsCapture.FontPath };
         var sessions = new SessionsScreen([], "test", Live.At);
         var screen = CardsScreen.From(cards);
         chrome.Show(PilotPage.Home);
         chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
+        var firstCalls = renderer.Calls;
+        var firstFrame = renderer.Texts.Keys.ToHashSet();
         renderer.Calls = 0;
         renderer.Chars = 0;
         renderer.Texts.Clear();
         chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
         chrome.ShowsCards.ShouldBeTrue();
         var top = string.Join("\n", renderer.Texts.OrderByDescending(t => t.Value).Take(15).Select(t => $"{t.Value} x {t.Key}"));
-        TestContext.Current.TestOutputHelper?.WriteLine($"calls={renderer.Calls} chars={renderer.Chars}\n{top}");
-        return (renderer.Calls, renderer.Chars, renderer);
+        TestContext.Current.TestOutputHelper?.WriteLine($"first={firstCalls} calls={renderer.Calls} chars={renderer.Chars}\n{top}");
+        renderer.Texts.Keys.Where(firstFrame.Contains).ShouldBeEmpty("a leaf measured in the first frame is measured again in the second");
+        return (renderer.Calls, renderer.Chars, firstCalls);
     }
 
     [Fact]
@@ -66,12 +70,7 @@ public sealed class RenderCostTests
         var shortOne = SecondFrame(Card("c1", null, "short detail"));
         var longOne = SecondFrame(Card("c1", null, Prose(2000)));
 
-        longOne.Calls.ShouldBeLessThan(600);
-        longOne.Chars.ShouldBeLessThan(20_000);
-        // Measured: 98 calls for a short detail, 431 for 2,000 characters (about 40 words, each leaf measured 6 to 8 times by DIR.Lib's
-        // layout passes; the fit inside DIR.Lib's painter is DIR.Lib's to memoise, a per-run TextFit cache). The delta is fixed
-        // whatever the length: 20,000 characters measure the same as 2,000.
-        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 380);
+        AssertBounded(shortOne, longOne);
     }
 
     [Fact]
@@ -80,8 +79,16 @@ public sealed class RenderCostTests
         var shortOne = SecondFrame(Card("c1", "short summary", null));
         var longOne = SecondFrame(Card("c1", Prose(2000), null));
 
-        longOne.Calls.ShouldBeLessThan(600);
-        longOne.Chars.ShouldBeLessThan(20_000);
-        longOne.Calls.ShouldBeLessThanOrEqualTo(shortOne.Calls + 250);
+        AssertBounded(shortOne, longOne);
+    }
+
+    // Measured at the leaf: 41 first-frame measurements for a short text, 47 for 2,000 characters (about 6 more words that fit
+    // the capped lines), and none in the second frame, because the memoised renderer answers a leaf it has measured.
+    private static void AssertBounded((int Calls, long Chars, int FirstCalls) shortOne, (int Calls, long Chars, int FirstCalls) longOne)
+    {
+        shortOne.Calls.ShouldBe(0);
+        longOne.Calls.ShouldBe(0);
+        longOne.FirstCalls.ShouldBeLessThanOrEqualTo(shortOne.FirstCalls + 10);
+        longOne.FirstCalls.ShouldBeLessThan(80);
     }
 }

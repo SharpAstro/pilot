@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Pilot.Contracts;
 using Pilot.Ui;
 
 namespace Pilot.Gui;
@@ -23,17 +24,41 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     /// A fingerprint of the text the built pages show: every row's dump line (which carries its own "ago") and the summaries'
     /// "made ago". It moves exactly when some row's text does, whenever that row's second or minute turns over.
     /// </summary>
-    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now)
+    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now, bool settingsOpen = false)
     {
         var hash = new HashCode();
         void Add(string line) => hash.Add(line, StringComparer.Ordinal);
-        foreach (var line in pages.Sessions.Lines) Add(line.ToDumpLine());
-        foreach (var line in pages.Flights.Lines) Add(line.ToDumpLine());
+        foreach (var line in pages.Sessions.Lines)
+        {
+            Add(line.ToDumpLine());
+            // The transcript banner's "waiting since", counted at render time from the row.
+            if (line.WaitingSince is { } since) Add(Waited.Say(now - since));
+        }
+        foreach (var line in pages.Flights.Lines)
+        {
+            Add(line.ToDumpLine());
+            // The flight detail's artifacts, each with its own "ago".
+            foreach (var leg in line.LegRows)
+            {
+                foreach (var artifact in leg.Artifacts) Add(SessionLine.Ago(now - artifact.At));
+            }
+        }
         foreach (var line in pages.Jobs.Lines) Add(line.ToDumpLine());
         foreach (var line in fleet.Lines) Add(line.ToDumpLine());
         if (pages.Repos is { } repos)
         {
             foreach (var line in repos.Lines) Add(line.ToDumpLine());
+        }
+        if (pages.PullRequests?.Row is { } read)
+        {
+            // The pull requests' "read ago" and each row's "updated ago".
+            Add(PullRequestsRow.Age(read.ReadAt, now));
+            foreach (var pr in read.PullRequests) Add(PullRequestsRow.Age(pr.UpdatedAt ?? pr.CreatedAt, now));
+        }
+        if (settingsOpen)
+        {
+            // Settings' "checked Ns ago" is counted from the clock in seconds, so an open Settings page turns over each second.
+            hash.Add(now.ToUnixTimeSeconds());
         }
         if (pages.Summaries is { } shelf)
         {
