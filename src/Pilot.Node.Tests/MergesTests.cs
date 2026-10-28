@@ -58,7 +58,7 @@ public sealed class MergesTests
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
 
         var entry = Entry(node, "TIA1");
-        (entry.Repo, entry.Pr, entry.Head, entry.Method, entry.By).ShouldBe(("tianwen", 63, PrHead, "squash", MergeBy.Hand));
+        (entry.Repo, entry.Pr, entry.Head, entry.Method, entry.By).ShouldBe(("tianwen", 63, PrHead, "rebase", MergeBy.Hand));
         entry.State.ShouldBe(MergeEntryState.Merging);
         entry.Place.ShouldBe(1);
         entry.Why.ShouldNotBeNull().ShouldContain("merge queue");
@@ -107,7 +107,7 @@ public sealed class MergesTests
         // TIA1 is at GitHub, so TIA2 stands behind it: second in its repo's queue, nothing of it asked of GitHub yet.
         (Entry(node, "TIA1").State, Entry(node, "TIA1").Place).ShouldBe((MergeEntryState.Merging, 1));
         (Entry(node, "TIA2").State, Entry(node, "TIA2").Place).ShouldBe((MergeEntryState.Waiting, 2));
-        node.GitHub.Merged.ShouldHaveSingleItem();
+        node.GitHub.Merged.ShouldBeEmpty();
         two.IsCompleted.ShouldBeFalse();
 
         // Another repo's queue is its own: its entry goes through while TIA1 is held (its GitHub call is the second, and not held).

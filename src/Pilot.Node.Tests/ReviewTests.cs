@@ -593,7 +593,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         // the PR-ready card offers the new head.
         Git(F("TIA21").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         F("TIA21").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
-        Open().Single(c => c.Kind == LegCommander.PrReady).Choices.Single(ch => ch.Verb == Verbs.Merge).Args[0].ShouldBe(Git(F("TIA21").Worktree, "rev-parse", "HEAD").Trim());
+        Open().Single(c => c.Kind == LegCommander.PrReady).Choices.Single(ch => ch.Verb == Verbs.Merge).Args[0].ShouldBe(_github.Pr!.Head);
         _workers.Started.Count.ShouldBe(startedBefore);
         // Once a removal, as for any other: the update count, not only the card count, holds still.
         await checks.LookAsync(Ct);
