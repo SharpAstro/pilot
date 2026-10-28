@@ -403,6 +403,24 @@ public sealed partial class LegCommander(
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _pilotMdRung = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The text of the repo's PILOT.md at the flight's base for a brief, or null when there is none or it is over the limit; an
+    /// over-long file raises one card per flight and line count (not on every brief), and is not quoted.
+    /// </summary>
+    public async Task<string?> PilotMdOfAsync(FlightRow flight)
+    {
+        var read = await PilotMd.ReadAsync(git, flight, CancellationToken.None);
+        if (read.TooLongBy is { } lines && _pilotMdRung.TryAdd($"{flight.Code}:{lines}", true))
+        {
+            state.RaiseCard(CardBin.Ring, PilotMd.TooLongKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Repo}'s PILOT.md is too long to quote for {flight.Code}",
+                $"The {flight.Repo} repo's PILOT.md has {lines} lines, over the {PilotMd.MaxLines} limit, and was not quoted into {flight.Code}'s briefs. Shorten it to its rules.");
+        }
+        return read.Text;
+    }
+
     /// <summary>One flight's next step, where it has one, as <see cref="AdvanceAllAsync"/> takes it for every flying flight: what a flight just handed over by another node goes on with.</summary>
     public Task AdvanceFlightAsync(string code, CancellationToken cancellationToken) =>
         state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.Ordinal)) is { } flight ? AdvanceAsync(flight, cancellationToken) : Task.CompletedTask;
@@ -825,7 +843,7 @@ public sealed partial class LegCommander(
                     plane = new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : "");
                 }
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight)), leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
             },
             job =>
             {
@@ -1291,7 +1309,7 @@ public sealed partial class LegCommander(
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var commits = await git.RunAsync(["log", "--oneline", $"{flight.Base}..HEAD"], flight.Worktree, CancellationToken.None);
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
-                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: await UpdateInstructionAsync(flight.Code, CancellationToken.None));
+                var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: await UpdateInstructionAsync(flight.Code, CancellationToken.None), pilotMd: await PilotMdOfAsync(flight));
                 entering();
                 return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, leg.Model ?? Models.Model(RoleModels.Worker), leg.Effort ?? Models.Effort(RoleModels.Worker)), CancellationToken.None);
             },
@@ -1956,12 +1974,12 @@ public sealed partial class LegCommander(
             return;
         }
         var subject = Verbs.FlightTarget(flight.Code);
-        var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine);
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
             new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
+                var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, await PilotMdOfAsync(flight));
                 entering();
                 return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), CancellationToken.None);
             },
@@ -2054,7 +2072,7 @@ public sealed partial class LegCommander(
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
-                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine);
+                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine, await PilotMdOfAsync(flight));
                 // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);

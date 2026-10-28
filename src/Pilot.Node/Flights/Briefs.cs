@@ -48,7 +48,7 @@ public static class Briefs
     }
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null)
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -93,6 +93,7 @@ public static class Briefs
             text.AppendLine();
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
+        text.Append(PilotMdSection(pilotMd));
         text.AppendLine();
         text.AppendLine(CiRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
@@ -198,6 +199,10 @@ public static class Briefs
         $"- Outside work to wait for (a file another tool writes, a time of day): `{run} leg wait --for-file <path> [--until <time>] [why...]`, then end\n" +
         "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
         "  it holds a slot of the queue and blocks every job behind it.";
+
+    /// <summary>The repo's PILOT.md quoted whole under one heading; nothing when it has none.</summary>
+    internal static string PilotMdSection(string? pilotMd) =>
+        string.IsNullOrWhiteSpace(pilotMd) ? "" : $"\n## This repo's rules for pilot (PILOT.md)\n{pilotMd}\n\n";
 
     /// <summary>
     /// The line every brief carries: a background session a session starts itself is named with the node's machine code, as the
@@ -311,7 +316,7 @@ public static class Briefs
     /// The planner's brief: read the issue and the code, and plan the flight's legs as the node flies them (one worker each,
     /// in order, on one branch), then say <c>planned</c>. It writes no code.
     /// </summary>
-    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run, string? machine = null)
+    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run, string? machine = null, string? pilotMd = null)
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
@@ -322,7 +327,9 @@ public static class Briefs
         text.AppendLine($"({words.Read(flight.Issue)}), the repo's CLAUDE.md, and the code it touches. Do not edit, commit or push");
         text.AppendLine("anything: you plan, and each leg's worker does the work.");
         text.AppendLine("Do it yourself, in this session: no subagents, or one at most for a single narrow question.");
+        text.AppendLine("A step the plane cannot do by the repo's PILOT.md rules is not planned, or is planned with the way round it named in the leg.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(PilotMdSection(pilotMd));
         text.AppendLine();
         text.AppendLine("How legs fly: one at a time, in order, each by a fresh worker that sees only its own leg, the legs before it and");
         text.AppendLine("what the branch holds. So each leg must stand on its own: a goal a worker can do in one sitting, a Done-when");
@@ -424,7 +431,7 @@ public static class Briefs
     }
 
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null)
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, string? pilotMd = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -435,6 +442,7 @@ public static class Briefs
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(PilotMdSection(pilotMd));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
