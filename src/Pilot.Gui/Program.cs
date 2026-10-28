@@ -27,8 +27,15 @@ void LogLine(string line)
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
 
-if (GuiOptions.Parse(args, out var error) is not { } options)
+if (GuiOptions.Parse(args, out var error, out var isHelp) is not { } options)
 {
+    if (isHelp)
+    {
+        // Help is a result, not an error: it goes to stdout.
+        Console.Out.Write(error);
+        return 0;
+    }
+
     LogLine(error!);
     return 2;
 }

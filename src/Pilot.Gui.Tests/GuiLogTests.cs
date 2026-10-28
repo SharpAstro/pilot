@@ -59,6 +59,30 @@ public sealed class GuiLogTests : IDisposable
     }
 
     [Fact]
+    public async Task Help_goes_to_stdout_and_stderr_stays_empty()
+    {
+        var exe = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot-gui.exe" : "pilot-gui");
+        Directory.CreateDirectory(_folder);
+        var start = new System.Diagnostics.ProcessStartInfo(exe)
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("--help");
+        start.Environment[RollingLog.FolderEnvironmentVariable] = _folder;
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var stderr = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stdout = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+
+        process.ExitCode.ShouldBe(0);
+        (await stdout).ShouldContain("Usage:");
+        (await stderr).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task A_former_stderr_line_lands_in_the_log_and_stderr_stays_empty()
     {
         // The --capture one-shot on a snapshot that is not there says so; that line used to go to stderr. The child's data
