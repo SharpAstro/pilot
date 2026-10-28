@@ -44,6 +44,22 @@ internal static class DashboardCommands
         }
     }
 
+    /// <summary>
+    /// The command a card's button sends: <paramref name="verb"/> (<see cref="Verbs.Answer"/> with the choice's number, or
+    /// <see cref="Verbs.Dismiss"/>) on <paramref name="card"/>. One builder for the panel's buttons in either host and for the
+    /// Pull requests page's Merge and Go around, which press the flight's card, so a PR row says to the node what its card does.
+    /// </summary>
+    public static CommandRequest CardRequest(string verb, CardRow card, string[] args, string who) =>
+        new() { Verb = verb, Target = Verbs.CardTarget(card.Id), Args = args, Who = who };
+
+    /// <summary>The command a card's choice number is answered with.</summary>
+    public static CommandRequest AnswerRequest(CardRow card, int number, string who) =>
+        CardRequest(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], who);
+
+    /// <summary>What <c>pilot review pr</c> sends for <paramref name="pr"/>: a fresh reviewer on it, pinned at its head.</summary>
+    public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) =>
+        new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
+
     /// <summary>Opens a file or a URL the way the platform does (the browser, the image viewer); false when it could not.</summary>
     public static bool Open(string location)
     {

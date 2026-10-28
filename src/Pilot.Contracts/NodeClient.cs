@@ -68,8 +68,7 @@ public sealed class NodeClient : IDisposable
     public async Task<ResponseEnvelope<GrantTicket>> AskGrantAsync(string label, CancellationToken cancellationToken)
     {
         using var response = await _http.PostAsJsonAsync(NodeWire.GrantsRoute, new GrantRequest { Label = label }, PilotJsonContext.Default.GrantRequest, cancellationToken).ConfigureAwait(false);
-        return await response.Content.ReadFromJsonAsync(PilotJsonContext.Default.ResponseEnvelopeGrantTicket, cancellationToken).ConfigureAwait(false)
-            ?? throw new HttpRequestException($"The node answered the ask with an empty body ({(int)response.StatusCode})");
+        return await ReadEnvelopeAsync(response, PilotJsonContext.Default.ResponseEnvelopeGrantTicket, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary><c>GET /api/v1/grants/&lt;id&gt;</c>: where an ask stands, and the token once accepted. Each read also says the asker is still there.</summary>
@@ -84,8 +83,34 @@ public sealed class NodeClient : IDisposable
     private async Task<ResponseEnvelope<T>> GetEnvelopeAsync<T>(string path, System.Text.Json.Serialization.Metadata.JsonTypeInfo<ResponseEnvelope<T>> type, CancellationToken cancellationToken)
     {
         using var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
-        return await response.Content.ReadFromJsonAsync(type, cancellationToken).ConfigureAwait(false)
-            ?? throw new HttpRequestException($"The node answered with an empty body ({(int)response.StatusCode})");
+        return await ReadEnvelopeAsync(response, type, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A reply's envelope, or a failed one when the node sent no JSON (an empty body, or text): never a throw, so a caller
+    /// prints a refusal. A command may have run before the node went quiet, so the error says to check.
+    /// </summary>
+    private static async Task<ResponseEnvelope<T>> ReadEnvelopeAsync<T>(HttpResponseMessage response, System.Text.Json.Serialization.Metadata.JsonTypeInfo<ResponseEnvelope<T>> type, CancellationToken cancellationToken)
+    {
+        var status = (int)response.StatusCode;
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var excerpt = "";
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                if (JsonSerializer.Deserialize(body, type) is { } envelope)
+                {
+                    return envelope;
+                }
+            }
+            catch (JsonException)
+            {
+                var text = body.Trim();
+                excerpt = ": " + (text.Length > 200 ? text[..200] + "..." : text);
+            }
+        }
+        return ResponseEnvelope<T>.Fail($"status {status}: the node sent no answer; the command may have run: check pilot status{excerpt}", status);
     }
 
     /// <summary><c>GET /api/v1/attachments/&lt;id&gt;</c>: the copy the node keeps of an image: its status, content type and bytes (none unless 200).</summary>
@@ -169,8 +194,7 @@ public sealed class NodeClient : IDisposable
     public async Task<ResponseEnvelope<CommandResult>> SendAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         using var response = await _http.PostAsJsonAsync(NodeWire.CommandsRoute, command, PilotJsonContext.Default.CommandRequest, cancellationToken).ConfigureAwait(false);
-        return await response.Content.ReadFromJsonAsync(PilotJsonContext.Default.ResponseEnvelopeCommandResult, cancellationToken).ConfigureAwait(false)
-            ?? throw new HttpRequestException($"The node answered the command with an empty body ({(int)response.StatusCode})");
+        return await ReadEnvelopeAsync(response, PilotJsonContext.Default.ResponseEnvelopeCommandResult, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
