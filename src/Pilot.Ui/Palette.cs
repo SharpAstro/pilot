@@ -104,6 +104,26 @@ internal sealed record Palette(
     /// <summary>Makes the page about to be built paint with the window's palette: night while the switch is on, else the standard one.</summary>
     public static void Use(NightSwitch? night) => _current = night?.Palette ?? Standard;
 
+    /// <summary>The colours a text input paints with while Night is on, else null so the input keeps its own defaults.</summary>
+    public static TextInputColors? Input => ReferenceEquals(Current, Night) ? _nightInput ??= NightInputColors() : null;
+
+    /// <summary>A colour emoji while the standard palette is on, else a mark the UI face draws: a colour glyph cannot be painted red, and the UI face has no emoji.</summary>
+    public static string Glyph(string emoji, string plain) => ReferenceEquals(Current, Night) ? plain : emoji;
+
+    private static TextInputColors? _nightInput;
+
+    private static TextInputColors NightInputColors() => new()
+    {
+        Background = Night.RowAltBg,
+        BackgroundActive = Night.HeaderBg,
+        Border = Night.Faint,
+        BorderActive = Night.Dim,
+        Text = Night.Bright,
+        Placeholder = Night.Dim,
+        Cursor = Night.Held,
+        Selection = Night.RowFocusBg,
+    };
+
     public static Palette Standard { get; } = new(
         Ground: new(0x12, 0x12, 0x18, 0xff),
         HeaderBg: new(0x1b, 0x1c, 0x24, 0xff),

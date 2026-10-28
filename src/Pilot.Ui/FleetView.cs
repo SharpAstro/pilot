@@ -544,7 +544,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
-                                Layout.Builder.Text(FleetLine.MaintenanceIcon, 11f, Ringing).WFixed(MarkIconWidth),
+                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).WFixed(MarkIconWidth),
                                 Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
                             .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
@@ -601,6 +601,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 /// <summary>What the Home and Flights pages say when this window's node is in maintenance.</summary>
 internal static class MaintenanceNotice
 {
+    /// <summary>The notice with its spanner swapped for a mark the UI face draws while Night is on.</summary>
+    public static string LineFor(Palette palette) => ReferenceEquals(palette, Palette.Night) ? "! " + Line[3..] : Line;
+
     public const string Line = "🔧 This node is in maintenance: it takes no new flights (a new flight goes to a willing node of the fleet); flights in the air carry on";
 }
 

@@ -181,7 +181,7 @@ using var loggerFactory = LoggerFactory.Create(logging => logging
 var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
-var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
+var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x00, 0x00, 0x00, 0xff) };
 // The list pages' column widths a drag on a title's divider set: read from the GUI's own settings file, written back a
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();

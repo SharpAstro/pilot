@@ -587,7 +587,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         : Layout.Builder.VStack(
                 Layout.Builder.HStack(
                         Layout.Builder.Text(SayTarget is { } target ? $"Say to {target}" : "No session selected", 14f, Body).WAuto(),
-                        Layout.Builder.TextInput(SayInput, 15f, focusOnOpen: true)
+                        Layout.Builder.TextInput(SayInput, 15f, Palette.Input, focusOnOpen: true)
                             .WithShortcut(SayShortcut)
                             .WStar())
                     .WithGap(12f)

@@ -36,7 +36,7 @@ internal sealed class TranscriptEntryView
     // it is body text a step below them, not furniture: it was the faintest grey, below the tool lines (DE1, 2026-10-25).
     internal static Layout.MarkdownStyle Prose => new()
     {
-        Text = Bright, Strong = Palette.Current.Strong, Link = Palette.Current.LinkSoft, Muted = Body, Code = OutputText, CodeBackground = OutputShade,
+        Text = Bright, Strong = Palette.Current.Strong, Emphasis = Body, Link = Palette.Current.LinkSoft, Muted = Body, Code = OutputText, CodeBackground = OutputShade,
     };
     internal static Layout.MarkdownStyle Thought => new()
     {
@@ -69,7 +69,7 @@ internal sealed class TranscriptEntryView
     private readonly HashSet<int> _expanded = [];
 
     // Each Markdown entry's tree, by its index and whether it is opened.
-    private readonly Dictionary<(int Index, bool Open), Layout.Node> _markdown = [];
+    private readonly Dictionary<(int Index, bool Open, bool Night), Layout.Node> _markdown = [];
 
     /// <summary>Called when what a click opened or closed changed: the owner redraws.</summary>
     public Action? Changed { get; set; }
@@ -350,10 +350,10 @@ internal sealed class TranscriptEntryView
         var all = entry.Text.ReplaceLineEndings("\n").Split('\n');
         var open = _expanded.Contains(entry.Index);
         // Parsed once per entry, folded or opened: the tree is rebuilt every frame, and a node is immutable.
-        if (!_markdown.TryGetValue((entry.Index, open), out var document))
+        if (!_markdown.TryGetValue((entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night)), out var document))
         {
             var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
-            _markdown[(entry.Index, open)] = document = Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
         }
         yield return document;
         if (Fold(entry, all.Length, lines) is { } fold)

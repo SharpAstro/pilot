@@ -50,6 +50,15 @@ internal sealed class PilotChrome<TSurface>
     /// it is. The chords count down the rail, Ctrl+1 at the top: numbered by the enum, Chat and Repos (added later) sat at 8
     /// and 7 between 1 and 2, and the tooltip said a third number, the enum's (SE1, 2026-10-27).
     /// </summary>
+    /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn, the glyph itself where the UI face has it (the plane and the cog).</summary>
+    internal static string NightGlyph(PilotPage page, string glyph) => NightGlyphs.GetValueOrDefault(page, glyph);
+
+    private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
+    {
+        [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F",
+    };
+
     internal static readonly IReadOnlyList<(PilotPage Page, string Icon, string Label, KeyChord Shortcut, string? Locked)> Pages =
     [
         (PilotPage.Home, "\U0001F3E0", "Home", new KeyChord(InputKey.D1, InputModifier.Ctrl), null),
@@ -722,6 +731,8 @@ internal sealed class PilotChrome<TSurface>
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
             var (glyph, said) = page == PilotPage.Jobs ? tasks : (icon, null);
+            // Night has no colour emoji face, and the UI face has none of these: the page's initial, in the rail's ink.
+            glyph = Night.On ? NightGlyph(page, glyph) : glyph;
             _items.Add(new TabItem<PilotPage>(label, page)
             {
                 Icon = glyph,

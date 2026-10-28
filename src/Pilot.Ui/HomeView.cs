@@ -249,7 +249,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         TopBar.Build(new PageHeader("home")
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
-            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.Line, 12f, Ring).RowH(20f)] : [],
+            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).RowH(20f)] : [],
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)

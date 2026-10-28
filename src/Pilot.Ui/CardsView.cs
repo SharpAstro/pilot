@@ -556,7 +556,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
-    internal static string Titled(CardRow card) => card.Kind == "landed" ? "🛬 " + card.Title : card.Title;
+    internal static string Titled(CardRow card) => card.Kind == "landed" ? Palette.Glyph("🛬", "✈") + " " + card.Title : card.Title;
 
     /// <summary>A card raised while the panel is held: a dot in its bin's colour, its title on hover, until the pointer leaves.</summary>
     private static Layout.Node Waiting(CardRow card) =>

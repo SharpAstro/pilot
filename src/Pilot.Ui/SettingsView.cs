@@ -763,7 +763,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             }
             return Task.CompletedTask;
         };
-        return Layout.Builder.TextInput(input, 13f).Bg(FieldBg);
+        return Layout.Builder.TextInput(input, 13f, Palette.Input).Bg(FieldBg);
     }
 
     private static string[] Roots(SettingRow setting) =>

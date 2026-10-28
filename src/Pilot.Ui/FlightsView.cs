@@ -264,18 +264,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Palette P => Night?.Palette ?? Palette.Standard;
     private Palette? NightOrNull => ReferenceEquals(P, Palette.Night) ? P : null;
 
-    private static TextInputColors NightInput(Palette n) => new()
-    {
-        Background = n.RowAltBg,
-        BackgroundActive = n.HeaderBg,
-        Border = n.Faint,
-        BorderActive = n.Dim,
-        Text = n.Bright,
-        Placeholder = n.Dim,
-        Cursor = n.Held,
-        Selection = n.RowFocusBg,
-    };
-
     private RGBAColor32 Ground => P.Ground;
     private RGBAColor32 HeaderBg => P.HeaderBg;
     private RGBAColor32 RowAltBg => P.RowAltBg;
@@ -646,7 +634,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var action = asking.Action;
         yield return Layout.Builder.HStack(
                 Layout.Builder.Text(action.WhyPrompt ?? "why?", 12f, Dim).WAuto(),
-                Layout.Builder.TextInput(WhyInput, 14f, NightOrNull is { } n ? NightInput(n) : null, focusOnOpen: true).WStar(),
+                Layout.Builder.TextInput(WhyInput, 14f, Palette.Input, focusOnOpen: true).WStar(),
                 Layout.Builder.Text("Enter sends · Esc cancels", 11f, Faint).WAuto())
             .WithGap(10f)
             .RowH(WhyRowHeight);
@@ -881,7 +869,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var lines = new List<Layout.Node>();
         if (Maintenance)
         {
-            lines.Add(Layout.Builder.Text(MaintenanceNotice.Line, 12f, Held).RowH(20f));
+            lines.Add(Layout.Builder.Text(MaintenanceNotice.LineFor(P), 12f, Held).RowH(20f));
         }
         if (Lan is { Quiet: false } lan)
         {

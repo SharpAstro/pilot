@@ -16,7 +16,7 @@ public sealed class NightPanelsTests
         new() { Index = 0, Kind = TranscriptKind.User, Text = "launch a flight for issue 12", At = At },
         new() { Index = 1, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "pilot flight new", Description = "Start the flight", ToolUseId = "t1", At = At.AddSeconds(3) },
         new() { Index = 2, Kind = TranscriptKind.ToolResult, Text = "result-line-1\nresult-line-2", ToolUseId = "t1" },
-        new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Started **PIL12** for [issue 12](https://example.org/12) with `pilot flight new`.\n\n- the flight is flying\n- its planner is working\n\n```\ndotnet test -c Release\n```", At = At.AddSeconds(9) },
+        new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Started **PIL12** with *care* for [issue 12](https://example.org/12) with `pilot flight new`.\n\n- the flight is flying\n- its planner is working\n\n```\ndotnet test -c Release\n```", At = At.AddSeconds(9) },
         new() { Index = 4, Kind = TranscriptKind.Thinking, Text = "Waiting on the planner.", At = At.AddSeconds(12) },
         new() { Index = 5, Kind = TranscriptKind.Divider, Text = "A fresh watchtower started: its brief changed", At = At.AddMinutes(5) },
     ];
@@ -63,6 +63,7 @@ public sealed class NightPanelsTests
         chrome.Autopilot.OnToggle = _ => { };
         chrome.Autopilot.On = true;
         var transcript = Transcript();
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
         chrome.Chat.Load = (after, _) => Task.FromResult(new ChatPage { Entries = after < 0 ? transcript : [], Total = transcript.Length });
 
         var sessions = new SessionsScreen(SessionLine.Order([SessionLine.From(Live.Row("aaaa0000", "worker", SessionState.Working), At)]), "test", At);

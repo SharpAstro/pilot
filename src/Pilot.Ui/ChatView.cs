@@ -627,7 +627,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
-        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, focusOnOpen: true).RowH(30f));
+        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, Palette.Input, focusOnOpen: true).RowH(30f));
         rows.Add(Layout.Builder.Text(before.Count > 0 ? $"{before.Count + 1} lines · Enter sends · Backspace on an empty line goes back" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }

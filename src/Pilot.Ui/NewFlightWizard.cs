@@ -407,7 +407,7 @@ internal sealed class NewFlightWizard
         {
             Title("New flight · 1. Repos",
                 "Pick the repos the work is in, in the order their flights land: a library before the app that takes it. Each gets a flight that waits for the one before."),
-            Layout.Builder.TextInput(RepoFilter, 14f, focusOnOpen: true).RowH(28f),
+            Layout.Builder.TextInput(RepoFilter, 14f, Palette.Input, focusOnOpen: true).RowH(28f),
         };
         if (_repos is null)
         {
@@ -449,15 +449,15 @@ internal sealed class NewFlightWizard
         {
             Title($"New flight · 2. The issue in {repo.Name} ({_issueFor + 1} of {_chosen.Count})",
                 "The flight does this issue: its code comes from it, its planner reads it, and its PR closes it."),
-            Layout.Builder.TextInput(IssueFilter, 14f, focusOnOpen: true).RowH(28f),
+            Layout.Builder.TextInput(IssueFilter, 14f, Palette.Input, focusOnOpen: true).RowH(28f),
         };
         if (NewIssueOpen)
         {
             rows.RemoveAt(1);
             rows.Add(Layout.Builder.Text("Title", 12f, Dim).RowH(20f));
-            rows.Add(Layout.Builder.TextInput(IssueTitle, 14f, focusOnOpen: true).RowH(28f));
+            rows.Add(Layout.Builder.TextInput(IssueTitle, 14f, Palette.Input, focusOnOpen: true).RowH(28f));
             rows.Add(Layout.Builder.Text("Text (optional)", 12f, Dim).RowH(20f));
-            rows.Add(Layout.Builder.TextInput(IssueBody, 14f).RowH(28f));
+            rows.Add(Layout.Builder.TextInput(IssueBody, 14f, Palette.Input).RowH(28f));
             if (IssueStatus is { } said)
             {
                 rows.Add(Layout.Builder.Text(said, 13f, said.StartsWith("failed", StringComparison.Ordinal) ? Warn : Dim).RowH(RowHeight));
