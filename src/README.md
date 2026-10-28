@@ -856,6 +856,7 @@ Control on if it had it.
 
 ```bash
 pilot tell <text…>                             # to the watchtower, whichever session it is now
+pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
 pilot ring <subject> <title> [--detail …]      # a card that needs the controller
 pilot flag <subject> <title> [--detail …]      # a card for them, no push
@@ -863,6 +864,14 @@ pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+**`tell card/<id> <words…>`** (`pilot tell --card <id> <words…>`, #400) says to the watchtower, as the person's message, the
+card's whole context and then the words, so it can act without looking anything up. The node refuses an unknown or closed card.
+The message opens with a plain-ASCII block, `[pilot card <id>]` to `[end of card]`: the node's machine, the card's kind,
+subject and title, its detail, each choice numbered with its command (`verb target args`), its link, and the card's flight
+(its legs, PR and review), then a blank line and the words. It goes the way a plain tell does, so it is the person's turn
+(`ActingForPerson`). `CardContext` (Pilot.Contracts) composes it and `CardContext.TryParse` reads it back as the card's id and
+title, a short quote and the words, for a client to show in the chat.
 
 ### The chat (#207)
 
