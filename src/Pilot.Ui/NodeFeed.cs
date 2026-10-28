@@ -287,7 +287,7 @@ internal sealed class NodeFeed : IAsyncDisposable
                 // The mirror refused a delta out of order: start again from a snapshot rather than show a state the
                 // node never had.
                 _mirror = new NodeMirror();
-                (Log ?? Console.Error.WriteLine)($"pilot-gui: resyncing with the node: {ex.Message}");
+                Log?.Invoke($"pilot-gui: resyncing with the node: {ex.Message}");
                 SetStatus($"resyncing with the node on {_socketPath}: {ex.Message}", connected: false);
                 continue;
             }

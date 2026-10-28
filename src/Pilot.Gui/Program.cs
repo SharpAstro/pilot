@@ -11,19 +11,26 @@ using static SDL3.SDL;
 // selected one. --snapshot shows a file instead (the bundled sample is the contract's); --say says one thing and
 // exits.
 ConsoleOutput.AttachToParent();
-// gui.log (pilot #416): everything this window writes to stderr is kept in %LOCALAPPDATA%\pilot2\logs\gui.log too, rolling
-// at 4 MB. The --capture and --say one-shots do not write it: they run by the dozen in tests and scripts, and would
-// bury the window's own history (and the test runs would write to the user's real log).
-var isOneShot = args.Contains("--capture") || args.Contains("--say");
-var guiLog = isOneShot ? null : new RollingLog("gui");
-if (guiLog is not null)
+// gui.log (pilot #416): the window writes nothing to stderr; everything it would say is kept in
+// %LOCALAPPDATA%\pilot2\logs\gui.log, rolling at 4 MB. The --capture and --say one-shots log there too, and keep only their
+// result lines on stdout.
+var guiLog = new RollingLog("gui");
+void LogLine(string line) => guiLog.Write(line);
+// The one stderr use left: a crash the log may not outlive. The line goes to the log first; stderr only carries it when
+// the log cannot take it (RollingLog never throws, so a file it cannot open shows as a file that is not there).
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
-    Console.SetError(new TeeWriter(Console.Error, guiLog) { });
-}
+    var line = $"pilot-gui: unhandled exception: {e.ExceptionObject}";
+    LogLine(line);
+    if (!File.Exists(guiLog.Path))
+    {
+        LogLine(line);
+    }
+};
 
 if (GuiOptions.Parse(args, out var error) is not { } options)
 {
-    Console.Error.WriteLine(error);
+    LogLine(error!);
     return 2;
 }
 
@@ -38,7 +45,7 @@ if (nodeTarget is not null)
     var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(nodeTarget, CancellationToken.None);
     if (unknown is not null)
     {
-        Console.Error.WriteLine($"pilot-gui: {unknown}");
+        LogLine($"pilot-gui: {unknown}");
         return 2;
     }
     remoteEndpoint = resolved is not null && NodeClient.IsEndpoint(resolved, out var endpoint) ? endpoint : null;
@@ -59,7 +66,7 @@ async Task EnsureNodeAsync()
     var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
     if (outcome != NodeLaunch.Found)
     {
-        Console.Error.WriteLine($"pilot-gui: {message}");
+        LogLine($"pilot-gui: {message}");
     }
 }
 
@@ -86,7 +93,7 @@ if (options.Snapshot is { } snapshotFile)
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
     {
-        Console.Error.WriteLine($"pilot-gui: cannot read the snapshot {snapshotPath}: {ex.Message}");
+        LogLine($"pilot-gui: cannot read the snapshot {snapshotPath}: {ex.Message}");
         return 1;
     }
 
@@ -121,7 +128,7 @@ else if (options.Capture is not null)
     }
     catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException)
     {
-        Console.Error.WriteLine($"pilot-gui: no node answers on {socketPath} ({ex.Message}); start pilot-node, or pass --snapshot <file>");
+        LogLine($"pilot-gui: no node answers on {socketPath} ({ex.Message}); start pilot-node, or pass --snapshot <file>");
         return 1;
     }
 }
@@ -183,16 +190,14 @@ var chrome = new PilotChrome<VulkanContext>(renderer, view, PlayFilter.DefaultFi
 
 using var cts = new CancellationTokenSource();
 // Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get
-// the same timestamps and routing. Warnings and worse go to stderr, beside the GUI's own pilot-gui: lines.
+// the same timestamps and routing. All of it goes to gui.log, beside the GUI's own pilot-gui: lines.
 using var loggerFactory = LoggerFactory.Create(logging => logging
-    .AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; })
-    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Warning)
-    .AddProvider(guiLog is null ? Microsoft.Extensions.Logging.Abstractions.NullLoggerProvider.Instance : new FileLoggerProvider(guiLog)));
+    .AddProvider(new FileLoggerProvider(guiLog)));
 var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
-Console.Error.WriteLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
-var frameTimer = new FrameTimer(line => Console.Error.WriteLine(line));
+LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
+var frameTimer = new FrameTimer(LogLine);
 string WhatRendered()
 {
     var what = chrome.Page.ToString();
@@ -245,7 +250,7 @@ using var client = snapshot is null ? NewClient() : null;
 var feed = client is null ? null : NodeFeed.For(client);
 if (feed is not null)
 {
-    feed.Log = line => Console.Error.WriteLine(line);
+    feed.Log = LogLine;
 }
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
@@ -465,7 +470,7 @@ if (feed is not null && client is not null && clients is not null)
         }
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
         {
-            Console.Error.WriteLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
+            LogLine($"pilot-gui: the LAN cannot be watched: {ex.Message}");
         }
     }, "watch the LAN");
     // The new-flight wizard reads the node's repos and issues, and its Create makes the flights through the node.
@@ -665,7 +670,7 @@ if (feed is not null && client is not null && clients is not null)
             var (outcome, message) = await NodeLauncher.FindOrStartAsync(socketPath, namedSocket, CancellationToken.None);
             if (outcome != NodeLaunch.Found)
             {
-                Console.Error.WriteLine($"pilot-gui: {message}");
+                LogLine($"pilot-gui: {message}");
             }
             if (outcome is NodeLaunch.NamedSocketSilent or NodeLaunch.NoNodeBinary or NodeLaunch.DidNotStart)
             {
@@ -897,7 +902,7 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
-ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), Console.Error);
+ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), LogLine);
 if (restarting && Environment.ProcessPath is { } self)
 {
     // The gate first: held, the new window would hand off to this one and leave. The binary at this path is the new one,
@@ -921,7 +926,7 @@ async Task ShutDownAsync()
     }
     catch (TimeoutException)
     {
-        Console.Error.WriteLine($"pilot-gui: {tracker.PendingCount} background task(s) still running after 5 s; closing anyway");
+        LogLine($"pilot-gui: {tracker.PendingCount} background task(s) still running after 5 s; closing anyway");
     }
     if (chrome.Flights.Lan is { } lan)
     {

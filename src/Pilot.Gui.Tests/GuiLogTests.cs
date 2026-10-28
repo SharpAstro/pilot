@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-/// <summary>The GUI's rolling log (pilot #416): the roll at its limit, the tee to stderr and the file, and the slow-frame line.</summary>
+/// <summary>The GUI's rolling log (pilot #416): the roll at its limit, a former stderr line in the file and not on stderr, and the slow-frame line.</summary>
 public sealed class GuiLogTests : IDisposable
 {
     private static readonly DateTimeOffset At = new(2026, 10, 28, 9, 30, 0, TimeSpan.Zero);
@@ -59,18 +59,36 @@ public sealed class GuiLogTests : IDisposable
     }
 
     [Fact]
-    public void The_tee_writes_to_both()
+    public async Task A_former_stderr_line_lands_in_the_log_and_stderr_stays_empty()
     {
-        var log = new RollingLog("t", folder: _folder, clock: () => At);
-        var inner = new StringWriter();
-        using var tee = new TeeWriter(inner, log);
+        // The --capture one-shot on a snapshot that is not there says so; that line used to go to stderr. The child's data
+        // folder is this test's temp folder, so the user's own gui.log is never written.
+        var exe = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot-gui.exe" : "pilot-gui");
+        Directory.CreateDirectory(_folder);
+        var start = new System.Diagnostics.ProcessStartInfo(exe)
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in new[] { "--snapshot", Path.Combine(_folder, "missing.json"), "--capture", Path.Combine(_folder, "o.png") })
+        {
+            start.ArgumentList.Add(arg);
+        }
+        start.Environment["LOCALAPPDATA"] = _folder;
+        start.Environment["XDG_DATA_HOME"] = _folder;
+        start.Environment["HOME"] = _folder;
 
-        tee.WriteLine("pilot-gui: hello");
-        tee.Write("partial ");
-        tee.WriteLine("line");
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var stderr = process.StandardError.ReadToEndAsync();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        await stdout;
 
-        inner.ToString().ShouldBe($"pilot-gui: hello\npartial line\n");
-        File.ReadAllLines(log.Path).ShouldBe(["2026-10-28 09:30:00.000 pilot-gui: hello", "2026-10-28 09:30:00.000 partial line"]);
+        process.ExitCode.ShouldNotBe(0);
+        (await stderr).ShouldBeEmpty();
+        var logFile = Directory.GetFiles(_folder, "gui.log", SearchOption.AllDirectories).ShouldHaveSingleItem();
+        File.ReadAllText(logFile).ShouldContain("cannot read the snapshot");
     }
 
     [Fact]
