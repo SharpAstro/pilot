@@ -275,6 +275,28 @@ public sealed class ReviewTests1 : ReviewTestsBase
         (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, "high"));
     }
 
+    /// <summary>The flight's page draws the report as Markdown (PIL383), so the reviewer is asked to write it as that.</summary>
+    [Fact]
+    public async Task TheReviewersBriefAsksForItsReportAsMarkdownOneListItemPerFinding()
+    {
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA1"), "controller")).Error.ShouldBeNull();
+
+        var verdict = _workers.Started.Last().Brief.Split("## Your verdict")[1];
+
+        verdict.ShouldContain("as Markdown: one list item per finding");
+        verdict.ShouldContain("short first line that says what is wrong, then the detail");
+        verdict.ShouldContain("Put every code name, path");
+        verdict.ShouldContain("in backticks");
+        verdict.ShouldContain("\"Show all\"");
+        // The template's own double quotes would eat the backticks: it says how to pass the report instead.
+        verdict.ShouldContain("Pass the Markdown report intact");
+        verdict.ShouldContain("<<'EOF'");
+        verdict.ShouldContain("single-quoted here-string");
+        verdict.ShouldContain("Never put it between plain double quotes");
+    }
+
     [Fact]
     public async Task APrOpensAFreshReviewerAndOnlyItsPassOffersTheMerge()
     {
@@ -679,6 +701,22 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         var again = F(flight.Code);
         (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
+    }
+
+    [Fact]
+    public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
+    {
+        var (flight, _) = await Passed("35");
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        _github.Pr = _github.Pr! with { Draft = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(true);
+
+        // Made ready for review (by the node on a pass, or by hand): the next look says so.
+        _github.Pr = _github.Pr! with { Draft = false };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(false);
     }
 }
 
@@ -1411,22 +1449,17 @@ public sealed class ReviewTests3 : ReviewTestsBase
         _github.AutoMergeDisarmed.ShouldBeEmpty();
         var card = Open().ShouldHaveSingleItem();
         var goAround = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldBeNull();
+        var pushedBefore = Git(Repo, "ls-remote", "origin", "flight/tia35");
 
+        // The go-around takes the merge back first, and is refused while GitHub's auto-merge cannot be turned off: no leg flies under an armed PR.
+        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldNotBeNull().ShouldContain("could not be turned off");
+        _state.Legs(code).Single().State.ShouldBe(LegState.Done);
+        _github.AutoMergeDisarmed.ShouldBeEmpty();
+
+        // Opening the PR again by hand is refused too, and nothing is pushed.
         File.WriteAllText(Path.Combine(flight.Worktree, "fix35.txt"), "fixed\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        var worker = _state.Legs(code).Single().Worker!;
-        var pushedBefore = Git(Repo, "ls-remote", "origin", "flight/tia35");
-
-        // The finish refuses, with the leg still flying for its worker to finish again; nothing went up.
-        var refused = await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), worker, "done", "fixed");
-        refused.Error.ShouldNotBeNull().ShouldContain("could not be turned off");
-        _state.Legs(code).Single().State.ShouldBe(LegState.Flying);
-        Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
-
-        // The same for opening the PR again by hand: refused, nothing pushed.
-        _state.PutLeg(_state.Legs(code).Single() with { State = LegState.Done });
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldNotBeNull().ShouldContain("not pushed");
         Git(Repo, "ls-remote", "origin", "flight/tia35").ShouldBe(pushedBefore);
 

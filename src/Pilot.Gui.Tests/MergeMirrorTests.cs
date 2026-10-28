@@ -130,13 +130,13 @@ public sealed class MergeMirrorTests
     [Fact]
     public void AConflictingOrBehindCardOffersTheGoAroundAndDismissAndNoMerge()
     {
-        var card = Card([new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }],
+        var card = Card([new CardChoice { Label = "Redo leg armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }],
             "PIL244's PR #251 conflicts with its base", "GitHub cannot merge it until the conflict is resolved.");
         var arranged = Arrange(CardsScreen.From([card]), 340, out var renderer);
         using var _ = renderer;
 
-        Actions(arranged).ShouldBe(["card:c1:title", "card:c1:1", "card:c1:dismiss"], ignoreOrder: true);
-        Words(arranged).ShouldContain("Go around armed-in-gui");
+        Actions(arranged).ShouldBe(["card:c1:title", "card:c1:leg", "card:c1:1", "card:c1:dismiss"], ignoreOrder: true);
+        Words(arranged).ShouldContain("Redo leg armed-in-gui");
         Words(arranged).ShouldNotContain("Merge");
     }
 
@@ -149,7 +149,7 @@ public sealed class MergeMirrorTests
         var cards = new[]
         {
             Card([Merge(ChoiceStatus.Blocked, LongCheck)], detail: $"GitHub blocks the merge: {LongCheck} failed."),
-            Card([new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }], "conflicts", conflict, id: "c2"),
+            Card([new CardChoice { Label = "Redo leg armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }], "conflicts", conflict, id: "c2"),
         };
         foreach (var card in cards)
         {
@@ -236,9 +236,9 @@ public sealed class MergeMirrorTests
             Card([Merge(ChoiceStatus.Passing)], "PIL245's PR #252 is ready to merge", "Every check passed.", id: "c2"),
             Card([Merge(ChoiceStatus.Queued, "position 2")], "PIL246's PR #253 is in the merge queue", "in the merge queue, position 2: PIL246 lands once the queue merges it", id: "c3"),
             Card([Merge(ChoiceStatus.Armed, "6 of 7")], "PIL247's PR #254 merges when its checks pass", "merging when checks pass: 6 of 7 done. GitHub merges it, with the node up or not.", id: "c4"),
-            Card([Merge(ChoiceStatus.Blocked, LongCheck)], $"PIL248's PR #255 is blocked: {LongCheck} failed", $"GitHub blocks the merge: {LongCheck} failed. Go around to fix what it found, or re-run the check if it was a flake.", id: "c5"),
+            Card([Merge(ChoiceStatus.Blocked, LongCheck)], $"PIL248's PR #255 is blocked: {LongCheck} failed", $"GitHub blocks the merge: {LongCheck} failed. Redo the leg to fix what it found, or re-run the check if it was a flake.", id: "c5"),
             Card([Merge(ChoiceStatus.ChangesRequested)], "PIL249's PR #256 has changes requested", "A review on GitHub asks for changes. They are read first, then the merge is offered again.", id: "c6"),
-            Card([new CardChoice { Label = "Go around armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }],
+            Card([new CardChoice { Label = "Redo leg armed-in-gui", Verb = Verbs.GoAround, Target = "flight/PIL244/armed-in-gui", Args = ["rebase"] }],
                 "PIL250's PR #257 conflicts with its base", "GitHub cannot merge it until the conflict is resolved. The node rebases it by itself, once a head; one that conflicts is a go-around: the last leg resolves it.", id: "c7"),
             Card([Merge(ChoiceStatus.Merged)], "PIL251's PR #258 is ready to merge", state: CardState.Closed, closedAt: closedAt, id: "c8"),
         ];

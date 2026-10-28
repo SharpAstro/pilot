@@ -100,6 +100,8 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.ShouldContain("leg_remove");
         tools.Keys.ShouldContain("leg_validate");
         tools.Keys.ShouldContain("job_cancel");
+        tools.Keys.ShouldContain("job_pause");
+        tools.Keys.ShouldContain("job_resume");
         tools.Keys.ShouldNotContain("mcp");
 
         var plan = tools["leg_plan"];

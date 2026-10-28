@@ -132,7 +132,8 @@ if (options.Capture is { } capturePath)
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
-        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)]);
+        jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
+        hover: options.Hover, flightsView: options.View, select: options.Select);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -385,6 +386,32 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
         return refused;
     };
+    // The chat with another node's watchtower (a card raised there was chatted about): its feed is read through its own
+    // client, which needs no grant, and what is typed is told through the grant's, a refusal said in the chat.
+    chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
+        ? chat
+        : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.OnSendOn = async (node, text) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.TellAsync(to, text, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell {node.Name}'s watchtower: {refused ?? "told"}");
+        return refused;
+    };
+    // A card's Chat about this: the words go to the node the card was raised on, as its tell card/<id>.
+    chrome.Chat.OnSendAboutCard = async (card, node, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.TellAboutCardAsync(to, card.Id, words, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
+        return refused;
+    };
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);
@@ -502,6 +529,20 @@ if (feed is not null && client is not null && clients is not null)
     }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
     chrome.Jobs.OnCancel = CancelJob(force: false);
     chrome.Jobs.OnForceCancel = CancelJob(force: true);
+    chrome.Jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "pause");
+    chrome.Jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resume");
+    void SendJobVerb(JobRow job, string verb, string word) => tracker.Run(async () =>
+    {
+        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        {
+            Console.WriteLine($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
+            return;
+        }
+        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
+        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
+        Console.WriteLine($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
+        loop.RequestRedraw();
+    }, $"{word} {job.Id}");
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect

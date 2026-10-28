@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
 using Shouldly;
 using Xunit;
@@ -51,5 +53,133 @@ public sealed class AutostartTests
 
         exit.ShouldBe(NodeExitCodes.InvalidArguments);
         error.ToString().ShouldContain("autostart takes the node's own options");
+    }
+
+    [Theory]
+    [InlineData("/home/ada/.local/share/pilot2/bin/pilot-node")]
+    [InlineData("/home/ada/my bin/pilot-node", "--lan", "--repo-root", "/home/ada/src/my org")]
+    [InlineData("/opt/pilot-node", "50%", "$HOME", "say \"hi\"", "back\\slash", "", "it's")]
+    public void ExecStartReadsBackAsThePathAndArgumentsTheUnitWasWrittenFrom(string path, params string[] args)
+    {
+        var unit = Autostart.SystemdUnit(path, args);
+        var exec = unit.Split('\n').Single(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))["ExecStart=".Length..];
+
+        var parsed = Autostart.ParseExecStart(exec).ShouldNotBeNull();
+
+        parsed.Path.ShouldBe(path);
+        parsed.Args.ShouldBe(args);
+        Autostart.UnitIsCurrent(unit).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ExecOfReadsThePathAndOptionsOfTheUnitInPlace()
+    {
+        var unit = Autostart.SystemdUnit("/opt/pilot-node", ["--data", "/x y", "--lan"]).Replace("\n", "\r\n");
+
+        var own = Autostart.ExecOf(unit).ShouldNotBeNull();
+
+        own.Path.ShouldBe("/opt/pilot-node");
+        own.Args.ShouldBe(["--data", "/x y", "--lan"]);
+        Autostart.ExecOf("[Service]\n").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ASetupCheckFlagsAStaleUnitForRewriteAndPassesACurrentOne()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pilot-setup-" + Guid.NewGuid().ToString("N"));
+        NodeSetup Setup(string unit) => new(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude"))
+        {
+            AutostartEntry = () => "unit: ExecStart=/opt/pilot-node",
+            UnitText = () => unit,
+        };
+        var current = Autostart.SystemdUnit("/opt/pilot-node", ["--data", "/x"]);
+
+        var stale = Setup(current.Replace("Restart=always", "Restart=always\nKillMode=process")).Checks().Single(c => c.Key == NodeSetup.AutostartKey);
+        var ok = Setup(current).Checks().Single(c => c.Key == NodeSetup.AutostartKey);
+
+        stale.Ok.ShouldBeFalse();
+        stale.Fix.ShouldBe("Rewrite");
+        ok.Ok.ShouldBeTrue();
+        ok.Fix.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("ExecStart=\"/unclosed")]
+    public void AnExecStartThatDoesNotReadIsNotCurrent(string line) => Autostart.UnitIsCurrent("[Service]\n" + line + "\n").ShouldBeFalse();
+
+    [Fact]
+    public void AUnitThatDiffersFromTheOneTheNodeWritesIsStale()
+    {
+        var current = Autostart.SystemdUnit("/home/ada/pilot-node", ["--lan"]);
+
+        Autostart.UnitIsCurrent(current).ShouldBeTrue();
+        Autostart.UnitIsCurrent(current.Replace("Restart=always", "Restart=always\nKillMode=process")).ShouldBeFalse();
+        Autostart.UnitIsCurrent(current.Replace("RestartSec=5", "RestartSec=1")).ShouldBeFalse();
+        Autostart.UnitIsCurrent(current.Replace("\n", "\r\n")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void UnderSystemdARestartStopsTheNodeAndStartsNoSuccessor()
+    {
+        var (restarter, lifetime, started) = Restarter("/home/ada/pilot-node", systemd: true);
+
+        restarter.Request("a setting").ShouldBeNull();
+
+        lifetime.Stopped.ShouldBeTrue();
+        started.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void WithoutSystemdARestartStartsTheSuccessorAndStopsTheNode()
+    {
+        var (restarter, lifetime, started) = Restarter("/home/ada/pilot-node", systemd: false);
+
+        restarter.Request("a setting").ShouldBeNull();
+
+        lifetime.Stopped.ShouldBeTrue();
+        started.ShouldBe(["/home/ada/pilot-node"]);
+    }
+
+    [Fact]
+    public void SystemdOrNotOnlyAPilotNodeRestartsItself()
+    {
+        NodeRestarter.UnderSystemdUnit("/usr/bin/dotnet").ShouldBeFalse();
+        var (restarter, lifetime, started) = Restarter("/usr/bin/dotnet", systemd: false);
+
+        restarter.Request("a setting").ShouldNotBeNull().ShouldContain("does not restart itself");
+
+        lifetime.Stopped.ShouldBeFalse();
+        started.ShouldBeEmpty();
+    }
+
+    private static (NodeRestarter Restarter, StopRecorder Lifetime, List<string> Started) Restarter(string node, bool systemd)
+    {
+        var lifetime = new StopRecorder();
+        var started = new List<string>();
+        var restarter = new NodeRestarter(lifetime, NullLogger<NodeRestarter>.Instance)
+        {
+            NodePath = node,
+            RestartedBySystemd = _ => systemd,
+            StartSuccessor = path =>
+            {
+                started.Add(path);
+                return true;
+            },
+        };
+        return (restarter, lifetime, started);
+    }
+
+    private sealed class StopRecorder : IHostApplicationLifetime
+    {
+        public bool Stopped { get; private set; }
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication() => Stopped = true;
     }
 }

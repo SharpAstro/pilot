@@ -83,6 +83,23 @@ public sealed class MergeFixtureCardTests
     }
 
     [Theory]
+    [InlineData("blocked-check", "build (windows-latest, win-x64) failed")]
+    [InlineData("review-required", "a review is required")]
+    [InlineData("changes-requested", "asks for changes")]
+    [InlineData("pending", "still running")]
+    public async Task APrGitHubHoldsBackIsNotSummarisedAsReady(string fixture, string says)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Ready(node);
+
+        await Look(node, Read(fixture));
+
+        var summary = Card(node, ready).Summary.ShouldNotBeNull();
+        summary.ShouldContain(says);
+        summary.ShouldNotContain("is ready");
+    }
+
+    [Theory]
     [InlineData("conflicts", "conflicts with its base")]
     [InlineData("behind", "is behind its base")]
     public async Task ConflictsAndBehindShowAsAGoAroundThatRebasesAndLinkTheirPr(string fixture, string title)

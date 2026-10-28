@@ -237,14 +237,76 @@ public sealed class FleetTests
         marked.Maintenance.ShouldBeTrue();
         marked.ToDumpLine().ShouldEndWith(" | 🔧 maintenance");
         FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("s2")).Maintenance.ShouldBeFalse();
-        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2", connected: false)).Maintenance.ShouldBeFalse();
+        FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, InMaintenance("s2", connected: false) with { Node = null }).Maintenance.ShouldBeFalse();
 
         using var vessel = new RgbaImageRenderer(1, 1);
         var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
         var screen = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")), marked], Live.At);
         var described = CellLayout.Describe(Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
 
-        described.Split('\n').Count(l => l.Contains("🔧 maintenance", StringComparison.Ordinal)).ShouldBe(1);
+        described.Split('\n').Count(l => l.Contains("maintenance", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    /// <summary>A node in maintenance that goes unreachable keeps its mark, dated, its values dimmed and its status line says when it was last heard.</summary>
+    [Fact]
+    public void AnUnreachableNodeKeepsItsLastKnownRowDimmedAndDated()
+    {
+        var heard = new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero);
+        var hhmm = heard.ToLocalTime().ToString("HH:mm");
+        var gone = InMaintenance("s2", connected: false) with { DownSince = heard, RetryEvery = TimeSpan.FromSeconds(2), LiveSessions = 3, WaitingOnYou = 1, Flying = 2, Rings = 1 };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, gone);
+
+        line.LastKnown.ShouldBeTrue();
+        line.Connected.ShouldBeFalse();
+        line.Maintenance.ShouldBeTrue();
+        line.AsOf.ShouldBe($"as of {hhmm}");
+        line.State.ShouldBe($"last heard {hhmm} (restarting or unreachable; retrying every 2 s)");
+        (line.Account, line.Sessions, line.Flights, line.Rings).ShouldBe(("bo@example.org", "3 live · 1 waiting on you", "2 flying", 1));
+        line.WaitingOnYou.ShouldBe(0);
+        line.CanSetMaintenance.ShouldBeFalse();
+        line.ToDumpLine().ShouldContain($" | {FleetLine.MaintenanceMark} as of {hhmm}");
+
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<int>(0, 0, 1280, 400), CellMeasureContext.PixelAuthored);
+        bool Has(string text) => arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text);
+        Has($"{FleetLine.MaintenanceWord} as of {hhmm}").ShouldBeTrue();
+        line.StateLines.ShouldBe([$"last heard {hhmm}", "(restarting or unreachable; retrying every 2 s)"]);
+        foreach (var part in line.StateLines)
+        {
+            Has(part).ShouldBeTrue();
+        }
+        Has("2 flying").ShouldBeTrue();
+        arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
+    }
+
+    /// <summary>The header counts only the rings of rows that answer now; a last-known row still shows its own, dimmed.</summary>
+    [Fact]
+    public void TheHeaderDoesNotCountALastKnownRowsRings()
+    {
+        var live = FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org", rings: 1));
+        var gone = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null,
+            Summary("s2", "bo@example.org", connected: false, rings: 1) with { DownSince = new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero) });
+
+        gone.LastKnown.ShouldBeTrue();
+        gone.Rings.ShouldBe(1);
+        new FleetScreen([live, gone], Live.At).Summary.ShouldBe("2 nodes · 1 live · 1 ringing");
+    }
+
+    /// <summary>A node never heard has nothing last said: dashes, and a status that says why.</summary>
+    [Fact]
+    public void ANodeNeverHeardShowsDashesAndWhy()
+    {
+        var never = Summary("quiet", connected: false) with { Node = null };
+        var waiting = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, never);
+        var refused = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, never with { Status = "no node on 10.0.0.9:47731: refused; retrying every 2s" });
+
+        waiting.LastKnown.ShouldBeFalse();
+        (waiting.Account, waiting.Sessions, waiting.Flights, waiting.Jobs, waiting.Rings).ShouldBe(("—", "—", "—", "—", 0));
+        waiting.State.ShouldStartWith("no answer yet");
+        refused.State.ShouldContain("refused");
+        waiting.Maintenance.ShouldBeFalse();
     }
 
     /// <summary>
@@ -298,6 +360,68 @@ public sealed class FleetTests
         fleet.OnMaintenance = null;
         Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 220, 40), CellMeasureContext.PixelAuthored)
             .Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action.EndsWith(":maintenance", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Frames of the whole fleet story (PILOT_TEST_CAPTURE_DIR names the folder; without it nothing is written): a live node, a live
+    /// node in maintenance with autopilot and usage, the same node unreachable, and a node never heard; at 900 and 1800 wide.
+    /// The Fleet page has the one palette; the node pills are also framed on Flights, in its day and its night palette.
+    /// </summary>
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1800)]
+    public void TheFleetStoryIsCapturedInBothPalettes(int width)
+    {
+        var heard = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero);
+        var live = new NodeMark("node.sock", "node.sock", "SE1", Here: true);
+        var busy = new NodeMark("10.0.0.7:47731", "10.0.0.7:47731", "DE1", Here: false);
+        var gone = new NodeMark("10.0.0.9:47731", "10.0.0.9:47731", "DE2", Here: false);
+        var quiet = new NodeMark("10.0.0.5:47731", "10.0.0.5:47731", "LE1", Here: false);
+        var inMaintenance = InMaintenance("de1", connected: true) with { Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
+        inMaintenance = inMaintenance with { Node = inMaintenance.Node! with { Autopilot = true, MachinePrefix = "DE1", MachineName = "NAS-1" } };
+        var down = InMaintenance("de2", connected: false) with { DownSince = heard, RetryEvery = TimeSpan.FromSeconds(2), Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
+        down = down with { Node = down.Node! with { Autopilot = true, MachinePrefix = "DE2", MachineName = "LAPTOP-3" } };
+        var never = Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" };
+        var screen = new FleetScreen(
+        [
+            FleetLine.From(live.Where, here: true, canCommand: true, null, Summary("se1", "ada@example.org", flying: 2) with { Node = Summary("se1").Node! with { MachinePrefix = "SE1", MachineName = "DESKTOP-7" } }),
+            FleetLine.From(busy.Where, here: false, canCommand: true, null, inMaintenance, heard.AddMinutes(30)),
+            FleetLine.From(gone.Where, here: false, canCommand: true, null, down, heard.AddMinutes(30)),
+            FleetLine.From(quiet.Where, here: false, canCommand: true, null, never, heard.AddMinutes(30)),
+        ], heard.AddMinutes(30));
+
+        FleetLine.From(gone.Where, here: false, canCommand: true, null, down).Maintenance.ShouldBeTrue();
+        var capture = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } dir ? dir : null;
+        using var renderer = new RgbaImageRenderer((uint)width, 760);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.LinkFleet();
+        chrome.Nodes.Choices = [live, busy, gone];
+        chrome.Nodes.Down = new Dictionary<string, DateTimeOffset?> { [gone.Key] = heard };
+        var sessions = new SessionsScreen([], "test", heard);
+        FlightLine Flight(string code, int issue, string title, NodeMark node, string? stale = null) =>
+            FlightLine.From(new FlightRow { Code = code, Repo = "tianwen", RepoPath = "/r/tianwen", Issue = issue, Title = title, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = heard }, [], heard.AddMinutes(30))
+                with { Node = node, Stale = stale };
+        // One flight from each heard node, so the Flights frames show every node's pill and rows; the never-heard LE1 has none.
+        var flights = new FlightsScreen(FlightLine.Order([Flight("TIA1611", 1611, "Planets on the GPU", live), Flight("TIA1612", 1612, "Mount model", busy), Flight("TIA1613", 1613, "Guider calibration", gone, "DE2")]), "test", heard);
+
+        chrome.Show(PilotPage.Fleet);
+        chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 760));
+        void Keep(string name)
+        {
+            if (capture is not null)
+            {
+                Directory.CreateDirectory(capture);
+                File.WriteAllBytes(Path.Combine(capture, $"{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 760));
+            }
+        }
+        Keep("fleet-day");
+        foreach (var (name, mode) in new[] { ("flights-day", FlightsViewMode.Grid), ("flights-night", FlightsViewMode.Night) })
+        {
+            chrome.Flights.Mode = mode;
+            chrome.Show(PilotPage.Flights);
+            chrome.Render(sessions, flights, null, null, screen, new RectF32(0, 0, width, 760));
+            Keep(name);
+        }
     }
 
     private static NodeSummary WithWatchtower(WatchtowerHealth? health, bool connected = true) =>
@@ -406,5 +530,93 @@ public sealed class FleetTests
         Described(queued).ShouldContain("j14 holds the queue (xy1-orb204-parser), held for 11m 0s");
         Described(queued).ShouldContain(@"waiting for C:\x\done.txt");
         Described(Summary("laptop", "ada@example.org")).ShouldNotContain("holds the queue");
+    }
+
+    /// <summary>An unreachable node's status line (last heard, retrying) reads in full: its leaf is as wide as the text, at a narrow and a wide window.</summary>
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1800)]
+    public void ALastKnownRowsStatusLineIsNotClipped(int width)
+    {
+        var down = InMaintenance("de2", connected: false) with { DownSince = new DateTimeOffset(2026, 10, 28, 5, 34, 0, TimeSpan.Zero), RetryEvery = TimeSpan.FromSeconds(2), Usage = "5 h 42% · 7 d 18%" };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, down, Live.At);
+        var never = FleetLine.From("10.0.0.5:47731", here: false, canCommand: true, null,
+            Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" }, Live.At);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line, never], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        foreach (var text in (string[])[.. line.StateLines, line.Usage, never.State])
+        {
+            var leaf = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == text).ShouldHaveSingleItem();
+            var measured = renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 11f).Width;
+            leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(measured - 0.5f, text);
+        }
+    }
+
+    /// <summary>The marks under a row's account (maintenance, churning watchtower, autopilot, usage) each end a gap before the next starts, live and last known, narrow and wide.</summary>
+    [Theory]
+    [InlineData(false, 1280)]
+    [InlineData(false, 700)]
+    [InlineData(true, 1280)]
+    [InlineData(true, 700)]
+    public void TheMarksUnderTheAccountNeverOverlap(bool lastKnown, int width)
+    {
+        var churning = Calm with { Churning = true, StartsLast24h = 9, Summary = "12 watchtowers in the last hour" };
+        var summary = WithWatchtower(churning, connected: !lastKnown) with
+        {
+            Usage = "5h 41% · 7d 12%",
+            DownSince = lastKnown ? new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero) : null,
+            Node = Summary("s2").Node! with { Maintenance = true, Autopilot = true, Watchtower = churning },
+        };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, summary, Live.At);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
+        string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
+        var icon = leaves.Where(a => TextOf(a) == FleetLine.MaintenanceIcon).ShouldHaveSingleItem();
+        var word = leaves.Where(a => TextOf(a).StartsWith(FleetLine.MaintenanceWord, StringComparison.Ordinal)).ShouldHaveSingleItem();
+        var marks = new List<(string Name, float Left, float Right)> { ("maintenance", icon.Bounds.X, word.Bounds.X + word.Bounds.Width) };
+        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("autopilot", line.AutopilotWord), ("usage", line.Usage) })
+        {
+            if (!string.IsNullOrEmpty(text))
+            {
+                var leaf = leaves.Where(a => TextOf(a) == text).ShouldHaveSingleItem();
+                // A last known row's usage has a line of its own under the marks, so it is not in the gap row.
+                if (name != "usage" || !lastKnown)
+                {
+                    marks.Add((name, leaf.Bounds.X, leaf.Bounds.X + leaf.Bounds.Width));
+                }
+                else
+                {
+                    leaf.Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+                    leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(renderer.MeasureText(text.AsSpan(), SessionsCapture.FontPath, 11f).Width - 0.5f);
+                }
+            }
+        }
+
+        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 2 : 3);
+        if (!lastKnown)
+        {
+            marks.ShouldContain(m => m.Name == "usage");
+        }
+        if (lastKnown)
+        {
+            // The status keeps a line of its own under the marks, so it is not squeezed out by them.
+            foreach (var part in line.StateLines)
+            {
+                leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem().Bounds.Y.ShouldBeGreaterThan(icon.Bounds.Y);
+            }
+        }
+        icon.Bounds.Width.ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkIconWidth);
+        marks.Sort((a, b) => a.Left.CompareTo(b.Left));
+        for (var i = 1; i < marks.Count; i++)
+        {
+            (marks[i].Left - marks[i - 1].Right).ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkGap - 0.01f, $"{marks[i - 1].Name} then {marks[i].Name}");
+        }
     }
 }

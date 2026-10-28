@@ -25,6 +25,15 @@ public interface IProcessTable
 
     /// <summary>The physical memory the process <paramref name="pid"/> holds now, in bytes; null when it is gone or cannot be read (a table that has no memory to read says nothing).</summary>
     long? MemoryOf(int pid) => null;
+
+    /// <summary>Freezes that one process (a table with nothing real to freeze does nothing); false when it could not be.</summary>
+    bool Suspend(int pid) => false;
+
+    /// <summary>Thaws that one process, once for each time it was frozen; false when it could not be.</summary>
+    bool Resume(int pid) => false;
+
+    /// <summary>Stops (<paramref name="stop"/>) or continues every process of the group <paramref name="pgid"/>; only where there are process groups (Linux, where a job is its own session).</summary>
+    bool SignalGroup(int pgid, bool stop) => false;
 }
 
 /// <summary>The real table: toolhelp's snapshot on Windows, <c>/proc</c> elsewhere.</summary>
@@ -70,6 +79,66 @@ public sealed class OsProcessTable : IProcessTable
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or Win32Exception or NotSupportedException)
         {
             // Gone already.
+        }
+    }
+
+    private const uint ProcessSuspendResume = 0x0800;
+    private const int SigStop = 19;
+    private const int SigCont = 18;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, int pid);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSuspendProcess(nint process);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtResumeProcess(nint process);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int kill(int pid, int signal);
+
+    public bool Suspend(int pid) => Freeze(pid, suspend: true);
+
+    public bool Resume(int pid) => Freeze(pid, suspend: false);
+
+    public bool SignalGroup(int pgid, bool stop)
+    {
+        try
+        {
+            return !OperatingSystem.IsWindows() && pgid > 1 && kill(-pgid, stop ? SigStop : SigCont) == 0;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static bool Freeze(int pid, bool suspend)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return kill(pid, suspend ? SigStop : SigCont) == 0;
+            }
+            var handle = OpenProcess(ProcessSuspendResume, false, pid);
+            if (handle == 0)
+            {
+                return false;
+            }
+            try
+            {
+                return (suspend ? NtSuspendProcess(handle) : NtResumeProcess(handle)) >= 0;
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
         }
     }
 

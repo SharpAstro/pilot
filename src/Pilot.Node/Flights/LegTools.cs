@@ -329,6 +329,13 @@ public interface IGitHub
     /// </summary>
     Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Takes PR <paramref name="number"/> out of its base's merge queue (GraphQL <c>dequeuePullRequest</c>); no error when it is not
+    /// queued, or its base has no queue.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub would not take it out.</exception>
+    Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken);
+
     /// <summary>Runs PR <paramref name="number"/>'s failed workflow runs again (<c>gh run rerun --failed</c>); how many runs it asked for.</summary>
     /// <exception cref="FlightException">The PR has no failed run, or gh could not rerun one.</exception>
     Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken);
@@ -475,7 +482,7 @@ public sealed class GhCli : IGitHub
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
@@ -491,7 +498,8 @@ public sealed class GhCli : IGitHub
                 ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
                 : null,
             MergeCommit: root.TryGetProperty("mergeCommit", out var merge) ? TextOf(merge, "oid") ?? "" : "",
-            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null);
+            MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null,
+            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True);
     }
 
     public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
@@ -930,6 +938,26 @@ public sealed class GhCli : IGitHub
         if (exit != 0)
         {
             throw new FlightException($"gh could not queue #{number} to merge: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    private const string DequeueMutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}";
+
+    public async Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        // The PR's node id is found as joining the queue finds it; a base with no queue has nothing to leave.
+        if (await QueuedPullRequestAsync(repoPath, number, cancellationToken) is not { } id)
+        {
+            return;
+        }
+        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken);
+        var said = (error.Trim().Length > 0 ? error : output).Trim();
+        // Not queued (or merged, or closed) already is the state wanted.
+        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal))
+            && !said.Contains("not in the merge queue", StringComparison.OrdinalIgnoreCase) && !said.Contains("not queued", StringComparison.OrdinalIgnoreCase)
+            && !said.Contains("not currently", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"gh could not take #{number} out of the merge queue: {said}");
         }
     }
 

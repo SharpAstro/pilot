@@ -90,10 +90,13 @@ Install one by unzipping it into a folder on `PATH` (`%LOCALAPPDATA%\pilot2\bin`
 `pilot-node autostart install -- <node options>` starts the node at logon with those options (none, once the settings
 file holds them), and now if none answers
 on its socket: a value in the user's `Run` key on Windows (through `conhost --headless`, so no console window), a
-systemd user unit on Linux (`Restart=always`, so a self-update's restart is the unit's own; exit code 3, another node on
-the socket, is not retried). The options are checked by the node's own parser before anything is written.
+systemd user unit on Linux (`Restart=always`; jobs run in scopes of their own, and an update or a settings restart starts no
+successor: the node exits and the unit restarts it itself; exit code 3, another node on the socket, is not retried; a unit
+that differs from the one the node writes fails the setup check, whose fix `Rewrite` writes it again and reloads systemd). The options are checked by the node's own parser before anything is written.
 `autostart show` says what is there, `autostart remove` takes it out. Without it the node runs while something
 started it: by hand, or the GUI, whose node listens on its socket only, never on the LAN.
+
+`tests/linux/systemd-jobs.sh` proves the Linux half on a real systemd (WSL Ubuntu will do): `wsl -d Ubuntu -- bash tests/linux/systemd-jobs.sh` from the plane root installs a node as the user unit, starts a job, restarts the node by a setting and by an update from a folder feed, and checks the job lives on with the same start time, is listed running by the new node, ends with its own exit code, and the unit is active. It takes linux-x64 builds from `$PILOT_LINUX_PUBLISH` (see its header for the three `dotnet publish -p:PublishAot=false` lines; AOT does not cross-compile from Windows), works in a scratch folder under `/tmp`, and puts back a `pilot-node` unit it found (the unit name is fixed, and systemd reads only `~/.config/systemd/user`). It enables user lingering when no user bus answers.
 
 An installed node keeps itself on the latest release by `--update-policy`:
 
@@ -114,6 +117,11 @@ A prerelease is never GitHub's latest release, so a stable node never sees the b
 the Actions artifacts earlier runs left (the zips that matter are release assets, which Actions storage does not count).
 
 It looks a minute after it starts and every 6 hours (15 minutes on beta), through `gh` (the repo is private, and gh's login reads it).
+`pilot node restart [why…]` restarts the node without an install, as a setting does: it starts the same binary as its
+successor (`--after <its pid>`) and stops, with the restart's caller and the jobs left (`1 job carries on under the next
+node`) on a Handled card and in the answer. It is your-only like an update (a flight's session is refused, an assistant is
+sorted by the autopilot rule), and refused, with nothing stopped, when the node's binary is not `pilot-node` or the
+successor does not start.
 `pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
 runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
 `pilot-node --version`, then renames each file it replaces (and each of the old release's the new one lacks) to
@@ -304,15 +312,29 @@ The brief says the depth and why (`Depth: light (usage at 88%).`), the review ro
 carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 
 - `pilot review pass <report>` from the plane offers the merge: the PR-ready card, with the review's words.
-- `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
+- **More work takes the merge back (#342).** `plan-leg`, `start-leg` and `go-around` on a flight whose merge is armed (the
+  node's `MergeWhenGreen`, or GitHub's auto-merge) or queued in GitHub's merge queue take it back first: the node's arm is
+  cleared, auto-merge disarmed, the PR dequeued (GraphQL `dequeuePullRequest`), the passed review turned back to Changes
+  (the PR to draft), the PR-ready card's Merge closed, and a Handled `merge-taken-back` card says so and why. The merge is
+  offered again only once the new leg is done and a fresh review passes. A disarm or dequeue GitHub refuses refuses the
+  verb with that said, so a PR is never left armed under a new leg. The queue watcher skips a flight with a leg not done,
+  so the node's own dequeue is not rung as a dropped merge.
+- **Too late: the PR merged under the new leg (#342).** When GitHub shows the PR MERGED as a leg is planned, started or
+  flying (the take-back, or PrChecks seeing the merge), a Ring `merged-under-leg` card says the merge went without the
+  leg and its work goes to a new PR. The flight stays flying and is not landed: its PR and review are let go, its merge
+  cards close, and the merged head is kept (`MergedHead`). When its legs are done, `open-pr` (the node's next step)
+  rebases the plane `--onto` the base from that head (the merged commits drop out, squashed or not), pushes, opens the new
+  PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
+  done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
+- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
   for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
   before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
-  closes, and the review's ring offers **Go around**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Go around**
+  closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
+- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Redo leg**
   sends the last leg's worker to rebase it, keeping both sides' work.
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
@@ -440,10 +462,10 @@ The node watches every flying leg's worker (`LegWatch`, every 30 s) and never le
 | The worker | What the node does |
 | --- | --- |
 | stopped by the usage limit, with a reset time | A For-you card saying when it resumes; 2 min after the reset, says "carry on" to it (resumed as a real turn) and closes the card. Stopped again on the same reset, it rings. |
-| stopped by the API with no reset time | Rings, with **Resume** and **Go around**. |
-| idle (or ended) with its leg unfinished, 3 min past its last answer | Nudges it, twice at most, with what is left and how to finish or give up; then rings, with **Nudge** and **Go around**. |
+| stopped by the API with no reset time | Rings, with **Resume** and **Redo leg**. |
+| idle (or ended) with its leg unfinished, 3 min past its last answer | Nudges it, twice at most, with what is left and how to finish or give up; then rings, with **Nudge** and **Redo leg**. |
 | waiting on a person | Rings with what it waits on; it is answered in its own session, or gone around. |
-| failed, or never showed up 3 min after its start | Rings, with **Go around**. |
+| failed, or never showed up 3 min after its start | Rings, with **Redo leg**. |
 
 Each nudge and resume is a Handled card. The watch's cards close by themselves once the worker works again, and a
 go-around or a finished leg closes every card about the leg. What it resumed and nudged is kept in memory, so a node
@@ -565,11 +587,14 @@ pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
 pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
+pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
 pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
 pilot jobs                                     # the node's jobs, running first
 pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
 pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
+pilot job <id> pause                           # freezes a running job's processes; it keeps its slot and its timeout stops
+pilot job <id> resume                          # lets a paused job run on
 pilot mcp                                      # these commands as an MCP server over stdio (see The MCP server)
 ```
 
@@ -638,7 +663,7 @@ once; a short spike never does. `--job-memory <GB>` (0 by default) is a floor: a
 the order they came, each saying what it needs (median and peak) and the memory free now. A job's log is kept in the node's data folder
 (`jobs/<id>.log`), and its end is served for the GUI (`GET /api/v1/jobs/<id>/log`, a grant's on the LAN).
 
-A job runs **detached** from the node (its own session via `setsid`, or on Windows its own hidden console outside the
+A job runs **detached** from the node (its own session via `setsid`, and under a Linux systemd unit also its own transient user scope, `systemd-run --user --scope`, outside the node unit's cgroup so the unit's default `KillMode=control-group` does not kill it when the node exits; or on Windows its own hidden console outside the
 node's job object, in a named job object of its own, inheriting only the log and NUL, so no pipe the node holds): its
 shell writes stdout and stderr straight to the log and its exit code to `jobs/<id>.log.exit` when it ends. The Running row carries `Pid`, `ProcessStartedAt` and `ExitPath`; the node
 follows the log file for the tail and step, takes the end from the process exit plus the exit file (no file: failed, no
@@ -659,6 +684,8 @@ runtime's processor count, a test host's default parallelism among it. It does n
 (MSBuild asks the OS for the core count; a Release build of Pilot.slnx peaked at 11 worker nodes on 12 cores with it, with
 `MSBUILDNODECOUNT`, `MSBUILDCORELIMIT` and `MSBUILDNODELIMITOFFSET`, and with none): no environment variable does, only
 `-maxcpucount:4` or a `Directory.Build.rsp`, which edit the build.
+
+`pause-job job/<id>` freezes a running job's whole process tree (every process the node reads under it, and on Linux the job's process group too; `pilot job <id> pause`, the `job_pause` MCP tool, **Pause** in the GUI) and `resume-job` thaws it (`pilot job <id> resume`, `job_resume`). A paused job stays Running, so it keeps its slot. Its row records `PausedAt` and `PausedFor` and is the truth: a restarted node finds a paused job still frozen and reading paused, and resume, cancel and the timeout reach it by pid as for any job. Its timeout does not count the time it is paused, and cancel or a timeout thaw the tree before they kill it, so nothing is left frozen behind.
 
 A worker that finishes its own leg is stopped after 90 s, once it has said its report. Claude Code tears down a worktree
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
@@ -699,7 +726,7 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 context against its window, last response, state, spend, usage in the header; a bar to say something to the selected
 one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and
 artifacts (a click opens them), and what can be done with it now: **Start <leg>**, **Open PR**, **Review again** run
-at once. **Go around** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
+at once. **Redo leg** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
 from the row menu) asking why: Enter sends the verb (`go-around`, `remove-leg`) with that why to the flight's own node, Escape
 closes the field. **Plan a leg** needs a goal and a Done-when, which the planner writes: it opens the Chat page with
 `plan a leg on <code>: ` in its box for the person to finish, and the watchtower's plan card comes back to confirm; only on this window's own node's flights, since the chat's watchtower runs `pilot` against that node and another node's flight has no such leg there. There is no
@@ -743,7 +770,10 @@ its planner) follow with no command typed; Escape closes the form first.
 
 The right panel is the watchtower's: its state and context, its Remote Control link, then the cards with their buttons
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
-panel once had a box to tell it things; that box is the chat's now).
+panel once had a box to tell it things; that box is the chat's now). Every open card also has **Chat about this** (#400),
+beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is with the node, absent from a handled or
+closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
+card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
@@ -775,7 +805,23 @@ asks for a read at once); leaving the page stops the reads and coming back resum
 - **● working…** while the watchtower is on a turn, **● sending…** while a message is on its way;
 - a rule where a fresh watchtower began (`A fresh watchtower started: its brief changed`);
 - what was said and not yet taken, dim under the messages (`queued · not read yet`);
-- a question it asked, with its choices as buttons: a click says the choice to the watchtower, as typing it would.
+- a question it asked, with its choices as buttons: a click says the choice to the watchtower, as typing it would;
+- a message about a card (#400: the `CardContext` block the node's `tell card/<id>` makes, then the person's words) as the
+  card's short quote (`> card c1: title`, and its detail cut to a line) followed by the words, never the whole block
+  (`ChatView.AsQuoted`).
+
+**Chat about this** (`ChatView.Attach`) holds the card, with its node, as a quote above the box (id, node, title, two lines
+at most) with a **Drop** to let it go. While one is held, Enter sends the words through `OnSendAboutCard`
+(`ChatCommands.TellAboutCardAsync`: `tell card/<id> <words>` on the node the card was raised on, so another node's card is
+told to that node's watchtower; a node with no grant is refused in the chat) and the card is dropped with the message; a
+choice button's answer never carries it.
+
+**Another node's card** points the page at that node (`ChatView.SwitchTo`, `Node`; null is this window's own): what is held
+is dropped and the page reads that node's chat feed from the start (`LoadOn`, its client through `FleetClients.For` with no
+grant needed to read), and typing goes through `OnSendOn` (that node's grant; no grant is refused in the chat's notices, and
+such a card has no live **Chat about this** button). The header then reads `watchtower · SE1` with a **This node's
+watchtower** pill back (`chat:back`) in place of New watchtower, which restarts this node's only. The rail's Chat, its chord
+and the panel's foot always open this node's chat. pilot-tui wires the same.
 
 The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, as the panel's box did): **Enter** sends,
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
@@ -798,7 +844,8 @@ The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then t
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
 or a terminal), its state with what it is doing, waits on or came to, when it started and how long it ran; a job that
 ended without its owner being told says so. The selected job shows its folder, log and timeout beside the end of its
-output (its last 200 lines, read from the node every 2 s while selected), with **Cancel** while it runs or waits,
+output (its last 200 lines, read from the node every 2 s while selected), with **Pause** while it runs and **Resume**
+while it is paused (a paused job reads *paused*, since when, here, in `pilot jobs` and on its flight's page), **Cancel** while it runs or waits,
 **Its session** (the transcript of the session it wakes, from when it was handed over) and **Open log**; its
 right-click menu adds its folder and Copy entries.
 
@@ -856,6 +903,7 @@ Control on if it had it.
 
 ```bash
 pilot tell <text…>                             # to the watchtower, whichever session it is now
+pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
 pilot ring <subject> <title> [--detail …]      # a card that needs the controller
 pilot flag <subject> <title> [--detail …]      # a card for them, no push
@@ -863,6 +911,14 @@ pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+**`tell card/<id> <words…>`** (`pilot tell --card <id> <words…>`, #400) says to the watchtower, as the person's message, the
+card's whole context and then the words, so it can act without looking anything up. The node refuses an unknown or closed card.
+The message opens with a plain-ASCII block, `[pilot card <id>]` to `[end of card]`: the node's machine, the card's kind,
+subject and title, its detail, each choice numbered with its command (`verb target args`), its link, and the card's flight
+(its legs, PR and review), then a blank line and the words. It goes the way a plain tell does, so it is the person's turn
+(`ActingForPerson`). `CardContext` (Pilot.Contracts) composes it and `CardContext.TryParse` reads it back as the card's id and
+title, a short quote and the words, for a client to show in the chat.
 
 ### The chat (#207)
 
@@ -926,7 +982,7 @@ is tried again in 10 min. This replaced the watchtower's keep-warm round every 5
 - **The digest**, at 08:00 and 18:00 local time (`pilot digest` for one now): a For-you card of what landed, what the
   node and the watchtower handled, line by line, and what is parked (held flights, failed legs, open cards). A newer
   digest closes the last; the watchtower pushes it as one short message.
-- **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Go around**,
+- **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Redo leg**,
   and keeps working until you choose. `pilot leg extend <tokens>` raises it by hand.
 
 ### Usage
@@ -1094,7 +1150,7 @@ command is refused, naming each node and why it did not qualify (`in maintenance
 Any other setting's change restarts the node to run with it at once, whatever jobs run or wait (a job runs detached
 from the node and the next node follows it again, and the answer says how many carry on: ` (2 jobs carry on under the
 next node)`, as an update's says `; 2 jobs carry on`): the node starts its successor with its own arguments and
-`--after <its pid>`, and stops, as a self-update does, so flights, sessions and the watchtower carry on and clients
+`--after <its pid>`, and stops, as a self-update does (under its systemd unit it only stops, and the unit restarts it), so flights, sessions and the watchtower carry on and clients
 resume their stream. A setting the command line gives is saved but says it does
 not count until the command line stops giving it.
 
@@ -1121,6 +1177,19 @@ guard for this binary: a user-wide `PreToolUse` hook on `Bash` and `PowerShell` 
 `pilot-node merge-guard` (see Hooks). It is TODO until its button (or `pilot-node setup`, or `pilot settings setup
 merge-guard`) installs it; a guard for another path of the binary, or an older one on `Bash` alone, fails it until the
 fix replaces it, and a second install changes nothing.
+
+The **Claude Code permissions** check (`setup node claude-permissions`, not optional) reads `permissions.allow` in the same
+user settings file and lists which of pilot's allow rules are missing, so an unattended session is not stopped at a permission
+prompt for its own commands. The rules, each for both `Bash` and `PowerShell`: `pilot <verb>:*` for `update`, `node`, `answer`,
+`dismiss`, `settings`, `job`, `jobs`, `cancel`, `leg`, `flight`, `review`, `tell`, `say`, `cards`, `status` and `sessions`, and
+the node's own binary and the `pilot` CLI beside it by full path (`<path>:*`), so a restart by path is allowed. A rule counts
+as present when the list has it, the whole tool (`Bash`), or every pilot verb (`Bash(pilot:*)`). The check names how many are
+missing and which. Its button (`pilot settings setup claude-permissions`) first copies the file as it is to
+`settings.json.pilot-bak` beside it, then appends only the missing rules after the entries already there, creating
+`permissions.allow` when absent and touching nothing else; with nothing missing it writes nothing and makes no backup, and a
+file that is not valid JSON (or whose `allow` is not a list) is refused and left byte for byte as it was. Allowing a command
+only lets Claude Code run it: the node still refuses a caller without the role, and merges and a person's cards stay guarded by
+the node and the merge guard.
 
 One more optional check is **Guard hooks** (`setup node guard-hooks`): it says whether three generic guard hooks
 are in `~/.claude/settings.json`: `big_read_guard.sh` (refuses a whole-file `Read` and a bare `cat`),
@@ -1163,7 +1232,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Go around); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `connect-overlap`, `create-issue`, `create-flight` or `sync-repos` |
 | **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
@@ -1200,7 +1269,7 @@ sorted by the `autopilot` setting (`Autopilot` on the node):
   person, a human-run CLI and a grant are not in the rule at all.
 
 The message is the optional `Why` of a command (`CommandRequest.Why`), filled by `--why "<message>"` on `pilot flight merge`,
-`pilot flight land`, `pilot settings set`, `pilot settings setup` and `pilot update` (and the matching MCP tool inputs); it is
+`pilot flight land`, `pilot settings set`, `pilot settings setup`, `pilot update` and `pilot node restart` (and the matching MCP tool inputs); it is
 empty when none is given.
 
 ## Cards
@@ -1210,7 +1279,7 @@ before an irreversible step, a stop: waits until someone acts), **For you** (a c
 node or the watchtower did itself: one line, born closed). A session going quiet is not a card by itself; it changes
 how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
-PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
+PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Redo leg**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
 watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
 `worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings

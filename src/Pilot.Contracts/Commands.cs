@@ -257,6 +257,15 @@ public static class Verbs
     /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
     public const string ForceArg = "force";
 
+    /// <summary>
+    /// <c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree. The job stays <see cref="JobState.Running"/>
+    /// (it keeps its slot), its row says <see cref="JobRow.PausedAt"/>, and its timeout stops counting.
+    /// </summary>
+    public const string PauseJob = "pause-job";
+
+    /// <summary><c>resume-job job/&lt;id&gt;</c>: thaws a paused job's process tree; the time it was paused is added to <see cref="JobRow.PausedFor"/>.</summary>
+    public const string ResumeJob = "resume-job";
+
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";
 
@@ -328,6 +337,12 @@ public static class Verbs
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>
     public const string Update = "update";
+
+    /// <summary>
+    /// <c>restart-node node [why…]</c> (<c>pilot node restart</c>): the node starts its successor and stops, as for a setting
+    /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
+    /// </summary>
+    public const string RestartNode = "restart-node";
 
     /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
@@ -463,6 +478,9 @@ public static class Verbs
 
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
+
+    /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
+    public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";

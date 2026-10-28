@@ -71,6 +71,16 @@ public sealed record FlightRow
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 
+    /// <summary>
+    /// The head its PR merged at while a leg was planned or flying (#342): the merge went without that leg's work, so the flight
+    /// is not landed as merged, and when its legs are done the plane is rebased onto the base from this head and goes up as a
+    /// new PR. Null otherwise.
+    /// </summary>
+    public string? MergedHead { get; init; }
+
+    /// <summary>The number of the PR that merged without the new leg, while <see cref="MergedHead"/> says so.</summary>
+    public int? MergedPullRequest { get; init; }
+
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
 
@@ -82,6 +92,12 @@ public sealed record FlightRow
 
     /// <summary>The PR's head as GitHub had it at the node's last look at it (#222); null before a look.</summary>
     public string? GitHubHead { get; init; }
+
+    /// <summary>
+    /// Whether the PR is a draft as GitHub had it at the node's last look at it, which it keeps for a flight with a review (the
+    /// pages' PR state: draft, open, queued, merged); null before a look, where the pages say open.
+    /// </summary>
+    public bool? GitHubDraft { get; init; }
 
     /// <summary>
     /// The <c>pilot:</c> label GitHub has on the PR as of the node's last look (several, joined by a comma, if someone added
