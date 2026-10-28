@@ -285,6 +285,81 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void RepoGroupsAreGroupedOnceMoreByOrgTheOrgWithThePullRequestThatMostNeedsThePersonFirstAndEachWithItsCounts()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["sharpastro", "sebgod", "acme"], ReadAt = Noon,
+            PullRequests =
+            [
+                Row("sebgod/a", 1, PullRequestKind.Conflicts, 2),
+                Row("SharpAstro/draft", 2, PullRequestKind.Draft, 1),
+                Row("SharpAstro/ready", 3, PullRequestKind.Ready, 8),
+                Row("sharpastro/READY", 4, PullRequestKind.ChecksRunning, 1),
+                Row("sebgod/b", 5, PullRequestKind.Conflicts, 1),
+                Row("acme/x", 6, PullRequestKind.Ready, 20),
+            ],
+        };
+
+        var orgs = row.OrgGroups();
+
+        // Ready in acme (older) and SharpAstro (newer) tie on rank: the more recently updated first, then the conflicts.
+        orgs.Select(o => o.Org).ShouldBe(["SharpAstro", "acme", "sebgod"]);
+        // Each org's repos are Groups' order, the repos of an org as Groups has them.
+        orgs[0].Repos.Select(g => g.Repo).ShouldBe(["SharpAstro/ready", "SharpAstro/draft"]);
+        orgs[2].Repos.Select(g => g.Repo).ShouldBe(["sebgod/b", "sebgod/a"]);
+        orgs.SelectMany(o => o.Repos).Select(g => g.Repo).ShouldBe(row.Groups().Select(g => g.Repo), ignoreOrder: true);
+        // The words of the summary, over the org's PRs, so header and summary read alike.
+        orgs[0].Counts.ShouldBe("3 open · 1 ready · 1 checks running");
+        orgs[2].Counts.ShouldBe("2 open · 2 conflicts");
+        row.Summary().ShouldBe(PullRequestsRow.Counts(row.PullRequests));
+        orgs.All(o => o.Error is null).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnOrgWithNoPullRequestOrWhoseReadFailedIsStillListedAfterTheOnesWithPullRequestsAndAFailedOneKeepsItsLastReadPullRequests()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["zeta", "SharpAstro", "alpha", "sebgod"], ReadAt = Noon,
+            PullRequests = [Row("SharpAstro/a", 1, PullRequestKind.Draft), Row("sebgod/m", 2, PullRequestKind.Ready)],
+            Errors = [new PullRequestsError { Org = "sebgod", Message = "gh offline\nretry" }, new PullRequestsError { Org = "Sebgod", Message = "rate limited" }, new PullRequestsError { Org = "elsewhere", Message = "no access" }],
+        };
+
+        var orgs = row.OrgGroups();
+
+        orgs.Select(o => o.Org).ShouldBe(["sebgod", "SharpAstro", "alpha", "elsewhere", "zeta"]);
+        // A failed org keeps what was read of it, and says why (once however it is cased, on one line).
+        orgs[0].ShouldSatisfyAllConditions(o => o.Error.ShouldBe("gh offline retry rate limited"), o => o.Repos.Single().PullRequests.Single().Number.ShouldBe(2), o => o.Counts.ShouldBe("1 open · 1 ready"));
+        orgs[1].Error.ShouldBeNull();
+        // No PR: nothing to show under it, and it counts none.
+        orgs[2].ShouldSatisfyAllConditions(o => o.Repos.ShouldBeEmpty(), o => o.Counts.ShouldBe("0 open"), o => o.Error.ShouldBeNull());
+        // An error naming an org that is not among Orgs is one too.
+        orgs[3].Error.ShouldBe("no access");
+    }
+
+    [Fact]
+    public void TheNeedsMeOrgGroupsKeepOnlyTheOrgsWithAPullRequestThatNeedsThePersonOrWhoseReadFailed()
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro", "sebgod", "quiet", "down"], ReadAt = Noon,
+            PullRequests = [Row("SharpAstro/a", 1, PullRequestKind.Ready), Row("SharpAstro/a", 2, PullRequestKind.ChecksRunning), Row("sebgod/m", 3, PullRequestKind.Draft)],
+            Errors = [new PullRequestsError { Org = "down", Message = "offline" }],
+        };
+
+        var orgs = row.OrgGroups(needsMeOnly: true);
+
+        orgs.Select(o => o.Org).ShouldBe(["SharpAstro", "down"]);
+        // The shown repos are the ones that need the person; the counts are still of everything the org has open.
+        orgs[0].Repos.Single().PullRequests.Select(p => p.Number).ShouldBe([1]);
+        orgs[0].Counts.ShouldBe("2 open · 1 ready · 1 checks running");
+        orgs[1].Repos.ShouldBeEmpty();
+        RowOf().OrgGroups().Single().ShouldSatisfyAllConditions(o => o.Org.ShouldBe("SharpAstro"), o => o.Counts.ShouldBe("0 open"), o => o.Repos.ShouldBeEmpty());
+        RowOf().OrgGroups(needsMeOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void RowsOfSeveralNodesMergeIntoOneWithTheNewestReadOfEachPullRequestAndTheFlightEitherKnew()
     {
         var mine = new PullRequestsRow
@@ -307,6 +382,11 @@ public sealed class PullRequestsTests : IDisposable
         // The orgs as the newest read spelled them, once however they are cased.
         merged.Orgs.ShouldBe(["sharpastro", "sebgod"]);
         merged.Errors.Single().Message.ShouldBe("offline");
+        // The per-org errors and the rate-limit note of every node stand, an error once however its org is cased.
+        var limited = PullRequestsRow.Merge([mine with { Note = "Rate-limited by GitHub until 14:05; reading again then" }, theirs with { Errors = [.. theirs.Errors, new PullRequestsError { Org = "SEBGOD", Message = "offline" }, new PullRequestsError { Org = "acme", Message = "no access" }] }])!;
+        limited.Errors.Select(e => e.Message).ShouldBe(["offline", "no access"]);
+        limited.Note.ShouldBe("Rate-limited by GitHub until 14:05; reading again then");
+        limited.OrgGroups().Single(o => o.Org == "sebgod").Error.ShouldBe("offline");
         // As old as the oldest read, so a node that stopped reading shows as stale.
         merged.ReadAt.ShouldBe(Noon - TimeSpan.FromMinutes(1));
         PullRequestsRow.Merge([null, null]).ShouldBeNull();
@@ -368,7 +448,7 @@ public sealed class PullRequestsTests : IDisposable
         new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System);
 
     [Fact]
-    public async Task TheWatchSearchesOncePerDistinctOwnerOfTheClonesOriginsAndMapsAFlightBranchToItsFlight()
+    public async Task TheWatchSearchesTheTrackedReposInOneBatchAndMapsAFlightBranchToItsFlight()
     {
         var pilot = Clone("SharpAstro", "pilot");
         Clone("SharpAstro", "tianwen");
@@ -381,12 +461,12 @@ public sealed class PullRequestsTests : IDisposable
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         });
         var github = new FakeGitHub();
-        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1" }, Row("SharpAstro/tianwen", 8, PullRequestKind.Draft) with { Head = "flight/pil1" }];
-        github.OrgPrs["sebgod"] = [Row("sebgod/mercury", 9, PullRequestKind.Behind)];
+        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1" }, Row("SharpAstro/tianwen", 8, PullRequestKind.Draft) with { Head = "flight/pil1" }, Row("sebgod/mercury", 9, PullRequestKind.Behind)]);
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
-        github.OrgSearches.ShouldBe(["SharpAstro", "sebgod"], ignoreOrder: true);
+        // One search for the three repos with a GitHub origin; the clone whose origin is elsewhere is not in it.
+        github.Searches.Single().ShouldBe(["sebgod/mercury", "SharpAstro/pilot", "SharpAstro/tianwen"]);
         row.Orgs.ShouldBe(["sebgod", "SharpAstro"]);
         row.PullRequests.Select(p => (p.Number, p.Flight)).ShouldBe([(7, "PIL1"), (8, null), (9, null)], ignoreOrder: true);
         state.PullRequests().ShouldBe(row);
@@ -402,7 +482,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub { Login = null };
-        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Author = "sebgod" }];
+        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Author = "sebgod" });
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
@@ -435,25 +515,40 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
-    public async Task AnOrgThatCannotBeSearchedIsNamedInTheRowAndKeepsTheLastReadOfItsPullRequests()
+    public async Task EveryOrgOfABatchThatCannotBeSearchedIsNamedInTheRowAndKeepsTheLastReadOfItsPullRequestsWhileTheOtherBatchesAreReadAfresh()
     {
-        Clone("SharpAstro", "pilot");
-        Clone("sebgod", "mercury");
+        // Twelve repos of two orgs, named long enough that they take more than one search.
+        var long1 = Enumerable.Range(0, 6).Select(i => $"SharpAstro/repo-with-a-rather-long-name-{i}").ToArray();
+        var long2 = Enumerable.Range(0, 6).Select(i => $"sebgod/another-quite-long-repository-name-{i}").ToArray();
+        foreach (var repo in long1.Concat(long2))
+        {
+            Clone(repo.Split('/')[0], repo.Split('/')[1]);
+        }
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 1, PullRequestKind.Ready)];
-        github.OrgPrs["sebgod"] = [Row("sebgod/mercury", 2, PullRequestKind.Ready)];
+        for (var i = 0; i < 6; i++)
+        {
+            github.PullRequestsOnGitHub.Add(Row(long1[i], i + 1, PullRequestKind.Ready));
+            github.PullRequestsOnGitHub.Add(Row(long2[i], i + 101, PullRequestKind.Ready));
+        }
         var watch = Watch(state, github);
         await watch.RefreshAsync(Ct);
+        github.Searches.Count.ShouldBeGreaterThan(1);
+        var first = github.Searches.Count;
 
-        github.OrgPrsFail.Add("sebgod");
-        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 1, PullRequestKind.Behind)];
+        // One repo of the batch the first of the sorted repos is in fails it; every other batch is read again.
+        var failing = github.Searches[0][0];
+        github.SearchFail.Add(failing);
+        github.PullRequestsOnGitHub.RemoveAll(p => p.Number is 2);
         var row = (await watch.RefreshAsync(Ct))!;
 
-        var error = row.Errors.Single();
-        (error.Org, error.Message).ShouldBe(("sebgod", "gh could not search sebgod's PRs: offline"));
-        // The other org is read afresh; the failed one stands as it was read rather than vanishing.
-        row.PullRequests.Select(p => (p.Number, p.Kind)).ShouldBe([(1, PullRequestKind.Behind), (2, PullRequestKind.Ready)], ignoreOrder: true);
+        var batch = github.Searches[first];
+        var failedOrgs = batch.Select(r => r.Split('/')[0]).Distinct().Order().ToArray();
+        row.Errors.Select(e => e.Org).Order().ToArray().ShouldBe(failedOrgs);
+        row.Errors.ShouldAllBe(e => e.Message == $"gh could not search the PRs of {batch.Length} repos: offline");
+        // The failed batch's PRs stand as they were read, PR 2 included (it is closed now, but this read could not say); the rest are read afresh.
+        row.PullRequests.Count(p => batch.Contains(p.Repo)).ShouldBe(batch.Length);
+        row.PullRequests.Any(p => p.Number == 2).ShouldBe(batch.Contains(long1[1]));
     }
 
     [Fact]
@@ -465,7 +560,7 @@ public sealed class PullRequestsTests : IDisposable
         (await Watch(state, github).RefreshAsync(Ct)).ShouldBeNull();
 
         state.PullRequests().ShouldBeNull();
-        github.OrgSearches.ShouldBeEmpty();
+        github.Searches.ShouldBeEmpty();
     }
 
     [Fact]
@@ -474,7 +569,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 1, PullRequestKind.Ready)];
+        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
         var time = new ManualTime(Noon);
         var watch = Watch(state, github, time);
         watch.Interval.ShouldBe(TimeSpan.FromSeconds(60));
@@ -482,23 +577,23 @@ public sealed class PullRequestsTests : IDisposable
         await watch.StartAsync(Ct);
         try
         {
-            await Until(() => github.OrgSearches.Count == 1 && time.Waiting == 1);
+            await Until(() => github.Searches.Count == 1 && time.Waiting == 1);
             state.PullRequests()!.ReadAt.ShouldBe(Noon);
 
             time.Advance(TimeSpan.FromSeconds(59));
             await Task.Delay(50, Ct);
-            github.OrgSearches.Count.ShouldBe(1);
+            github.Searches.Count.ShouldBe(1);
 
-            github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 1, PullRequestKind.Behind)];
+            github.PullRequestsOnGitHub.Clear(); github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Behind));
             time.Advance(TimeSpan.FromSeconds(1));
-            await Until(() => github.OrgSearches.Count == 2 && time.Waiting == 1);
+            await Until(() => github.Searches.Count == 2 && time.Waiting == 1);
             state.PullRequests()!.PullRequests.Single().Kind.ShouldBe(PullRequestKind.Behind);
             state.PullRequests()!.ReadAt.ShouldBe(Noon.AddSeconds(60));
 
             // Refresh: now, with no time passed.
-            github.OrgPrs["SharpAstro"] = [Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("SharpAstro/pilot", 2, PullRequestKind.Draft)];
+            github.PullRequestsOnGitHub.Clear(); github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("SharpAstro/pilot", 2, PullRequestKind.Draft)]);
             var row = (await watch.RefreshAsync(Ct))!;
-            github.OrgSearches.Count.ShouldBe(3);
+            github.Searches.Count.ShouldBe(3);
             row.PullRequests.Length.ShouldBe(2);
             state.PullRequests()!.PullRequests.Length.ShouldBe(2);
         }
@@ -522,7 +617,7 @@ public sealed class PullRequestsTests : IDisposable
         held.SetResult();
 
         (await first).ShouldBeSameAs(await second);
-        github.OrgSearches.Count.ShouldBe(1);
+        github.Searches.Count.ShouldBe(1);
     }
 
     [Fact]
@@ -535,11 +630,11 @@ public sealed class PullRequestsTests : IDisposable
             Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         });
-        node.GitHub.OrgPrs["SharpAstro"] =
+        node.GitHub.PullRequestsOnGitHub.AddRange(
         [
             Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1", Author = "sebgod", Review = PullRequestReview.Passed },
             Row("SharpAstro/pilot", 8, PullRequestKind.Draft),
-        ];
+        ]);
 
         var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.RefreshPullRequests, Target = Verbs.NodeTarget, Who = "test" }, Ct)).Response!;
 
@@ -555,6 +650,259 @@ public sealed class PullRequestsTests : IDisposable
         (await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "prs", "--needs-me", "--output-format", "plain"], _root, needsMe, new StringWriter(), Ct)).ShouldBe(0);
         needsMe.ToString().ShouldContain("#7 PR 7");
         needsMe.ToString().ShouldNotContain("#8 PR 8");
+    }
+
+    // ---- scope: only the repos pilot works in (#429)
+
+    private static PrReviewRow Review(string repo, int number) => new()
+    {
+        Repo = repo, Number = number, Url = $"https://github.com/{repo}/pull/{number}", Base = "main", Head = "4f2c9a01d6e8",
+        ClonePath = "/r", Worktree = $"/r/.claude/worktrees/review-{number}", Reviewer = $"review-{number}",
+        State = PrReviewState.Reviewing, StartedAt = Noon,
+    };
+
+    [Fact]
+    public async Task OnlyTheTrackedReposAreSearchedTheClonesAndTheReposOfFlightsAndPrReviewsAndNeverAnOrg()
+    {
+        var pilot = Clone("SharpAstro", "pilot");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        // A review of a PR in a repo that is not cloned here: tracked all the same.
+        state.PutPrReview(Review("acme/widget", 7));
+        var github = new FakeGitHub();
+        // GitHub holds PRs of other repos of the same orgs, which an org-wide search would have read.
+        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("acme/widget", 7, PullRequestKind.Ready), Row("SharpAstro/never-cloned", 2, PullRequestKind.Ready), Row("acme/other", 3, PullRequestKind.Ready)]);
+
+        var row = (await Watch(state, github).RefreshAsync(Ct))!;
+
+        var search = github.Searches.Single();
+        search.ShouldBe(["SharpAstro/pilot", "acme/widget"], ignoreOrder: true);
+        PullRequestSearch.QueryFor(search).ShouldNotContain("org:");
+        PullRequestSearch.QueryFor(search).ShouldStartWith("is:pr is:open repo:");
+        row.PullRequests.Select(p => p.Repo).Order().ToArray().ShouldBe(new[] { "SharpAstro/pilot", "acme/widget" }.Order().ToArray());
+        row.Orgs.ShouldBe(["acme", "SharpAstro"]);
+
+        // A flight's repo is tracked whether or not it is in the catalog, and a repo is tracked once however it came to be.
+        var flight = new FlightRow
+        {
+            Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        };
+        PullRequestWatch.TrackedRepos([], [flight], [Review("sharpastro/PILOT", 3), Review("acme/widget", 7)])
+            .ShouldBe(["acme/widget", "SharpAstro/pilot"]);
+        PullRequestWatch.TrackedRepos([], [flight], []).ShouldBe(["SharpAstro/pilot"]);
+    }
+
+    [Fact]
+    public void ReposAreBatchedIntoRepoQualifiersAndSplitWhereAQueryWouldPassTheLimit()
+    {
+        PullRequestSearch.MaxQueryLength.ShouldBe(256);
+        PullRequestSearch.QueryFor(["a/b", "c/d"]).ShouldBe("is:pr is:open repo:a/b repo:c/d");
+        PullRequestSearch.Batches([]).ShouldBeEmpty();
+        Show(PullRequestSearch.Batches(["a/b", "c/d", "A/B"])).ShouldBe("a/b,c/d");
+
+        var repos = Enumerable.Range(0, 40).Select(i => $"SharpAstro/repo-number-{i:00}").ToArray();
+        var batches = PullRequestSearch.Batches(repos);
+
+        batches.Length.ShouldBeGreaterThan(1);
+        // Every repo is in exactly one batch, in order, and no batch makes a query past the limit.
+        batches.SelectMany(b => b).ShouldBe(repos);
+        batches.ShouldAllBe(b => PullRequestSearch.QueryFor(b).Length <= PullRequestSearch.MaxQueryLength);
+        // As full as can be: the next batch's first repo would not have fitted in the batch before it.
+        for (var i = 1; i < batches.Length; i++)
+        {
+            PullRequestSearch.QueryFor(batches[i - 1].Append(batches[i][0])).Length.ShouldBeGreaterThan(PullRequestSearch.MaxQueryLength);
+        }
+
+        // A query of exactly 256 characters fits; one more does not.
+        var head = PullRequestSearch.QueryFor([]).Length;
+        string Of(int length) => "o/" + new string('x', length - 2);
+        var room = PullRequestSearch.MaxQueryLength - head - 2 * " repo:".Length;
+        PullRequestSearch.Batches([Of(100), Of(room - 100)]).Length.ShouldBe(1);
+        PullRequestSearch.QueryFor([Of(100), Of(room - 100)]).Length.ShouldBe(256);
+        PullRequestSearch.Batches([Of(100), Of(room - 100 + 1)]).Length.ShouldBe(2);
+        // A repo too long for a query alone is still searched, alone.
+        Show(PullRequestSearch.Batches([Of(300), "a/b"])).ShouldBe($"{Of(300)} {"a/b"}");
+    }
+
+    private static string Show(string[][] batches) => string.Join(" ", batches.Select(b => string.Join(",", b)));
+
+    [Fact]
+    public async Task TheWatchSplitsManyReposIntoSearchesThatEachStayWithinTheQueryLimit()
+    {
+        var repos = Enumerable.Range(0, 23).Select(i => $"SharpAstro/clone-{i:00}").ToArray();
+        foreach (var repo in repos)
+        {
+            Clone("SharpAstro", repo.Split('/')[1]);
+        }
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.AddRange(repos.Select((r, i) => Row(r, i + 1, PullRequestKind.Ready)));
+
+        var row = (await Watch(state, github).RefreshAsync(Ct))!;
+
+        github.Searches.Count.ShouldBeGreaterThan(1);
+        github.Searches.ShouldAllBe(s => PullRequestSearch.QueryFor(s).Length <= PullRequestSearch.MaxQueryLength);
+        github.Searches.SelectMany(s => s).Order().ToArray().ShouldBe(repos);
+        row.PullRequests.Length.ShouldBe(23);
+    }
+
+    [Fact]
+    public async Task ARepoThatIsNoLongerTrackedLeavesTheRowEvenWhenItsSearchFailsAndItsHeldPullRequestsAreNotKept()
+    {
+        Clone("SharpAstro", "pilot");
+        var mercury = Clone("sebgod", "mercury");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("sebgod/mercury", 2, PullRequestKind.Ready)]);
+        var watch = Watch(state, github);
+        (await watch.RefreshAsync(Ct))!.PullRequests.Length.ShouldBe(2);
+
+        // The clone goes: its repo is tracked no more, and the PR GitHub still holds is not in the row.
+        foreach (var file in Directory.EnumerateFiles(mercury, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+        Directory.Delete(mercury, recursive: true);
+        var row = (await watch.RefreshAsync(Ct))!;
+
+        row.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);
+        row.Orgs.ShouldBe(["SharpAstro"]);
+        // Nor are its held PRs kept when what is left cannot be read: only the tracked repo's stand.
+        github.PullRequestsOnGitHub.Add(Row("sebgod/mercury", 2, PullRequestKind.Ready));
+        github.SearchFail.Add("SharpAstro/pilot");
+        var failed = (await watch.RefreshAsync(Ct))!;
+        failed.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);
+        failed.Errors.Single().Org.ShouldBe("SharpAstro");
+    }
+
+    [Fact]
+    public async Task TheRowCarriesTheGraphQlPointsTheReadCostAndWhatIsLeftAndTheLogLineSaysSo()
+    {
+        Clone("SharpAstro", "pilot");
+        Clone("sebgod", "mercury");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub { SearchCost = 4, SearchRemaining = 4321 };
+        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        var log = new StringWriter();
+        var watch = Watch(state, github);
+        watch.Error = log;
+
+        var row = (await watch.RefreshAsync(Ct))!;
+
+        // One search of both repos: its cost, and the points GitHub says are left.
+        (row.Cost, row.RateRemaining, row.Note).ShouldBe((4, 4321, null));
+        log.ToString().ShouldContain("1 open PRs of 2 repos in 1 searches, 4 GraphQL points, 4321 left");
+        // The cost of several searches is summed.
+        github.SearchCost = 5;
+        foreach (var i in Enumerable.Range(0, 20))
+        {
+            Clone("SharpAstro", $"another-clone-{i:00}");
+        }
+        var more = (await watch.RefreshAsync(Ct))!;
+        github.Searches.Count.ShouldBeGreaterThan(2);
+        more.Cost.ShouldBe(5 * (github.Searches.Count - 1));
+        // And merging several nodes' rows adds their reads up.
+        PullRequestsRow.Merge([row, more with { ReadAt = row.ReadAt.AddSeconds(1) }])!.Cost.ShouldBe(row.Cost + more.Cost);
+    }
+
+    [Fact]
+    public async Task ARateLimitedReadKeepsTheHeldPullRequestsSaysSoOnTheRowAndTheNextReadsWaitForTheReset()
+    {
+        Clone("SharpAstro", "pilot");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        var time = new ManualTime(Noon);
+        var watch = Watch(state, github, time);
+        (await watch.RefreshAsync(Ct))!.Note.ShouldBeNull();
+
+        var reset = Noon.AddMinutes(30);
+        github.RateLimited = (true, reset);
+        github.PullRequestsOnGitHub.Clear();
+        time.Advance(TimeSpan.FromMinutes(1));
+        var limited = (await watch.RefreshAsync(Ct))!;
+
+        github.Searches.Count.ShouldBe(2);
+        limited.Note.ShouldBe("Rate-limited by GitHub until 12:30 UTC: showing what was last read, reading again then");
+        limited.PullRequests.Select(p => p.Number).ShouldBe([1]);
+        limited.RateRemaining.ShouldBe(0);
+        limited.Errors.ShouldBeEmpty();
+        state.PullRequests()!.Note.ShouldBe(limited.Note);
+
+        // Until the reset, a read (or a refresh asked for) asks GitHub nothing and shows the same PRs, as old as they were.
+        github.RateLimited = (false, null);
+        time.Advance(TimeSpan.FromMinutes(20));
+        var waiting = (await watch.RefreshAsync(Ct))!;
+        github.Searches.Count.ShouldBe(2);
+        (waiting.Note, waiting.Cost, waiting.ReadAt).ShouldBe((limited.Note, 0, limited.ReadAt));
+        waiting.PullRequests.Select(p => p.Number).ShouldBe([1]);
+
+        // At the reset it reads again, and the note goes.
+        time.Advance(TimeSpan.FromMinutes(8) + TimeSpan.FromSeconds(59));
+        (await watch.RefreshAsync(Ct))!.Note.ShouldNotBeNull();
+        github.Searches.Count.ShouldBe(2);
+        time.Advance(TimeSpan.FromSeconds(1));
+        var again = (await watch.RefreshAsync(Ct))!;
+        github.Searches.Count.ShouldBe(3);
+        again.Note.ShouldBeNull();
+        again.PullRequests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARateLimitStopsTheLoopReadingEveryMinuteUntilTheResetAndAnUnknownResetIsWaitedOutForAWhile()
+    {
+        Clone("SharpAstro", "pilot");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        var time = new ManualTime(Noon);
+        var watch = Watch(state, github, time);
+
+        await watch.StartAsync(Ct);
+        try
+        {
+            await Until(() => github.Searches.Count == 1 && time.Waiting == 1);
+            github.RateLimited = (true, Noon.AddMinutes(31));
+            time.Advance(TimeSpan.FromSeconds(60));
+            await Until(() => github.Searches.Count == 2 && time.Waiting == 1);
+            github.RateLimited = (false, null);
+
+            // Not every minute: nothing is read for the half hour the limit holds.
+            time.Advance(TimeSpan.FromMinutes(29));
+            await Task.Delay(50, Ct);
+            github.Searches.Count.ShouldBe(2);
+            time.Advance(TimeSpan.FromMinutes(1));
+            await Until(() => github.Searches.Count == 3 && time.Waiting == 1);
+            state.PullRequests()!.Note.ShouldBeNull();
+        }
+        finally
+        {
+            await watch.StopAsync(CancellationToken.None);
+        }
+
+        // gh could not say when: the watch waits a fixed while, not a minute.
+        var unknown = new FakeGitHub { RateLimited = (true, null) };
+        var state2 = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var time2 = new ManualTime(Noon);
+        var limited = (await Watch(state2, unknown, time2).RefreshAsync(Ct))!;
+        limited.Note.ShouldBe($"Rate-limited by GitHub until {Noon.Add(PullRequestWatch.UnknownReset):HH:mm} UTC: showing what was last read, reading again then");
+    }
+
+    [Fact]
+    public void TheCostAndTheRateLimitAreReadFromGitHubsAnswerAndAnErrorOfTheRateLimitSaysSo()
+    {
+        const string answer = """
+            {"data":{"rateLimit":{"cost":3,"remaining":4990,"resetAt":"2026-10-28T13:00:00Z"},
+            "search":{"issueCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}
+            """;
+
+        var page = PullRequestSearch.Parse(answer);
+
+        (page.Cost, page.Remaining, page.ResetAt).ShouldBe((3, 4990, new DateTimeOffset(2026, 10, 28, 13, 0, 0, TimeSpan.Zero)));
+        PullRequestSearch.Query.ShouldContain("rateLimit{cost remaining resetAt}");
+        // An answer with none says nothing of it.
+        PullRequestSearch.Parse(Recorded("empty-node")).Cost.ShouldBe(0);
+        Should.Throw<RateLimitedException>(() => PullRequestSearch.Parse(Recorded("errors"))).Message.ShouldContain("API rate limit exceeded");
     }
 
     private static async Task Until(Func<bool> condition)

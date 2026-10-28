@@ -45,6 +45,9 @@ internal sealed record GuiOptions
     /// <summary>With <c>--flight</c>: drag over the page's text from the run that starts with the words before the <c>|</c> to the run that starts with those after it, so the capture shows the selection.</summary>
     public string? Select { get; init; }
 
+    /// <summary>With <c>--page prs</c>: the orgs (<c>SharpAstro</c>) and repos (<c>SharpAstro/pilot</c>) to fold, comma-separated, so the capture shows them folded.</summary>
+    public string? Fold { get; init; }
+
     public int Width { get; init; } = 1280;
 
     public int Height { get; init; } = 800;
@@ -74,6 +77,7 @@ internal sealed record GuiOptions
         var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
         view.AcceptOnlyFromAmong("canvas", "grid", "list");
         var select = new Option<string?>("--select") { Description = "With --flight: drag over the page's text in the capture, from the run starting with the words before the | to the run starting with those after it" };
+        var fold = new Option<string?>("--fold") { Description = "With --page prs: fold these orgs (SharpAstro) or repos (SharpAstro/pilot), comma-separated, so the capture shows them folded" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
         {
@@ -84,7 +88,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, fold, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -112,6 +116,7 @@ internal sealed record GuiOptions
             Hover = parsed.GetValue(hover),
             View = parsed.GetValue(view) switch { "canvas" => FlightsViewMode.Canvas, "grid" => FlightsViewMode.Grid, "list" => FlightsViewMode.List, _ => null },
             Select = parsed.GetValue(select),
+            Fold = parsed.GetValue(fold),
             Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
         };
         if (parsed.GetValue(size) is { } sizeText)

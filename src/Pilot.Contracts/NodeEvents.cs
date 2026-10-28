@@ -128,7 +128,7 @@ public sealed record SnapshotEvent : NodeEvent
 
     private readonly SummaryRow[]? _summaries;
 
-    /// <summary>Every open PR of the clones' orgs as the node last read them; null before it has read any.</summary>
+    /// <summary>Every open PR of the repos pilot works in as the node last read them; null before it has read any.</summary>
     public PullRequestsRow? PullRequests { get; init; }
 }
 
