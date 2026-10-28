@@ -359,6 +359,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorkWidth = 170f;
     private const float RingsWidth = 80f;
     private const float ButtonsWidth = 180f;
+    // What a window too narrow for the rest leaves the columns that cannot be dropped: their words end in an ellipsis.
+    private const float MachineMin = 70f;
+    private const float RingsMin = 44f;
+    private const float ButtonsMin = 70f;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -490,12 +494,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Fixed("Node", MachineWidth),
-        ListColumn.Fixed("Account and usage", AccountWidth),
-        ListColumn.Fixed("Sessions", SessionsWidth),
+        ListColumn.Shrinking("Node", MachineWidth, MachineMin),
+        ListColumn.Optional("Account and usage", AccountWidth),
+        ListColumn.Optional("Sessions", SessionsWidth),
         ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Fixed("Rings", RingsWidth),
-        ListColumn.Fixed("", ButtonsWidth),
+        ListColumn.Shrinking("Rings", RingsWidth, RingsMin),
+        ListColumn.Shrinking("", ButtonsWidth, ButtonsMin),
     ];
 
     private static float LastKnownUsageHeight(FleetLine line) => !line.Connected && line.Usage.Length > 0 ? 16f : 0f;

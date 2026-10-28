@@ -208,11 +208,16 @@ internal sealed partial class FlightsView<TSurface>
         }
         page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
-        var scrolled = Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments ? [attachments, .. legs] : legs;
+        // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
+        // above the scroll they pushed the page's foot past the window's.
+        List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
+        {
+            scrolled.Add(attachments);
+        }
+        scrolled.AddRange(legs);
         return Layout.Builder.VStack(
                 [.. page,
-                FlowRow.Of(22f, 14f, facts),
-                FlowRow.Of(26f, 10f, WhoWorks(line)),
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();

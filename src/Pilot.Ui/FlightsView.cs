@@ -257,6 +257,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     // What a window too narrow for the rest leaves these two columns: their words end in an ellipsis, the row's tooltip has the whole.
     private const float CodeMin = 56f;
     private const float StateMin = 64f;
+    private const float NodeMin = 40f;
     private const float BranchWidth = 150f;
     private const float LegsWidth = 210f;
     private const float SessionsWidth = 170f;
@@ -965,7 +966,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

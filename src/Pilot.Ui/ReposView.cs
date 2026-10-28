@@ -17,7 +17,12 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     private const float WorktreeRowHeight = 46f;
     private const float Gutter = 16f;
     private const float IndentWidth = 16f;
-    private const float NameMin = 190f;
+    // The Repo column keeps most of the row by its weight while the window has the room, as it kept 190 units; its floor is what a
+    // window too narrow for anything else leaves it (its words then end in an ellipsis), and the Checkout and Node columns have theirs.
+    private const float NameMin = 80f;
+    private const float NameWeight = 6f;
+    private const float MainMin = 70f;
+    private const float NodeMin = 40f;
 
     // Column widths, as they are before a reader drags a divider.
     private const float NodeWidth = 64f;
@@ -288,15 +293,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Repo · worktree", NameMin),
-            ListColumn.Fixed("Checkout · diff", MainWidth),
+            ListColumn.Star("Repo · worktree", NameMin, NameWeight),
+            ListColumn.Shrinking("Checkout · diff", MainWidth, MainMin),
             ListColumn.Optional("Open PRs · session", PullsWidth),
             ListColumn.Optional("Worktrees · action", WorkWidth),
             ListColumn.Optional("Flight · PR", LinkWidth),
         };
         if (_marked)
         {
-            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(1, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

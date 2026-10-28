@@ -95,6 +95,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float SessionMin = 80f;
     private const float SessionWeight = 6f;
     private const float StateMin = 64f;
+    private const float NodeMin = 40f;
 
     private static readonly RGBAColor32 Ground = TranscriptPane.Ground;
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -702,7 +703,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         };
         if (_marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
         }
         return columns;
     }

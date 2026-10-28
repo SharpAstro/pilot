@@ -45,7 +45,9 @@ internal static class WrappedProse
 
     /// <summary>
     /// <paramref name="word"/> cut after each of its separators (<c>, + / \ . : _ -</c>), a separator that ends it left with it;
-    /// the pieces joined are the word, so the copy of a run of them has no space the text did not.
+    /// the pieces joined are the word, so the copy of a run of them has no space the text did not. A piece still longer than
+    /// <see cref="LongWord"/> (a type's name, a long identifier) is cut again at its humps (<c>fooBar</c> into <c>foo</c> and
+    /// <c>Bar</c>), and one with none every <see cref="LongWord"/> characters: a piece wider than the page is a line cut by the clip.
     /// </summary>
     internal static IEnumerable<string> Break(string word)
     {
@@ -54,11 +56,38 @@ internal static class WrappedProse
         {
             if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-')
             {
-                yield return word[start..(i + 1)];
+                foreach (var piece in Shorter(word[start..(i + 1)]))
+                {
+                    yield return piece;
+                }
                 start = i + 1;
             }
         }
-        yield return word[start..];
+        foreach (var piece in Shorter(word[start..]))
+        {
+            yield return piece;
+        }
+    }
+
+    // A piece cut at its humps once it has run half a LongWord, then by length.
+    private static IEnumerable<string> Shorter(string piece)
+    {
+        if (piece.Length <= LongWord)
+        {
+            yield return piece;
+            yield break;
+        }
+        var start = 0;
+        for (var i = 1; i < piece.Length; i++)
+        {
+            var hump = char.IsUpper(piece[i]) && char.IsLower(piece[i - 1]) && i - start >= LongWord / 2;
+            if (hump || i - start >= LongWord)
+            {
+                yield return piece[start..i];
+                start = i;
+            }
+        }
+        yield return piece[start..];
     }
 
     /// <summary>

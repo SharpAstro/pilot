@@ -159,8 +159,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float StartedWidth = 110f;
     private const float TookWidth = 90f;
     private const float NodeWidth = 64f;
+    // What a window too narrow for the rest leaves the columns that cannot be dropped: their words end in an ellipsis.
+    private const float IdMin = 44f;
+    private const float StateMin = 70f;
+    private const float NodeMin = 40f;
     // Tall enough for the facts, the pid and a tree of TreeRows processes under it, so the panel does not grow when the tree arrives.
     private const float DetailHeight = 300f;
+    // The panel keeps its height while the window has the room; below DetailMinHeight it is not shown, and the table keeps
+    // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
+    private const float DetailMinHeight = 200f;
+    private const float BodyMinHeight = 140f;
+    private const float DetailWeight = 3f;
     private const float FactsColumn = 420f;
     private const float FactLabel = 70f;
     private const float LogLineHeight = 16f;
@@ -486,7 +495,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     internal Layout.Node Build(JobsScreen screen, JobLine? selected)
     {
-        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
+        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar(1f, BodyMinHeight) };
         // A question asked about one job does not follow the selection to another, nor outlive the job's run.
         if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Key != asked))
         {
@@ -546,16 +555,16 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Job", IdWidth),
-            ListColumn.Star("Command"),
-            ListColumn.Fixed("For", ForWidth),
-            ListColumn.Fixed("State", StateWidth),
+            ListColumn.Shrinking("Job", IdWidth, IdMin),
+            ListColumn.Star("Command", 0f, 3f),
+            ListColumn.Optional("For", ForWidth),
+            ListColumn.Shrinking("State", StateWidth, StateMin),
             ListColumn.Optional("Started", StartedWidth),
             ListColumn.Optional("Took", TookWidth),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Shrinking("Node", NodeWidth, NodeMin));
         }
         return columns;
     }
@@ -722,20 +731,23 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     internal static string Branch(int depth) => depth <= 1 ? "" : string.Concat(Enumerable.Repeat("  ", depth - 2)) + "└ ";
 
     /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
-    private static Layout.Node Question(string text) => Layout.Builder.Text(text, 12f, Bright).Pad(0f, 4f).WAuto();
+    private static Layout.Node Question(string text) => WrappedProse.Of(text, 12f, Bright).Pad(0f, 4f).WAuto();
 
     private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
     {
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. facts]).WFixed(FactsColumn),
+                        Layout.Builder.VStack([.. facts]).WStar(2f, 0f, FactsColumn),
                         LogTail(line).WStar())
                     .WithGap(24f)
                     .Stretch(),
-                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f))
+                // The buttons flow onto lines of their own where the page is narrower than they are.
+                Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto())
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .RowH(DetailHeight);
+            .W(Layout.Sizing.Star())
+            .H(Layout.Sizing.Star(DetailWeight, 0f, DetailHeight))
+            .CollapseBelow(DetailMinHeight);
     }
 
     /// <summary>The end of the job's output, read from the node and followed while it is selected; its last line at the bottom.</summary>
