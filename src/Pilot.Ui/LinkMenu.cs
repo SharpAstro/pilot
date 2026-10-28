@@ -3,8 +3,8 @@ using DIR.Lib;
 namespace Pilot.Ui;
 
 /// <summary>
-/// The right-click menu of a link that leaves the app (<see cref="Followable.Away"/>): one item, Copy URL, which hands the
-/// URL to the host's <see cref="CopyText"/> and shows a short "Copied" notice at the pointer, that fades on its own. One per
+/// The right-click menu of a link that leaves the app (<see cref="Followable.Away"/>): Copy URL, which hands the
+/// URL to the host's <see cref="CopyText"/> (and Copy beside it while text is selected, which hands that over) and shows a short "Copied" notice at the pointer, that fades on its own. One per
 /// view: it owns the menu's state, where the press was and the notice, so a view declares its links with
 /// <see cref="OnLink"/> and lays <see cref="Over"/> on its page, and no view keeps a copy of the menu.
 /// </summary>
@@ -12,6 +12,9 @@ internal sealed class LinkMenu
 {
     /// <summary>The menu's one item.</summary>
     public const string CopyLabel = "Copy URL";
+
+    /// <summary>The entry that copies the text selected on the page, beside <see cref="CopyLabel"/> on a link.</summary>
+    public const string CopySelectionLabel = "Copy";
 
     /// <summary>The notice's text.</summary>
     public const string CopiedText = "Copied";
@@ -32,6 +35,9 @@ internal sealed class LinkMenu
 
     /// <summary>Puts text on the clipboard. Null where the host has none: a link then has no menu, there being nothing it could do.</summary>
     public Action<string>? CopyText { get; set; }
+
+    /// <summary>The text selected on the page, or null with none: a link's menu offers it beside Copy URL, and <see cref="OpenSelection"/> is the menu of the selection alone.</summary>
+    public Func<string?>? SelectedText { get; set; }
 
     /// <summary>Asks the host for a frame: the notice fades over several, and nothing else would draw them. Null draws on the next input.</summary>
     public Action? Changed { get; set; }
@@ -86,21 +92,47 @@ internal sealed class LinkMenu
     /// <summary>Opens the menu where <paramref name="at"/> was pressed, with Copy URL for <paramref name="url"/>.</summary>
     public void Open(string url, PointerPress at) => OpenAt(url, at.X, at.Y);
 
-    private void OpenAt(string url, float x, float y)
+    /// <summary>Opens the menu where <paramref name="at"/> was pressed on selected text, with Copy for the selection alone.</summary>
+    public void OpenSelection(PointerPress at) => OpenAt(null, at.X, at.Y);
+
+    // The entries, in order: Copy URL for a link, and Copy for the text selected on the page, if any is.
+    private void OpenAt(string? url, float x, float y)
     {
         if (CopyText is not { } copy)
         {
             return;
         }
-        _menu.Items = [new DropdownItem<string>(CopyLabel, "copy-url") { OnChoose = () => Copied(url, copy, x, y) }];
-        // Hung where the press was, a point: the menu is as wide as its entry, measured, and kept on screen.
+        var items = new List<DropdownItem<string>>();
+        if (url is not null)
+        {
+            items.Add(new DropdownItem<string>(CopyLabel, "copy-url") { OnChoose = () => Copied(url, copy, x, y) });
+        }
+        if (SelectedText?.Invoke() is { Length: > 0 } selected)
+        {
+            items.Add(new DropdownItem<string>(CopySelectionLabel, "copy-selection") { OnChoose = () => Copied(selected, copy, x, y) });
+        }
+        if (items.Count == 0)
+        {
+            return;
+        }
+        _menu.Items = [.. items];
+        // Hung where the press was, a point: the menu is as wide as its widest entry, measured, and kept on screen.
         _at = new RectF32(x, y, 0f, 0f);
         _menu.IsOpen = true;
     }
 
-    private void Copied(string url, Action<string> copy, float x, float y)
+    /// <summary>Puts <paramref name="text"/> on the clipboard and shows the "Copied" notice at (<paramref name="x"/>, <paramref name="y"/>): Ctrl+C on a selection.</summary>
+    public void Copy(string text, float x, float y)
     {
-        copy(url);
+        if (CopyText is { } copy)
+        {
+            Copied(text, copy, x, y);
+        }
+    }
+
+    private void Copied(string text, Action<string> copy, float x, float y)
+    {
+        copy(text);
         _menu.IsOpen = false;
         _copiedAt = Now();
         _noticeAt = new RectF32(x, y, 0f, 0f);

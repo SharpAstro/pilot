@@ -275,6 +275,28 @@ public sealed class ReviewTests1 : ReviewTestsBase
         (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, "high"));
     }
 
+    /// <summary>The flight's page draws the report as Markdown (PIL383), so the reviewer is asked to write it as that.</summary>
+    [Fact]
+    public async Task TheReviewersBriefAsksForItsReportAsMarkdownOneListItemPerFinding()
+    {
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA1"), "controller")).Error.ShouldBeNull();
+
+        var verdict = _workers.Started.Last().Brief.Split("## Your verdict")[1];
+
+        verdict.ShouldContain("as Markdown: one list item per finding");
+        verdict.ShouldContain("short first line that says what is wrong, then the detail");
+        verdict.ShouldContain("Put every code name, path");
+        verdict.ShouldContain("in backticks");
+        verdict.ShouldContain("\"Show all\"");
+        // The template's own double quotes would eat the backticks: it says how to pass the report instead.
+        verdict.ShouldContain("Pass the Markdown report intact");
+        verdict.ShouldContain("<<'EOF'");
+        verdict.ShouldContain("single-quoted here-string");
+        verdict.ShouldContain("Never put it between plain double quotes");
+    }
+
     [Fact]
     public async Task APrOpensAFreshReviewerAndOnlyItsPassOffersTheMerge()
     {
@@ -679,6 +701,22 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         var again = F(flight.Code);
         (again.GitHubHead, again.GitHubLabel, again.GitHubDisagrees).ShouldBe((reviewed, "pilot: passed", null));
+    }
+
+    [Fact]
+    public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
+    {
+        var (flight, _) = await Passed("35");
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        _github.Pr = _github.Pr! with { Draft = true };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(true);
+
+        // Made ready for review (by the node on a pass, or by hand): the next look says so.
+        _github.Pr = _github.Pr! with { Draft = false };
+        await checks.LookAsync(Ct);
+        F(flight.Code).GitHubDraft.ShouldBe(false);
     }
 }
 

@@ -200,9 +200,9 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         var why = disagrees.Count > 0 ? string.Join("; ", disagrees) : null;
         var head = pr.Head.Length > 0 ? pr.Head : null;
         var seen = pr.Labels is null ? flight.GitHubLabel : label;
-        if (flight.GitHubHead != head || flight.GitHubLabel != seen || flight.GitHubDisagrees != why)
+        if (flight.GitHubHead != head || flight.GitHubLabel != seen || flight.GitHubDisagrees != why || flight.GitHubDraft != pr.Draft)
         {
-            state.UpdateFlight(code, f => f with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why });
+            state.UpdateFlight(code, f => f with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why, GitHubDraft = pr.Draft });
         }
     }
 
