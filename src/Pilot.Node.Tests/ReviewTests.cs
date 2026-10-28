@@ -900,8 +900,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         (await _legs.BringUpToDateAsync("TIA6", Ct)).ShouldBeNull();
 
         Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
-        Open().ShouldBeEmpty();
+        // A clean merge of the base alone: the pass goes with the head, and the PR-ready card offers the merge at it.
+        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
     [Fact]
@@ -1098,17 +1099,12 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         (await _legs.BringUpToDateAsync("TIA10", Ct)).ShouldBeNull();
 
-        // Rebased and pushed, its old pass is of a head that is gone: no review stands, so no merge goes by it.
+        // Only a clean merge of the base moved the head: its pass goes with it, so a spent window leaves it reviewed and starts no review.
         Git(F("TIA10").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        F("TIA10").Review.ShouldBeNull();
+        var review = F("TIA10").Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Passed);
+        review.ReviewedHead.ShouldBe(Git(F("TIA10").Worktree, "rev-parse", "HEAD").Trim());
         _workers.Started.Count.ShouldBe(startedBefore);
-        Open().ShouldBeEmpty();
-        (await Run(Verbs.Merge, "flight/TIA10", "controller", "cafe0000")).Error.ShouldNotBeNull().ShouldContain("has not been reviewed");
-
-        Window(4, TimeSpan.FromHours(6));
-        await _legs.AdvanceAllAsync(Ct);
-
-        F("TIA10").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
     }
 
     [Fact]
