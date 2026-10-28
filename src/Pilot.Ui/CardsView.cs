@@ -879,10 +879,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>What an armed Merge says in place of its verb: it is not pressed again, it is waited on.</summary>
     internal const string ArmedLabel = "Merging when checks pass";
 
-    /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words, <see cref="Bright"/>, are 8:1 on it.</summary>
+    /// <summary>The armed merge's fill, a violet no other status uses (green passes, amber runs, red fails, blue is a plain button). Its words are 4.5:1 or more on it in both palettes.</summary>
     internal static RGBAColor32 ArmedBg => Palette.Current.ArmedBg;
 
-    internal static RGBAColor32 ArmedText => Bright;
+    internal static RGBAColor32 ArmedText => Palette.Current.ArmedText;
 
     /// <summary>The button's colours for a choice's status: green when its checks pass, amber while they run, red when one failed, violet once armed.</summary>
     internal static (RGBAColor32 Bg, RGBAColor32 Hover)? StatusTint(string? status) => status switch
