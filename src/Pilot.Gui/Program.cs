@@ -341,10 +341,23 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
     }, "the ? card's node");
     // The update light: this machine's node runs a newer pilot than this window, which it installed beside it. A window on
-    // another node (--node) is told nothing: that node's install is not this machine's.
+    // another node (--node) is told nothing: that node's install is not this machine's. Nor is a window run from anywhere but
+    // the node's own folder (a build in a plane): its restart starts that same build again, which offers the light again.
     if (remoteEndpoint is null)
     {
-        chrome.About.Newer = () => feed.NewerInstalled;
+        (int Pid, bool Beside) nodeFolder = (0, false);
+        chrome.About.Newer = () =>
+        {
+            if (feed.Node is not { } node)
+            {
+                return null;
+            }
+            if (nodeFolder.Pid != node.ProcessId)
+            {
+                nodeFolder = (node.ProcessId, InstallFolder.RunsBeside(node.ProcessId));
+            }
+            return nodeFolder.Beside ? feed.NewerInstalled : null;
+        };
         chrome.About.Restart = () =>
         {
             restarting = true;
