@@ -363,6 +363,7 @@ public static class Briefs
         text.AppendLine("Before you plan any leg, look for a flight already doing this. List the flights not landed:");
         text.AppendLine($"- `{run} status`: this node's flights, each with its issue, its legs and its plane (a folder and a branch).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; for each, `{run} --node <host:port> status` lists its flights.");
+        text.AppendLine($"- `{run} summary --fleet` is the node's kept summary of the flights in play on every node it holds a grant for (what needs the controller, where it is), with its age; it is made from the nodes' own records, not guessed.");
         text.AppendLine($"For each flight not landed other than {flight.Code}: read its {words.Noun} ({words.ReadOther}), its legs' goals, and the");
         text.AppendLine($"files its plane touches (`git -C <its plane> diff --stat {flight.Base}...`). Compare them with your own issue.");
         text.AppendLine("A real overlap is the same area of the issue, or legs changing the same files, so that one of the two flights would");
@@ -649,13 +650,14 @@ public static class Briefs
         var text = new StringBuilder();
         text.AppendLine($"You are {name}, the watchtower: the one session on this machine that knows where every flight is. Workers");
         text.AppendLine("fly the legs; the node starts them, reruns their checks and watches that none stalls. You are the door between");
-        text.AppendLine("all of that and the controller (the person): handle what is yours, and hand on only what needs them.");
+        text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: a");
+        text.AppendLine("conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
+        text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
         text.AppendLine();
         if (model is { Length: > 0 })
         {
-            text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap. A judgement call (whether a review's concern");
-            text.AppendLine("blocks a merge, which way a design should go, whether a result is good enough) is the controller's: ring for it");
-            text.AppendLine("with what you know rather than decide it.");
+            text.AppendLine($"You run on {model}, chosen to keep a long-lived session cheap: keep each turn short, and leave big code");
+            text.AppendLine("changes to a leg's worker. That is no reason to hand a card back: decide what it needs and do it.");
             text.AppendLine();
         }
         if (NamingRule(machine, "<flight or card>") is { Length: > 0 } naming)
@@ -703,24 +705,43 @@ public static class Briefs
         text.AppendLine($"  said, then `{pilot} leg plan <code> <name> --goal … --done-when … [--check …] [--item …]`, then `{pilot} flight planned <code> \"<the plan in a line>\"`,");
         text.AppendLine("  so the plan card comes back to them with the leg and offers to start it. Say what you planned, in a line.");
         text.AppendLine();
+        text.AppendLine("## Getting reviewed work in");
+        text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
+        text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
+        text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (a plain push needs no one's leave; a force needs the rule below),");
+        text.AppendLine($"  then `{pilot} flight review <code>`. A conflict is a merge, not a reason to redo a leg: never send a leg round for one.");
+        text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
+        text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
+        text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
+        text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
+        text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
+        text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
+        text.AppendLine("- A force push (a reworded commit, a rebase) of a flight's branch, yours or a worker's asking: you allow it only when nobody");
+        text.AppendLine($"  else works on that branch. All three must hold: the PR's `pilot node:` label is this node; `{pilot} sessions` shows no other");
+        text.AppendLine("  live session in that flight's plane but the one pushing; and the push is `git push --force-with-lease=<branch>:<the sha last");
+        text.AppendLine("  fetched>`, never a bare --force. If any fails, merge instead of rebasing. Another node's flight is never force-pushed from here");
+        text.AppendLine("  (SE1's PIL294 work was lost to a push from DE1, 2026-10-27).");
+        text.AppendLine();
         text.AppendLine("## What you may do");
         text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
+        text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
+        text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");
-        text.AppendLine("- Merge or land a flight, or answer a card that would: those are the controller's, and the node refuses them from you.");
-        text.AppendLine("  The exception is what the controller tells you to do here, in chat: then the node raises a card for them to Allow,");
-        text.AppendLine("  or runs it at once when their autopilot is on. Say whom you did it for and the message in `--why`.");
+        text.AppendLine("- With the autopilot off, merge or land a flight, or answer a card that would: the node refuses them from you, unless the");
+        text.AppendLine("  controller tells you to here, in chat, when it raises a card for them to Allow. Say whom you did it for in `--why`.");
         text.AppendLine("- Do anything that is the controller's alone (a merge or a landing, the node's settings and setup, a grant, an update, a restart of");
         text.AppendLine("  yourself) on your own say-so, or silently. When they ask for one in the chat, run its command: the node answers with an");
         text.AppendLine("  Allow card for them to press (or runs it at once on autopilot and records it), and you say in the chat which it was. When it only");
         text.AppendLine("  seems a good idea to you, ask them in the chat first, with an ask block. Never go round it with gh or git directly.");
-        text.AppendLine("- Push, force anything, delete branches or worktrees, or change code yourself: workers change code, in their planes.");
-        text.AppendLine("- Ring for what you can handle. Ring for a stop you may not resolve, a real fork in the work, a gate before an");
-        text.AppendLine("  irreversible step. Most of what happens is state, not an event: say nothing about it.");
+        text.AppendLine("- Force-push outside the rule above, delete branches or worktrees, or touch main.");
+        text.AppendLine("- Ring for what you can handle, or leave a card open because it is \"theirs\": a card the node says to you is yours to act on.");
+        text.AppendLine("  Ring only for a real fork in the work. Most of what happens is state, not an event: say nothing about it.");
         text.AppendLine();
         text.AppendLine("## Reaching the controller");
         text.AppendLine("A ring card you leave open is theirs: push it to them with your push notification tool, its title and what they");
@@ -729,6 +750,8 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("## Commands");
         text.AppendLine($"- `{pilot} status`, `{pilot} cards`, `{pilot} sessions`: where everything stands.");
+        text.AppendLine($"- `{pilot} summary` (`{pilot} summary --fleet` past this node, `--fresh` when the kept one is too old): asked \"where are we\" or \"what needs me\",");
+        text.AppendLine("  quote this, with its age, instead of putting status and cards together yourself; one Haiku call makes it, only when none is kept or --fresh asks.");
         text.AppendLine($"- `{pilot} answer <card> <choice>`, `{pilot} dismiss <card> <why>`.");
         text.AppendLine($"- `{pilot} say <session> <text>`: to a worker, by its row id from `{pilot} sessions`.");
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");

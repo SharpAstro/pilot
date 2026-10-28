@@ -100,6 +100,8 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.ShouldContain("leg_remove");
         tools.Keys.ShouldContain("leg_validate");
         tools.Keys.ShouldContain("job_cancel");
+        tools.Keys.ShouldContain("job_pause");
+        tools.Keys.ShouldContain("job_resume");
         tools.Keys.ShouldNotContain("mcp");
 
         var plan = tools["leg_plan"];
@@ -258,9 +260,23 @@ public sealed class McpTests : IAsyncLifetime
         (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
         (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
         child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp"]);
-        child.Heard.Count.ShouldBe(2);
-        JsonDocument.Parse(child.Heard[0]).RootElement.GetProperty("method").GetString().ShouldBe("initialize");
-        JsonDocument.Parse(child.Heard[1]).RootElement.GetProperty("method").GetString().ShouldBe("notifications/initialized");
+        // The child's server reads what it was written on its own task, so it may not have taken the second line yet.
+        string[] heard = [];
+        for (var i = 0; i < 600; i++)
+        {
+            lock (child.Heard)
+            {
+                heard = [.. child.Heard];
+            }
+            if (heard.Length >= 2)
+            {
+                break;
+            }
+            await Task.Delay(50, Ct);
+        }
+        heard.Length.ShouldBe(2);
+        JsonDocument.Parse(heard[0]).RootElement.GetProperty("method").GetString().ShouldBe("initialize");
+        JsonDocument.Parse(heard[1]).RootElement.GetProperty("method").GetString().ShouldBe("notifications/initialized");
 
         // From here the new server answers, and the client's later lines reach it; its initialize reply was not passed on.
         input.Feed("""{"jsonrpc":"2.0","id":3,"method":"ping"}""");
@@ -480,7 +496,10 @@ public sealed class McpTests : IAsyncLifetime
             var line = await inner.ReadLineAsync(cancellationToken);
             if (line is not null)
             {
-                heard.Add(line);
+                lock (heard)
+                {
+                    heard.Add(line);
+                }
             }
             return line;
         }

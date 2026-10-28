@@ -19,6 +19,9 @@ internal sealed record HomeChip(HomeChipKind Kind, string Label, string Tone)
     public SessionLine? Session { get; init; }
 
     public JobLine? Job { get; init; }
+
+    /// <summary>The chip's short brief for its hover (#258): at most <see cref="ChipBrief.MaxLines"/> lines, one per line of text.</summary>
+    public string Brief { get; init; } = "";
 }
 
 /// <summary>
@@ -86,18 +89,18 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         [.. Flights.Lines.Where(l => l.Row.State != FlightState.Landed)
             .Select(l => l.StaleMark is { } stale
                 // Its node is in the mark, so the node's name is not said twice; the chip is the last known row, dimmed.
-                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l }
-                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l })];
+                ? new HomeChip(HomeChipKind.Flight, $"{l.Code} · {stale}", "stale") { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) }
+                : new HomeChip(HomeChipKind.Flight, Mark(l.Node, $"{l.Code} · {l.State}"), l.State) { Flight = l, Brief = ChipBrief.Text(ChipBrief.Flight(l)) })];
 
     /// <summary>The live sessions.</summary>
     public IReadOnlyList<HomeChip> SessionChips =>
         [.. Sessions.Lines.Where(l => l.IsLive)
-            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l })];
+            .Select(l => new HomeChip(HomeChipKind.Session, Mark(l.Node, l.ShownName), "live") { Session = l, Brief = ChipBrief.Text(ChipBrief.Session(l)) })];
 
     /// <summary>The running and queued jobs.</summary>
     public IReadOnlyList<HomeChip> JobChips =>
         [.. Jobs.Lines.Where(l => l.Live)
-            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l })];
+            .Select(l => new HomeChip(HomeChipKind.Job, Mark(l.Node, $"{l.Id} · {l.State}"), l.State) { Job = l, Brief = ChipBrief.Text(ChipBrief.Job(l)) })];
 
     /// <summary>The machine blocks to draw: a node that sends no row has none.</summary>
     public IReadOnlyList<MachineLine> MachineBlocks => Machines ?? [];
@@ -120,10 +123,10 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             && (owner == WatchtowerOwner ? l.Row.Role == SessionRole.Watchtower : l.Row.Name == owner));
         if (session is not null)
         {
-            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session };
+            return new HomeChip(HomeChipKind.Session, session.ShownName, "live") { Session = session, Brief = ChipBrief.Text(ChipBrief.Session(session)) };
         }
         var job = Jobs.Lines.FirstOrDefault(l => l.Live && line.Is(l.Node) && l.Id == owner);
-        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job };
+        return job is null ? null : new HomeChip(HomeChipKind.Job, $"{job.Id} · {job.State}", job.State) { Job = job, Brief = ChipBrief.Text(ChipBrief.Job(job)) };
     }
 
     private string ProcessDump(MachineLine line, MachineProcess p)
@@ -148,8 +151,8 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 }
 
 /// <summary>
-/// The Home page: the two verdicts at the top, flying and waiting on you, then every flight, session and job on the
-/// node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
+/// The Home page: the Summary card first (what needs you and where it is, for the nodes in view), then the two verdicts,
+/// flying and waiting on you, then every flight, session and job on the node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
 /// <see cref="OnJob"/>. Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
@@ -183,6 +186,11 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The window's node selection: its pills in the top bar, and the nodes picked are the things shown.</summary>
     public NodeFilter? Nodes { get; set; }
 
+    /// <summary>The window's summaries: the card at the top reads its row from it and its button presses through it. Null draws no card.</summary>
+    public SummaryBoard? Summary { get; set; }
+
+    private readonly SummaryCard _card = new();
+
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
@@ -213,11 +221,15 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 Machines = [.. screen.MachineBlocks.Where(l => nodes.Shows(l.Node))],
             };
         }
-        var blocks = new List<Layout.Node>
+        var blocks = new List<Layout.Node>();
+        // The summary of the nodes the window shows comes first: it is what the person came to read.
+        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), FlightsPalette.Standard, screen.Flights.AsOf) is { } card)
         {
-            Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f),
-            Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f),
-        };
+            blocks.Add(card);
+            blocks.Add(Layout.Builder.Spacer().RowH(14f));
+        }
+        blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f));
+        blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f));
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
         Section(blocks, "Background tasks", screen.JobChips, "no job running or queued");
@@ -357,16 +369,18 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node Chip(HomeChip chip)
     {
         var tint = chip.Tone switch { "held" or "queued" => Amber, "stale" => Stale, _ => Green };
-        return chip.Kind switch
+        var pill = chip.Kind switch
         {
-            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim.
+            // The chip of a stale flight still opens its page (the last known row); its words, not its tint, say why it is dim,
+            // and its brief says it again in full (ChipBrief.Flight).
             HomeChipKind.Flight when chip.Tone == "stale" =>
-                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText)
-                    .WithTooltip($"{chip.Flight.Code} was {chip.Flight.State} when {chip.Flight.Stale} last answered"),
+                CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint, StaleText),
             HomeChipKind.Flight => CardsView<TSurface>.Pill(chip.Label, $"home:flight:{chip.Flight!.Code}", () => OnFlight?.Invoke(chip.Flight), tint),
             HomeChipKind.Session => CardsView<TSurface>.Pill(chip.Label, $"home:session:{chip.Session!.Key}", () => OnSession?.Invoke(chip.Session), tint),
             _ => CardsView<TSurface>.Pill(chip.Label, $"home:job:{chip.Job!.Key}", () => OnJob?.Invoke(chip.Job), tint),
         };
+        // The brief opens below the chip, centred, and the tooltip layer keeps it inside the window (flipping above near the bottom).
+        return chip.Brief.Length > 0 ? pill.WithTooltip(chip.Brief) : pill;
     }
 
     public override bool HandleInput(InputEvent evt) => false;

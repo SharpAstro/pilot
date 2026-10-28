@@ -249,6 +249,76 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "jobs")).Output.ShouldContain("j1 holds the queue (se1-tia1-parser), held for 5m");
     }
 
+    [Fact]
+    public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        // Not a bare sleep, which the node refuses: the echo makes it a job.
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        var (exit, output, error) = await Pilot(_root, "job", id, "cancel", "--force");
+
+        exit.ShouldBe(0, $"{output}{error}");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+        ended.State.ShouldBe(JobState.Cancelled);
+        ended.Error.ShouldNotBeNull().ShouldStartWith("cancelled (forced) by ");
+    }
+
+    [Fact]
+    public async Task PilotJobCancelWithoutForceIsAPlainCancel()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        runner.MinFreeMemory = 0;
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await Ok(_root, "run", "--", "sleep 30; echo slept");
+        var id = _node.State.Jobs().Single().Id;
+        for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
+        {
+            i.ShouldBeLessThan(500, "the job did not start");
+            await Task.Delay(20, Ct);
+        }
+
+        await Ok(_root, "job", id, "cancel");
+        JobRow ended;
+        for (var i = 0; (ended = _node.State.Jobs().Single()).EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the job did not end");
+            await Task.Delay(100, Ct);
+        }
+
+        ended.Error.ShouldStartWith("cancelled by ");
+    }
+
+    [Fact]
+    public async Task APausedJobReadsPausedWithItsTimeInJobsAndJob()
+    {
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+            LogPath = Path.Combine(_root, "j1.log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            PausedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+        });
+
+        var jobs = await Pilot(_root, "jobs");
+        jobs.Output.ShouldContain("j1  paused since ");
+        jobs.Output.ShouldNotContain("running");
+        (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {
@@ -296,6 +366,21 @@ public sealed class CliTests : IAsyncLifetime
         // Named, not by the folder, and refused when nothing is waiting.
         var again = await Pilot(plane, "leg", "validate", "go", "--leg", "TIA9/render");
         again.Exit.ShouldBe(1);
+    }
+
+    /// <summary>The node under test is not a pilot-node, so it refuses: the refusal shows <c>node restart</c> reached the node as <see cref="Verbs.RestartNode"/>, why words and all.</summary>
+    [Fact]
+    public async Task NodeRestartIsSentToTheNodeWhichRefusesWhenItIsNotAPilotNode()
+    {
+        var (exit, output, _) = await Pilot(_root, "node", "restart", "the", "settings", "changed");
+
+        exit.ShouldBe(1);
+        output.ShouldContain("is not pilot-node, so it cannot start a successor of itself");
+        _node.State.Cards().ShouldNotContain(c => c.Kind == "restart");
+        (await Pilot(_root, "node")).Exit.ShouldBe(2);
+        var help = await Pilot(_root, "node", "restart", "--help");
+        help.Output.ShouldContain("carry on");
+        help.Output.ShouldContain("--why");
     }
 
     [Fact]

@@ -143,6 +143,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
         var watchtower = Get<Watchtower>();
         var standing = Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
+        // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
+        // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
+        // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
+        if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb) && Get<RoleModels>().Autopilot)
+        {
+            standing = new Standing(StandingKind.Assistant);
+        }
         if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);
@@ -252,10 +259,26 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<JobRunner>().Cancel(command);
         }
+        if (command.Verb == Verbs.PauseJob)
+        {
+            return Get<JobRunner>().Pause(command);
+        }
+        if (command.Verb == Verbs.ResumeJob)
+        {
+            return Get<JobRunner>().Resume(command);
+        }
         if (command.Verb == Verbs.Digest)
         {
             Get<Digest>().Raise(Get<TimeProvider>().GetUtcNow());
             return state.Complete(command, null);
+        }
+        if (command.Verb == Verbs.Summarise)
+        {
+            return await Get<Summaries>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.Records)
+        {
+            return Get<Summaries>().Records(command);
         }
         if (command.Verb == Verbs.Stop)
         {
@@ -276,6 +299,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.Update)
         {
             return await Get<NodeUpdater>().RunAsync(command, cancellationToken);
+        }
+        if (command.Verb == Verbs.RestartNode)
+        {
+            return Get<NodeSettingsCommands>().RestartNode(command);
         }
         if (command.Verb == Verbs.Say)
         {

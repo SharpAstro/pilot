@@ -286,7 +286,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
-    public async Task AskRaisesACardWithUpdateOnceAndAutoWaitsForTheJobs()
+    public async Task AskRaisesACardWithUpdateOnce()
     {
         var node = NodeUpdater.Layout.Required[0];
         Install("2.0.1", Binaries("old"), rid: "test-rid");
@@ -302,20 +302,53 @@ public sealed class UpdateTests : IDisposable
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
             c => c.Label.ShouldBe("Update"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
 
-        state.PutJob(new JobRow
-        {
-            Id = "j1", Command = "dotnet test", Cwd = _root, State = JobState.Running, LogPath = Path.Combine(_root, "j1.log"),
-            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
-        });
+        Read(node).ShouldBe("old " + node);
+    }
+
+    [Fact]
+    public async Task AnInstallWithAJobRunningAndOneQueuedSwapsInAtOnceAndSaysTheJobsCarryOn()
+    {
+        var node = NodeUpdater.Layout.Required[0];
+        Install("2.0.1", Binaries("old"), rid: "test-rid");
+        var feed = Feed("2.0.2", Binaries("new"), rid: "test-rid", layout: NodeUpdater.Layout);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        PutJob(state, "j1", JobState.Running);
+        PutJob(state, "j2", JobState.Queued);
+        var updater = Updater(state, feed, UpdatePolicy.Off, out var successors, out var lifetime);
+
+        var installed = await updater.RunAsync(Command(UpdateArgs.Install), Ct);
+
+        installed.Ok.ShouldBeTrue(installed.Error);
+        installed.Way.ShouldBe("2.0.1 -> 2.0.2; the node restarts; 2 jobs carry on");
+        Read(node).ShouldBe("new " + node);
+        successors.ShouldBe([Path.Combine(_install, node)]);
+        lifetime.Stopped.ShouldBeTrue();
+        state.Cards().ShouldHaveSingleItem().Title.ShouldBe("pilot 2.0.1 -> 2.0.2, installed by cli; the node restarts; 2 jobs carry on");
+    }
+
+    [Fact]
+    public async Task AnAutoPolicyInstallsWithAJobRunning()
+    {
+        var node = NodeUpdater.Layout.Required[0];
+        Install("2.0.1", Binaries("old"), rid: "test-rid");
+        var feed = Feed("2.0.2", Binaries("new"), rid: "test-rid", layout: NodeUpdater.Layout);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        PutJob(state, "j1", JobState.Running);
         var auto = Updater(state, feed, UpdatePolicy.Auto, out var successors, out var lifetime);
+
         await auto.CheckAsync(Ct);
 
-        successors.ShouldBeEmpty();
-        lifetime.Stopped.ShouldBeFalse();
-        Read(node).ShouldBe("old " + node);
-        var refused = await auto.RunAsync(Command(), Ct);
-        refused.Error.ShouldBe("1 job is running or waiting: 2.0.2 goes in once they are done");
+        successors.ShouldBe([Path.Combine(_install, node)]);
+        lifetime.Stopped.ShouldBeTrue();
+        Read(node).ShouldBe("new " + node);
+        state.Cards().ShouldHaveSingleItem().Title.ShouldBe("pilot 2.0.1 -> 2.0.2, installed by node; the node restarts; 1 job carries on");
     }
+
+    private void PutJob(NodeState state, string id, JobState jobState) => state.PutJob(new JobRow
+    {
+        Id = id, Command = "dotnet test", Cwd = _root, State = jobState, LogPath = Path.Combine(_root, id + ".log"),
+        Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
+    });
 
     [Fact]
     public async Task AnInstallSwapsTheReleaseInStartsTheNewNodeAndStopsThisOne()

@@ -51,6 +51,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>Leg checks: what they say is the test's.</summary>
     public FakeChecks Checks { get; private init; } = new();
 
+    /// <summary>The summary's Haiku call: what it answers is the test's; never run.</summary>
+    public FakeSummaryModel Summary { get; private init; } = new();
+
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
@@ -66,6 +69,7 @@ internal sealed class NodeHarness : IAsyncDisposable
     public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
+        // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
         folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower,
@@ -85,6 +89,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var checks = new FakeChecks();
         var github = new FakeGitHub();
         var nuget = new FakeNuGetFeed();
+        var summary = new FakeSummaryModel();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -99,6 +104,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.ICheckRunner>(checks);
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
+                builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -106,13 +112,22 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary };
         }
         catch
         {
             held.Dispose();
             throw;
         }
+    }
+
+    /// <summary>Stops the node and leaves its folder, so <c>StartAsync(folder: Folder)</c> starts the next node on the same data; the last one's dispose deletes it.</summary>
+    public async Task StopKeepingFolderAsync()
+    {
+        Client.Dispose();
+        await App.StopAsync();
+        await App.DisposeAsync();
+        _held.Dispose();
     }
 
     public async ValueTask DisposeAsync()

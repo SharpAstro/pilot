@@ -59,6 +59,16 @@ public sealed record FlightRow
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 
+    /// <summary>
+    /// The head its PR merged at while a leg was planned or flying (#342): the merge went without that leg's work, so the flight
+    /// is not landed as merged, and when its legs are done the plane is rebased onto the base from this head and goes up as a
+    /// new PR. Null otherwise.
+    /// </summary>
+    public string? MergedHead { get; init; }
+
+    /// <summary>The number of the PR that merged without the new leg, while <see cref="MergedHead"/> says so.</summary>
+    public int? MergedPullRequest { get; init; }
+
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
 

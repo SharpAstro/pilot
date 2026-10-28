@@ -401,7 +401,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                 }
             }
         }
-        rows.Add(Section("Settings", "the node restarts to run with a change once no job runs; its sessions and flights carry on"));
+        rows.Add(Section("Settings", "the node restarts to run with a change at once; its sessions, flights and jobs carry on"));
         for (var i = 0; i < page.Settings.Length; i++)
         {
             rows.Add(SettingRowNode(page.Settings[i], i, read.Working));

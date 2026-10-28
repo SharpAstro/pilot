@@ -122,7 +122,18 @@ public sealed class SettingsTests : IDisposable
         page.Checks.ShouldBeEmpty();
         (await node.Client.GetSetupChecksAsync(Ct)).Response.ShouldNotBeNull().Checks.Select(c => c.Key).ShouldContain(NodeSetup.AutostartKey);
 
-        // The job limits are in force at once, no restart: one waiting for the queue would wait on what it is meant to clear.
+        // A running job does not hold a restart: the answer is the same with one running (jobs carry on under the next node).
+        node.State.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = _root, State = JobState.Running, LogPath = Path.Combine(_root, "j1.log"),
+            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow,
+        });
+        var withJob = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["update-channel", "beta"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        withJob.Way.ShouldNotBeNull().ShouldStartWith("saved; it applies at the node's next start");
+        withJob.Way.ShouldNotContain("once no job runs");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Restart.ShouldBeNull();
+
+        // The job limits are in force at once, no restart.
         var jobs = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "3"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         jobs.Way.ShouldBe("max-jobs saved as 3, and in force now");
         node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().MaxRunning.ShouldBe(3);

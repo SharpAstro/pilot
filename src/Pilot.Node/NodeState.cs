@@ -51,6 +51,7 @@ public sealed class NodeState
     private MachineRow? _machine;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
     private readonly Queue<(long Seq, byte[] Json)> _held = new Queue<(long Seq, byte[] Json)>();
@@ -579,6 +580,27 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The summaries made, one per scope: the fleet's first, then each flight's by code.</summary>
+    public SummaryRow[] Summaries()
+    {
+        lock (_gate)
+        {
+            return [.. _summaries.Values.OrderBy(s => s.Scope != SummaryRow.FleetScope).ThenBy(s => s.Scope, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Keeps a summary, replacing the older of its scope: one delta, journaled and sent to every client. Always a delta, even for
+    /// the same words, as the row says when it was made and what that cost.
+    /// </summary>
+    public void PutSummary(SummaryRow summary)
+    {
+        lock (_gate)
+        {
+            Publish(new SummaryChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Summary = summary });
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
@@ -829,6 +851,9 @@ public sealed class NodeState
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
                 break;
+            case SummaryChangedEvent summary:
+                _summaries[summary.Summary.Scope] = summary.Summary;
+                break;
         }
     }
 
@@ -865,6 +890,10 @@ public sealed class NodeState
         {
             _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
         }
+        foreach (var summary in snapshot.Summaries ?? [])
+        {
+            _summaries[summary.Scope] = summary;
+        }
         _seq = snapshot.Seq;
     }
 
@@ -882,6 +911,7 @@ public sealed class NodeState
         Machine = _machine,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
+        Summaries = [.. _summaries.Values],
     };
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);

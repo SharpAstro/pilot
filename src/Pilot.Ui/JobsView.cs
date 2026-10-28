@@ -38,6 +38,9 @@ internal sealed record JobLine
     /// <summary>What the selection follows: its id, which another node's job may share, so with that node's key before it.</summary>
     public string Key => Node is null or { Here: true } ? Id : $"{Node.Key}/{Id}";
 
+    /// <summary>Whether it is running with its process tree frozen.</summary>
+    public bool Paused => Row.State == JobState.Running && Row.PausedAt is not null;
+
     /// <summary>Whether it may still be cancelled: running or queued.</summary>
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
@@ -61,9 +64,10 @@ internal sealed record JobLine
         Id = job.Id,
         Command = job.Command,
         For = job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
-        State = job.State.ToString().ToLowerInvariant(),
+        State = job.State == JobState.Running && job.PausedAt is not null ? "paused" : job.State.ToString().ToLowerInvariant(),
         StateDetail = job.State switch
         {
+            JobState.Running when job.PausedAt is { } pausedAt => $"since {SessionLine.Ago(now - pausedAt)}",
             JobState.Succeeded => "exit 0",
             JobState.Failed => job.Error ?? (job.ExitCode is { } code ? $"exit {code}" : null),
             JobState.Cancelled => job.Error,
@@ -92,9 +96,11 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
     {
         get
         {
-            var running = Lines.Count(l => l.Row.State == JobState.Running);
+            var paused = Lines.Count(l => l.Paused);
+            var running = Lines.Count(l => l.Row.State == JobState.Running) - paused;
             var queued = Lines.Count(l => l.Row.State == JobState.Queued);
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "job" : "jobs")} · {running} running";
+            summary = paused > 0 ? $"{summary} · {paused} paused" : summary;
             return queued > 0 ? $"{summary} · {queued} queued" : summary;
         }
     }
@@ -153,10 +159,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float StartedWidth = 110f;
     private const float TookWidth = 90f;
     private const float NodeWidth = 64f;
-    private const float DetailHeight = 260f;
+    // Tall enough for the facts, the pid and a tree of TreeRows processes under it, so the panel does not grow when the tree arrives.
+    private const float DetailHeight = 300f;
     private const float FactsColumn = 420f;
     private const float FactLabel = 70f;
     private const float LogLineHeight = 16f;
+    private const float TreeRowHeight = 18f;
+    private const int TreeRows = 4;
 
     private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
     private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
@@ -224,11 +233,24 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
     public Action<JobRow>? OnCancel { get; set; }
 
+    /// <summary>Freezes a running job: the node's <c>pause-job</c>.</summary>
+    public Action<JobRow>? OnPause { get; set; }
+
+    /// <summary>Thaws a paused job: the node's <c>resume-job</c>.</summary>
+    public Action<JobRow>? OnResume { get; set; }
+
     /// <summary>
     /// The job whose Cancel was pressed and waits on its confirm: a cancel ends a run that may have taken hours, so one press
     /// only asks, and the detail's buttons become the question until it is answered or another job is picked.
     /// </summary>
     private string? _confirmCancel;
+
+    /// <summary>Kills a running job's whole process tree at once: the node's <c>cancel-job</c> with its <c>force</c> arg.</summary>
+    public Action<JobRow>? OnForceCancel { get; set; }
+
+    /// <summary>The job whose Force cancel… was pressed and waits on its own question, as <see cref="_confirmCancel"/>. Both hold the line's
+    /// Key (node and id), not the job id: two nodes' lists share one page, and each can have a j14 (review of #357).</summary>
+    private string? _confirmForce;
 
     /// <summary>Opens the session a job wakes (its transcript, on the Sessions page); null where there is none to open.</summary>
     public Action<JobRow>? OnSession { get; set; }
@@ -353,6 +375,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
     }
 
+    /// <summary>Whether two reads of a job's log say the same of its processes: a tree that grew or a job that got stuck redraws the page too.</summary>
+    private static bool SameProcesses(JobLog was, JobLog now) =>
+        was.Pid == now.Pid && was.Stuck == now.Stuck && (was.Tree ?? []).AsSpan().SequenceEqual(now.Tree ?? []);
+
     private async Task FollowAsync(string key, NodeMark? node, string jobId, Func<NodeMark?, string, CancellationToken, Task<JobLog>> load, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -361,7 +387,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             {
                 var log = await load(node, jobId, cancellationToken).ConfigureAwait(false);
                 var was = Volatile.Read(ref _followed);
-                var changed = was.For == key && (was.Log is null || was.Log.Length != log.Length || was.Problem is not null);
+                var changed = was.For == key && (was.Log is null || was.Log.Length != log.Length || was.Problem is not null || !SameProcesses(was.Log, log));
                 // Kept only while this job is still the one followed: a swap that lost to a newer follow is dropped.
                 if (was.For == key)
                 {
@@ -417,7 +443,19 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => _confirmCancel = job.Id });
+            if (line.Paused && OnResume is { } resume)
+            {
+                items.Add(new DropdownItem<string>("Resume", "resume") { OnChoose = () => resume(job) });
+            }
+            else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
+            {
+                items.Add(new DropdownItem<string>("Pause", "pause") { OnChoose = () => pause(job) });
+            }
+            items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => { _confirmForce = null; _confirmCancel = line.Key; } });
+            if (job.State == JobState.Running && OnForceCancel is not null)
+            {
+                items.Add(new DropdownItem<string>("Force cancel…", "force-cancel") { OnChoose = () => { _confirmCancel = null; _confirmForce = line.Key; } });
+            }
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -450,9 +488,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
         // A question asked about one job does not follow the selection to another, nor outlive the job's run.
-        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Row.Id != asked))
+        if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Key != asked))
         {
             _confirmCancel = null;
+        }
+        if (_confirmForce is { } forceAsked && (selected is not { Row.State: JobState.Running } || selected.Key != forceAsked))
+        {
+            _confirmForce = null;
         }
         if (selected is not null)
         {
@@ -526,7 +568,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private Layout.Node Row(JobLine line, int index, bool marked, IReadOnlyList<ListColumn> columns)
     {
         var ended = !line.Live;
-        var color = ColorOf(line.Row.State);
+        var color = line.Paused ? Queued : ColorOf(line.Row.State);
+        // Only the followed job's log is read, so only it can say it is stuck; the word, in amber, is what the person acts on.
+        var stuck = line.Row.State == JobState.Running ? StuckOf(line) : null;
         var cells = new List<Layout.Node>
         {
             Top(Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright)),
@@ -534,7 +578,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Top(Layout.Builder.Text(line.For, 13f, Dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).RowH(22f),
-                Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).RowH(18f)),
+                // The state column can be narrower than the stuck line: it ends in an ellipsis and says the whole of it on hover.
+                (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim) : Layout.Builder.Text(stuck, 11f, Queued).WithTooltip(stuck)).RowH(18f)),
             Top(Layout.Builder.Text(line.Started, 13f, Dim)),
             Top(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body)),
         };
@@ -547,10 +592,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             .BgHover(RowHoverBg)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
-            .WithContextMenu(at => OpenMenu(line, index, at));
+            .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258), which names the pid of a running job (the row's hover said only that before).
+            .WithTooltip(ChipBrief.Text(ChipBrief.Job(line)));
         // The selection stated as a background too: a terminal paints no focus of its own, and on pixels it is the focus colour.
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
+
+    /// <summary>The followed log of <paramref name="line"/>'s job, or null while another job is followed or none was read yet.</summary>
+    private JobLog? LogOf(JobLine line) => Volatile.Read(ref _followed) is { } held && held.For == line.Key ? held.Log : null;
+
+    private string? StuckOf(JobLine line) => LogOf(line)?.Stuck;
 
     /// <summary>The selected job: its command whole, its folder and log, what it came to, the end of its output, and its buttons.</summary>
     private Layout.Node Details(JobLine line)
@@ -569,6 +621,10 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             facts.Add(Fact("waits", waits, Queued));
         }
+        if (job.State == JobState.Running)
+        {
+            facts.AddRange(Processes(line));
+        }
         if (job.Error is { } error)
         {
             facts.Add(Fact("why", error, Failed));
@@ -583,16 +639,36 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
-            if (_confirmCancel == job.Id)
+            if (_confirmCancel == line.Key)
             {
                 // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
-                buttons.Add(Layout.Builder.Text($"Cancel {job.Id}? It stops now; its output so far stays in its log.", 12f, Bright).WAuto());
+                buttons.Add(Question($"Cancel {job.Id}? It stops now; its output so far stays in its log."));
                 buttons.Add(Pill("Cancel job", $"job:{job.Id}:cancel-yes", () => { _confirmCancel = null; cancel(job); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
                 return Panel(facts, line, buttons);
             }
+            if (_confirmForce == line.Key && OnForceCancel is { } forceYes)
+            {
+                // Its own question, as Cancel's: a force kills the wrapper and everything under it with no grace.
+                buttons.Add(Question($"Force cancel {job.Id}? It and every process under it are killed at once; its output so far stays in its log."));
+                buttons.Add(Pill("Force cancel job", $"job:{job.Id}:force-yes", () => { _confirmForce = null; forceYes(job); }, Danger, DangerHover));
+                buttons.Add(Pill("Keep running", $"job:{job.Id}:force-no", () => _confirmForce = null));
+                return Panel(facts, line, buttons);
+            }
+            if (line.Paused && OnResume is { } resume)
+            {
+                buttons.Add(Pill("Resume", $"job:{job.Id}:resume", () => resume(job)));
+            }
+            else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
+            {
+                buttons.Add(Pill("Pause", $"job:{job.Id}:pause", () => pause(job)));
+            }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => _confirmCancel = job.Id, Danger, DangerHover));
+            buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => { _confirmForce = null; _confirmCancel = line.Key; }, Danger, DangerHover));
+            if (job.State == JobState.Running && OnForceCancel is not null)
+            {
+                buttons.Add(Pill("Force cancel…", $"job:{job.Id}:force", () => { _confirmCancel = null; _confirmForce = line.Key; }, Danger, DangerHover));
+            }
         }
         if (job.Owner is not null && OnSession is { } session)
         {
@@ -607,6 +683,46 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
         return Panel(facts, line, buttons);
     }
+
+    /// <summary>
+    /// A running job's process id and the live tree under it, from the followed log: <c>pid</c>, then each process below the
+    /// wrapper (name and pid, indented by depth), at most <see cref="TreeRows"/> and a count of the rest. Nothing before the first read.
+    /// </summary>
+    private IEnumerable<Layout.Node> Processes(JobLine line)
+    {
+        var log = LogOf(line);
+        var pid = log?.Pid ?? line.Row.Pid;
+        if (pid is null)
+        {
+            yield break;
+        }
+        yield return Fact("pid", pid.ToString()!, Dim);
+        var below = (log?.Tree ?? []).Where(p => p.Pid != pid).ToList();
+        for (var i = 0; i < below.Count && i < TreeRows; i++)
+        {
+            var process = below[i];
+            yield return Layout.Builder.HStack(
+                    Layout.Builder.Text(i == 0 ? "tree" : "", 12f, Faint).WFixed(FactLabel),
+                    Layout.Builder.Text($"{Branch(process.Depth)}{process.Name} {process.Pid}", 12f, Body).WStar())
+                .RowH(TreeRowHeight);
+        }
+        if (below.Count > TreeRows)
+        {
+            yield return Layout.Builder.HStack(
+                    Layout.Builder.Spacer().WFixed(FactLabel),
+                    Layout.Builder.Text($"and {below.Count - TreeRows} more", 12f, Dim).WStar())
+                .RowH(TreeRowHeight);
+        }
+    }
+
+    /// <summary>
+    /// A process's place in the tree, drawn in its text as pstree does (two spaces a level, then └): an indent computed as a width was a
+    /// size laid out by hand, which LayoutDrivenTests refuses (review of #357).
+    /// </summary>
+    internal static string Branch(int depth) => depth <= 1 ? "" : string.Concat(Enumerable.Repeat("  ", depth - 2)) + "└ ";
+
+    /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
+    private static Layout.Node Question(string text) => Layout.Builder.Text(text, 12f, Bright).Pad(0f, 4f).WAuto();
 
     private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
     {

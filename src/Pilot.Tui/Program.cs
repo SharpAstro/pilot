@@ -207,17 +207,35 @@ jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false)
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
 // Cancel is the selected job's, whose log is followed: its node's.
-jobs.OnCancel = job => _ = Task.Run(async () =>
+Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
 {
+    var what = force ? "force cancel" : "cancel";
     if (clients.For(jobs.FollowingNode) is not { } to)
     {
-        flights.Say($"cancel {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        flights.Say($"{what} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
         Redraw();
         return;
     }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = Who }, stop.Token);
     clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"cancelled {job.Id}" : $"cancel {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{(force ? "force cancelled" : "cancelled")} {job.Id}" : $"{what} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
+    Redraw();
+});
+jobs.OnCancel = CancelJob(force: false);
+jobs.OnForceCancel = CancelJob(force: true);
+jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "paused");
+jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resumed");
+void SendJobVerb(JobRow job, string verb, string done) => _ = Task.Run(async () =>
+{
+    if (clients.For(jobs.FollowingNode) is not { } to)
+    {
+        flights.Say($"{verb} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
+        Redraw();
+        return;
+    }
+    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
+    clients.NoteRefusal(jobs.FollowingNode, envelope);
+    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{done} {job.Id}" : $"{verb} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
     Redraw();
 });
 jobs.OnOpen = location => DashboardCommands.Open(location);

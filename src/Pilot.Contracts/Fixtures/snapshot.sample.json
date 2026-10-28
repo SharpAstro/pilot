@@ -199,10 +199,19 @@
       "error": null,
       "exitCode": null,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j14.log",
+      "exitPath": "/home/ada/.local/share/pilot2/jobs/j14.log.exit",
+      "pid": 41822,
+      "processStartedAt": "2026-10-18T09:29:41+00:00",
+      "scriptPath": null,
+      "memoryKey": "example-org/orbit|dotnet test|src/Orbit.Lib.Tests|",
+      "memoryMedian": 1288490188,
+      "memoryPeak": 1503238553,
       "timeout": "01:00:00",
       "startedAt": "2026-10-18T09:29:40+00:00",
       "queuedAt": null,
       "endedAt": null,
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -218,10 +227,19 @@
       "error": null,
       "exitCode": null,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j15.log",
+      "exitPath": "/home/ada/.local/share/pilot2/jobs/j15.log.exit",
+      "pid": null,
+      "processStartedAt": null,
+      "scriptPath": null,
+      "memoryKey": "example-org/pilot|dotnet build||-c",
+      "memoryMedian": null,
+      "memoryPeak": null,
       "timeout": "00:30:00",
       "startedAt": "2026-10-18T09:38:02+00:00",
       "queuedAt": "2026-10-18T09:38:02+00:00",
       "endedAt": null,
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -237,10 +255,19 @@
       "error": "exit 1",
       "exitCode": 1,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j13.log",
+      "exitPath": "/home/ada/.local/share/pilot2/jobs/j13.log.exit",
+      "pid": 40377,
+      "processStartedAt": "2026-10-18T09:02:12+00:00",
+      "scriptPath": null,
+      "memoryKey": "example-org/orbit|dotnet test|src/Orbit.Lib.Tests|filter",
+      "memoryMedian": 1181116006,
+      "memoryPeak": 1395864371,
       "timeout": "01:00:00",
       "startedAt": "2026-10-18T09:02:11+00:00",
       "queuedAt": null,
       "endedAt": "2026-10-18T09:06:48+00:00",
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": false
     },
     {
@@ -256,10 +283,19 @@
       "error": null,
       "exitCode": 0,
       "logPath": "/home/ada/.local/share/pilot2/jobs/j12.log",
+      "exitPath": "/home/ada/.local/share/pilot2/jobs/j12.log.exit",
+      "pid": 38105,
+      "processStartedAt": "2026-10-18T08:40:01+00:00",
+      "scriptPath": null,
+      "memoryKey": "example-org/site|npm run|build|",
+      "memoryMedian": 611318374,
+      "memoryPeak": 805306368,
       "timeout": "00:20:00",
       "startedAt": "2026-10-18T08:40:00+00:00",
       "queuedAt": null,
       "endedAt": "2026-10-18T08:40:44+00:00",
+      "pausedAt": null,
+      "pausedFor": "00:00:00",
       "told": true
     }
   ],
@@ -302,6 +338,15 @@
       "startedAt": "2026-10-18T09:02:10+00:00",
       "finishedAt": "2026-10-18T09:31:55+00:00",
       "closedAt": null
+    }
+  ],
+  "summaries": [
+    {
+      "scope": "*",
+      "markdown": "## Needs you\n- c41: the PR review of bullclip-backend#2479 asks for changes.\n\n## Where it is\nTIA1611 is flying its second leg, parser, with 2 of 4 steps ticked.",
+      "madeAt": "2026-10-18T09:40:00+00:00",
+      "tokens": 9412,
+      "cost": 0.0123
     }
   ]
 }
