@@ -866,7 +866,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     // A line in an org's group, under its header: that it has no open PR, or why its read failed. Cut with an ellipsis, whole on hover.
     private Layout.Node OrgNote(string text, RGBAColor32 color, string whole) =>
-        Layout.Builder.Text(text, SecondarySize, color).WithTooltip(whole).Pad(NoteIndent, 0f).RowH(OrgNoteHeight);
+        Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(NoteIndent), Layout.Builder.Text(text, SecondarySize, color).WithTooltip(whole).WStar().HStar()).RowH(OrgNoteHeight);
 
     // A repo's header: its fold mark, its name as a link to the repo, and how many PRs it lists. A click anywhere on it folds it.
     private Layout.Node GroupRow(PullRequestGroup group)
