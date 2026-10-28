@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node;
 
@@ -331,7 +332,7 @@ public sealed class NodeState
     /// </summary>
     /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null)
     {
         lock (_gate)
         {
@@ -349,6 +350,7 @@ public sealed class NodeState
                 Subject = subject,
                 Title = title,
                 Detail = detail,
+                Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
                 Choices = [.. choices ?? []],
                 Link = link,
                 AskedBy = askedBy,
@@ -401,7 +403,7 @@ public sealed class NodeState
     /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
     /// False when the card is not open or nothing changed.
     /// </summary>
-    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null)
+    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null, string? summary = null)
     {
         lock (_gate)
         {
@@ -410,7 +412,9 @@ public sealed class NodeState
                 return false;
             }
             var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind };
-            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind
+            // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
+            next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
+            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
                 && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
             {
                 return false;
@@ -824,10 +828,10 @@ public sealed class NodeState
                 _legs.Remove((removed.Flight, removed.Name));
                 break;
             case CardAddedEvent added:
-                _cards[added.Card.Id] = added.Card;
+                _cards[added.Card.Id] = WithSummary(added.Card);
                 break;
             case CardChangedEvent changed:
-                _cards[changed.Card.Id] = changed.Card;
+                _cards[changed.Card.Id] = WithSummary(changed.Card);
                 break;
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
@@ -853,6 +857,9 @@ public sealed class NodeState
         }
     }
 
+    private static CardRow WithSummary(CardRow card) =>
+        CardSummaries.Usable(card.Summary) ? card : card with { Summary = CardSummaries.For(card.Kind, card.Subject, card.Title, card.Choices) };
+
     private void Restore(SnapshotEvent snapshot)
     {
         foreach (var row in snapshot.Sessions)
@@ -870,7 +877,8 @@ public sealed class NodeState
         }
         foreach (var card in snapshot.Cards ?? [])
         {
-            _cards[card.Id] = card;
+            // A card an older node wrote has no summary: it gets one from the same table.
+            _cards[card.Id] = WithSummary(card);
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;

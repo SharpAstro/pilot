@@ -307,15 +307,15 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   rebases the plane `--onto` the base from that head (the merged commits drop out, squashed or not), pushes, opens the new
   PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
   done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
-- `pilot review changes <changes>` rings with **Go around** (the last leg, told the changes; a done leg may go around
+- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
   for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
   before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
-  closes, and the review's ring offers **Go around**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Go around**
+  closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
+- A passed PR that conflicts with its base and does not rebase cleanly is taken as changes too: the ring's **Redo leg**
   sends the last leg's worker to rebase it, keeping both sides' work.
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
@@ -443,10 +443,10 @@ The node watches every flying leg's worker (`LegWatch`, every 30 s) and never le
 | The worker | What the node does |
 | --- | --- |
 | stopped by the usage limit, with a reset time | A For-you card saying when it resumes; 2 min after the reset, says "carry on" to it (resumed as a real turn) and closes the card. Stopped again on the same reset, it rings. |
-| stopped by the API with no reset time | Rings, with **Resume** and **Go around**. |
-| idle (or ended) with its leg unfinished, 3 min past its last answer | Nudges it, twice at most, with what is left and how to finish or give up; then rings, with **Nudge** and **Go around**. |
+| stopped by the API with no reset time | Rings, with **Resume** and **Redo leg**. |
+| idle (or ended) with its leg unfinished, 3 min past its last answer | Nudges it, twice at most, with what is left and how to finish or give up; then rings, with **Nudge** and **Redo leg**. |
 | waiting on a person | Rings with what it waits on; it is answered in its own session, or gone around. |
-| failed, or never showed up 3 min after its start | Rings, with **Go around**. |
+| failed, or never showed up 3 min after its start | Rings, with **Redo leg**. |
 
 Each nudge and resume is a Handled card. The watch's cards close by themselves once the worker works again, and a
 go-around or a finished leg closes every card about the leg. What it resumed and nudged is kept in memory, so a node
@@ -701,7 +701,7 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 context against its window, last response, state, spend, usage in the header; a bar to say something to the selected
 one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and
 artifacts (a click opens them), and what can be done with it now: **Start <leg>**, **Open PR**, **Review again** run
-at once. **Go around** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
+at once. **Redo leg** and **Remove** need words, so each opens a one-line field under its button (also in a flight's page and
 from the row menu) asking why: Enter sends the verb (`go-around`, `remove-leg`) with that why to the flight's own node, Escape
 closes the field. **Plan a leg** needs a goal and a Done-when, which the planner writes: it opens the Chat page with
 `plan a leg on <code>: ` in its box for the person to finish, and the watchtower's plan card comes back to confirm; only on this window's own node's flights, since the chat's watchtower runs `pilot` against that node and another node's flight has no such leg there. There is no
@@ -957,7 +957,7 @@ is tried again in 10 min. This replaced the watchtower's keep-warm round every 5
 - **The digest**, at 08:00 and 18:00 local time (`pilot digest` for one now): a For-you card of what landed, what the
   node and the watchtower handled, line by line, and what is parked (held flights, failed legs, open cards). A newer
   digest closes the last; the watchtower pushes it as one short message.
-- **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Go around**,
+- **Budgets** are applied by the node: a worker past its leg's budget rings with **Extend** (by half) and **Redo leg**,
   and keeps working until you choose. `pilot leg extend <tokens>` raises it by hand.
 
 ### Usage
@@ -1207,7 +1207,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Go around); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold` or `separate` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `create-issue`, `create-flight` or `sync-repos` |
 | **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
@@ -1254,7 +1254,7 @@ before an irreversible step, a stop: waits until someone acts), **For you** (a c
 node or the watchtower did itself: one line, born closed). A session going quiet is not a card by itself; it changes
 how its row looks. A flying leg's worker stalling is: its flight is derailing (see Liveness). A card leaves when its
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
-PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Go around**; a landed flight
+PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Redo leg**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
 watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
 `worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings

@@ -131,11 +131,11 @@ public sealed class StandingTests
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, worker, status: "busy"));
         var row = await Listed(node, worker);
 
-        // The choices LegWatch gives a stalled worker's ring card: Resume says to the worker, Go around starts a fresh one.
+        // The choices LegWatch gives a stalled worker's ring card: Resume says to the worker, Redo leg starts a fresh one.
         var choices = new[]
         {
             new CardChoice { Label = "Resume", Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = ["Carry on with your leg from where you left off."] },
-            new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["the last worker stalled (idle)"] },
+            new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["the last worker stalled (idle)"] },
         };
         var resume = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stopped", null, choices);
 
@@ -145,7 +145,7 @@ public sealed class StandingTests
 
         var around = node.State.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1/parser", "TIA1/parser's worker stalled", null, choices);
 
-        var error = await Error(node, Command(Verbs.Answer, Verbs.CardTarget(around.Id), lookout, true, "Go around"));
+        var error = await Error(node, Command(Verbs.Answer, Verbs.CardTarget(around.Id), lookout, true, "Redo leg parser"));
         error.ShouldNotBeNull().ShouldContain("a go-around is for a leg flying or failed");
         error.ShouldNotContain("controller's");
 

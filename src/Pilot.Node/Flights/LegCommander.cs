@@ -766,7 +766,8 @@ public sealed partial class LegCommander(
                     new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
                     new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
                     new CardChoice { Label = "Re-plan", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
-                ]);
+                ],
+                summary: $"The worker of {flight.Code}/{leg.Name} reports the tree is not as its brief assumes. Go anyway starts it as it is; Remove leg drops it; Re-plan plans the flight again.");
         }
 
         // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.
@@ -1051,9 +1052,10 @@ public sealed partial class LegCommander(
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
                     [
-                        new CardChoice { Label = $"Redo leg {leg.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
                         new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
-                    ]);
+                    ],
+                    summary: $"The worker of {flight.Code}/{leg.Name} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.");
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
@@ -1142,7 +1144,7 @@ public sealed partial class LegCommander(
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = $"Redo leg {leg.Name}", Verb = Verbs.GoAround, Target = target, Args = [why] },
+            new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -1397,7 +1399,8 @@ public sealed partial class LegCommander(
             note ??= way == MergeWays.Queued ? System.Text.RegularExpressions.Regex.Match(line ?? "", @"position \d+") is { Success: true } place ? place.Value : null : ArmedProgress.Read(line);
             state.UpdateCard(card.Id,
                 way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue" : $"{code}'s PR #{flight?.PullRequest} merges when its checks pass",
-                line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady);
+                line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
+                way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not." : $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not.");
         }
     }
 
@@ -1452,8 +1455,20 @@ public sealed partial class LegCommander(
             ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
             : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
-        state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady);
+        state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge));
     }
+
+    /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
+    internal static string MergeSummary(string code, MergeState merge) => merge.Kind switch
+    {
+        MergeKinds.Pending when merge.AwaitsCheck => $"The PR of {code} waits for a check GitHub requires. Merge arms it, and it goes through once the check passes.",
+        MergeKinds.Pending => $"The checks of the PR of {code} are still running. Merge arms it, and it goes through once they pass.",
+        MergeKinds.Armed or MergeKinds.Queued => $"The merge of {code} is set. GitHub merges it by itself, with the node up or not.",
+        MergeKinds.Blocked when merge.FailedName is { } name => $"GitHub blocks the merge of {code}: the check {name} failed. Redo the last leg from the flight page or with pilot leg go-around to fix what it found, or re-run the check if it was a flake.",
+        MergeKinds.Blocked => $"GitHub blocks the merge of {code}: {merge.Reason}. It waits until that is cleared.",
+        MergeKinds.ChangesRequested => $"A review on GitHub asks for changes to {code}. They are read first, then the merge is offered again.",
+        _ => $"{code} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
+    };
 
     /// <summary>
     /// Turns an armed merge's card, open still, into what failed: <paramref name="title"/> and <paramref name="detail"/> say why, its
@@ -1472,7 +1487,7 @@ public sealed partial class LegCommander(
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
         {
-            choices.Add(new CardChoice { Label = $"Redo leg {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
+            choices.Add(new CardChoice { Label = Verbs.RedoLeg(last.Name), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
         }
         if (rerun)
         {
@@ -1483,7 +1498,21 @@ public sealed partial class LegCommander(
         {
             choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
-        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind);
+        var offers = new List<string>();
+        if (choices.FirstOrDefault(c => c.Verb == Verbs.GoAround) is { } redoChoice)
+        {
+            offers.Add($"{redoChoice.Label} sends a fresh worker to fix it");
+        }
+        if (rerun)
+        {
+            offers.Add("Re-run checks runs them again");
+        }
+        if (mergeAgain)
+        {
+            offers.Add("Merge again tries once more as it is");
+        }
+        var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
+        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary);
         return true;
     }
 
@@ -2043,7 +2072,8 @@ public sealed partial class LegCommander(
         state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url);
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
+            summary: $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
     }
 
     /// <summary>Whether a command comes from this node's watchtower, which the person's own words are not.</summary>
@@ -2067,10 +2097,12 @@ public sealed partial class LegCommander(
         var choices = new List<CardChoice>();
         if (last is not null)
         {
-            choices.Add(new CardChoice { Label = $"Redo leg {last.Name}", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+            choices.Add(new CardChoice { Label = Verbs.RedoLeg(last.Name), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl);
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl,
+            summary: last is null ? $"The review of {flight.Code} asked for changes. Ready anyway lands it as it is."
+                : $"The review of {flight.Code}/{last.Name} asked for changes. Redo leg sends a fresh worker to make them; Ready anyway lands it as it is.");
     }
 
     /// <summary>

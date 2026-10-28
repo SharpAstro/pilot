@@ -121,9 +121,9 @@ public sealed class GoAroundFromCardTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         // The card as PrChecks leaves it when the node's own rebase of a passed review did not send it back: the go-around is all it offers.
         var why = $"the PR {what}: rebase the plane onto its base, resolving every conflict so both sides' work stays, rerun the check, and push";
-        var card = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Go around parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [why] });
+        var card = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [why] });
 
-        var result = await Answer(node, card, "Go around parser");
+        var result = await Answer(node, card, "Redo leg parser");
 
         result.Error.ShouldBeNull();
         ShouldHaveGoneAround(node, card, "rebase the plane onto its base");
@@ -133,10 +133,10 @@ public sealed class GoAroundFromCardTests : IDisposable
     public async Task AGoAroundRefusedLeavesItsCardOpen()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Go around parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] });
+        var ready = Ready(node, LegCommander.PrReady, new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget("TIA1", "parser"), Args = [" "] });
 
         // A go-around needs a why: the card stays for the person to try again, and nothing was sent back.
-        (await Answer(node, ready, "Go around parser")).Error.ShouldNotBeNull().ShouldContain("needs why");
+        (await Answer(node, ready, "Redo leg parser")).Error.ShouldNotBeNull().ShouldContain("needs why");
 
         node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Open);
         node.GitHub.DraftCalls.ShouldBeEmpty();

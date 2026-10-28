@@ -60,7 +60,7 @@ public static class Briefs
         text.AppendLine("with messages that say what changed and why. Do not push, open a PR or merge: the controller lands the flight.");
         text.AppendLine("Leave nothing behind in the plane: every change is committed before you finish (the node refuses a done leg");
         text.AppendLine("whose plane holds files not committed), and scratch output goes outside the plane, never into it. Once your");
-        text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a go-around.");
+        text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a redo of the leg (a go-around).");
 
         var before = legs.Where(l => l.Order < leg.Order).ToList();
         if (before.Count > 0)
@@ -414,7 +414,7 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
-        text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a go-around makes any change.");
+        text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
@@ -740,12 +740,12 @@ public static class Briefs
         text.AppendLine("  (SE1's PIL294 work was lost to a push from DE1, 2026-10-27).");
         text.AppendLine();
         text.AppendLine("## What you may do");
-        text.AppendLine("- Answer a card, ring cards included, whose choice is a go-around, a resume or a nudge, when the card's detail shows it is the right one.");
+        text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
-        text.AppendLine("  refuses its dismissal from you, so answer it with a go-around, a resume or a nudge, or leave it open for them.");
+        text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");
