@@ -87,6 +87,291 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void ThePageSaysWhatTheReviewAsksInFullAndThatTheNextRoundIsYoursPastTheCap()
+    {
+        // PIL294's page showed a "review changes" chip and every step ticked, while the findings sat on a card cut short.
+        var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
+        var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
+        var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new FlightsView<RgbaImage>(renderer);
+        // The prose wraps word by word, one leaf each: read the leaves back as the text a person would see.
+        string Said(FlightRow row, LegRow[] rows) => string.Concat(System.Text.RegularExpressions.Regex.Matches(CellLayout.Describe(Layout.Engine.Arrange(
+            Layout.Builder.VStack([.. view.ReviewAsks(FlightDetail.From(FlightLine.Build([row], [], Now, rows).Single(), Now))]),
+            new Rect<int>(0, 0, 400, 40), CellMeasureContext.PixelAuthored)), @"Leaf Text ""(.*)"" \(")
+            .Select(m => m.Groups[1].Value.EndsWith(' ') ? m.Groups[1].Value : m.Groups[1].Value + "\n"));
+
+        var said = Said(flight, legs);
+
+        said.ShouldContain("The review asks for changes:");
+        said.ShouldContain("JobsView.cs:680");
+        said.ShouldContain("starts with 2 GB free");
+        said.ShouldContain("render has been redone 3 times");
+        said.ShouldContain("Redo leg render on the review's card once more, or Ready anyway");
+        // An earlier capped leg with a later one planned after it is not the person's round: the node still lets the watchtower go around.
+        var planned = legs.Append(legs[0] with { Name = "polish", Order = 3, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
+        Said(flight, planned).ShouldNotContain("the next round is yours");
+        // A review that passed, or none, says nothing here.
+        Said(Flight(), Legs()).Trim().ShouldBeEmpty();
+    }
+
+    // The page's text leaves with the colour each is drawn in, and its clickable regions, at a width where nothing is cut.
+    private static (List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions) LeavesOf(FlightRow flight, int width = 1600, Action<string>? onOpen = null)
+    {
+        using var vessel = new RgbaImageRenderer((uint)width, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.OnOpen = onOpen;
+        var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        var leaves = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        return (leaves, regions);
+    }
+
+    [Theory]
+    [InlineData("open", null, null, false)]
+    [InlineData("draft", null, null, true)]
+    [InlineData("queued", "in the merge queue, position 2", null, false)]
+    [InlineData("merged", null, "landed", false)]
+    public void TheHeaderCarriesThePrAsALinkWithItsStateAndTheFactsLineNoLonger(string state, string? queue, string? landed, bool draft)
+    {
+        var flight = Flight() with
+        {
+            MergeQueue = queue,
+            GitHubDraft = draft ? true : null,
+            State = landed is null ? FlightState.Flying : FlightState.Landed,
+            LandedAt = landed is null ? null : Live.At,
+        };
+        var opened = new List<string>();
+
+        var (leaves, regions) = LeavesOf(flight, onOpen: opened.Add);
+
+        var link = leaves.Single(t => t.Value.StartsWith("PR #7", StringComparison.Ordinal));
+        link.Value.ShouldEndWith(Followable.Away);
+        // Once, in the header: the facts line says the PR no longer.
+        leaves.Count(t => t.Value.Contains("PR #7", StringComparison.Ordinal)).ShouldBe(1);
+        var said = leaves.Single(t => t.Value == state);
+        // The state sits beside the link, after the code and the title.
+        leaves.IndexOf(said).ShouldBe(leaves.IndexOf(link) + 1);
+        leaves.FindIndex(t => t.Value == "TIA1611").ShouldBeLessThan(leaves.IndexOf(link));
+        // A link that leaves the app: a click opens it through the host's opener, a right-click offers Copy URL.
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "pr:TIA1611" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/x/tianwen/pull/7"]);
+    }
+
+    [Fact]
+    public void AFlightWithNoPrHasNoLinkAndNoStateInItsHeader()
+    {
+        var (leaves, _) = LeavesOf(Flight() with { PullRequest = null, PullRequestUrl = null });
+
+        leaves.Any(t => t.Value.StartsWith("PR #", StringComparison.Ordinal)).ShouldBeFalse();
+        leaves.Any(t => t.Value is "open" or "draft" or "queued" or "merged").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AReportFromAnOlderHeadSaysSoAndIsDimmedWhileOneForTheCurrentHeadIsNot()
+    {
+        var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680.";
+        var changes = new ReviewRow { State = ReviewState.Changes, Reviewer = "r", Report = asks, StartedAt = Live.At, GoAround = 2, ReviewedHead = "cafe0000aaaa" };
+
+        var (older, _) = LeavesOf(Flight() with { Review = changes, GitHubHead = "beef1111bbbb" });
+        var (current, _) = LeavesOf(Flight() with { Review = changes, GitHubHead = "CAFE0000AAAA" });
+
+        // Each word of the report is a leaf of its own colour: the older one is the dim shade, the current one the body's.
+        var oldWord = older.Single(t => t.Value == "LayoutDrivenTests ");
+        var curWord = current.Single(t => t.Value == "LayoutDrivenTests ");
+        oldWord.Color.ShouldNotBe(curWord.Color);
+        Contrast(oldWord.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(oldWord.Color, FlightsPalette.Standard.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
+        Joined(older).ShouldContain("review of cafe000, round 3; the head is now beef111");
+        Joined(current).ShouldContain("review of cafe000, round 3");
+        Joined(current).ShouldNotContain("the head is now");
+        // The head not yet known (no look at the PR) says nothing of a newer one, and the report is not dimmed.
+        var (unknown, _) = LeavesOf(Flight() with { Review = changes });
+        Joined(unknown).ShouldNotContain("the head is now");
+        unknown.Single(t => t.Value == "LayoutDrivenTests ").Color.ShouldBe(curWord.Color);
+        // A review that never recorded its head still says its round.
+        var (headless, _) = LeavesOf(Flight() with { Review = changes with { ReviewedHead = null }, GitHubHead = "beef1111bbbb" });
+        Joined(headless).ShouldContain("review round 3");
+    }
+
+    private static ReviewRow Changes(string report) => new() { State = ReviewState.Changes, Reviewer = "r", Report = report, StartedAt = Live.At, GoAround = 0, ReviewedHead = "cafe0000aaaa" };
+
+    [Fact]
+    public void AReportWrittenAsAMarkdownListShowsOneListItemPerFindingWithItsNamesAsCode()
+    {
+        var report = "1. CI is red: `LayoutDrivenTests` rejects `JobsView.cs:680`.\n2. The memory gate takes the smaller of the estimate and `job-memory`.\n3. A **third** finding.";
+
+        var (leaves, _) = LeavesOf(Flight() with { Review = Changes(report) });
+
+        // One marker per finding, in the list's own column, so the findings do not run together as one paragraph.
+        leaves.Where(t => t.Value is "1." or "2." or "3.").Select(t => t.Value).ShouldBe(["1.", "2.", "3."]);
+        // A backticked name is drawn in the transcript's code colour, in a leaf of its own, and the prose around it is not.
+        var code = leaves.Single(t => t.Value.StartsWith("LayoutDrivenTests", StringComparison.Ordinal));
+        code.Color.ShouldBe(TranscriptEntryView.Prose.Code);
+        leaves.Single(t => t.Value.StartsWith("job-memory", StringComparison.Ordinal)).Color.ShouldBe(TranscriptEntryView.Prose.Code);
+        leaves.Single(t => t.Value == "rejects ").Color.ShouldBe(TranscriptEntryView.Prose.Text);
+        leaves.Single(t => t.Value.StartsWith("third", StringComparison.Ordinal)).Color.ShouldBe(TranscriptEntryView.Prose.Strong);
+        // The backticks are not shown, and a report that fits has no Show all.
+        leaves.Any(t => t.Value.Contains('`')).ShouldBeFalse();
+        leaves.Any(t => t.Value is "Show all" or "Show less").ShouldBeFalse();
+        // Contrast against the panel the report is drawn on, in the transcript's colours.
+        Contrast(code.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+    }
+
+    [Fact]
+    public void ALongPathOrNameInAReportWrapsAtItsSeparatorsInsidePageWidthAndStaysSelectableAndWhole()
+    {
+        const string path = "src/Pilot.Ui/SomeVeryLongNamespace/WithNestedFolders/AndMore/FlightsView.Detail.Header.Row.cs:1234";
+        const string name = "Some_Very_Long_CheckName_That_Has_Many_Underscores_And_Keeps_Going_On_And_On";
+        var report = $"1. `{path}` is wrong, and so is {path}.\n2. The check `{name}` fails, as **{name}**, does.";
+        const int width = 900;
+        using var vessel = new RgbaImageRenderer(width, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        var screen = new FlightsScreen([FlightLine.Build([Flight() with { Review = Changes(report) }], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, new RectF32(0, 0, width, 800));
+
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
+        var texts = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToList();
+
+        // Nothing is drawn past the page's right edge: the long words broke at their separators instead of running off it.
+        texts.Where(a => a.Bounds.Right > width + 0.5f).Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value).ShouldBeEmpty();
+        // Each path is more than one leaf, each of them selectable and none carrying a space the path did not have.
+        var pieces = texts.Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Where(t => path.Contains(t.Value.TrimEnd(), StringComparison.Ordinal) && t.Value.Length > 3).ToList();
+        pieces.Count.ShouldBeGreaterThan(2);
+        pieces.ShouldAllBe(t => t.Selectable);
+        // The leaves in reading order, joined, are the report's own words: the path appears whole twice, the name twice.
+        var said = string.Concat(texts.Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value));
+        said.Split(path).Length.ShouldBe(3);
+        said.Split(name).Length.ShouldBe(3);
+    }
+
+    [Fact]
+    public void ALongReportFoldsEachFindingToItsFirstLinesAndShowAllOpensItAndShowLessFoldsItAgain()
+    {
+        string Finding(int n) => $"{n}. Finding {n} starts here\n   detail A{n}\n   detail B{n}\n   detail C{n}\n   detail D{n}";
+        var report = string.Join("\n", Enumerable.Range(1, 3).Select(Finding));
+        using var vessel = new RgbaImageRenderer(1600, 800);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        var screen = new FlightsScreen([FlightLine.Build([Flight() with { Review = Changes(report) }], [], Now, Legs()).Single()], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, 1600, 800));
+        flights.OpenDetail("TIA1611");
+        string Said()
+        {
+            flights.Render(screen, new RectF32(0, 0, 1600, 800));
+            return string.Concat(Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1600, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
+                .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.EndsWith(' ') ? t.Value : t.Value + " "));
+        }
+        void Press()
+        {
+            var regions = new List<ClickableRegion>();
+            flights.CollectPaintedRegions(regions);
+            regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:review-fold" }).OnClick!.Invoke(InputModifier.None);
+        }
+
+        var folded = Said();
+
+        // Each finding's first three lines show, the rest wait; nothing is cut without a pill to open it.
+        folded.ShouldContain("Finding 1 starts here");
+        folded.ShouldContain("detail B1");
+        folded.ShouldContain("Finding 3 starts here");
+        folded.ShouldNotContain("detail C1");
+        folded.ShouldNotContain("detail D3");
+        folded.ShouldContain("Show all");
+        Press();
+        var opened = Said();
+        opened.ShouldContain("detail D1");
+        opened.ShouldContain("detail D3");
+        opened.ShouldContain("Show less");
+        opened.ShouldNotContain("Show all");
+        Press();
+        Said().ShouldNotContain("detail D1");
+        // The open state is the flight's: another flight's page starts folded.
+        ReviewReport.Fold(report).Folded.ShouldBeTrue();
+        ReviewReport.Fold("1. short\n2. short too").ShouldBe(("1. short\n2. short too", false));
+    }
+
+    [Fact]
+    public void CapturesOfTheReviewReportFoldedOpenedAndOlderAtNarrowAndWideWindowsInBothPalettes()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var report = """
+            1. **CI is red on `LayoutDrivenTests`.** It rejects `JobsView.cs:680`: a text leaf there is wider than its column.
+               The check the leg names runs `dotnet test Pilot.Gui.Tests -c Release`, and it fails the same way on the PR's head.
+               Fix the column width or wrap the leaf with `WrappedProse.Of`; do not loosen the test.
+               The failure first showed in round 1 and the second round did not touch it, so the leg's report claiming green is wrong.
+            2. **The memory gate takes the wrong minimum.** `JobMemory.Gate` uses the smaller of the estimate and `job-memory`, so a job that measured 8 GB starts with 2 GB free.
+               See `src/Pilot.Node/Jobs/JobMemory.cs:112` and the test `AJobThatMeasuredMoreThanItsEstimate` that does not cover it.
+            3. **A link in the report is dropped.** [the issue](https://github.com/SharpAstro/pilot/issues/383) is shown as plain words in the transcript's own tree.
+               Check `Follow` against `TranscriptEntryView.WebLink`.
+               Add a test that clicks it.
+            4. Short one: `README.md` still says `pilot review changes` takes one line.
+            """;
+        foreach (var (width, night, open, older) in new[] { (900, false, false, false), (1800, false, false, false), (900, true, false, false), (1800, true, true, false), (1800, false, true, true) })
+        {
+            var flight = Flight() with { Review = Changes(report), GitHubHead = older ? "beef1111bbbb" : "cafe0000aaaa" };
+            var screen = new FlightsScreen([FlightLine.Build([flight], [], Now, Legs()).Single()], "test", Now);
+            using var renderer = new RgbaImageRenderer((uint)width, 1300);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            if (night)
+            {
+                chrome.Flights.Mode = FlightsViewMode.Night;
+            }
+            chrome.Show(PilotPage.Flights);
+            chrome.Flights.OpenDetail("TIA1611");
+            chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, 1300));
+            if (open)
+            {
+                var regions = new List<ClickableRegion>();
+                chrome.Flights.CollectPaintedRegions(regions);
+                regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:review-fold" }).OnClick!.Invoke(InputModifier.None);
+                chrome.Render(new SessionsScreen([], "test", Now), screen, new RectF32(0, 0, width, 1300));
+            }
+            File.WriteAllBytes(Path.Combine(dir, $"review-{width}{(night ? "-night" : "")}{(open ? "-open" : "")}{(older ? "-older" : "")}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, 1300));
+        }
+    }
+
+    [Fact]
+    public void AFoldedReportKeepsItsStructureAndAClosedFence()
+    {
+        var report = "Intro\n\n1. First\n   ```\n   code 1\n   code 2\n   code 3\n   ```\n2. Second";
+
+        var (text, folded) = ReviewReport.Fold(report);
+
+        folded.ShouldBeTrue();
+        text.ShouldContain("1. First");
+        text.ShouldContain("2. Second");
+        text.ShouldNotContain("code 2");
+        // The fence the cut left open is closed, so item 2 is not swallowed into it.
+        text.Split('\n').Count(l => l.TrimStart().StartsWith("```", StringComparison.Ordinal)).ShouldBe(2);
+    }
+
+    // The page's words as one string, a leaf's trailing space as a space: the wrapped prose reads as it does on the page.
+    private static string Joined(List<Layout.Content.Text> leaves) => string.Concat(leaves.Select(t => t.Value.EndsWith(' ') ? t.Value : t.Value + " "));
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        static double Lin(byte v)
+        {
+            var s = v / 255.0;
+            return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+        static double Lum(RGBAColor32 c) => 0.2126 * Lin(c.Red) + 0.7152 * Lin(c.Green) + 0.0722 * Lin(c.Blue);
+        var (hi, lo) = (Math.Max(Lum(a), Lum(b)), Math.Min(Lum(a), Lum(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    [Fact]
     public void ADumpListsEveryLegStepAndArtifact()
     {
         var dump = FlightDetail.From(Line(), Now).ToDump();

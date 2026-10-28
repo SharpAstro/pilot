@@ -50,8 +50,8 @@ From a source build instead, `pilot update --adopt` moves the folder onto releas
 
 ## Update
 
-The node keeps itself current. `--update-policy` is `auto` (the default: it installs a newer release once no job
-is running), `ask` (a card with **Update**) or `off`. `--update-channel` is `stable` (the tagged releases, native AOT)
+The node keeps itself current. `--update-policy` is `auto` (the default: it installs a newer release at once; running
+jobs carry on and the new node picks them up), `ask` (a card with **Update**) or `off`. `--update-channel` is `stable` (the tagged releases, native AOT)
 or `beta`: every push to main that builds and passes its tests, as a framework-dependent Debug build that needs the
 .NET 10 runtime with ASP.NET Core. A beta version is the next patch after the latest tag, numbered by the CI run
 (`2.0.4-beta.292` is run 292). Both are on the GUI's Settings page.
@@ -63,15 +63,21 @@ pilot update             # install the latest now, whatever the policy
 
 An update swaps the files in place and restarts the node; flights, cards, workers and the watchtower carry on.
 
+`pilot node restart [why…]` restarts the node in place the same way, without an install, so a session never kills the
+process itself: the node starts its successor and stops, jobs are not waited for and the next node follows them again, and
+the answer says how many carry on.
+
 ## Use it
 
 ```bash
 pilot status [--all]                      # flights in the air (--all: landed too), their legs, and the live sessions
+pilot summary [--fleet] [--fresh]         # "where are we": what needs you, where it is (one Haiku call, kept with its age); --fleet covers every node
 pilot issue create "<title>" --body "<text>" --repo <checkout>
 pilot flight create <issue> --repo <checkout>   # the flight, its plane made
 pilot flight plan <code>                  # a planner plans the legs; then they fly
 pilot flight merge <code> <head>          # once its review has passed and CI is green
 pilot nodes                               # the fleet; pilot --node <host:port> status reads another node
+pilot job <id> cancel [--force]           # stop a job; --force kills its whole process tree at once
 pilot mcp                                 # the same commands as an MCP server over stdio; an update hands the session to the new binary
 ```
 

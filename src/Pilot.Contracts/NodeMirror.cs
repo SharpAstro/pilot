@@ -48,6 +48,11 @@ public sealed class NodeMirror
     /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
     public IReadOnlyDictionary<string, PrReviewRow> PrReviews => _prReviews;
 
+    private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
+
+    /// <summary>The summaries, by scope (<see cref="SummaryRow.FleetScope"/> or a flight's code).</summary>
+    public IReadOnlyDictionary<string, SummaryRow> Summaries => _summaries;
+
     /// <summary>
     /// Applies one event. A snapshot replaces everything; a delta must be numbered one past the last, or the mirror
     /// has missed something and throws rather than show a state the node never had.
@@ -89,6 +94,11 @@ public sealed class NodeMirror
             foreach (var review in snapshot.PrReviews ?? [])
             {
                 _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
+            }
+            _summaries.Clear();
+            foreach (var summary in snapshot.Summaries ?? [])
+            {
+                _summaries[summary.Scope] = summary;
             }
             Stream = snapshot.Stream;
             Seq = snapshot.Seq;
@@ -150,6 +160,9 @@ public sealed class NodeMirror
                 break;
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
+                break;
+            case SummaryChangedEvent summary:
+                _summaries[summary.Summary.Scope] = summary.Summary;
                 break;
             case UsageChangedEvent usage:
                 Usage = usage.Usage;

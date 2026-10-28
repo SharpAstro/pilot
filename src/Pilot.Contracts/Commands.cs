@@ -248,8 +248,23 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
-    /// <summary><c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end.</summary>
+    /// <summary>
+    /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
+    /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
+    /// </summary>
     public const string CancelJob = "cancel-job";
+
+    /// <summary>The arg of <see cref="CancelJob"/> that kills the whole process tree, descendants that outlived the wrapper too.</summary>
+    public const string ForceArg = "force";
+
+    /// <summary>
+    /// <c>pause-job job/&lt;id&gt;</c>: freezes a running job's whole process tree. The job stays <see cref="JobState.Running"/>
+    /// (it keeps its slot), its row says <see cref="JobRow.PausedAt"/>, and its timeout stops counting.
+    /// </summary>
+    public const string PauseJob = "pause-job";
+
+    /// <summary><c>resume-job job/&lt;id&gt;</c>: thaws a paused job's process tree; the time it was paused is added to <see cref="JobRow.PausedFor"/>.</summary>
+    public const string ResumeJob = "resume-job";
 
     /// <summary>What a job target starts with: <c>job/&lt;id&gt;</c>.</summary>
     public const string JobTargetPrefix = "job/";
@@ -304,14 +319,34 @@ public static class Verbs
     public const string Digest = "digest";
 
     /// <summary>
+    /// <c>summarise node</c> or <c>summarise flight/&lt;code&gt;</c>: one Haiku call over what the node holds of the flights in play
+    /// (or of that one flight), kept as the scope's <see cref="SummaryRow"/> with its time, tokens and cost, on the feed for every
+    /// client. Never run by itself: a client asks. The result's <see cref="CommandResult.Made"/> is the summary's markdown.
+    /// </summary>
+    public const string Summarise = "summarise";
+
+    /// <summary>
+    /// <c>records node</c> or <c>records flight/&lt;code&gt;</c>: what the node holds of its flights in play (or of that one flight) as
+    /// the plain records a summary is made from, in the result's <see cref="CommandResult.Made"/>; nothing when it holds none. A read,
+    /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
+    /// </summary>
+    public const string Records = "records";
+
+    /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>
     public const string Update = "update";
 
     /// <summary>
+    /// <c>restart-node node [why…]</c> (<c>pilot node restart</c>): the node starts its successor and stops, as for a setting
+    /// or an update; jobs run detached, are not waited for, and the next node follows them again. The answer says how many carry on.
+    /// </summary>
+    public const string RestartNode = "restart-node";
+
+    /// <summary>
     /// <c>set node &lt;key&gt; [value…]</c>: saves a setting in the node's settings file (no value, or <c>default</c>, takes
-    /// it out); the node restarts to run with it once no job would be cut short. This machine only.
+    /// it out); the node restarts to run with it at once; jobs carry on under the next node. This machine only.
     /// </summary>
     public const string Set = "set";
 

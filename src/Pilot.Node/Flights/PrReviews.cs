@@ -388,17 +388,25 @@ public sealed class PrReviews(
             detail.Append($"\n{finding}");
         }
         state.CloseCardsAbout(subject, "the verdict is in", LegWatch.ReviewStalled);
-        // For-you, not a ring: on an open PR the node posts it itself (below), and the card is only for one it could not.
-        var card = state.RaiseCard(CardBin.ForYou, ReadyKind, subject,
-            $"{pr}: review ready, {verdict}{(review.Title is { Length: > 0 } title ? $" ({title})" : "")}",
-            detail.ToString(),
-            [new CardChoice { Label = PostLabel, Verb = Verbs.PostReview, Target = subject }],
-            link: review.Url);
-        state.PutPrReview(reviewed with { Card = card.Id });
+        state.PutPrReview(reviewed);
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
         await SetLabelAsync(reviewed, cancellationToken);
-        var posted = await PostIfOpenAsync(pr, subject, cancellationToken);
+        // The node posts first and asks after. The Post card used to be raised before the node's own post, which takes some 30 s,
+        // and was pressed meanwhile: the press was refused as a second post and reopened the card (DIR.Lib#168, SE1, 2026-10-28).
+        var (posted, notPosted) = await PostIfOpenAsync(pr, subject, cancellationToken);
+        if (!posted)
+        {
+            // For-you, not a ring, and only for a review the node did not post: a PR no longer open, a post GitHub refused, or one
+            // that went out and never said back, which may be on the PR and PostAsync refuses again, so it gets no Post.
+            var sentUnanswered = Of(pr) is { PostedId: null, PostingAt: not null };
+            var card = state.RaiseCard(CardBin.ForYou, ReadyKind, subject,
+                $"{pr}: review ready, {verdict}{(review.Title is { Length: > 0 } title ? $" ({title})" : "")}",
+                (notPosted is { } why ? $"Not posted by the node: {why}\n" : "") + detail.ToString(),
+                sentUnanswered ? [] : [new CardChoice { Label = PostLabel, Verb = Verbs.PostReview, Target = subject }],
+                link: review.Url);
+            state.PutPrReview((Of(pr) ?? reviewed) with { Card = card.Id });
+        }
 
         // A reviewer that gave its verdict is done with, after a grace to end its turn, as a flight's is. A review the node posted
         // itself is over too, its card closed by the post, but its worktree and reviewer go only after that grace, not before the
@@ -438,49 +446,36 @@ public sealed class PrReviews(
     /// <summary>
     /// A verdict on a PR still open is posted by the node at once, as a flight's review is, and a Handled card says what went
     /// out: the person is asked for nothing. It rang with a Post button whatever the verdict, and #241's sat ringing all night
-    /// (SE1, 2026-10-26). A PR merged or closed meanwhile, or a post GitHub refused, keeps the For-you card and its Post; a post
-    /// that went out and never said back keeps the card without it, as the post is never made twice. True when the review went out.
+    /// (SE1, 2026-10-26). A PR merged or closed meanwhile, or a post GitHub refused, gets the For-you card and its Post; a post
+    /// that went out and never said back gets the card without it, as the post is never made twice. Posted is true when the review
+    /// went out; NotPosted is why a post the node tried did not, so a press of the card's Post is not a guess.
     /// An approve posts itself too, by design, as a changes or a comment does. The Handled posted card closes with the review in
     /// <see cref="EndAsync"/> (<c>CloseCardsAbout</c>), on purpose: it is a record, still shown under <c>--all</c> and in the digest.
     /// </summary>
-    private async Task<bool> PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
+    private async Task<(bool Posted, string? NotPosted)> PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
     {
         if (!PostsItself)
         {
-            return false;
+            return (false, null);
         }
         try
         {
             var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
             if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
-                return false;
+                return (false, null);
             }
             await PostAsync(pr, new CommandRequest { Verb = Verbs.PostReview, Target = subject, Who = "node" }, cancellationToken);
             if (Of(pr) is { PostedUrl: { } url, Verdict: { } verdict })
             {
                 state.RaiseCard(CardBin.Handled, PostedKind, subject, $"{pr}: pilot's review posted, {verdict}", url, link: url);
             }
-            return true;
+            return (true, null);
         }
         catch (FlightException ex)
         {
-            // The For-you card with Post stays, and says why the node did not post it, so a press is not a guess.
-            if (Of(pr)?.Card is { } card && state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card) is { } open)
-            {
-                state.CloseCard(open.Id, "replaced: the node could not post it", "node");
-                // A post that went out and never said back may be on the PR, and PostAsync refuses it again: so no Post, only a look
-                // on the PR and a dismiss.
-                var sentUnanswered = Of(pr) is { PostedId: null, PostingAt: not null };
-                var again = state.RaiseCard(CardBin.ForYou, ReadyKind, subject, open.Title,
-                    $"Not posted by the node: {ex.Message}\n{open.Detail}", sentUnanswered ? [] : open.Choices, link: open.Link);
-                if (Of(pr) is { } review)
-                {
-                    state.PutPrReview(review with { Card = again.Id });
-                }
-            }
+            return (false, ex.Message);
         }
-        return false;
     }
 
     /// <summary>The Handled card of a review the node posted itself.</summary>
@@ -704,7 +699,8 @@ public sealed class PrReviews(
                 await TendFixerAsync(fixing, cancellationToken);
             }
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-            foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed, Card: { } card } && closed.Contains(card)))
+            // A review the node posted itself has no card to close: posted, it is over all the same.
+            foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed } && (r.Card is { } card && closed.Contains(card) || r.PostedId is not null)))
             {
                 if (_graced.ContainsKey(Verbs.PrTarget(review.Repo, review.Number)))
                 {

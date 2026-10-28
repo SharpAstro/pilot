@@ -51,10 +51,17 @@ internal sealed class FakeChecks : ICheckRunner
 
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
-    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
+    public Func<Task>? OnRun { get; set; }
+
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
     {
         Runs.Add((command, cwd));
-        return Task.FromResult(Next);
+        if (OnRun is { } wait)
+        {
+            await wait();
+        }
+        return Next;
     }
 }
 
@@ -146,10 +153,17 @@ internal sealed class FakeGitHub : IGitHub
 
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
+    /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
+    public string? PrFails { get; set; }
+
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
         await Called(nameof(PullRequestAsync));
+        if (PrFails is { } why)
+        {
+            throw new FlightException(why);
+        }
         return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
     }
 
@@ -282,6 +296,27 @@ internal sealed class FakeGitHub : IGitHub
     public MergeQueueState? Queue { get; set; }
 
     public Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Queue);
+
+    /// <summary>Every dequeue the node asked for, by PR number.</summary>
+    public List<int> Dequeued { get; } = [];
+
+    /// <summary>When set, DequeueAsync fails with it.</summary>
+    public string? DequeueFails { get; set; }
+
+    public Task DequeueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        if (DequeueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        Dequeued.Add(number);
+        // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
+        if (Queue is { Queued: true } queued)
+        {
+            Queue = queued with { Queued = false, Position = null, RemovedAt = DateTimeOffset.UtcNow, RemovedReason = "manually removed" };
+        }
+        return Task.CompletedTask;
+    }
 
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
     public List<(int Number, bool Draft)> DraftCalls { get; } = [];
@@ -1045,6 +1080,34 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _workers.Stopped.ShouldBe(["job00001"]);
         // The next leg may go now.
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ALegsCheckRunsWithoutTheLockSoOtherCommandsAreAnsweredAndARetriedFinishDoesNotRunItAgain()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && _checks.Runs.Count == 0; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        _checks.Runs.Count.ShouldBe(1);
+
+        // The check holds no lock: the worker's retry is answered at once, refused, and runs no second check (DE1, 2026-10-28:
+        // a ten-minute check held every flight's commands, and each retry queued another).
+        var retry = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in").WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check already");
+        _checks.Runs.Count.ShouldBe(1);
+
+        gate.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Done);
     }
 
     [Fact]

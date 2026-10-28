@@ -6,10 +6,11 @@ namespace Pilot.Node;
 /// <summary>
 /// Restarts the node to run with what changed under it (a saved setting): it starts a new <c>pilot-node</c> with its own
 /// arguments and <c>--after &lt;its pid&gt;</c>, and stops; the new one waits for it to exit and takes the socket, as a
-/// self-update's successor does. Never while a job runs or waits, as a job is the node's child and a restart would cut
-/// it short: a restart asked for then waits for the jobs, and says so.
+/// self-update's successor does. At once, whatever jobs run or wait: a job runs detached from the node and the next node
+/// follows it again, so a restart says how many carry on instead of waiting for them. Under a systemd unit it starts no
+/// successor: the node only stops, and the unit's <c>Restart=always</c> starts it again on the binaries now in place.
 /// </summary>
-public sealed class NodeRestarter(NodeState state, TimeProvider time, IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger) : BackgroundService
+public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger)
 {
     /// <summary>The binary a successor is started from: this process's own.</summary>
     public string NodePath { get; init; } = Environment.ProcessPath ?? "";
@@ -17,99 +18,106 @@ public sealed class NodeRestarter(NodeState state, TimeProvider time, IHostAppli
     /// <summary>Starts the successor; false if it did not start. A test replaces it.</summary>
     public Func<string, bool> StartSuccessor { get; init; } = Start;
 
-    public TimeSpan BusyRetryEvery { get; init; } = TimeSpan.FromMinutes(1);
+    /// <summary>Whether the node's unit restarts it, so no successor is started. A test replaces it.</summary>
+    public Func<string, bool> RestartedBySystemd { get; init; } = UnderSystemdUnit;
 
-    private readonly Lock _lock = new();
-    private string? _why;
+    /// <summary>
+    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess"/>,
+    /// and it is pilot-node): the unit restarts it when it exits, whatever the exit code but those in
+    /// <c>RestartPreventExitStatus</c>, so a clean stop is a restart and a successor would only fight the unit for the socket.
+    /// </summary>
+    public static bool UnderSystemdUnit(string nodePath) => IsNode(nodePath) && IsUnitMainProcess();
 
-    /// <summary>Why a restart waits, in a line, or null when none does.</summary>
-    public string? Waiting
+    /// <summary>A test's answer to <see cref="IsUnitMainProcess()"/>, in place of the real process's; null reads the process.</summary>
+    internal static bool? UnitMainProcessOverride { get; set; }
+
+    /// <summary>
+    /// This process is the main process of a systemd service. <c>INVOCATION_ID</c> alone is not enough: every child inherits it,
+    /// so a node started from a job of a systemd node sees it, and would stop on a restart with nothing to bring it back.
+    /// </summary>
+    internal static bool IsUnitMainProcess() => UnitMainProcessOverride ?? IsUnitMainProcess(
+        Environment.GetEnvironmentVariable("INVOCATION_ID"), ReadSelfCgroup(),
+        Environment.GetEnvironmentVariable("SYSTEMD_EXEC_PID"), Environment.ProcessId);
+
+    /// <summary>
+    /// The pure rule: an invocation id; a cgroup whose last segment is a <c>.service</c> (a job's scope or a login session is not);
+    /// and, where systemd gives <c>SYSTEMD_EXEC_PID</c>, that it is this process's pid, not an ancestor's inherited copy.
+    /// </summary>
+    internal static bool IsUnitMainProcess(string? invocationId, string? cgroup, string? execPid, int pid)
     {
-        get
+        if (string.IsNullOrEmpty(invocationId) || string.IsNullOrWhiteSpace(cgroup))
         {
-            lock (_lock)
-            {
-                return _why is { } why && Busy(state) is { } busy ? $"the node restarts for {why} once no job runs ({busy})" : null;
-            }
+            return false;
+        }
+        var lines = cgroup.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var line = lines.FirstOrDefault(l => l.StartsWith("0::", StringComparison.Ordinal)) ?? lines[^1];
+        var path = line[(line.LastIndexOf(':') + 1)..].TrimEnd('/');
+        if (!path[(path.LastIndexOf('/') + 1)..].EndsWith(".service", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        return string.IsNullOrEmpty(execPid) || execPid == pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string? ReadSelfCgroup()
+    {
+        try
+        {
+            return OperatingSystem.IsLinux() ? File.ReadAllText("/proc/self/cgroup") : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 
     /// <summary>
-    /// Restarts the node for <paramref name="why"/> now, or as soon as no job runs. Returns what became of it: null when it
-    /// is stopping for its successor, else a line saying why it waits or why it cannot.
+    /// Restarts the node for <paramref name="why"/> now. Returns what became of it: null when it is stopping for its
+    /// successor, else a line saying why it cannot.
     /// </summary>
-    public string? Request(string why)
-    {
-        lock (_lock)
-        {
-            _why = why;
-        }
-        return TryNow();
-    }
+    public string? Request(string why) => Restart(why,
+        $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)",
+        $"saved, but {NodePath} did not start; it applies at the node's next start");
 
-    protected override async Task ExecuteAsync(CancellationToken stopping)
-    {
-        while (!stopping.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(BusyRetryEvery, time, stopping);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            bool waiting;
-            lock (_lock)
-            {
-                waiting = _why is not null;
-            }
-            if (waiting)
-            {
-                TryNow();
-            }
-        }
-    }
+    /// <summary>
+    /// Restarts the node because someone asked (<c>pilot node restart</c>): as <see cref="Request"/>, but the refusals say
+    /// nothing was saved. <paramref name="beforeStop"/> runs once the successor has started and before this node stops, so what
+    /// it records is there for the next node.
+    /// </summary>
+    public string? Restart(string why, Action? beforeStop = null) => Restart(why,
+        $"the node did not restart: {Path.GetFileName(NodePath)} is not pilot-node, so it cannot start a successor of itself",
+        $"the node did not restart: {NodePath} did not start, so this node runs on",
+        beforeStop);
 
-    private string? TryNow()
+    private string? Restart(string why, string notNode, string notStarted, Action? beforeStop = null)
     {
-        string why;
-        lock (_lock)
+        if (!IsNode(NodePath))
         {
-            if (_why is null)
-            {
-                return null;
-            }
-            why = _why;
-            if (Busy(state) is { } busy)
-            {
-                return $"saved; the node restarts to apply it once no job runs ({busy})";
-            }
-            if (!IsNode(NodePath))
-            {
-                _why = null;
-                return $"saved; it applies at the node's next start ({Path.GetFileName(NodePath)} is not pilot-node, so it does not restart itself)";
-            }
-            if (!StartSuccessor(NodePath))
-            {
-                _why = null;
-                return $"saved, but {NodePath} did not start; it applies at the node's next start";
-            }
-            _why = null;
+            return notNode;
+        }
+        // A clean stop (exit 0) is one Restart=always restarts: the unit starts the node again after RestartSec.
+        if (!RestartedBySystemd(NodePath) && !StartSuccessor(NodePath))
+        {
+            return notStarted;
         }
         logger.LogInformation("restart: for {Why}", why);
+        beforeStop?.Invoke();
         lifetime.StopApplication();
         return null;
     }
 
-    /// <summary>A job running or waiting its turn, in words, or null: a restart would cut it short.</summary>
-    public static string? Busy(NodeState state)
+    /// <summary>The jobs running or waiting their turn, in words, or null when there are none: the next node carries them on.</summary>
+    public static string? JobsCarryOn(NodeState state)
     {
         var jobs = state.Jobs().Count(j => j.State is JobState.Running or JobState.Queued);
-        return jobs == 0 ? null : $"{jobs} job{(jobs == 1 ? " is" : "s are")} running or waiting";
+        return jobs == 0 ? null : $"{jobs} job{(jobs == 1 ? " carries" : "s carry")} on";
     }
 
-    private static bool IsNode(string path) =>
+    internal static bool IsNode(string path) =>
         string.Equals(Path.GetFileNameWithoutExtension(path), "pilot-node", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Starts <paramref name="node"/> windowless with this node's own arguments, to take over once it exits.</summary>

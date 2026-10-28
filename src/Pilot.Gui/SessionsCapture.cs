@@ -50,7 +50,8 @@ internal static class SessionsCapture
     /// <param name="jobs">The Background tasks page's screen, drawn when <paramref name="page"/> is Jobs.</param>
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
-        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null)
+        FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -72,17 +73,67 @@ internal static class SessionsCapture
         {
             chrome.Flights.OpenDetail(openFlight);
         }
-        chrome.Render(screen, flights, cards, jobs, null, repos, new RectF32(0, 0, renderer.Width, renderer.Height), machines);
+        if (flightsView is { } mode)
+        {
+            chrome.Flights.Mode = mode;
+        }
+        var window = new RectF32(0, 0, renderer.Width, renderer.Height);
+        chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+        if (hover is not null)
+        {
+            // The hover text the window shows once the pointer has rested on the region, painted last, over everything.
+            chrome.Tooltips.Render(TooltipOf(chrome.PageWidget, hover), window);
+        }
+        if (select is not null && openFlight is not null && page == PilotPage.Flights)
+        {
+            // A drag as the window gets one: a press at the start of the first run, a move to the end of the last, a release.
+            // The selection is only offered where a copy has somewhere to go, so a capture's goes nowhere.
+            chrome.Flights.CopyText = _ => { };
+            chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+            var (from, to) = select.Split('|') is [var a, var b] ? (a.Trim(), b.Trim()) : (select.Trim(), select.Trim());
+            var runs = chrome.Flights.SelectableTextRegions.ToArray();
+            var first = Array.FindIndex(runs, r => r.Text.StartsWith(from, StringComparison.Ordinal));
+            var last = Array.FindLastIndex(runs, r => r.Text.StartsWith(to, StringComparison.Ordinal));
+            if (first >= 0 && last >= first)
+            {
+                var (start, end) = (runs[first], runs[last]);
+                chrome.HandleInput(new InputEvent.MouseDown(start.X + 0.5f, start.Y + start.Height / 2f));
+                chrome.HandleInput(new InputEvent.MouseMove(end.X + end.Width - 0.5f, end.Y + end.Height / 2f, MouseButton.Left));
+                chrome.HandleInput(new InputEvent.MouseUp(end.X + end.Width - 0.5f, end.Y + end.Height / 2f));
+                chrome.Render(screen, flights, cards, jobs, null, repos, window, machines);
+            }
+        }
         return view;
+    }
+
+    /// <summary>
+    /// The tooltip the page's region <paramref name="hover"/> declares: a button's id, or a list row as <c>list:index</c>. Throws
+    /// when no region has that id or the region states no hover text, so a capture never silently shows no tooltip.
+    /// </summary>
+    internal static TooltipRequest TooltipOf(IPixelWidget page, string hover)
+    {
+        var regions = new List<ClickableRegion>();
+        page.CollectPaintedRegions(regions);
+        var at = regions.FindLastIndex(r => r is
+            { Result: HitResult.ButtonHit { Action: var action } } && action == hover
+            || r is { Result: HitResult.ListItemHit { ListId: var list, Index: var index } } && $"{list}:{index}" == hover);
+        if (at < 0)
+        {
+            throw new InvalidOperationException($"--hover {hover}: the page has no such region");
+        }
+        var region = regions[at];
+        return region.Tooltip is { } text
+            ? new TooltipRequest(text, new RectF32(region.X, region.Y, region.Width, region.Height)) { Side = region.TooltipSide ?? Layout.DockSide.Bottom }
+            : throw new InvalidOperationException($"--hover {hover}: that region states no hover text");
     }
 
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);

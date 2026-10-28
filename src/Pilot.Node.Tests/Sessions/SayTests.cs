@@ -232,6 +232,45 @@ public sealed class SayTests : IDisposable
         _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn", "tests"));
     }
 
+    [Fact]
+    public async Task ASessionIsFoundByItsNameAsWellAsItsRowId()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.SayAsync(Say("pil5-say-bg", "by name"), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _delivery.Calls.ShouldBe(["relay pil5-say-bg"]);
+    }
+
+    [Fact]
+    public async Task ASaidFromASessionHereTellsTheRecipientToAnswerWithASayToItsRow()
+    {
+        _agents.Json = AgentRows.List(
+            AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-asker", status: "busy"),
+            AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.SayAsync(Say("b2c3d4e5", "your view?") with { Who = "pil5-asker" }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        var relay = _delivery.Relays.Single();
+        relay.ReplyTo.ShouldBe("a1b2c3d4");
+        ClaudeCliDelivery.RelayText(relay.Text, relay.ReplyTo).ShouldEndWith("To answer, run: pilot say a1b2c3d4 \"<your answer>\". Not SendMessage: it cannot reach the sender.)");
+    }
+
+    [Fact]
+    public async Task ASaidFromAPersonHasNoRowToAnswer()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        await _messenger.SayAsync(Say("b2c3d4e5", "hello") with { Who = "gui" }, Ct);
+
+        _delivery.Relays.Single().ReplyTo.ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("idle")]
     [InlineData("busy")]
@@ -405,7 +444,7 @@ public sealed class SayTests : IDisposable
         var lines = _log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         lines.Length.ShouldBe(2);
         lines[0].ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed delivered (");
-        lines[1].ShouldStartWith("say: who=tests target=session/nobody way=none refused: There is no session nobody (");
+        lines[1].ShouldStartWith("say: who=tests target=session/nobody way=none refused: There is no session nobody: ");
     }
 
     [Fact]

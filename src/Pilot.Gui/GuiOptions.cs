@@ -33,6 +33,18 @@ internal sealed record GuiOptions
     /// <summary>With <c>--page flights</c>: the flight whose page the capture opens, by code, as Enter on its row does in the window.</summary>
     public string? Flight { get; init; }
 
+    /// <summary>
+    /// With <c>--capture</c>: the region whose hover text the frame shows as due, as the window does after the pointer rests on
+    /// it: a button's id (<c>home:flight:PIL258</c>) or a list row (<c>flights:3</c>, the list's id and the row's index).
+    /// </summary>
+    public string? Hover { get; init; }
+
+    /// <summary>With <c>--page flights</c>: the view the capture draws, canvas, grid, list or night.</summary>
+    public FlightsViewMode? View { get; init; }
+
+    /// <summary>With <c>--flight</c>: drag over the page's text from the run that starts with the words before the <c>|</c> to the run that starts with those after it, so the capture shows the selection.</summary>
+    public string? Select { get; init; }
+
     public int Width { get; init; } = 1280;
 
     public int Height { get; init; } = 800;
@@ -54,6 +66,10 @@ internal sealed record GuiOptions
         var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, jobs or chat" };
         page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "jobs", "chat");
         var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
+        var hover = new Option<string?>("--hover") { Description = "With --capture: show this region's hover text as due; a button's id (home:flight:PIL258) or a list row (flights:3)" };
+        var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
+        view.AcceptOnlyFromAmong("canvas", "grid", "list", "night");
+        var select = new Option<string?>("--select") { Description = "With --flight: drag over the page's text in the capture, from the run starting with the words before the | to the run starting with those after it" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
         {
@@ -64,7 +80,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, flight, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -88,6 +104,9 @@ internal sealed record GuiOptions
             Node = parsed.GetValue(node),
             Capture = parsed.GetValue(capture),
             Flight = parsed.GetValue(flight),
+            Hover = parsed.GetValue(hover),
+            View = parsed.GetValue(view) switch { "canvas" => FlightsViewMode.Canvas, "grid" => FlightsViewMode.Grid, "list" => FlightsViewMode.List, "night" => FlightsViewMode.Night, _ => null },
+            Select = parsed.GetValue(select),
             Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
         };
         if (parsed.GetValue(size) is { } sizeText)

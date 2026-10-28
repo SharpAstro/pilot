@@ -171,8 +171,8 @@ public sealed class StaleFlightTests : IAsyncDisposable
         var labels = home.FlightChips.Select(c => c.Label).ToList();
         labels.ShouldContain($"ORB2 · {Mark}");
         labels.ShouldContain($"ORB3 · {Mark}");
-        // The reachable node's chip is as it was (unmarked: with DE1 down SE1 is the only node to choose).
-        labels.ShouldContain("TIA1 · flying");
+        // The reachable node's chip is as it was; the down node keeps its pill, so two nodes are offered and the chip names SE1.
+        labels.ShouldContain("SE1 · TIA1 · flying");
         home.FlightChips.Where(c => c.Tone == "stale").Select(c => c.Flight!.Code).ShouldBe(["ORB2", "ORB3"]);
         // A last known row is not what is flying or held now.
         home.Flying.ShouldStartWith("1 flight flying");

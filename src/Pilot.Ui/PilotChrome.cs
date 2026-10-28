@@ -116,6 +116,19 @@ internal sealed class PilotChrome<TSurface>
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
+        // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the
+        // chat of the node the card was raised on (its watchtower, not this node's).
+        Cards.OnChatAbout = card =>
+        {
+            var node = Cards.NodeOf(card);
+            Navigate(() =>
+            {
+                Chat.SwitchTo(node);
+                Switch(PilotPage.Chat, _show);
+            });
+            Chat.Attach(card, node);
+        };
+        Flights.OnChatAboutCard = card => Cards.OnChatAbout?.Invoke(card);
         // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.
         Flights.OnChat = text =>
         {
@@ -142,6 +155,8 @@ internal sealed class PilotChrome<TSurface>
         Home.About = About;
         Settings.Nodes = Nodes;
         Home.Nodes = Nodes;
+        Home.Summary = Summaries;
+        Flights.Summary = Summaries;
         Chat.About = About;
         Chat.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
@@ -191,6 +206,12 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>Whether the pages show only what is in play (the default) or everything: kept across pages for the window's life, and across a restart when the chrome was given a file.</summary>
     public PlayFilter Play { get; }
+
+    /// <summary>
+    /// The window's summaries, which Home's card and each flight's page read and press through: the host sets its
+    /// <see cref="SummaryBoard.Shelf"/> with every build of the pages, and its <see cref="SummaryBoard.Send"/> to ask a node.
+    /// </summary>
+    public SummaryBoard Summaries { get; } = new();
 
     /// <summary>The Home page: what flies, what waits on the controller, and a chip for each thing.</summary>
     public HomeView<TSurface> Home { get; }
@@ -249,7 +270,15 @@ internal sealed class PilotChrome<TSurface>
     /// The page shown, by the chord or a click on the rail; a locked page is never shown. A move to another page is recorded for
     /// <see cref="Back"/>. Where the host keeps the page itself (the show of a Link call), it is told as well.
     /// </summary>
-    public void Show(PilotPage page) => Navigate(() => Switch(page, _show));
+    public void Show(PilotPage page) => Navigate(() =>
+    {
+        // The rail's Chat, its chord and the panel's foot open this node's chat; a card's Chat about this picks its own node.
+        if (page == PilotPage.Chat)
+        {
+            Chat.SwitchTo(null);
+        }
+        Switch(page, _show);
+    });
 
     // The page shown without a record: where the host keeps the page itself, the host's say, and the chrome's own page follows.
     private void Switch(PilotPage page, Action<PilotPage>? show)
@@ -259,6 +288,11 @@ internal sealed class PilotChrome<TSurface>
             return;
         }
         show?.Invoke(page);
+        if (page != Page)
+        {
+            // Text selected on the flight's page stays on it: leaving the page lets it go.
+            Flights.ClearSelection();
+        }
         Page = page;
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
@@ -333,7 +367,8 @@ internal sealed class PilotChrome<TSurface>
             case InputEvent.MouseUp { Button: MouseButton.Back or MouseButton.Forward }:
                 return true;
             default:
-                return false;
+                // The open flight page's text selection (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
+                return Page == PilotPage.Flights && Flights.HandleSelection(evt);
         }
     }
 

@@ -385,6 +385,80 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The links' menu: its open items and its notice.</summary>
     internal LinkMenu Links => _links;
 
+    // The text selected on the open flight's page (its host has a clipboard to copy it to), made on first use: it measures through the renderer.
+    private TextSelection<TSurface>? _selection;
+
+    /// <summary>The selection over the open flight page's text; a view has one, as it has one link menu.</summary>
+    internal TextSelection<TSurface> Selection => _selection ??= new TextSelection<TSurface>(Renderer);
+
+    /// <summary>The Fill leaf laid over the open page: painted after its text and before the menus over it, it is where the selection is drawn.</summary>
+    private const string SelectionKey = "text-selection";
+
+    /// <summary>Lets go of the selected text: the page it was made on was left.</summary>
+    internal void ClearSelection() => _selection?.Clear();
+
+    private void DrawSelection(Layout.Content.Fill fill)
+    {
+        if (fill.Key != SelectionKey)
+        {
+            return;
+        }
+        Selection.Frame(SelectableTextRegions, _detailScroll.Viewport);
+        var palette = P;
+        Selection.Paint(
+            (text, region, x, y, width, height, color) => DrawText(text, region.FontPath, x, y, width, height, region.FontSize, color, TextAlign.Near, region.VerticalAlign),
+            palette.SelectionBg, palette.SelectionText);
+    }
+
+    /// <summary>
+    /// The open page's selection, ahead of the router: a left drag over its text selects it, Ctrl+C and a right-click on the
+    /// selection copy it through <see cref="CopyText"/>. Never takes a press that is a button's, a link's, a field's or a
+    /// scrollbar's, and lets go while a menu or the viewer is up (those presses are theirs). True for what it took.
+    /// </summary>
+    public bool HandleSelection(InputEvent evt)
+    {
+        if (!IsDetailOpen || CopyText is null || Wizard.IsOpen || _links.MenuItems.Count > 0 || _menu.IsOpen
+            || Gallery.Viewing is not null || About is { IsOpen: true })
+        {
+            return false;
+        }
+        switch (evt)
+        {
+            case InputEvent.KeyDown { Key: InputKey.C, Modifiers: InputModifier.Ctrl } when Selection.Text is { } text:
+                _links.Copy(text, Selection.Pointer.X, Selection.Pointer.Y);
+                return true;
+            case InputEvent.MouseDown { Button: MouseButton.Right } right:
+                // A link keeps its own menu (Copy URL, and Copy beside it); the selection's is for the text itself.
+                if (!Selection.Contains(right.X, right.Y) || Under(right.X, right.Y, r => r is { OnContextMenu: not null }))
+                {
+                    return false;
+                }
+                _links.OpenSelection(new PointerPress(right.X, right.Y, right.Button, right.Modifiers, right.ClickCount));
+                return true;
+            default:
+                // Property patterns throughout: a region that is not plain chrome, or has anything to do with a press, is not ours.
+                return Selection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
+                    || r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
+                    or { Dismisses: not null } or { FocusOnOpen: true }));
+        }
+    }
+
+    // Whether the topmost region painted under the point is one the test holds for.
+    private bool Under(float x, float y, Func<ClickableRegion, bool> test)
+    {
+        var regions = new List<ClickableRegion>();
+        CollectPaintedRegions(regions);
+        for (var i = regions.Count - 1; i >= 0; i--)
+        {
+            var r = regions[i];
+            if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return test(r);
+            }
+        }
+        return false;
+    }
+
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
     private RectF32 _menuAt;
@@ -461,6 +535,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
+            DrawSelection(fill);
         });
     }
 
@@ -643,6 +718,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        if (open is not null && CopyText is not null)
+        {
+            // After the page's text and before the menus over it: where the selection is drawn (DrawSelection).
+            page = Layout.Builder.Overlay(page, Layout.Builder.Fill(key: SelectionKey).Stretch());
+            _links.SelectedText ??= () => Selection.Text;
+        }
         page = About?.Over(page, NightOrNull) ?? page;
         page = Gallery.Over(page);
         page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
@@ -692,9 +773,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         foreach (var job in Jobs.Where(j => j.Flight == flight.Code).OrderBy(j => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 })
             .ThenByDescending(j => j.StartedAt).Take(2))
         {
-            var color = job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
+            var isPaused = job.State == JobState.Running && job.PausedAt is not null;
+            var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(Layout.Builder.Text($"job {job.Id} {job.State.ToString().ToLowerInvariant()}{waiting}: {job.Command}", 12f, color).RowH(20f));
+            legs.Add(Layout.Builder.Text($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", 12f, color).RowH(20f));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };
@@ -915,6 +997,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
+            // The same brief as the Home chip (#258). A cell cut by its column keeps its own whole-text tooltip, which is the
+            // innermost and so wins over the cell; the rest of the row says the brief.
+            .WithTooltip(ChipBrief.Text(ChipBrief.Flight(line)))
             .DoubleClickable(_ =>
             {
                 ListCursor.MoveTo(index);
