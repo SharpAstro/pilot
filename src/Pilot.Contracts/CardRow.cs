@@ -24,8 +24,11 @@ public sealed record CardRow
     /// <summary>The card in a line: <c>TIA1611's PR #63 is ready to merge</c>.</summary>
     public required string Title { get; init; }
 
-    /// <summary>What else the person needs to decide, in a few lines; null when the title says it all.</summary>
+    /// <summary>What else the person needs to decide, in a few lines; null when the title says it all. The raw text, a log if need be.</summary>
     public string? Detail { get; init; }
+
+    /// <summary>One or two plain sentences: what happened and what the choices do, no log. Detail stays the raw text; null only on a card an older node wrote.</summary>
+    public string? Summary { get; init; }
 
     /// <summary>What can be done about it, each a command the node runs when the card is answered with it.</summary>
     public CardChoice[] Choices { get; init => field = value ?? []; } = [];

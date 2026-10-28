@@ -206,7 +206,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         }
         if ((flying ?? failed) is { } stuck)
         {
-            actions.Add(new FlightAction($"Redo leg {stuck.Name}", Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
+            actions.Add(new FlightAction(Verbs.RedoLeg(stuck.Name), Verbs.GoAround, Verbs.LegTarget(code, stuck.Name), []) { WhyPrompt = $"why redo leg {stuck.Name}?" });
         }
         var allDone = legs.Count > 0 && legs.All(l => l.State == LegState.Done);
         if (allDone && (flight.PullRequest is null || flight.Review is null))
@@ -523,12 +523,18 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         Palette.Use(Night);
         BeginFrame();
-        RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
+        var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
             DrawSelection(fill);
         });
+        _arranged = arranged;
+        // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
+        if (RevealLeg(arranged))
+        {
+            Render(screen, bounds);
+        }
     }
 
     /// <summary>

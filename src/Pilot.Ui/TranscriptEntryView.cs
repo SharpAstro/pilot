@@ -336,7 +336,9 @@ internal sealed class TranscriptEntryView
         var shown = open ? all : all.Take(lines);
         foreach (var (line, i) in shown.Select((l, i) => (l, i)))
         {
-            yield return Layout.Builder.Text(i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line, 13f, color);
+            // Wrapped, never cut: a long message (a choice's answer carries its question) ended in an ellipsis (SE1, 2026-10-28).
+            var said = i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line;
+            yield return said.Length == 0 ? Layout.Builder.Text(" ", 13f, color) : WrappedProse.Of(said, 13f, color);
         }
         if (Fold(entry, all.Length, lines) is { } fold)
         {

@@ -447,6 +447,9 @@ public static class Verbs
     /// <summary>The target naming leg <paramref name="leg"/> of flight <paramref name="code"/>.</summary>
     public static string LegTarget(string code, string leg) => $"{FlightTargetPrefix}{code}/{leg}";
 
+    /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
+    public static string RedoLeg(string leg) => $"Redo leg {leg}";
+
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";
 
