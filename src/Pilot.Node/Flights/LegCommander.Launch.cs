@@ -77,6 +77,7 @@ public sealed partial class LegCommander
     private void Launching(string key, string what, string subject, CardChoice? again, Func<Action, Task<string>> start, Func<string, string?> record,
         Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null)
     {
+        RefuseIfMoving(key, what);
         var token = new object();
         if (!replacing && _starting.ContainsKey(key))
         {

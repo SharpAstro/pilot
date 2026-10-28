@@ -55,7 +55,7 @@ public sealed partial class LegCommander(
     private static partial Regex LegName();
 
     public static bool Handles(string verb) =>
-        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks
+        verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
@@ -88,6 +88,7 @@ public sealed partial class LegCommander(
         string? made = null;
         string? way = null;
         var merged = false;
+        FlightRow? moving = null;
         try
         {
             if (peerRefusal is not null)
@@ -96,6 +97,9 @@ public sealed partial class LegCommander(
             }
             switch (command.Verb)
             {
+                case Verbs.MoveFlight:
+                    moving = FlightOf(command.Target);
+                    break;
                 case Verbs.Overlap:
                     made = await AskOverlapAsync(command, cancellationToken);
                     break;
@@ -174,6 +178,19 @@ public sealed partial class LegCommander(
         var (started, notStarted) = await AwaitLaunchesAsync(launches);
         made ??= started;
         error ??= notStarted;
+
+        // A flight moved by hand goes through its own calls, the lock let go: git and the other node take as long as they take.
+        if (error is null && moving is not null)
+        {
+            try
+            {
+                (made, error) = await MoveAsync(moving.Code, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                error = ex.Message;
+            }
+        }
 
         // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
@@ -386,6 +403,10 @@ public sealed partial class LegCommander(
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
 
+    /// <summary>One flight's next step, where it has one, as <see cref="AdvanceAllAsync"/> takes it for every flying flight: what a flight just handed over by another node goes on with.</summary>
+    public Task AdvanceFlightAsync(string code, CancellationToken cancellationToken) =>
+        state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.Ordinal)) is { } flight ? AdvanceAsync(flight, cancellationToken) : Task.CompletedTask;
+
     /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
     public async Task AdvanceAllAsync(CancellationToken cancellationToken)
     {
@@ -418,8 +439,18 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task AdvanceAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A flight whose move may have been taken by another node is flown on no node until that is known: it is asked about, never advanced.
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MoveUnknown: not null })
+        {
+            await SettleMoveAsync(flight.Code, cancellationToken);
+            return;
+        }
         if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current
-            || Due(current) is not { } due)
+            || await InMaintenanceAsync(current, cancellationToken))
+        {
+            return;
+        }
+        if (Due(current) is not { } due)
         {
             return;
         }
@@ -441,6 +472,12 @@ public sealed partial class LegCommander(
         if (result.Ok)
         {
             _rung.TryRemove(current.Code, out _);
+            // It went on here, so a move that failed once is no longer what it waits on (while the node is in maintenance it is held, and says so).
+            if (!Models.Maintenance && current.MoveFailure is not null)
+            {
+                Record(current.Code, f => f with { MoveFailure = null });
+                state.CloseCardsAbout(Verbs.FlightTarget(current.Code), $"{current.Code} flies on here", MoveFailedKind);
+            }
             return;
         }
         // Taken meanwhile by another path: a validator's go starts its leg's worker itself, and until the worker is up the

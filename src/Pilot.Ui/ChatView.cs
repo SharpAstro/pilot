@@ -14,7 +14,7 @@ namespace Pilot.Ui;
 /// has its choices as buttons, a click on one saying it. A box at the foot sends through <see cref="OnSend"/>
 /// (the node's tell): Enter sends, Shift+Enter starts a new line. A refusal is said in the chat itself.
 /// </summary>
-internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>How often an open page asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);

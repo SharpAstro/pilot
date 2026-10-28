@@ -62,7 +62,7 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
 /// picked stays picked. With <see cref="CanSay"/>, a bar at the foot takes text for the selected session, and Enter
 /// hands it to <see cref="OnSay"/>.
 /// </remarks>
-internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "sessions";
 
@@ -90,8 +90,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float NodeWidth = 64f;
 
     // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
-    // before it gives any of it up.
+    // before it gives any of it up. On a page too narrow for the table (ListTable.Fit) it keeps less, by its weight most of what there
+    // is, and the name then ends in an ellipsis, the row's tooltip having the whole of it, led by the name (ChipBrief.Session does not carry it).
     private const float SessionMin = 200f;
+    private const float SessionSqueezedMin = 80f;
+    private const float SessionSqueezedWeight = 6f;
+    // What a page too narrow for the table leaves the State and Node columns, which cannot be dropped: their words end in an ellipsis.
+    private const float StateMin = 64f;
+    private const float NodeMin = 40f;
 
     private static RGBAColor32 Ground => TranscriptPane.Ground;
     private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
@@ -320,6 +326,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         Palette.Use(Night);
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
@@ -668,7 +675,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Layout.Builder.Text(screen.Hidden is null ? "No sessions" : "No session in play: Everything, above, shows the ended", 16f, Dim, TextAlign.Center).Stretch();
         }
 
-        var columns = Columns();
+        var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(screen.Lines.Count);
         for (var i = 0; i < screen.Lines.Count; i++)
         {
@@ -694,17 +701,17 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Session", SessionMin),
+            ListColumn.Star("Session", SessionMin, SessionSqueezedMin, SessionSqueezedWeight),
             ListColumn.Optional("Model", ModelWidth),
             ListColumn.Fixed("Context", ContextWidth),
             ListColumn.Optional("Last response", LastWidth),
-            ListColumn.Fixed(StateTitle, StateWidth),
+            ListColumn.Fixed(StateTitle, StateWidth, StateMin),
             ListColumn.Optional("Spend", SpendWidth),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }
@@ -731,7 +738,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         };
         if (_marked)
         {
-            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)));
+            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(stateColor), cells)
             .RowH(RowHeight)
@@ -739,8 +746,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
-            // The same brief as the Home chip (#258).
-            .WithTooltip(ChipBrief.Text(ChipBrief.Session(line)))
+            // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
+            .WithTooltip(ChipBrief.SessionRow(line))
             .DoubleClickable(_ =>
             {
                 Select(index);

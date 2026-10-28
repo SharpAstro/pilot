@@ -153,6 +153,22 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// <c>receive-flight flight/&lt;code&gt; &lt;FlightMove as JSON&gt;</c> (#376): another node of the fleet hands this one a flight, with its whole
+    /// record (<see cref="FlightMove"/>). Only under a LAN grant, and only by a node that is not in maintenance and has
+    /// <c>accept-fleet-flights</c> on. The node makes the plane from the pushed branch, puts the flight, its legs and its open
+    /// cards, records where it came from (<see cref="FlightRow.MovedFrom"/>), and the flight goes on with its next leg.
+    /// </summary>
+    public const string ReceiveFlight = "receive-flight";
+
+    /// <summary>
+    /// <c>move-flight flight/&lt;code&gt;</c> (#376): hand the flight to the best willing node of the fleet now, as a node in maintenance does
+    /// at a leg boundary: the plane is made safe (clean, pushed fast-forward only, the remote's head read back equal to the plane's),
+    /// the flight is sent with <see cref="ReceiveFlight"/>, and this node stops flying it. Refused when a leg is flying; any failure
+    /// leaves the flight here with <see cref="FlightRow.MoveFailure"/> saying why and a card offering to move it again.
+    /// </summary>
+    public const string MoveFlight = "move-flight";
+
+    /// <summary>
     /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
     /// <c>pilot node:</c> label. It is no part of the title.
     /// </summary>

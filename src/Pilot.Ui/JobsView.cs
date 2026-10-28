@@ -145,7 +145,7 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
 /// whom it wakes, how it stands and how long it took; the selected job's folder, log and the end of its output beneath,
 /// followed while it runs; and Cancel, its session and its log. Generic over the surface, as the flights view is.
 /// </summary>
-internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "jobs";
 
@@ -159,8 +159,19 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float StartedWidth = 110f;
     private const float TookWidth = 90f;
     private const float NodeWidth = 64f;
+    // What a page too narrow for the table leaves the columns that cannot be dropped: their words end in an ellipsis; and the command, which
+    // then takes most of the room, by its weight.
+    private const float CommandSqueezedWeight = 3f;
+    private const float IdMin = 44f;
+    private const float StateMin = 70f;
+    private const float NodeMin = 40f;
     // Tall enough for the facts, the pid and a tree of TreeRows processes under it, so the panel does not grow when the tree arrives.
     private const float DetailHeight = 300f;
+    // The panel keeps its height while the window has the room; with less to give it, it is not shown, and the table keeps
+    // BodyMinHeight before the panel has any, so a header that wrapped onto many lines leaves the table, not a panel past the foot.
+    private const float DetailMinHeight = DetailHeight;
+    private const float BodyMinHeight = 140f;
+    private const float DetailWeight = 3f;
     private const float FactsColumn = 420f;
     private const float FactLabel = 70f;
     private const float LogLineHeight = 16f;
@@ -324,6 +335,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         Palette.Use(Night);
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -491,7 +503,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     internal Layout.Node Build(JobsScreen screen, JobLine? selected)
     {
-        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar() };
+        var parts = new List<Layout.Node> { Header(screen), Main(screen).HStar(1f, BodyMinHeight) };
         // A question asked about one job does not follow the selection to another, nor outlive the job's run.
         if (_confirmCancel is { } asked && (selected is not { Live: true } || selected.Key != asked))
         {
@@ -527,7 +539,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Columns(marked);
+        var columns = Table.Fit(Columns(marked));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -551,16 +563,16 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Job", IdWidth),
-            ListColumn.Star("Command"),
+            ListColumn.Fixed("Job", IdWidth, IdMin),
+            ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight),
             ListColumn.Fixed("For", ForWidth),
-            ListColumn.Fixed("State", StateWidth),
+            ListColumn.Fixed("State", StateWidth, StateMin),
             ListColumn.Optional("Started", StartedWidth),
             ListColumn.Optional("Took", TookWidth),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
         }
         return columns;
     }
@@ -590,7 +602,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         };
         if (marked)
         {
-            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body)));
+            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)
@@ -727,20 +739,23 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     internal static string Branch(int depth) => depth <= 1 ? "" : string.Concat(Enumerable.Repeat("  ", depth - 2)) + "└ ";
 
     /// <summary>A confirm question beside its pills: padded as a pill is, so its text shares their middle.</summary>
-    private static Layout.Node Question(string text) => Layout.Builder.Text(text, 12f, Bright).Pad(0f, 4f).WAuto();
+    private static Layout.Node Question(string text) => WrappedProse.Of(text, 12f, Bright).Pad(0f, 4f).WAuto();
 
     private Layout.Node Panel(List<Layout.Node> facts, JobLine line, List<Layout.Node> buttons)
     {
         return Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                        Layout.Builder.VStack([.. facts]).WFixed(FactsColumn),
+                        Layout.Builder.VStack([.. facts]).WStar(2f, 0f, FactsColumn),
                         LogTail(line).WStar())
                     .WithGap(24f)
                     .Stretch(),
-                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f).RowH(28f))
+                // The buttons flow onto lines of their own where the page is narrower than they are.
+                Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto())
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
-            .RowH(DetailHeight);
+            .W(Layout.Sizing.Star())
+            .H(Layout.Sizing.Star(DetailWeight, 0f, DetailHeight))
+            .CollapseBelow(DetailMinHeight);
     }
 
     /// <summary>The end of the job's output, read from the node and followed while it is selected; its last line at the bottom.</summary>

@@ -625,6 +625,7 @@ public sealed class FlightDetailTests
         flights.OpenDetail("TIA1611");
         var texts = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f))
             .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
+        texts = TestText.WithRuns(texts);
 
         texts.ShouldContain("validating render · du1-tia1611-render-validator · working");
         texts.ShouldContain("flying render · du1-tia1611-render · waiting");
@@ -695,7 +696,7 @@ public sealed class FlightDetailTests
         flights.Tree(screen);
         flights.OpenDetail("TIA1611");
 
-        var described = CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored));
+        var described = TestText.Flat(CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(screen), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored)));
 
         described.ShouldContain("← Back");
         described.ShouldContain("1. parser");
@@ -770,7 +771,7 @@ public sealed class FlightDetailTests
             .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
         var regions = new List<ClickableRegion>();
         flights.CollectPaintedRegions(regions);
-        return (texts, regions);
+        return (TestText.WithRuns(texts), regions);
     }
 
     /// <summary>The page and the selected flight's panel both say the pilot/review status and the pilot: label as the node set them, and link the review comment (#222).</summary>

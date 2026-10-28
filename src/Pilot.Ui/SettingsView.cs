@@ -13,7 +13,7 @@ namespace Pilot.Ui;
 /// shown from the answer's row, never from the click and with no second read. This machine's node only: a node on the LAN
 /// does not show its settings to another machine. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     private static readonly TimeSpan Every = TimeSpan.FromSeconds(5);
 
