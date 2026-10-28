@@ -87,6 +87,17 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void ACheckThatFailedAndPassedOnAReRunCountsOnceAsPassedLikeTheCardReadsIt()
+    {
+        // The rollup lists the failed run and its re-run as two entries of one name (the failed one listed last here): only the one
+        // that started last counts, as GhCli.RollupChecks reads it, so the page says Ready where the flight's card does.
+        var pr = Read("rerun-passed");
+
+        (pr.Kind, pr.Label, pr.NeedsMe).ShouldBe((PullRequestKind.Ready, "Ready", true));
+        (pr.ChecksDone, pr.ChecksTotal, pr.FailedCheck).ShouldBe((4, 4, null));
+    }
+
+    [Fact]
     public void ASearchPageSaysWhereTheNextOneStartsAndTheLastSaysNone()
     {
         var first = PullRequestSearch.Parse(Recorded("page-1"));

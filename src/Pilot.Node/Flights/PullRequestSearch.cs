@@ -21,7 +21,7 @@ public static class PullRequestSearch
         + "nodes{... on PullRequest{number title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName "
         + "mergeable mergeStateStatus reviewDecision isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:100){nodes{__typename "
-        + "... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}}}}}";
+        + "... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}}";
 
     /// <summary>A page of the answer: its PRs, and the cursor of the next page when there is one.</summary>
     public sealed record Page(PullRequestRow[] PullRequests, string? Next);
@@ -151,8 +151,16 @@ public static class PullRequestSearch
             return (checks, null, null);
         }
         string? review = null, reviewUrl = null;
+        // The rollup keeps superseded runs (a re-run is a new entry of the same name): only the latest of each counts, as in
+        // GhCli.RollupChecks, so a card and this page read the same checks. The latest is the one that started last, else the one
+        // listed last.
+        var started = new List<DateTimeOffset?>();
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var context in contextNodes.EnumerateArray())
         {
+            (string Bucket, string? Name, string? Link) entry;
+            string? key;
+            DateTimeOffset? when;
             if (Text(context, "__typename") == "StatusContext")
             {
                 var name = Text(context, "context") ?? "";
@@ -168,15 +176,42 @@ public static class PullRequestSearch
                     };
                     reviewUrl = Text(context, "targetUrl");
                 }
-                checks.Add((GhCli.CheckBucket(status, null), name, Text(context, "targetUrl")));
+                entry = (GhCli.CheckBucket(status, null), name, Text(context, "targetUrl"));
+                key = $" {name}";
+                when = Time(context, "createdAt");
             }
             else if (Text(context, "__typename") == "CheckRun")
             {
-                checks.Add((GhCli.CheckBucket(Text(context, "conclusion"), Text(context, "status")), Text(context, "name") ?? "check", Text(context, "detailsUrl")));
+                var name = Text(context, "name") ?? "check";
+                entry = (GhCli.CheckBucket(Text(context, "conclusion"), Text(context, "status")), name, Text(context, "detailsUrl"));
+                key = $"{WorkflowName(context)} {name}";
+                when = Time(context, "startedAt") ?? Time(context, "completedAt");
             }
+            else
+            {
+                continue;
+            }
+            if (index.TryGetValue(key, out var at))
+            {
+                // Older than what is listed already stays out; equal or unstamped, the later listed wins.
+                if (!(when is { } stamp && started[at] is { } listed && stamp < listed))
+                {
+                    checks[at] = entry;
+                    started[at] = when;
+                }
+                continue;
+            }
+            index[key] = checks.Count;
+            checks.Add(entry);
+            started.Add(when);
         }
         return (checks, review, reviewUrl);
     }
+
+    private static string? WorkflowName(JsonElement checkRun) =>
+        checkRun.TryGetProperty("checkSuite", out var suite) && suite.ValueKind == JsonValueKind.Object
+            && suite.TryGetProperty("workflowRun", out var run) && run.ValueKind == JsonValueKind.Object
+            && run.TryGetProperty("workflow", out var workflow) ? Text(workflow, "name") : null;
 
     private static string? Text(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
