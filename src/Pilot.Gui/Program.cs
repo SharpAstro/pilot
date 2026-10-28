@@ -999,11 +999,7 @@ if (restarting && Environment.ProcessPath is { } self)
     Note($"pilot-gui: window closed; started again on {self}.");
     return 0;
 }
-<<<<<<< HEAD
-Console.WriteLine((cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.") + $" {frameWatch.Frames} frames drawn.");
-=======
-Note(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
->>>>>>> origin/main
+Note((cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.") + $" {frameWatch.Frames} frames drawn.");
 return 0;
 
 // Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to
