@@ -14,6 +14,9 @@ public sealed record PendingRemoval(string Path, string OwnerKind, string Owner,
 /// </summary>
 public sealed class RemovalQueue(string file, TimeProvider time)
 {
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     public const string PlaneKind = "plane";
     public const string ReviewKind = "review";
     public const string CacheKind = "cache";
@@ -189,7 +192,7 @@ public sealed class RemovalQueue(string file, TimeProvider time)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"removal queue: could not write {file}: {ex.Message}");
+            Error.WriteLine($"removal queue: could not write {file}: {ex.Message}");
         }
     }
 }
@@ -246,7 +249,7 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
             }
             catch (Exception ex)
             {
-                await Console.Error.WriteLineAsync($"removal queue: one look failed, looking again: {ex.Message}");
+                await queue.Error.WriteLineAsync($"removal queue: one look failed, looking again: {ex.Message}");
             }
         }
     }
@@ -274,11 +277,11 @@ public sealed class RemovalQueueStart(RemovalQueue queue, NodeState? state = nul
         var (removed, held) = queue.TryAll(countStart);
         foreach (var entry in removed)
         {
-            Console.Error.WriteLine($"removal queue: removed {entry.Path} ({entry.OwnerKind} {entry.Owner})");
+            queue.Error.WriteLine($"removal queue: removed {entry.Path} ({entry.OwnerKind} {entry.Owner})");
         }
         foreach (var (entry, why) in held)
         {
-            Console.Error.WriteLine($"removal queue: kept {entry.Path} ({entry.OwnerKind} {entry.Owner}), start {entry.StartsTried}: {why}");
+            queue.Error.WriteLine($"removal queue: kept {entry.Path} ({entry.OwnerKind} {entry.Owner}), start {entry.StartsTried}: {why}");
         }
         if (state is null)
         {

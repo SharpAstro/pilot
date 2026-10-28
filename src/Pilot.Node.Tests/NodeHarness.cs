@@ -94,7 +94,8 @@ internal sealed class NodeHarness : IAsyncDisposable
         {
             var app = NodeApp.Build(options, held, builder =>
             {
-                builder.Logging.ClearProviders();
+                // The node's file logger stays: logs/node.log in the temp data folder.
+
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
                 // A test node never runs the claude CLI or reads this machine's sessions: it tracks what the test gives it.
                 builder.Services.AddSingleton<IClaudeAgents>(agents);

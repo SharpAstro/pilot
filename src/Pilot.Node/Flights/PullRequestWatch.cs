@@ -16,6 +16,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     private Task<PullRequestsRow?>? _running;
     private string? _viewer;
 
+    /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
     /// <summary>Reads every org afresh and puts the row on the stream; joins the refresh already running, if one is. Null when the clones have no org to read.</summary>
@@ -41,7 +44,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 }
                 catch (Exception ex) when (!stopping.IsCancellationRequested)
                 {
-                    await Console.Error.WriteLineAsync($"pull request watch: one read failed, reading again: {ex.Message}");
+                    await Error.WriteLineAsync($"pull request watch: one read failed, reading again: {ex.Message}");
                 }
                 await Task.Delay(Interval, time, stopping);
             }
