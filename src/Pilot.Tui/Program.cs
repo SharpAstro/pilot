@@ -187,6 +187,20 @@ chat.OnSend = async text =>
     Redraw();
     return refused;
 };
+chat.OnSendAboutCard = async (card, node, words) =>
+{
+    var refused = clients.For(node) is { } to
+        ? await ChatCommands.TellAboutCardAsync(to, card.Id, words, Who, stop.Token)
+        : FleetClients.WatchOnly(node);
+    Redraw();
+    return refused;
+};
+cards.OnChatAbout = card =>
+{
+    chrome.Show(PilotPage.Chat);
+    chat.Attach(card, cards.NodeOf(card));
+};
+flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);

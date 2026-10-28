@@ -33,6 +33,9 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>Runs a card's choice, as the panel's button does, so the card closes once it is done.</summary>
     public Action<CardRow, int>? OnAnswerCard { get; set; }
 
+    /// <summary>Opens the Chat page about the flight's card: its <b>Chat about this</b>. Null leaves the button off.</summary>
+    public Action<CardRow>? OnChatAboutCard { get; set; }
+
     /// <summary>The button of a card whose press is with the node, as the cards panel marks it: the page's Merge is the same card's.</summary>
     public Func<string, string?>? CardWorking { get; set; }
 
@@ -250,6 +253,14 @@ internal sealed partial class FlightsView<TSurface>
                 : CardWorking?.Invoke(card.Id) is not null
                 ? CardsView<TSurface>.Dead($"{choice.Label} …")
                 : CardsView<TSurface>.ChoiceControl(choice, card.Detail, $"flight:{line.Code}:merge-card", () => answer(card, number)));
+        }
+        if (OnChatAboutCard is { } about)
+        {
+            cells.Add(line.Stale is not null
+                ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel).WithTooltip(StaleWhy(line))
+                : CardWorking?.Invoke(card.Id) is not null
+                ? CardsView<TSurface>.Dead(CardsView<TSurface>.ChatAboutLabel)
+                : Pill(CardsView<TSurface>.ChatAboutLabel, $"flight:{line.Code}:chat-card", () => about(card)));
         }
         return Layout.Builder.HStack([.. cells]).WithGap(12f).Pad(0f, 6f).Bg(RowFocusBg).RowH(40f);
     }

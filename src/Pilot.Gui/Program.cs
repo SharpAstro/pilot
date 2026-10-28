@@ -386,6 +386,17 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: tell watchtower: {refused ?? "told"}");
         return refused;
     };
+    // A card's Chat about this: the words go to the node the card was raised on, as its tell card/<id>.
+    chrome.Chat.OnSendAboutCard = async (card, node, words) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = await ChatCommands.TellAboutCardAsync(to, card.Id, words, GuiSay.Who, cts.Token);
+        Console.WriteLine($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
+        return refused;
+    };
     chrome.Chat.OnRestart = async () =>
     {
         var refused = await ChatCommands.RestartWatchtowerAsync(client, GuiSay.Who, cts.Token);

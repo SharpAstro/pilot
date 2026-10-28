@@ -742,7 +742,10 @@ its planner) follow with no command typed; Escape closes the form first.
 
 The right panel is the watchtower's: its state and context, its Remote Control link, then the cards with their buttons
 (Merge is a card's) and what was handled, and at its foot a **Chat with the watchtower** shortcut to the Chat page (the
-panel once had a box to tell it things; that box is the chat's now).
+panel once had a box to tell it things; that box is the chat's now). Every open card also has **Chat about this** (#400),
+beside its choices (`CardsView.OnChatAbout`; dead while a press of the card is with the node, absent from a handled or
+closed card and from a watch-only card of a node with no grant); the flight page's merge block has the same button for its
+card. It shows the Chat page with the card quoted above the box (see below) and the keyboard in the box.
 
 A node the window cannot reach (its stream is down: the same `Connected` the Fleet page shows) leaves the panel with its
 cards, which may be long answered and cannot be commanded now (#325). In their place, at the foot of **For you**, one dim
@@ -774,7 +777,16 @@ asks for a read at once); leaving the page stops the reads and coming back resum
 - **● working…** while the watchtower is on a turn, **● sending…** while a message is on its way;
 - a rule where a fresh watchtower began (`A fresh watchtower started: its brief changed`);
 - what was said and not yet taken, dim under the messages (`queued · not read yet`);
-- a question it asked, with its choices as buttons: a click says the choice to the watchtower, as typing it would.
+- a question it asked, with its choices as buttons: a click says the choice to the watchtower, as typing it would;
+- a message about a card (#400: the `CardContext` block the node's `tell card/<id>` makes, then the person's words) as the
+  card's short quote (`> card c1: title`, and its detail cut to a line) followed by the words, never the whole block
+  (`ChatView.AsQuoted`).
+
+**Chat about this** (`ChatView.Attach`) holds the card, with its node, as a quote above the box (id, node, title, two lines
+at most) with a **Drop** to let it go. While one is held, Enter sends the words through `OnSendAboutCard`
+(`ChatCommands.TellAboutCardAsync`: `tell card/<id> <words>` on the node the card was raised on, so another node's card is
+told to that node's watchtower; a node with no grant is refused in the chat) and the card is dropped with the message; a
+choice button's answer never carries it.
 
 The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, as the panel's box did): **Enter** sends,
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single

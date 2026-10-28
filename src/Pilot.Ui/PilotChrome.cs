@@ -116,6 +116,13 @@ internal sealed class PilotChrome<TSurface>
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
+        // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box.
+        Cards.OnChatAbout = card =>
+        {
+            Show(PilotPage.Chat);
+            Chat.Attach(card, Cards.NodeOf(card));
+        };
+        Flights.OnChatAboutCard = card => Cards.OnChatAbout?.Invoke(card);
         // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.
         Flights.OnChat = text =>
         {
