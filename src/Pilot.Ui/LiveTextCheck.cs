@@ -20,7 +20,7 @@ internal sealed class LiveTextCheck
     // change of the words on it: a page's first frame at a size is often empty or loading, and its rows arrive later at the same size.
     private readonly Dictionary<string, (int Width, int Height, float Dpi, int Content)> _checked = [];
     private readonly HashSet<string> _raised = [];
-    // The fault line each page last logged: a page whose words change every frame says a fault once, not at every change.
+    // The fault (line, size and DPI) each page last logged: a page whose words change every frame says the same fault once, not at every change.
     private readonly Dictionary<string, string> _logged = [];
 
     /// <summary>The window's size in pixels, as the chrome last drew it: the card names it beside the page's own, which is the window less the rail and the panel. Null where the host gives none.</summary>
@@ -68,9 +68,9 @@ internal sealed class LiveTextCheck
             ? $"window {window.Width}x{window.Height}, page {key.Item1}x{key.Item2} at DPI {dpiText}"
             : $"page {key.Item1}x{key.Item2} at DPI {dpiText}";
         var detail = $"{faults[0].Line}{(faults.Count > 1 ? $" (+{faults.Count - 1} more)" : "")}; {where}";
-        if (!_logged.TryGetValue(page, out var said) || said != faults[0].Line)
+        if (!_logged.TryGetValue(page, out var said) || said != detail)
         {
-            _logged[page] = faults[0].Line;
+            _logged[page] = detail;
             Log?.Invoke($"GUI drew text over text on {page}: {detail}");
         }
         if (Send is null || !_raised.Add(page))
