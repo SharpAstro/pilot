@@ -13,7 +13,7 @@ internal sealed record PageHeader(string Title)
     /// <summary>The page's counts line (<c>12 flights · 8 flying</c>); null or empty says none.</summary>
     public string? Counts { get; init; }
 
-    /// <summary>Whether the counts may be longer than the bar has room for: they then wrap within the bar and carry the whole line on hover, rather than push the buttons out of the window.</summary>
+    /// <summary>Whether the counts may be longer than the bar has room for: they then stand on a line of their own under the bar, ending in an ellipsis where the page is narrower and carrying the whole line on hover, rather than push the buttons out of the window.</summary>
     public bool CountsFit { get; init; }
 
     /// <summary>What In play leaves out (<c>29 landed hidden</c>), after the counts, as a click that shows everything; null says nothing is hidden.</summary>

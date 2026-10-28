@@ -148,7 +148,7 @@ internal sealed class TranscriptEntryView
     /// <summary>A message handed to the session that it has not read yet: last, dim, and saying so.</summary>
     internal static Layout.Node Waiting(string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text("queued", 12f, Faint).WStar(LabelWeight, 0f, LabelWidth),
+                Layout.Builder.Text("queued", 12f, Faint).WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
                 Layout.Builder.VStack([
                     Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint),
                     .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim)),
@@ -216,7 +216,7 @@ internal sealed class TranscriptEntryView
         var said = call.Description is { Length: > 0 } description ? description : call.Text;
         var line = Layout.Builder.HStack(
                 Layout.Builder.Text(mark, 12f, markColor).WAuto(),
-                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar(LabelWeight, 0f, ToolWidth),
+                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar(LabelWeight, 0f, ToolWidth).Whole(call.Tool ?? "tool"),
                 Layout.Builder.Text(said, 13f, Dim).WStar(BodyWeight),
                 Stamp(call.At).CollapseBelow(TimeMin))
             .WithGap(6f)
@@ -324,7 +324,7 @@ internal sealed class TranscriptEntryView
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
             : Folded(entry, entry.Text, textColor, lines, ""));
         var row = Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth),
+                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
                 Layout.Builder.VStack([.. body]).WStar(BodyWeight),
                 ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
             .WithGap(10f);

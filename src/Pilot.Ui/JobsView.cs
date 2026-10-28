@@ -602,7 +602,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         };
         if (marked)
         {
-            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body)));
+            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)

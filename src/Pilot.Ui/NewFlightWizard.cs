@@ -433,8 +433,8 @@ internal sealed class NewFlightWizard
             var order = _chosen.FindIndex(r => string.Equals(r.Path, repo.Path, StringComparison.OrdinalIgnoreCase));
             var row = Layout.Builder.HStack(
                     Layout.Builder.Text(order >= 0 ? $"{order + 1}" : "", 14f, Accent, TextAlign.Center).WFixed(28f),
-                    Layout.Builder.Text(repo.Name, 14f, Bright).WStar(NameWeight, 0f, 260f),
-                    Layout.Builder.Text(repo.GitHub ?? "not on GitHub", 12f, Dim).WStar().CollapseBelow(MinSide),
+                    Layout.Builder.Text(repo.Name, 14f, Bright).WStar(NameWeight, 0f, 260f).Whole(repo.Name),
+                    Layout.Builder.Text(repo.GitHub ?? "not on GitHub", 12f, Dim).WStar().Whole(repo.GitHub).CollapseBelow(MinSide),
                     Layout.Builder.Text(repo.Flights == 0 ? "" : $"{repo.Flights} {(repo.Flights == 1 ? "flight" : "flights")}", 12f, Dim, TextAlign.Far).WStar(1f, 0f, 90f).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
@@ -490,8 +490,8 @@ internal sealed class NewFlightWizard
             var at = i;
             var row = Layout.Builder.HStack(
                     Layout.Builder.Text($"#{issue.Number}", 14f, Accent).WFixed(70f),
-                    Layout.Builder.Text(issue.Title, 14f, Bright).WStar(),
-                    Layout.Builder.Text(string.Join(", ", issue.Labels), 12f, Dim, TextAlign.Far).WStar(1f, 0f, 200f).CollapseBelow(MinSide))
+                    Layout.Builder.Text(issue.Title, 14f, Bright).WStar().Whole(issue.Title),
+                    Layout.Builder.Text(string.Join(", ", issue.Labels), 12f, Dim, TextAlign.Far).WStar(1f, 0f, 200f).Whole(string.Join(", ", issue.Labels)).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
                 .RowH(RowHeight)
@@ -515,11 +515,14 @@ internal sealed class NewFlightWizard
         for (var i = 0; i < picks.Count; i++)
         {
             var (repo, issue) = picks[i];
+            var waits = i == 0 ? "" : $"waits for {picks[i - 1].Repo.Name}";
             rows.Add(Layout.Builder.HStack(
                     Layout.Builder.Text($"{i + 1}.", 14f, Accent).WFixed(28f),
-                    Layout.Builder.Text($"{repo.Name} #{issue.Number}", 14f, Bright).WStar(NameWeight, 0f, 260f),
-                    Layout.Builder.Text(issue.Title, 14f, Body).WStar().CollapseBelow(MinSide),
-                    Layout.Builder.Text(i == 0 ? "" : $"waits for {picks[i - 1].Repo.Name}", 12f, Dim, TextAlign.Far).WStar(1f, 0f, 220f).CollapseBelow(MinSide))
+                    Layout.Builder.Text($"{repo.Name} #{issue.Number}", 14f, Bright).WStar(NameWeight, 0f, 260f).Whole($"{repo.Name} #{issue.Number}"),
+                    // The issue is what the person confirms: it stays at every width (cut, with the whole on hover) and the
+                    // 'waits for' column is the one dropped first.
+                    Layout.Builder.Text(issue.Title, 14f, Body).WStar(2f).Whole(issue.Title),
+                    Layout.Builder.Text(waits, 12f, Dim, TextAlign.Far).WStar(1f, 0f, 220f).Whole(waits).CollapseBelow(MinSide))
                 .WithGap(10f)
                 .PadX(6f)
                 .RowH(RowHeight));

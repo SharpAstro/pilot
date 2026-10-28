@@ -444,7 +444,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         Layout.Builder.HStack(
                 Layout.Builder.Text("Watchtower", 18f, Dim).WAuto(),
                 Layout.Builder.Spacer().WStar(),
-                Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WStarUpToContent())
+                Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WStarUpToContent().Whole("not running"))
             .RowH(30f),
         Layout.Builder.Spacer().RowH(18f),
         Layout.Builder.Spacer().RowH(20f),

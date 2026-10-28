@@ -329,11 +329,11 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         var tracked = line.Status.Tracked;
         var toggle = line.Worktrees.Count == 0
-            ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim)
+            ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).Whole(line.Name)
             : Layout.Builder.HStack(
                     CardsView<TSurface>.IconPill(IsOpen(line) ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, IsOpen(line) ? "Hide worktrees" : "Show worktrees",
                         $"repo:{line.Key}:worktrees", () => Toggle(line), bare: true, color: Link, hover: RowHoverBg),
-                    Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar())
+                    Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar().Whole(line.Name))
                 .WithGap(6f);
         var pulls = line.Pulls.Take(2).Select(PullText).ToList();
         if (line.Pulls.Count > 0 && line.Status.GitHub is { } github && OnPullRequests is { } show)
@@ -358,7 +358,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             Layout.Builder.VStack(
                 toggle.RowH(22f),
                 Layout.Builder.HStack(
-                        Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
+                        Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar().Whole(line.Status.GitHub ?? line.Status.Path),
                         // The wizard flies this window's own node, so a row of another node offers no New flight.
                         OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
                             : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
@@ -366,15 +366,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                                 .WithTooltip("Start a flight on one of this repo's issues"))
                     .WithGap(6f).RowH(18f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).RowH(22f),
-                Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).RowH(18f)),
+                Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).Whole(line.Main).RowH(22f),
+                Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).Whole(line.Status.Errors.FirstOrDefault()).RowH(18f)),
             Layout.Builder.VStack([.. pulls]),
             ListTable.Top(Layout.Builder.Text(line.WorktreesText, 13f, Body)),
             ListTable.Top(Layout.Builder.Text(line.Status.Flights == 0 ? "" : $"{line.Status.Flights} {(line.Status.Flights == 1 ? "flight" : "flights")}", 12f, Dim)),
         };
         if (_marked)
         {
-            cells.Insert(1, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body)));
+            cells.Insert(1, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(line.Status.Dirty ? Waiting : tracked ? Link : Faint), cells)
             .RowH(RowHeight)

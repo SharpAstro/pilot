@@ -254,7 +254,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
     private const float StateWidth = 160f;
-    // What a page too narrow for the table leaves these columns: their words end in an ellipsis, the row's tooltip has the whole.
+    // What a page too narrow for the table leaves these columns: their words end in an ellipsis; the row's tooltip has the whole (the Node column's cell has its own).
     private const float CodeMin = 56f;
     private const float StateMin = 64f;
     private const float NodeMin = 40f;
@@ -1077,7 +1077,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         };
         if (marked)
         {
-            cells.Insert(0, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body)));
+            cells.Insert(0, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, landed ? Dim : Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)

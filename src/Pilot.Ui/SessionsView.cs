@@ -91,7 +91,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
     // before it gives any of it up. On a page too narrow for the table (ListTable.Fit) it keeps less, by its weight most of what there
-    // is, and the name then ends in an ellipsis, the row's tooltip having the whole of it.
+    // is, and the name then ends in an ellipsis, the row's tooltip having the whole of it, led by the name (ChipBrief.Session does not carry it).
     private const float SessionMin = 200f;
     private const float SessionSqueezedMin = 80f;
     private const float SessionSqueezedWeight = 6f;
@@ -738,7 +738,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         };
         if (_marked)
         {
-            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)));
+            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(stateColor), cells)
             .RowH(RowHeight)
@@ -746,8 +746,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
-            // The same brief as the Home chip (#258).
-            .WithTooltip(ChipBrief.Text(ChipBrief.Session(line)))
+            // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
+            .WithTooltip(ChipBrief.Text([line.ShownName, .. ChipBrief.Session(line)]))
             .DoubleClickable(_ =>
             {
                 Select(index);
