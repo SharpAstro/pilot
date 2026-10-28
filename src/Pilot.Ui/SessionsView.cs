@@ -62,7 +62,7 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
 /// picked stays picked. With <see cref="CanSay"/>, a bar at the foot takes text for the selected session, and Enter
 /// hands it to <see cref="OnSay"/>.
 /// </remarks>
-internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "sessions";
 

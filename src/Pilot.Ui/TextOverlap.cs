@@ -51,9 +51,10 @@ internal static class TextOverlap
     /// Every fault in <paramref name="arranged"/>: two non-empty text leaves sharing a pixel, and a text leaf outside the
     /// viewport of its enclosing scroll (<see cref="Layout.Node.Scroll"/>) or, with no scroll around it, outside the page. A scroll
     /// slides its rows, so a row scrolled out of view is neither: only text that shows is held against what it shows beside, and two
-    /// rows of one scroll are held apart wherever they are.
+    /// rows of one scroll are held apart wherever they are. Only the first <paramref name="maxLeaves"/> text leaves are read (the
+    /// live GUI bounds its work by it): the pairs compared grow with the square of them.
     /// </summary>
-    public static IReadOnlyList<TextFault> Faults<T>(ImmutableArray<Layout.ArrangedNode<T>> arranged, float tolerance = Tolerance)
+    public static IReadOnlyList<TextFault> Faults<T>(ImmutableArray<Layout.ArrangedNode<T>> arranged, float tolerance = Tolerance, int maxLeaves = int.MaxValue)
         where T : INumber<T>
     {
         var faults = new List<TextFault>();
@@ -78,7 +79,7 @@ internal static class TextOverlap
             var rect = Rectangle(bounds);
             if (node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } text })
             {
-                if (string.IsNullOrWhiteSpace(text.Value))
+                if (string.IsNullOrWhiteSpace(text.Value) || leaves.Count >= maxLeaves)
                 {
                     continue;
                 }

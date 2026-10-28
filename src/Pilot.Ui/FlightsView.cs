@@ -239,7 +239,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
 /// one-line why under its button where the verb needs words, or a message put in the chat's box (Plan a leg). Generic over
 /// the surface, as the sessions view is.
 /// </summary>
-internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "flights";
 

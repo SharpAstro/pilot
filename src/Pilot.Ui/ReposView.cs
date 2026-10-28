@@ -9,7 +9,7 @@ namespace Pilot.Ui;
 /// its branch, diff stat, flight, session and what waits on the controller. Links open a flight on the Flights page, a
 /// session's transcript, and a PR in the browser. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "repos";
 

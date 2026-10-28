@@ -333,7 +333,7 @@ internal sealed class FleetWatch : IAsyncDisposable
 /// <see cref="OnOpen"/> (a window of its own on a node) by default.
 /// Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "fleet";
 

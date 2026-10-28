@@ -156,7 +156,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
 /// flying and waiting on you, then every flight, session and job on the node as a chip. A chip opens the thing's own page through <see cref="OnFlight"/>, <see cref="OnSession"/> and
 /// <see cref="OnJob"/>. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     private const float Gutter = 20f;
 

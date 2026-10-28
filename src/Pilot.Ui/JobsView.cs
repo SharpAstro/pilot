@@ -145,7 +145,7 @@ internal sealed record JobsScreen(IReadOnlyList<JobLine> Lines, string Source, D
 /// whom it wakes, how it stands and how long it took; the selected job's folder, log and the end of its output beneath,
 /// followed while it runs; and Cancel, its session and its log. Generic over the surface, as the flights view is.
 /// </summary>
-internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "jobs";
 

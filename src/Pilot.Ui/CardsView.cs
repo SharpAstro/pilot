@@ -211,7 +211,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
 /// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
 /// button runs through <see cref="OnAnswer"/> or <see cref="OnDismiss"/>; the node closes the card and the stream says so.
 /// </summary>
-internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>Design units, scaled by DpiScale.</summary>
     public const float Width = 300f;

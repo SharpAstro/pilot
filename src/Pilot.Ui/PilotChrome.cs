@@ -108,11 +108,23 @@ internal sealed class PilotChrome<TSurface>
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
         Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
+        // Every page reports the nodes it arranged to the one text check, under the name of what it shows now.
+        Sessions.Arranged = nodes => TextCheck.Observe(Sessions.Transcript.Line is null ? "sessions" : "transcript", nodes, DpiScale);
+        Flights.Arranged = nodes => TextCheck.Observe(
+            Flights.Wizard.IsOpen ? "new flight wizard" : Flights.OpenCode is not null ? "flight page" : Flights.Mode == FlightsViewMode.Canvas ? "flights canvas" : "flights table",
+            nodes, DpiScale);
+        Jobs.Arranged = nodes => TextCheck.Observe("jobs", nodes, DpiScale);
+        Fleet.Arranged = nodes => TextCheck.Observe("fleet", nodes, DpiScale);
+        Settings.Arranged = nodes => TextCheck.Observe("settings", nodes, DpiScale);
+        Repos.Arranged = nodes => TextCheck.Observe("repos", nodes, DpiScale);
+        Chat.Arranged = nodes => TextCheck.Observe("chat", nodes, DpiScale);
+        Cards.Arranged = nodes => TextCheck.Observe("cards panel", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         Flights.CardWorking = Cards.WorkingOn;
         Home = new HomeView<TSurface>(renderer);
+        Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
         sessions.ShareWith(Flights, Repos, Jobs, Fleet, Settings, Cards, Chat);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
@@ -191,6 +203,9 @@ internal sealed class PilotChrome<TSurface>
     }
 
     public TabBar<TSurface> Rail { get; }
+
+    /// <summary>The text check the pages report their arranged nodes to: the host gives it where to send the card it raises, and a line for the console.</summary>
+    public LiveTextCheck TextCheck { get; } = new();
 
     /// <summary>The Back and Forward at the top of the rail.</summary>
     internal NavControls<TSurface> Nav { get; }
