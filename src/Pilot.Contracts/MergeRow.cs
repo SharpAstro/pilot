@@ -47,7 +47,7 @@ public sealed record MergeRow
 
     /// <summary>Whether it still stands in its repo's queue (waiting, updating, checks or merging).</summary>
     [JsonIgnore]
-    public bool Open => State is MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Checks or MergeEntryState.Merging;
+    public bool Open => State is MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Checks or MergeEntryState.Batched or MergeEntryState.Merging;
 }
 
 /// <summary>Who asked for a merge entry.</summary>
@@ -73,6 +73,10 @@ public enum MergeEntryState
     /// <summary>Waiting for a passed review at its head, or for green checks.</summary>
     [JsonStringEnumMemberName("checks")]
     Checks,
+
+    /// <summary>Part of a batch branch (<c>pilot/batch/repo-n</c>) whose CI runs once for it and its fellows; the why names the batch.</summary>
+    [JsonStringEnumMemberName("batched")]
+    Batched,
 
     /// <summary>Being merged (or handed to GitHub's own merge queue).</summary>
     [JsonStringEnumMemberName("merging")]

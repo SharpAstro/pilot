@@ -28,6 +28,20 @@ public sealed partial class LegCommander
 
     private readonly AsyncLocal<HeldTurn?> _held = new();
 
+    // Merge batches (the merge-batch setting): the batch branch's builder; the flights a green batch landed with the base's direct
+    // push, by code (their commands take it as their merge); and the flights a batch was tried for, never batched again (a red or
+    // conflicting batch falls back to them one at a time).
+    private MergeBatcher? _batcher;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _landedInBatch = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _batchTried = new(StringComparer.Ordinal);
+
+    /// <summary>Builds and checks batch branches; a test sets how often it looks at the batch's CI.</summary>
+    public MergeBatcher Batcher
+    {
+        get => _batcher ??= new MergeBatcher(git, github);
+        set => _batcher = value;
+    }
+
     private void Signal()
     {
         TaskCompletionSource old;
@@ -46,6 +60,7 @@ public sealed partial class LegCommander
         {
             _active.Remove(code);
         }
+        _batchTried.TryRemove(code, out _);
         Signal();
     }
 
@@ -94,6 +109,11 @@ public sealed partial class LegCommander
             Task changed;
             lock (_turns)
             {
+                // A batch that landed this entry with the base's direct push has merged it: nothing is left to take a turn for.
+                if (_landedInBatch.ContainsKey(code))
+                {
+                    return;
+                }
                 var mine = state.Merges().FirstOrDefault(m => m.Flight == code);
                 var others = state.Merges().Where(m => m.Repo == repo && m.Flight != code && m.Open && _active.Contains(m.Flight)).ToList();
                 var running = others.Any(m => m.State is MergeEntryState.Updating or MergeEntryState.Merging);
@@ -108,6 +128,81 @@ public sealed partial class LegCommander
             await changed.WaitAsync(cancellationToken);
         }
     }
+
+    /// <summary>
+    /// With <c>merge-batch</c> on, an entry that has just taken its repo's turn looks for fellows: the repo's other waiting entries
+    /// that are ready (a passed review at their head, green checks) and not batched before. With two or more ready (this one among
+    /// them) the batch branch is built, pushed and its CI awaited once (<see cref="MergeBatcher"/>). Landed with the base's direct
+    /// push, each entry is merged (<see cref="TakeLanded"/>); else every entry goes back to waiting and is merged one at a time,
+    /// as it would be with batching off, the entries of a green batch as already proven green.
+    /// </summary>
+    private async Task BatchAsync(string code, string repo, CancellationToken cancellationToken)
+    {
+        var ready = new List<(MergeRow Entry, FlightRow Flight)>();
+        foreach (var entry in state.Merges().Where(m => m.Repo == repo && m.Open && m.Pr is not null && (m.Flight == code || m.State == MergeEntryState.Waiting))
+            .OrderBy(m => m.AddedAt).ThenBy(m => m.Flight, StringComparer.Ordinal).ToList())
+        {
+            bool taken;
+            lock (_turns)
+            {
+                taken = entry.Flight != code && !_active.Contains(entry.Flight);
+            }
+            if (taken || _batchTried.ContainsKey(entry.Flight)
+                || state.Flights().FirstOrDefault(f => f.Code == entry.Flight) is not { State: FlightState.Flying, Review: { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } reviewed } } flight
+                || !(entry.Head.StartsWith(reviewed, StringComparison.OrdinalIgnoreCase) || reviewed.StartsWith(entry.Head, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+            if ((await github.ChecksSummaryAsync(flight.RepoPath, entry.Pr!.Value, cancellationToken))?.Status != ChoiceStatus.Passing)
+            {
+                continue;
+            }
+            ready.Add((entry, flight));
+        }
+        if (ready.Count < 2 || ready.All(r => r.Entry.Flight != code))
+        {
+            return;
+        }
+        foreach (var (entry, _) in ready)
+        {
+            _batchTried[entry.Flight] = true;
+        }
+        var leader = ready.First(r => r.Entry.Flight == code).Flight;
+        BatchResult result;
+        try
+        {
+            var members = ready.Select(r => new BatchEntry(r.Entry.Flight, r.Entry.Pr!.Value, r.Entry.Head)).ToList();
+            foreach (var member in members)
+            {
+                SetEntry(member.Flight, MergeEntryState.Batched, $"in a batch of {members.Count} PRs: its CI runs once for them");
+            }
+            result = await Batcher.RunAsync(repo, leader.RepoPath, leader.Base, members, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            result = new BatchResult("pilot/batch", [], [], false, false, ex.Message);
+        }
+        foreach (var (entry, _) in ready)
+        {
+            var left = result.LeftOut.FirstOrDefault(l => l.Flight == entry.Flight).Why;
+            if (result.Landed && result.Included.Contains(entry.Flight))
+            {
+                _landedInBatch[entry.Flight] = result.Branch;
+                SetEntry(entry.Flight, MergeEntryState.Batched, $"landed with {result.Branch}: its CI passed once for the batch");
+            }
+            else
+            {
+                var back = entry.Flight == code ? MergeEntryState.Updating : MergeEntryState.Waiting;
+                SetEntry(entry.Flight, back, left is not null ? $"left out of {result.Branch}: {left}; merged one at a time"
+                    : result.Green ? $"{result.Branch} was green: merged on its own, already proven green ({result.Why})"
+                    : $"{result.Branch} did not pass ({result.Why}): merged one at a time");
+            }
+        }
+        Signal();
+    }
+
+    /// <summary>The batch a green batch landed the flight with; the entry's command takes it as the flight's merge. Null when none did.</summary>
+    private string? TakeLanded(string code) => _landedInBatch.TryRemove(code, out var batch) ? batch : null;
 
     /// <summary>
     /// What the node does of its own with the queue at each look: an entry waiting for a fresh review is merged once the review

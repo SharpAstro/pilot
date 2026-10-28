@@ -190,6 +190,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether ready merge queue entries are batched (<see cref="NodeSettings.MergeBatchKey"/>): in force at once, and off unless the person saved it on.</summary>
+    public bool MergeBatch
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MergeBatch ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and off unless the person saved it on.</summary>
     public bool Autopilot
     {

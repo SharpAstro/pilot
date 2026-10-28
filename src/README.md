@@ -378,6 +378,16 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   is raised for it); any other change is reviewed afresh. A conflict or a failed check takes the entry out with its why and sends it on as
   before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn, so an
   entry left by a node that went away holds nothing.
+- **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
+  takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries with a passed review at their head and green
+  checks. With two or more ready, `MergeBatcher` builds `pilot/batch/<repo>-<n>` from `origin/<base>` in a throwaway worktree, merges
+  each PR head in with `git merge --no-edit`, pushes the branch plainly and waits once for its CI (`WorkflowRunsAsync` on the batch
+  head; no run before the budget counts as red). The entries show state `batched`, the why naming the batch. On green the base is
+  pushed to the batch head (a plain push: it lands only as a fast-forward the repo allows a direct push for), GitHub shows each PR
+  merged and each entry's command takes it as its merge; where the base takes no direct push, each PR is merged as a single entry
+  already proven green. A PR that conflicts in the batch is aborted and left out (merged on its own); a red batch, or one with fewer
+  than two clean entries, is dropped. In every case the batch branch is deleted again (worktree, local, remote) and the entries go
+  on one at a time, none lost (`MergeBatchTests`; a flight a batch was tried for is never batched twice).
 - `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
   (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
 - **The remote's commits are taken in, never refused or dropped.** `TakeRemoteAsync` merges what `origin/<branch>` holds that the
@@ -1180,6 +1190,8 @@ Two per-repo settings (#254) are lists, keyed by the repo's folder name and in f
   For-you confirm card as it does with autopilot off, and the asking session is told the answer. A passed flight's
   PR-ready card there rings the controller as for any repo. The person's own merge (the card's **Allow**, the **Merge**
   button, `pilot flight merge` by hand) is not held.
+- `merge-batch` (`on` or `off`, off by default) merges a repo's ready merge queue entries as one batch: a branch of the base
+  plus each PR, its CI run once, the PRs landed together on green; a red or conflicting batch falls back to one at a time.
 
 `shortcut-token` is in force at once, and the setup checklist has an optional **Shortcut token** line saying whether one
 is present (the variable or the setting).

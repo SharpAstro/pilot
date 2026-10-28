@@ -1376,6 +1376,15 @@ public sealed partial class LegCommander(
         await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
         try
         {
+            if (Models.MergeBatch)
+            {
+                await OffLockAsync(null, () => BatchAsync(asked.Code, asked.Repo, cancellationToken));
+            }
+            if (TakeLanded(asked.Code) is { } batch)
+            {
+                SetEntry(asked.Code, MergeEntryState.Merging, $"merged with {batch}: the flight lands");
+                return (true, null, null);
+            }
             var result = await MergeEntryAsync(command, cancellationToken);
             if (result.Merged)
             {
