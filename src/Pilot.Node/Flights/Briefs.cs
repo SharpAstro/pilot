@@ -776,6 +776,22 @@ public static class Briefs
         return text.ToString();
     }
 
+    /// <summary>A flight's state in lines, as a card's chat says it: the flight, its PR and review, then each leg.</summary>
+    public static string FlightStatus(FlightRow flight, IReadOnlyList<LegRow> legs)
+    {
+        var text = new StringBuilder();
+        var state = flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant();
+        text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
+        text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
+        text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");
+        foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
+        {
+            var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
+            text.AppendLine().Append($"{leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}");
+        }
+        return text.ToString();
+    }
+
     /// <summary>One card as the watchtower reads it: id, bin, title, detail and its numbered choices.</summary>
     public static string CardLine(CardRow card)
     {
