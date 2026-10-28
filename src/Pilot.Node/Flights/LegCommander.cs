@@ -760,7 +760,8 @@ public sealed partial class LegCommander(
                     new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
                     new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
                     new CardChoice { Label = "Re-plan", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
-                ]);
+                ],
+                summary: $"The worker of {flight.Code}/{leg.Name} reports the tree is not as its brief assumes. Go anyway starts it as it is; Remove leg drops it; Re-plan plans the flight again.");
         }
 
         // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.

@@ -47,7 +47,7 @@ public static partial class CardSummaries
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Extend gives it more; Redo leg starts a fresh worker.",
             LegWatch.ReviewStalled => $"The review of {what} stalled. Retry it, or dismiss this once it moves.",
             LegWatch.ValidationStalled => $"The validation of {what} stalled. Resume it, or Redo leg to start over.",
-            LegCommander.NoGoKind => $"The worker of {what} reports the tree is not as its brief assumes. Redo leg sends a fresh worker once the brief is fixed.",
+            LegCommander.NoGoKind => $"The worker of {what} reports the tree is not as its brief assumes. Go anyway starts it as it is; Remove leg drops it; Re-plan plans the flight again.",
             LegCommander.WaitLateKind => $"{what} waits on something that has not come in time. Look at what it waits for, or Redo leg.",
             LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",

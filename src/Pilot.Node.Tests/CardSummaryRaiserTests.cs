@@ -23,6 +23,18 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
+    public void TheNoGoSummaryNamesTheChoicesTheCardOffers()
+    {
+        var card = _state.RaiseCard(CardBin.Ring, LegCommander.NoGoKind, "flight/TIA1/render", "NO-GO", "gone",
+            [new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = "flight/TIA1/render" }]);
+
+        card.Summary.ShouldNotBeNull().ShouldContain("Go anyway");
+        card.Summary.ShouldContain("Remove leg");
+        card.Summary.ShouldContain("Re-plan");
+        card.Summary.ShouldNotContain("Redo leg");
+    }
+
+    [Fact]
     public async Task AFailedLegSaysWhichLegGaveUp()
     {
         var flight = await NewFlight("42", "parser");
