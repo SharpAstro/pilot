@@ -439,10 +439,10 @@ public sealed class PullRequestLinksTests
         var chip = Regions(chrome.Flights).Single(r => r.Result is HitResult.ButtonHit { Action: "flight:PIL252:pr-chip" });
         var arranged = Layout.Engine.Arrange(chrome.Flights.Tree(flights), new Rect<float>(0, 0, 1280, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         var chipNode = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "flight:PIL252:pr-chip" }).Node;
-        var (bg, fg) = PullRequestsView<RgbaImage>.ChipColors(FlightsPalette.Standard, PullRequestKind.Ready);
+        var (bg, fg) = PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.Ready);
         chipNode.Background.ShouldBe(bg);
         (chipNode as Layout.Node.Leaf)?.Content.ShouldBeOfType<Layout.Content.Text>().Value.ShouldBe("Ready");
-        fg.ShouldBe(FlightsPalette.Standard.Bright);
+        fg.ShouldBe(Palette.Standard.Bright);
 
         Click(chrome.Flights, "pr:PIL252:browser");
         opened.ShouldBe(["https://github.com/SharpAstro/pilot/pull/252"]);
@@ -473,7 +473,8 @@ public sealed class PullRequestLinksTests
         // The second flight's PR is not on the node's list (merged, say): it has no chip, and nothing else changes.
         var flights = Flights(Flight("PIL252", "pilot", 252, 252), Flight("TIA1799", "tianwen", 1799, 1799), Flight("DIR9", "DIR.Lib", 9, 9));
         chrome.Show(PilotPage.Flights);
-        chrome.Flights.Mode = Enum.Parse<FlightsViewMode>(view);
+        chrome.Flights.Mode = view == "Night" ? FlightsViewMode.Canvas : Enum.Parse<FlightsViewMode>(view);
+        chrome.Night.On = view == "Night";
         Draw(chrome, flights, null, screen);
 
         Has(chrome.Flights, "flight:PIL252:pr-chip").ShouldBeTrue();
@@ -592,7 +593,8 @@ public sealed class PullRequestLinksTests
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var chrome = Window(renderer);
                 chrome.Show(PilotPage.Flights);
-                chrome.Flights.Mode = view switch { "night" => FlightsViewMode.Night, "list" => FlightsViewMode.List, _ => FlightsViewMode.Canvas };
+                chrome.Flights.Mode = view == "list" ? FlightsViewMode.List : FlightsViewMode.Canvas;
+                chrome.Night.On = view == "night";
                 var bounds = new RectF32(0, 0, width, height);
                 if (view == "page")
                 {

@@ -52,13 +52,13 @@ internal sealed class ListTable
     /// <summary>The padding at both ends of a row, around stripe and columns.</summary>
     internal const float EndPad = 8f;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
+    private static RGBAColor32 Ground => Palette.Current.Ground;
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
 
     // The page's own look: the titles on the page's ground, as the header was before it was a table. No padding of the
     // table's own, the row around stripe and table carries it; the gap is what the dividers sit in.
-    private static readonly Layout.TableStyle Style = new(Ground, Faint, Ground, Dim) { Gap = ColumnGap, PadX = 0f };
+    private static Layout.TableStyle Style => new(Ground, Faint, Ground, Dim) { Gap = ColumnGap, PadX = 0f };
 
     private readonly string _hitPrefix;
 
@@ -115,17 +115,11 @@ internal sealed class ListTable
         return Volatile.Read(ref _byTitle).TryGetValue(title, out var width) ? width : declared;
     }
 
-    /// <summary>
-    /// The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them. With a
-    /// <paramref name="palette"/> the titles are painted in its dim (the colour of a page's secondary text, which reads on its
-    /// ground where the shared style's faint grey does not) and the row on its ground, so a night view has no blue in it.
-    /// </summary>
-    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, FlightsPalette? palette = null)
+    /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null)
     {
         var specs = Lay(columns);
-        // Night's dim is too dark to read as a title on its black (1.7:1), and its body red too (2.5:1): its bright red is the best it has.
-        var titles = palette is null ? Dim : ReferenceEquals(palette, FlightsPalette.Night) ? palette.Bright : palette.Dim;
-        var style = palette is null ? Style : new Layout.TableStyle(palette.Ground, titles, palette.Ground, titles) { Gap = ColumnGap, PadX = 0f };
+        var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
         var header = Dropping(Layout.Builder.TableHeader(specs, null, null, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)

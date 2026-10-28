@@ -167,32 +167,32 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     private const float TreeRowHeight = 18f;
     private const int TreeRows = 4;
 
-    private static readonly RGBAColor32 Ground = new(0x12, 0x12, 0x18, 0xff);
-    private static readonly RGBAColor32 HeaderBg = new(0x1b, 0x1c, 0x24, 0xff);
-    private static readonly RGBAColor32 RowAltBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RowHoverBg = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RowFocusBg = new(0x26, 0x33, 0x4a, 0xff);
-    private static readonly RGBAColor32 PanelBg = new(0x18, 0x19, 0x21, 0xff);
-    private static readonly RGBAColor32 LogBg = new(0x10, 0x10, 0x15, 0xff);
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Body = new(0xc4, 0xc6, 0xd0, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Faint = new(0x5c, 0x5f, 0x6c, 0xff);
-    private static readonly RGBAColor32 Running = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Queued = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 Succeeded = new(0x6f, 0x9b, 0xd8, 0xff);
-    private static readonly RGBAColor32 Failed = new(0xe0, 0x5a, 0x5a, 0xff);
-    private static readonly RGBAColor32 Button = new(0x2a, 0x3a, 0x58, 0xff);
-    private static readonly RGBAColor32 ButtonHover = new(0x35, 0x4a, 0x70, 0xff);
+    private static RGBAColor32 Ground => Palette.Current.Ground;
+    private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
+    private static RGBAColor32 RowAltBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RowHoverBg => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RowFocusBg => Palette.Current.RowFocusBg;
+    private static RGBAColor32 PanelBg => Palette.Current.PanelBg;
+    private static RGBAColor32 LogBg => Palette.Current.LogBg;
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Body => Palette.Current.Body;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Faint => Palette.Current.Faint;
+    private static RGBAColor32 Running => Palette.Current.Flying;
+    private static RGBAColor32 Queued => Palette.Current.Held;
+    private static RGBAColor32 Succeeded => Palette.Current.Landed;
+    private static RGBAColor32 Failed => Palette.Current.Failed;
+    private static RGBAColor32 Button => Palette.Current.Button;
+    private static RGBAColor32 ButtonHover => Palette.Current.ButtonHover;
 
     /// <summary>
     /// A button that ends something. Its label is Bright: 5.3:1 on it and 4.8:1 on its hover, both AA (4.5:1) for 12 px text.
     /// The hover only lightens it a little: a lighter red took the label below AA.
     /// </summary>
-    internal static readonly RGBAColor32 Danger = new(0xb3, 0x26, 0x1e, 0xff);
-    internal static readonly RGBAColor32 DangerHover = new(0xbd, 0x2c, 0x23, 0xff);
-    internal static readonly RGBAColor32 DangerLabel = Bright;
-    private static readonly RGBAColor32 MenuBg = new(0x1f, 0x21, 0x2b, 0xff);
+    internal static RGBAColor32 Danger => Palette.Current.Danger;
+    internal static RGBAColor32 DangerHover => Palette.Current.DangerHover;
+    internal static RGBAColor32 DangerLabel => Bright;
+    private static RGBAColor32 MenuBg => Palette.Current.MenuBg;
 
     /// <summary>How often the selected job's log is read again.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
@@ -275,6 +275,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
@@ -319,6 +322,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     public void Render(JobsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds);
     }
@@ -329,6 +333,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// </summary>
     internal Layout.Node Tree(JobsScreen screen)
     {
+        Palette.Use(Night);
         if (_pinned is not null && !(Selected >= 0 && Selected < _shown.Count && _shown[Selected] == _pinned))
         {
             _pinned = null;
@@ -512,7 +517,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Hidden = screen.Hidden,
             HiddenAction = "jobs:play-all",
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
-        }, new TopBarParts(Nodes, Play, Autopilot, About));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
 
     private Layout.Node Main(JobsScreen screen)
     {

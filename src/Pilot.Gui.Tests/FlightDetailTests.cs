@@ -224,8 +224,8 @@ public sealed class FlightDetailTests
         var oldWord = older.Single(t => t.Value == "LayoutDrivenTests ");
         var curWord = current.Single(t => t.Value == "LayoutDrivenTests ");
         oldWord.Color.ShouldNotBe(curWord.Color);
-        Contrast(oldWord.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
-        Contrast(oldWord.Color, FlightsPalette.Standard.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(oldWord.Color, Palette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(oldWord.Color, Palette.Standard.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
         Joined(older).ShouldContain("review of cafe000, round 3; the head is now beef111");
         Joined(current).ShouldContain("review of cafe000, round 3");
         Joined(current).ShouldNotContain("the head is now");
@@ -259,7 +259,7 @@ public sealed class FlightDetailTests
         leaves.Any(t => t.Value.Contains('`')).ShouldBeFalse();
         leaves.Any(t => t.Value is "Show all" or "Show less").ShouldBeFalse();
         // Contrast against the panel the report is drawn on, in the transcript's colours.
-        Contrast(code.Color, FlightsPalette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(code.Color, Palette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
     }
 
     [Fact]
@@ -364,7 +364,7 @@ public sealed class FlightDetailTests
             var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
             if (night)
             {
-                chrome.Flights.Mode = FlightsViewMode.Night;
+                chrome.Night.On = true;
             }
             chrome.Show(PilotPage.Flights);
             chrome.Flights.OpenDetail("TIA1611");

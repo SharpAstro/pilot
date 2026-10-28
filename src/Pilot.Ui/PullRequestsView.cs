@@ -110,8 +110,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>The repo search: the page lists the repos whose name holds what it says.</summary>
     public TextInputState Search { get; } = new() { Placeholder = "Search repos" };
 
-    /// <summary>The colours the page paints with; the window sets Night while the Flights page is in its night view.</summary>
-    public FlightsPalette Palette { get; set; } = FlightsPalette.Standard;
+    /// <summary>The header's Night switch, the window's one night state; null is the day palette.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>Opens a flight's page; the host switches the page. Called with the PR whose <see cref="PullRequestRow.Flight"/> is the flight.</summary>
     public Action<PullRequestRow>? OnFlight { get; set; }
@@ -397,8 +397,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .Select(c => RefusedOf?.Invoke(c.Id) is { } why ? $"{c.Title}: {why}" : null).FirstOrDefault(r => r is not null);
 
     // The colours come from the palette handed to the page, so night repaints the same builders.
-    private FlightsPalette P => Palette;
-    private FlightsPalette? NightOrNull => ReferenceEquals(P, FlightsPalette.Night) ? P : null;
+    private Palette P => Night?.Palette ?? Palette.Standard;
+    private Palette? NightOrNull => ReferenceEquals(P, Palette.Night) ? P : null;
 
     // The text of a row and of the lines about the list: the palette's body, but at night its bright red, the body red being under 3:1 on black.
     private RGBAColor32 BodyText => NightOrNull is { } night ? night.Bright : P.Body;
@@ -408,6 +408,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     public void Render(PullRequestsScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen, bounds.Width / Scale.X), bounds);
         // A jump to a row on a page never laid out waits for this first layout, which tells the list its viewport: the next frame scrolls.
@@ -423,6 +424,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     internal Layout.Node Tree(PullRequestsScreen screen, float width = WideEnough)
     {
+        Palette.Use(Night);
         _now = screen.AsOf;
         _cards = screen.OpenCards;
         if (_reveal is { } want)
@@ -601,7 +603,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             SourceColor = screen.Stale ? P.Held : null,
             Buttons = buttons,
             Lines = lines,
-        }, new TopBarParts(Nodes, null, Autopilot, About, night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
     }
 
     // The pills' tints, as the node pills have them: the lit one, and the rest (the day's own button colour, or night's).
@@ -618,7 +620,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             var chosen = filter;
             items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = chosen, Filter == filter ? lit : plain, NightOrNull?.Bright));
         }
-        items.Add(Layout.Builder.TextInput(Search, TextSize, NightOrNull is { } n ? FlightsView<TSurface>.NightInput(n) : null).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
+        items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
         // always there, so a refusal moves nothing. Cut to the room it has with an ellipsis, whole on hover.
         if (Refusal() is { } refused)
@@ -668,7 +670,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         return Layout.Builder.VStack(
                 toolbar,
-                Table.Header(columns, Scale, P),
+                Table.Header(columns, Scale, NightOrNull),
                 Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
@@ -899,16 +901,16 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// A PR's state chip: the Contracts label on the kind's colours, one look wherever it is drawn (this page, a flight's card and its
     /// page), its width left to the caller. Cut with an ellipsis to the room it is given.
     /// </summary>
-    internal static Layout.Node Chip(FlightsPalette palette, PullRequestRow pr)
+    internal static Layout.Node Chip(Palette palette, PullRequestRow pr)
     {
         var colors = ChipColors(palette, pr.Kind);
         return Layout.Builder.Text(pr.Label, ChipSize, colors.Fg, TextAlign.Center, TextAlign.Center).Pad(8f, 0f).Bg(colors.Bg);
     }
 
     /// <summary>The chip's background and the text on it, for a PR of <paramref name="kind"/> in <paramref name="palette"/>.</summary>
-    internal static (RGBAColor32 Bg, RGBAColor32 Fg) ChipColors(FlightsPalette palette, PullRequestKind kind)
+    internal static (RGBAColor32 Bg, RGBAColor32 Fg) ChipColors(Palette palette, PullRequestKind kind)
     {
-        if (ReferenceEquals(palette, FlightsPalette.Night))
+        if (ReferenceEquals(palette, Palette.Night))
         {
             // Night is dim red on black and nothing else: the words carry the state, the ones for the person's attention in the brighter red.
             return PullRequestStates.Rank(kind) <= 2 ? (palette.RowFocusBg, palette.Failed) : (palette.PanelBg, palette.Bright);
@@ -929,6 +931,6 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     }
 
     // The thin stripe at a row's left edge, the chip's colour: a second place the state shows, never the only one.
-    private static RGBAColor32 StripeColor(FlightsPalette palette, PullRequestKind kind) =>
-        ReferenceEquals(palette, FlightsPalette.Night) ? palette.Faint : ChipColors(palette, kind).Bg;
+    private static RGBAColor32 StripeColor(Palette palette, PullRequestKind kind) =>
+        ReferenceEquals(palette, Palette.Night) ? palette.Faint : ChipColors(palette, kind).Bg;
 }

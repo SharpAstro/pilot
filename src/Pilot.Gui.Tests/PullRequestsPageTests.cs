@@ -561,7 +561,7 @@ public sealed class PullRequestsPageTests
         // Painted, the selected row is the one in the focus colour.
         arranged = Arrange(renderer, page, screen);
         var selected = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 2 }).Node;
-        selected.Background.ShouldBe(FlightsPalette.Standard.RowFocusBg);
+        selected.Background.ShouldBe(Palette.Standard.RowFocusBg);
 
         // A double-click on it opens the PR in the browser.
         ClickAt(arranged, x, y, twice: true);
@@ -678,14 +678,14 @@ public sealed class PullRequestsPageTests
 
         var fresh = SourceLine(Screen(Row(readAt: Now - TimeSpan.FromSeconds(75))));
         fresh.Value.ShouldBe("live from the node on node.sock · read from GitHub 1m ago (2026-10-28 11:58:45 UTC)");
-        fresh.Color.ShouldBe(FlightsPalette.Standard.Dim);
+        fresh.Color.ShouldBe(Palette.Standard.Dim);
         Screen(Row(readAt: Now - TimeSpan.FromMinutes(5))).Stale.ShouldBeFalse();
 
         var stale = SourceLine(Screen(Row(readAt: Now - TimeSpan.FromMinutes(6))));
         stale.Value.ShouldBe("live from the node on node.sock · read from GitHub 6m ago (2026-10-28 11:54:00 UTC) · stale: over 5 minutes old, Refresh reads it now");
-        stale.Color.ShouldBe(FlightsPalette.Standard.Held);
+        stale.Color.ShouldBe(Palette.Standard.Held);
         // Amber alone says nothing: the words do too, and the amber is legible on the bar.
-        Contrast(FlightsPalette.Standard.Held, FlightsPalette.Standard.HeaderBg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(Palette.Standard.Held, Palette.Standard.HeaderBg).ShouldBeGreaterThanOrEqualTo(4.5);
 
         // An org GitHub would not read is said under the bar, and its PRs are the ones read before.
         var errored = Row() with { Errors = [new PullRequestsError { Org = "sebgod", Message = "GitHub said 502\nBad gateway" }] };
@@ -734,7 +734,7 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void EveryColourPairMeetsTheContrastFloorOnTheBackgroundItIsDrawnOn()
     {
-        var day = FlightsPalette.Standard;
+        var day = Palette.Standard;
         foreach (var kind in Enum.GetValues<PullRequestKind>())
         {
             var (bg, fg) = PullRequestsView<RgbaImage>.ChipColors(day, kind);
@@ -753,7 +753,7 @@ public sealed class PullRequestsPageTests
         Contrast(day.Dim, day.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
 
         // Night is dim red on black and nothing else, so its floor is the 3:1 of large text and icons: what its own palette reaches.
-        var night = FlightsPalette.Night;
+        var night = Palette.Night;
         foreach (var kind in Enum.GetValues<PullRequestKind>())
         {
             var (bg, fg) = PullRequestsView<RgbaImage>.ChipColors(night, kind);
@@ -777,9 +777,9 @@ public sealed class PullRequestsPageTests
         chrome.Render(sessions, null, null, null, null, null, Screen(), new RectF32(0, 0, 1280, 900));
         var day = renderer.Surface.Pixels.ToArray();
 
-        chrome.Flights.Mode = FlightsViewMode.Night;
+        chrome.Night.On = true;
         chrome.Render(sessions, null, null, null, null, null, Screen(), new RectF32(0, 0, 1280, 900));
-        page.Palette.ShouldBeSameAs(FlightsPalette.Night);
+        page.Night!.Palette.ShouldBeSameAs(Palette.Night);
         renderer.Surface.Pixels.ToArray().ShouldNotBe(day);
 
         var regions = new List<ClickableRegion>();
@@ -790,10 +790,10 @@ public sealed class PullRequestsPageTests
         buttons.ShouldContain("prs:group:SharpAstro/pilot");
         regions.Select(r => r.Result).OfType<HitResult.ListItemHit>().Count(h => h.ListId == PullRequestsView<RgbaImage>.ListId).ShouldBe(8);
 
-        // And the day's again once the Flights page is off its night view.
-        chrome.Flights.Mode = FlightsViewMode.Canvas;
+        // And the day's again once the Night switch is off.
+        chrome.Night.On = false;
         chrome.Render(sessions, null, null, null, null, null, Screen(), new RectF32(0, 0, 1280, 900));
-        page.Palette.ShouldBeSameAs(FlightsPalette.Standard);
+        (page.Night!.Palette ?? Palette.Standard).ShouldBeSameAs(Palette.Standard);
     }
 
     [Fact]
@@ -850,7 +850,7 @@ public sealed class PullRequestsPageTests
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var (chrome, page) = Chrome(renderer);
                 chrome.Show(PilotPage.PullRequests);
-                chrome.Flights.Mode = night ? FlightsViewMode.Night : FlightsViewMode.Canvas;
+                chrome.Night.On = night;
                 var sessions = new SessionsScreen([], "live from the node on node.sock", Now);
                 // The stale read (an hour old) in one of the four: the amber source line.
                 var screen = Screen(night && width == 1280 ? Row(readAt: Now - TimeSpan.FromMinutes(9)) : Row());

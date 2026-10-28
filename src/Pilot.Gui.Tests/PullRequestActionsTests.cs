@@ -385,7 +385,7 @@ public sealed class PullRequestActionsTests
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var (chrome, page) = Window(renderer);
                 chrome.Show(PilotPage.PullRequests);
-                chrome.Flights.Mode = night ? FlightsViewMode.Night : FlightsViewMode.Canvas;
+                chrome.Night.On = night;
                 var sessions = new SessionsScreen([], "live from the node on node.sock", Now);
                 var screen = Screen();
                 chrome.Render(sessions, null, CardsScreen.From(screen.OpenCards), null, null, null, screen, new RectF32(0, 0, width, height));

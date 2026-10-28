@@ -153,13 +153,13 @@ internal sealed class SummaryCard
     private const float PadX = 14f;
     private const float PadY = 10f;
 
-    private (string Source, FlightsPalette Palette, Layout.Node Node)? _parsed;
+    private (string Source, Palette Palette, Layout.Node Node)? _parsed;
 
     /// <summary>
     /// The Markdown style of a card on <paramref name="p"/>: body in the palette's body colour, headings and strong in its bright,
     /// so the night palette repaints it as it does the page.
     /// </summary>
-    internal static Layout.MarkdownStyle Style(FlightsPalette p) => new()
+    internal static Layout.MarkdownStyle Style(Palette p) => new()
     {
         Text = p.Body, Strong = p.Bright, Emphasis = p.Body, Code = p.Bright, CodeBackground = p.GhostBg, Link = p.Landed, Muted = p.Dim,
     };
@@ -208,7 +208,7 @@ internal sealed class SummaryCard
     /// The card for <paramref name="ask"/> on <paramref name="p"/>: null where there is nothing to show and no node to ask (a
     /// snapshot file with no summary), so nothing greyed out forever.
     /// </summary>
-    public Layout.Node? Build(SummaryBoard? board, SummaryAsk ask, FlightsPalette p, DateTimeOffset now)
+    public Layout.Node? Build(SummaryBoard? board, SummaryAsk ask, Palette p, DateTimeOffset now)
     {
         if (board is null)
         {
@@ -247,7 +247,7 @@ internal sealed class SummaryCard
     }
 
     // The kept Markdown as a tree, parsed once while it stays the same: the page is built every frame, and a node is immutable.
-    private Layout.Node Parsed(string source, FlightsPalette p)
+    private Layout.Node Parsed(string source, Palette p)
     {
         if (_parsed is { } held && held.Source == source && ReferenceEquals(held.Palette, p))
         {
@@ -258,7 +258,7 @@ internal sealed class SummaryCard
         return node;
     }
 
-    private static Layout.Node Button(SummaryBoard board, SummaryAsk ask, SummaryRow? row, bool running, FlightsPalette p)
+    private static Layout.Node Button(SummaryBoard board, SummaryAsk ask, SummaryRow? row, bool running, Palette p)
     {
         var steerable = board.Steerable(ask);
         var label = running ? "Summarising…" : $"Summarise{CostLabel(row)}";

@@ -160,18 +160,18 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 {
     private const float Gutter = 20f;
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 Dim = new(0x86, 0x89, 0x98, 0xff);
-    private static readonly RGBAColor32 Live = new(0x4c, 0xc3, 0x8a, 0xff);
-    private static readonly RGBAColor32 Ring = new(0xf0, 0xb4, 0x3c, 0xff);
-    private static readonly RGBAColor32 PageBg = new(0x12, 0x13, 0x19, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 Dim => Palette.Current.Dim;
+    private static RGBAColor32 Live => Palette.Current.Flying;
+    private static RGBAColor32 Ring => Palette.Current.Held;
+    private static RGBAColor32 PageBg => Palette.Current.Well;
 
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Green = (new RGBAColor32(0x1f, 0x6b, 0x45, 0xff), new RGBAColor32(0x27, 0x85, 0x56, 0xff));
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Amber = (new RGBAColor32(0x6b, 0x52, 0x1c, 0xff), new RGBAColor32(0x85, 0x66, 0x23, 0xff));
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Green => (Palette.Current.Go, Palette.Current.GoHover);
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Amber => (Palette.Current.AmberChip, Palette.Current.AmberChipHover);
 
     // A stale flight's chip: grey, not the green or amber of a state, its text lighter than Dim so it stays at AA on the grey.
-    private static readonly (RGBAColor32 Bg, RGBAColor32 Hover) Stale = (new RGBAColor32(0x26, 0x28, 0x32, 0xff), new RGBAColor32(0x31, 0x34, 0x40, 0xff));
-    private static readonly RGBAColor32 StaleText = new(0xb4, 0xb7, 0xc4, 0xff);
+    private static (RGBAColor32 Bg, RGBAColor32 Hover) Stale => (Palette.Current.StaleChip, Palette.Current.StaleChipHover);
+    private static RGBAColor32 StaleText => Palette.Current.StaleText;
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
@@ -180,6 +180,9 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     /// <summary>The header's Autopilot switch, the same on every page.</summary>
     public AutopilotSwitch? Autopilot { get; set; }
+    
+    /// <summary>The header's Night switch, the same on every page.</summary>
+    public NightSwitch? Night { get; set; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
@@ -203,6 +206,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
 
     public void Render(HomeScreen screen, RectF32 bounds)
     {
+        Palette.Use(Night);
         BeginFrame();
         RenderLayout(Tree(screen), bounds);
     }
@@ -210,6 +214,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
     internal Layout.Node Tree(HomeScreen screen)
     {
+        Palette.Use(Night);
         // The node selection holds here as on every page; the pills above bring the others back.
         if (Nodes is { All: false } nodes)
         {
@@ -224,7 +229,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         var blocks = new List<Layout.Node>();
         // The summary of the nodes the window shows comes first: it is what the person came to read.
-        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), FlightsPalette.Standard, screen.Flights.AsOf) is { } card)
+        if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), Palette.Current, screen.Flights.AsOf) is { } card)
         {
             blocks.Add(card);
             blocks.Add(Layout.Builder.Spacer().RowH(14f));
@@ -244,8 +249,8 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         TopBar.Build(new PageHeader("home")
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
-            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.Line, 12f, Ring).RowH(20f)] : [],
-        }, new TopBarParts(Nodes, null, Autopilot, About));
+            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).RowH(20f)] : [],
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {

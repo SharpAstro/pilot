@@ -27,9 +27,9 @@ internal sealed class LinkMenu
 
     private static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(50);
 
-    private static readonly RGBAColor32 Bright = new(0xe6, 0xe7, 0xee, 0xff);
-    private static readonly RGBAColor32 MenuBg = new(0x38, 0x3e, 0x54, 0xff);
-    private static readonly RGBAColor32 Highlight = new(0x4a, 0x58, 0x7a, 0xff);
+    private static RGBAColor32 Bright => Palette.Current.Bright;
+    private static RGBAColor32 MenuBg => Palette.Current.LinkMenuMenuBg;
+    private static RGBAColor32 Highlight => Palette.Current.Highlight;
 
     private const float FontSize = 13f;
 
@@ -45,7 +45,7 @@ internal sealed class LinkMenu
     /// <summary>The time, replaceable so a test can let the notice run out.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
 
-    private static readonly RGBAColor32 FocusBg = new(0x2f, 0x4d, 0x8a, 0xff);
+    private static RGBAColor32 FocusBg => Palette.Current.SelectionBg;
 
     private readonly DropdownMenuState<string> _menu = new();
     // The links a view has declared, by the action of their hit: how the keyboard finds one again after the frame is rebuilt.

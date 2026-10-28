@@ -44,9 +44,9 @@ internal sealed class PilotChrome<TSurface>
     private const string PageKey = "page";
     private const string CardsKey = "cards";
 
-    private static readonly RGBAColor32 RailBg = new(0x16, 0x17, 0x1e, 0xff);
-    private static readonly RGBAColor32 RailHover = new(0x22, 0x24, 0x2e, 0xff);
-    private static readonly RGBAColor32 RailActive = new(0x26, 0x33, 0x4a, 0xff);
+    private static RGBAColor32 RailBg => Palette.Current.RowAltBg;
+    private static RGBAColor32 RailHover => Palette.Current.RowHoverBg;
+    private static RGBAColor32 RailActive => Palette.Current.RowFocusBg;
 
     /// <summary>
     /// What each page is on the rail, top to bottom: its glyph, its name, the chord that reaches it, and why it is locked, if
@@ -65,6 +65,17 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
     ];
+
+    /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn (the Background tasks tab adds ! for a failed job, ~ for a running one, … for a waiting one), the glyph itself where the UI face has it (the plane and the cog).</summary>
+    internal static string NightGlyph(PilotPage page, string glyph) => page == PilotPage.Jobs
+        ? glyph switch { "🔴" => "B!", "🔄" => "B~", "🕓" => "B…", _ => "B" }
+        : NightGlyphs.GetValueOrDefault(page, glyph);
+
+    private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
+    {
+        [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P",
+    };
 
     /// <summary>
     /// The Background tasks page's glyph on the rail, and what it says on hover: a job that failed in play (the last
@@ -183,6 +194,8 @@ internal sealed class PilotChrome<TSurface>
         Settings.Autopilot = Autopilot;
         Home.Autopilot = Autopilot;
         Chat.Autopilot = Autopilot;
+        // And the Night switch beside it, one state every page reads.
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Night;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -215,6 +228,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The header's Autopilot switch, the same on every page: the host sets <see cref="AutopilotSwitch.On"/> from the node in view and <see cref="AutopilotSwitch.OnToggle"/> to flip it.</summary>
     public AutopilotSwitch Autopilot { get; } = new();
+
+    /// <summary>The header's Night switch, the same on every page: the window's one night state, kept across a restart by <see cref="KeepColumnWidths"/>'s file.</summary>
+    public NightSwitch Night { get; } = new();
 
     /// <summary>Which nodes the window shows (<see cref="FleetPages.Merge"/>): all by default, kept across pages for the window's life.</summary>
     public NodeFilter Nodes { get; } = new();
@@ -686,8 +702,8 @@ internal sealed class PilotChrome<TSurface>
     }
 
     /// <summary>
-    /// Keeps the widths the user drags the list pages' columns to in <paramref name="file"/>: the pages start from what it
-    /// holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
+    /// Keeps the widths the user drags the list pages' columns to, and the Night switch, in <paramref name="file"/>: the pages
+    /// start from what it holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
     /// </summary>
     public void KeepColumnWidths(GuiSettingsFile file, Action redraw)
     {
@@ -697,6 +713,8 @@ internal sealed class PilotChrome<TSurface>
             file.Attach(table);
             table.Changed += redraw;
         }
+        file.Attach(Night);
+        Night.Changed += _ => redraw();
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>
@@ -747,12 +765,23 @@ internal sealed class PilotChrome<TSurface>
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
             var emoji = FontResolver.ResolveEmojiFont();
-            Rail.EmojiFontPath = emoji.Length > 0 ? emoji : null;
-            // A landed card's title starts with 🛬, which the UI face lacks as well.
-            Cards.EmojiFontPath = emoji.Length > 0 ? emoji : null;
-            // A node in maintenance is marked 🔧 on the Fleet, Home and Flights pages.
-            Fleet.EmojiFontPath = Home.EmojiFontPath = Flights.EmojiFontPath = Cards.EmojiFontPath;
+            _emojiFont = emoji.Length > 0 ? emoji : null;
+            ApplyEmojiFont();
         }
+    }
+
+    private string? _emojiFont;
+
+    /// <summary>
+    /// The colour emoji face for the rail's glyphs, a landed card's 🛬 and a node's 🔧, none while Night is on: a colour glyph
+    /// cannot be painted red, so night draws them in the UI face, in the page's own ink.
+    /// </summary>
+    private void ApplyEmojiFont()
+    {
+        var emoji = Night.On ? null : _emojiFont;
+        Rail.EmojiFontPath = emoji;
+        Cards.EmojiFontPath = emoji;
+        Fleet.EmojiFontPath = Home.EmojiFontPath = Flights.EmojiFontPath = emoji;
     }
 
     /// <summary>The pointer, so the rail resolves its own hover.</summary>
@@ -781,11 +810,15 @@ internal sealed class PilotChrome<TSurface>
     /// <param name="pullRequests">The Pull requests page's screen; null shows it as before the node's first read, as a snapshot file without one does.</param>
     public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null)
     {
+        Palette.Use(Night);
+        ApplyEmojiFont();
         _items.Clear();
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
             var (glyph, said) = page == PilotPage.Jobs ? tasks : (icon, null);
+            // Night has no colour emoji face, and the UI face has none of these: the page's initial, in the rail's ink.
+            glyph = Night.On ? NightGlyph(page, glyph) : glyph;
             _items.Add(new TabItem<PilotPage>(label, page)
             {
                 Icon = glyph,
@@ -809,6 +842,12 @@ internal sealed class PilotChrome<TSurface>
             InactiveBackground = RailBg,
             HoverBackground = RailHover,
             ActiveBackground = RailActive,
+            Separator = Palette.Current.RailSeparator,
+            ActiveAccent = Palette.Current.RailAccent,
+            ActiveText = Palette.Current.RailActiveText,
+            InactiveText = Palette.Current.RailInactiveText,
+            CloseMark = Palette.Current.RailClose,
+            DisabledText = Palette.Current.RailDisabled,
         };
         // The tab bar takes its icon in pixels; its own scale maps the design size.
         Rail.IconSize = Rail.Scale.ToSurface(RailIconSize);
@@ -830,8 +869,6 @@ internal sealed class PilotChrome<TSurface>
             PilotPage.PullRequests => PullRequests.FocusFlight,
             _ => null,
         };
-        // The page follows the Flights page's night view, so the one palette the window has is the one it paints in.
-        PullRequests.Palette = Flights is { Mode: FlightsViewMode.Night, CanvasAvailable: true } ? FlightsPalette.Night : FlightsPalette.Standard;
         var tree = ShowsCards
             ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
                 Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.Width))
