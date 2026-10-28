@@ -99,6 +99,50 @@ public sealed class MachineTests
         MachineSampler.Top(processes.Where(p => p.Pid is 1 or 4).ToList(), previous, TimeSpan.FromSeconds(20), 1, 5).Select(p => p.Pid).ShouldBe([1, 4]);
     }
 
+    [Fact]
+    public void MachineACommandLineIsItsArgumentsJoinedAndCut()
+    {
+        // /proc's NULs between the arguments and after the last, an argument with a space quoted.
+        ProcessDetails.JoinArguments("dotnet\0test\0/home/se/my repo\0"u8).ShouldBe("dotnet test \"/home/se/my repo\"");
+        ProcessDetails.JoinArguments(""u8).ShouldBe("");
+
+        ProcessDetails.Cap("  dotnet build  ").ShouldBe("dotnet build");
+        // A kernel thread has none: nothing to show rather than an empty line.
+        ProcessDetails.Cap("").ShouldBeNull();
+        ProcessDetails.Cap(null).ShouldBeNull();
+        var cut = ProcessDetails.Cap(new string('a', 5000)).ShouldNotBeNull();
+        cut.Length.ShouldBe(ProcessDetails.CommandLineCap);
+        cut.ShouldEndWith("…");
+    }
+
+    [Fact]
+    public void MachineThisProcessSaysHowItWasStartedAndWhereItWorks()
+    {
+        var (commandLine, folder) = ProcessDetails.Read(Environment.ProcessId);
+
+        commandLine.ShouldNotBeNullOrWhiteSpace();
+        Path.GetFullPath(folder.ShouldNotBeNull()).TrimEnd(Path.DirectorySeparatorChar)
+            .ShouldBe(Path.GetFullPath(Environment.CurrentDirectory).TrimEnd(Path.DirectorySeparatorChar), StringCompareShould.IgnoreCase);
+        // One that is not there says nothing, and does not throw.
+        ProcessDetails.Read(int.MaxValue).ShouldBe((null, null));
+    }
+
+    [Fact]
+    public void MachineTheTopProcessesCarryTheirCommandLineAndFolder()
+    {
+        var sampler = new MachineSampler(new NodeState(new InMemoryJournal(), new ManualTime(Now)), TimeProvider.System)
+        {
+            Details = pid => ($"cmd {pid}", $"/work/{pid}"),
+        };
+        sampler.Baseline();
+
+        var row = sampler.Sample().ShouldNotBeNull();
+
+        row.Processes.ShouldNotBeEmpty();
+        row.Processes.ShouldAllBe(p => p.CommandLine == $"cmd {p.Pid}" && p.WorkingDirectory == $"/work/{p.Pid}");
+        sampler.Dispose();
+    }
+
     // ---- GPU counters ----
 
     private const string Adapter = "0x00000000_0x0000D1B2";
@@ -242,6 +286,8 @@ public sealed class MachineTests
         MachineSampler.Differs(held, Row(20, 8L << 30, held.Gpu, Now.AddSeconds(5), Proc(1, 12, owner: "j1"))).ShouldBeTrue();
         // Its working set grew by a gigabyte.
         MachineSampler.Differs(held, Row(20, 8L << 30, held.Gpu, Now.AddSeconds(5), Proc(1, 12, memory: 1500L << 20))).ShouldBeTrue();
+        // It moved to another folder.
+        MachineSampler.Differs(held, Row(20, 8L << 30, held.Gpu, Now.AddSeconds(5), Proc(1, 12) with { WorkingDirectory = "/elsewhere" })).ShouldBeTrue();
     }
 
     [Fact]
