@@ -216,6 +216,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>Design units, scaled by DpiScale.</summary>
     public const float Width = 300f;
 
+    /// <summary>The most of a window the panel takes, so a narrow window keeps room for its page (PIL380).</summary>
+    public const float MostOfWindow = 0.4f;
+
+    /// <summary>The panel's width in design units in a window <paramref name="windowWidth"/> design units wide: <see cref="Width"/>, or less where that would leave the page too little.</summary>
+    public static float WidthIn(float windowWidth) => MathF.Min(Width, windowWidth * MostOfWindow);
+
     private const float Gutter = 14f;
 
     private static readonly RGBAColor32 PanelBg = new(0x16, 0x17, 0x1e, 0xff);

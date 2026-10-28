@@ -744,7 +744,7 @@ internal sealed class PilotChrome<TSurface>
         };
         var tree = ShowsCards
             ? Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch(),
-                Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.Width))
+                Layout.Builder.Fill(key: CardsKey).ColW(CardsView<TSurface>.WidthIn(bounds.Width / DpiScale)))
             : Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Layout.Builder.Fill(key: PageKey).Stretch());
         var arranged = Layout.Engine.Arrange(tree.Stretch(), new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height),
             new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale));

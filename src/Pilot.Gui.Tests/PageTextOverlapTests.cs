@@ -27,6 +27,9 @@ public sealed class PageTextOverlapTests
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
+    // Set PILOT_TEXT_OVERLAP_NOSKIP=1 to run the skipped cases too (with PILOT_TEXT_OVERLAP_DUMP=<file> to list every fault).
+    private static readonly bool IgnoreSkips = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_NOSKIP") is { Length: > 0 };
+
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
     public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
@@ -41,7 +44,7 @@ public sealed class PageTextOverlapTests
                     {
                         yield return new TheoryDataRow<string, string, int, float>(page, state, width, dpi)
                         {
-                            Skip = PageTextOverlapSkips.Reasons.GetValueOrDefault(Key(page, state, width, dpi)),
+                            Skip = IgnoreSkips ? null : PageTextOverlapSkips.Reasons.GetValueOrDefault(Key(page, state, width, dpi)),
                             TestDisplayName = Key(page, state, width, dpi),
                         };
                     }
@@ -89,7 +92,7 @@ public sealed class PageTextOverlapTests
 
         // The cards panel takes its width off the page when it has cards, as the chrome decides it.
         var cards = data.Cards;
-        var panel = cards.HasAny ? CardsView<RgbaImage>.Width * dpi : 0f;
+        var panel = cards.HasAny ? CardsView<RgbaImage>.WidthIn(width / dpi) * dpi : 0f;
         var pageWidth = width - RailWidth * dpi - panel;
         Rect<float> PageRect() => new(0, 0, pageWidth, Height);
 
@@ -133,7 +136,7 @@ public sealed class PageTextOverlapTests
                 break;
             case "cards panel":
                 tree = chrome.Cards.Tree(cards);
-                rect = new Rect<float>(0, 0, CardsView<RgbaImage>.Width * dpi, Height);
+                rect = new Rect<float>(0, 0, CardsView<RgbaImage>.WidthIn(width / dpi) * dpi, Height);
                 break;
             case "transcript":
                 tree = await OpenTranscript(chrome, data);

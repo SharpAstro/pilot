@@ -67,6 +67,9 @@ internal static class TopBar
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
+    // One item of the bar, in a cell as tall as the bar's row.
+    private static Layout.Node Cell(Layout.Node item) => Layout.Builder.HStack(item).WAuto().HFixed(RowHeight);
+
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
@@ -78,7 +81,6 @@ internal static class TopBar
         };
         items.AddRange(parts.Nodes?.Pills(parts.Night) ?? []);
         items.AddRange(parts.Play?.Pills(parts.Night) ?? []);
-        items.Add(Layout.Builder.Spacer().WStar());
         if (!string.IsNullOrEmpty(page.Counts))
         {
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, parts.Night));
@@ -93,7 +95,10 @@ internal static class TopBar
             items.Add(about.Button(parts.Night));
         }
 
-        var rows = new List<Layout.Node> { Layout.Builder.HStack([.. items]).WithGap(12f).RowH(RowHeight) };
+        // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
+        // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
+        // of it (PIL380).
+        var rows = new List<Layout.Node> { Layout.Builder.WrapH([.. items.Select(Cell)]).WithGap(12f).WStar().HAuto() };
         if (page.Source is { } source)
         {
             rows.Add(Layout.Builder.Text(source, 12f, palette.Dim).RowH(SourceHeight));
