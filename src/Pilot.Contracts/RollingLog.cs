@@ -17,8 +17,13 @@ public sealed class RollingLog
     /// <summary>Points the logs folder elsewhere (a test's temp folder); null is the default, <c>logs</c> under the data folder.</summary>
     public static string? FolderOverride { get; set; }
 
+    /// <summary>Points the logs folder elsewhere for a child process (a test running pilot-gui as one): <see cref="FolderOverride"/>, from the environment.</summary>
+    public const string FolderEnvironmentVariable = "PILOT_LOG_FOLDER";
+
     /// <summary>The folder the logs live in.</summary>
-    public static string Folder => FolderOverride ?? System.IO.Path.Combine(NodeSocket.DefaultDataFolder, "logs");
+    public static string Folder => FolderOverride
+        ?? (Environment.GetEnvironmentVariable(FolderEnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv : null)
+        ?? System.IO.Path.Combine(NodeSocket.DefaultDataFolder, "logs");
 
     private readonly object _gate = new();
     private readonly long _maxBytes;

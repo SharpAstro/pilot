@@ -75,9 +75,7 @@ public sealed class GuiLogTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        start.Environment["LOCALAPPDATA"] = _folder;
-        start.Environment["XDG_DATA_HOME"] = _folder;
-        start.Environment["HOME"] = _folder;
+        start.Environment[RollingLog.FolderEnvironmentVariable] = _folder;
 
         using var process = System.Diagnostics.Process.Start(start)!;
         var stderr = process.StandardError.ReadToEndAsync();
