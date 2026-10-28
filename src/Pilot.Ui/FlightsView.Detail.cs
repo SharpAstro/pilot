@@ -138,15 +138,16 @@ internal sealed partial class FlightsView<TSurface>
         {
             head.Add(PullRequestLink(line, url, $"pr:{line.Code}"));
         }
-        if (FlightMarks.PrState(flight) is { } prState)
-        {
-            // The link's own height (20), so the two share one middle.
-            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
-        }
         // Where the Pull requests page has it standing (Ready, Waiting, ...): beside the PR link, not in a second PR line in the facts.
+        // It says what the flight's own word (open, queued) would, and more, so the word is for a PR the page does not list (merged).
         if (flight.PullRequestUrl is not null && PullRequestChip(line, PullRequestChipWidth, PullRequestChipHeight) is { } chip)
         {
             head.Add(chip);
+        }
+        else if (FlightMarks.PrState(flight) is { } prState)
+        {
+            // The link's own height (20), so the two share one middle.
+            head.Add(Layout.Builder.Text(prState, 12f, PrStateColor(prState)).WAuto().RowH(20f).Selectable());
         }
         // The stale mark is a line of its own below: here it overlapped the title and cut the buttons at a narrow width.
         head.Add(Layout.Builder.Text(line.StateDetail is null ? line.State : $"{line.State} ({line.StateDetail})", 13f, color, TextAlign.Far).WAuto().Selectable());
