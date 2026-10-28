@@ -299,7 +299,8 @@ public sealed partial class LegCommander(
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to rebase.
                 if ((await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
                 {
-                    await PushAsync(repaired, repaired: false, cancellationToken);
+                    // A base just repaired rebased the plane: that is a rewrite, pushed with the lease and not merged with the remote's old head.
+                    await PushAsync(repaired, repaired: repaired.Base != flight.Base, cancellationToken);
                     return (repaired, null);
                 }
                 var rebase = await git.RunAsync(["rebase", repaired.Base], flight.Worktree, cancellationToken);

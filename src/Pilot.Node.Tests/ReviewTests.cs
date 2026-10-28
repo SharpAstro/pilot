@@ -817,6 +817,34 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ARebaseOntoTheDefaultWhenTheBaseIsNoBranchOnTheRemoteIsPushedWithTheLeaseAndNotMergedWithItsOldHead()
+    {
+        Git(Repo, "switch", "-q", "-c", "feat/landed");
+        File.WriteAllText(Path.Combine(Repo, "feature.txt"), "landed\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the feature");
+        Git(Repo, "switch", "-q", "main");
+        Git(Repo, "cherry-pick", "feat/landed");
+        Git(Repo, "push", "-q", "origin", "main");
+        var flight = await NewFlight("19", "parser");
+        Git(flight.Worktree, "reset", "-q", "--hard", "feat/landed");
+        _state.PutFlight(F("TIA19") with { Base = "feat/landed" });
+        await Fly(F("TIA19"), "parser");
+        // The branch is on the remote with the commits of the base that has since landed on main.
+        var branch = F("TIA19").Branch;
+        Git(F("TIA19").Worktree, "push", "-q", "-u", "origin", branch);
+
+        (await _legs.RebaseOntoBaseAsync("TIA19", Ct)).ShouldBeNull();
+
+        var wt = F("TIA19").Worktree;
+        var head = Git(wt, "rev-parse", "HEAD").Trim();
+        F("TIA19").Base.ShouldBe("origin/main");
+        Git(wt, "rev-parse", $"origin/{branch}").Trim().ShouldBe(head);
+        Git(wt, "rev-list", "--merges", "--count", $"origin/{branch}").Trim().ShouldBe("0");
+        Git(wt, "rev-list", "--count", "origin/main..HEAD").Trim().ShouldBe("1");
+    }
+
+    [Fact]
     public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndReviewedAfresh()
     {
         var flight = await NewFlight("6", "parser");
