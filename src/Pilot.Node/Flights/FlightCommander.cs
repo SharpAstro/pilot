@@ -316,6 +316,8 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
         {
             state.RaiseCard(card.Bin, card.Kind, card.Subject, card.Title, card.Detail, card.Choices, card.Link, card.AskedBy, card.Why);
         }
+        // The item says it flies here too (the sender takes its own label off once it has let go): a refusal is a card, not a lost flight.
+        await LabelAsync(repoPath, sent.Item, code, null, cancellationToken);
         var way = $"{code} {moved.Text}";
         state.RaiseCard(CardBin.Handled, ReceivedKind, Verbs.FlightTarget(code), way, $"{move.From} handed {code} over to {Machine}, which made its plane at {plane.Worktree} from {plane.Branch} on origin");
         return (code, way);
@@ -412,7 +414,7 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
     }
 
     /// <summary>The peer's facts as far as they can be read: a peer that cannot be reached, or refuses the grant held for it, is judged for that.</summary>
-    private static async Task<(IFleetPeer Peer, FleetPeerFacts Facts)> ReadPeerAsync(IFleetPeer peer, string? gitHub, DateTimeOffset now, CancellationToken cancellationToken)
+    internal static async Task<(IFleetPeer Peer, FleetPeerFacts Facts)> ReadPeerAsync(IFleetPeer peer, string? gitHub, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (!peer.HasGrant)
         {
@@ -829,7 +831,8 @@ public sealed class FlightCommander(NodeState state, Planes planes, TimeProvider
             return flight;
         }
         var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
-        var held = flight.PackageWaits.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed);
+        // A flight that went to another node is Landed here but has not landed: what waits for it keeps waiting.
+        var held = flight.PackageWaits.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed || other.MovedTo is not null);
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
     }
 

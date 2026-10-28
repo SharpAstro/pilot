@@ -149,6 +149,36 @@ public sealed record FlightRow
     /// when. Null for a flight made on this node.
     /// </summary>
     public FlightMoved? MovedFrom { get; init; }
+
+    /// <summary>
+    /// Where the flight went when this node handed it to another (<c>move-flight</c>, #376): the node flies it now, and this one
+    /// does not. Such a flight is <see cref="FlightState.Landed"/> here, as a folded one is, with its plane gone and its code and
+    /// branch kept; every client says <see cref="FlightMovedTo.Text"/> in place of "landed". Null for a flight that stayed.
+    /// </summary>
+    public FlightMovedTo? MovedTo { get; init; }
+
+    /// <summary>
+    /// Why the last attempt to move the flight failed, as a person reads it (what happened, what to do); null when none failed or
+    /// the flight moved since. The flight stays here and no new leg starts while the node is in maintenance, until it is moved
+    /// again (the card's Retry move, <c>pilot flight move</c>).
+    /// </summary>
+    public string? MoveFailure { get; init; }
+}
+
+/// <summary>Where a flight this node handed over went (<see cref="FlightRow.MovedTo"/>).</summary>
+public sealed record FlightMovedTo
+{
+    /// <summary>The node that took it, by its machine prefix (<c>DE1</c>).</summary>
+    public required string To { get; init; }
+
+    /// <summary>The last leg done on this node's plane, in the flight's order; null when none was done yet.</summary>
+    public string? AfterLeg { get; init; }
+
+    /// <summary>When the other node confirmed it had taken the flight.</summary>
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>How a client says it, in one place: <c>moved to DE1 after leg parser</c>.</summary>
+    public string Text => AfterLeg is { Length: > 0 } ? $"moved to {To} after leg {AfterLeg}" : $"moved to {To}";
 }
 
 /// <summary>Where a flight that moved between nodes came from (<see cref="FlightRow.MovedFrom"/>).</summary>

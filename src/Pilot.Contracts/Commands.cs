@@ -161,6 +161,14 @@ public static class Verbs
     public const string ReceiveFlight = "receive-flight";
 
     /// <summary>
+    /// <c>move-flight flight/&lt;code&gt;</c> (#376): hand the flight to the best willing node of the fleet now, as a node in maintenance does
+    /// at a leg boundary: the plane is made safe (clean, pushed fast-forward only, the remote's head read back equal to the plane's),
+    /// the flight is sent with <see cref="ReceiveFlight"/>, and this node stops flying it. Refused when a leg is flying; any failure
+    /// leaves the flight here with <see cref="FlightRow.MoveFailure"/> saying why and a card offering to move it again.
+    /// </summary>
+    public const string MoveFlight = "move-flight";
+
+    /// <summary>
     /// The arg a <c>create-flight</c> may carry after its item: create it although the item carries another node's
     /// <c>pilot node:</c> label. It is no part of the title.
     /// </summary>

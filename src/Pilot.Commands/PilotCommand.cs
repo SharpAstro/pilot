@@ -294,6 +294,9 @@ public static class PilotCommand
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
+        var move = Action(new Command("move", "Hand the flight to the best willing node of the fleet: its plane is pushed and checked, and this node stops flying it") { Arguments = { code }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.MoveFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
+
         var prTitle = Words("title", "The PR's title after the code; else the flight's", required: false);
         var pr = Action(new Command("pr", "Push the plane and open its PR") { Arguments = { code, prTitle } },
             (p, client, ct) => Send(client, Verbs.OpenPr, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(prTitle) ?? [], who, ct));
@@ -334,7 +337,7 @@ public static class PilotCommand
         var separate = Action(new Command("separate", "Plan the flight on its own despite the overlap: a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var flight = new Command("flight", "Flights: create, plan, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, pr, reviewStart, merge, land } };
+            { Subcommands = { create, planFlight, planned, overlap, separate, connect, fly, move, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -1176,7 +1179,7 @@ public static class PilotCommand
             var state = flight.State switch
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
-                FlightState.Landed => "landed",
+                FlightState.Landed => flight.MovedTo?.Text ?? "landed",
                 _ => "flying",
             };
             text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state})");

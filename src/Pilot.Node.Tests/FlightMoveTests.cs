@@ -10,7 +10,9 @@ namespace Pilot.Node.Tests;
 /// <summary>
 /// A node takes over a flight another node hands it (<c>receive-flight</c>, #376): the whole record arrives, the plane is made
 /// from the branch the sender pushed, the flight says where it came from, and its next leg starts by the normal advance. A node in
-/// maintenance, one that has the code already, and one with no checkout of the repo refuse it, with the reason.
+/// maintenance, one that has the code already, and one with no checkout of the repo refuse it, with the reason. And the sending side
+/// (<c>move-flight</c>): a node in maintenance moves its flight once its leg has finished, the plane made safe first, and on any failure
+/// keeps the flight, says why on the row, and offers a Retry move; the flight is flown on one node only, at every moment.
 /// </summary>
 public sealed class FlightMoveTests : IDisposable
 {
@@ -28,6 +30,14 @@ public sealed class FlightMoveTests : IDisposable
     private readonly FlightCommander _flights;
     private readonly LegCommander _legs;
     private readonly string _pushedHead;
+
+    // The sending node, SE1: its own state, settings, workers and git (which a test makes refuse a push), reaching DE1 through a peer.
+    private readonly RoleModels _senderModels = new(null);
+    private readonly FakeWorkers _senderWorkers = new();
+    private readonly RefusingGit _senderGit = new(new GitCli());
+    private readonly FlightCommander _senderFlights;
+    private readonly LegCommander _senderLegs;
+    private readonly MovePeer _peer;
 
     public FlightMoveTests()
     {
@@ -58,6 +68,11 @@ public sealed class FlightMoveTests : IDisposable
         _legs = new LegCommander(_state, _workers, new FakeChecks(), new FakeGitHub(), git, new Planes(git), _flights, options, TimeProvider.System) { Models = new RoleModels(null) };
         _flights.Advance = _legs.AdvanceFlightAsync;
         Fleet(true);
+
+        var senderOptions = new NodeOptions(Path.Combine(_root, "sender.sock"), Path.Combine(_root, "sender-data"), MachinePrefix: "SE1", RepoRootsGiven: [Path.Combine(_root, "sender")]);
+        _peer = new MovePeer(_flights) { Checkout = Receiving };
+        _senderFlights = new FlightCommander(_sender, new Planes(git), TimeProvider.System) { Models = _senderModels, Machine = "SE1", Fleet = new MoveFleet(_peer) };
+        _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), new FakeGitHub(), _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
     }
 
     private string Receiving => Path.Combine(_root, "receiver", "tianwen");
@@ -324,6 +339,386 @@ public sealed class FlightMoveTests : IDisposable
 
         (await _flights.RunAsync(Under(move) with { Args = ["{"] }, Ct)).Error.ShouldStartWith("receive-flight takes the flight's whole record as JSON");
         NothingTaken();
+    }
+
+    private string SenderPlane => Path.Combine(Sending, ".claude", "worktrees", "tia900");
+
+    private void SenderMaintenance(bool on) =>
+        _senderModels.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
+
+    /// <summary>
+    /// The flight on SE1, whose plane is a worktree of its clone on the pushed branch: the parser leg as given, a render leg planned after it,
+    /// and a card about the flight. With <paramref name="unpushedCommit"/> the plane holds a commit of its own that origin lacks.
+    /// </summary>
+    private void Fly(LegState parser, bool unpushedCommit = false)
+    {
+        Git(Sending, "switch", "-q", "main");
+        Git(Sending, "worktree", "add", SenderPlane, Branch);
+        if (unpushedCommit)
+        {
+            File.WriteAllText(Path.Combine(SenderPlane, "render-prep.txt"), "prepared on SE1\n");
+            Git(SenderPlane, "add", ".");
+            Git(SenderPlane, "commit", "-q", "-m", "prepare render");
+        }
+        var at = DateTimeOffset.UtcNow.AddHours(-1);
+        _sender.PutFlight(new FlightRow
+        {
+            Code = Code, Repo = "tianwen", RepoPath = Sending, Issue = 900, Title = "Planets", Branch = Branch, Worktree = SenderPlane,
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = at,
+        });
+        _sender.PutLeg(new LegRow
+        {
+            Flight = Code, Name = "parser", Order = 1, Goal = "Parse the ephemeris", DoneWhen = "Tests pass", State = parser, Report = parser == LegState.Done ? "parser in" : null,
+            Worker = "se1-tia900-parser", WorkerJob = parser == LegState.Flying ? "job-parser" : null, StartedAt = at, FinishedAt = parser == LegState.Done ? at.AddMinutes(30) : null,
+        });
+        _sender.PutLeg(new LegRow { Flight = Code, Name = "render", Order = 2, Goal = "Draw the planets", DoneWhen = "Shown", State = LegState.Planned });
+        _sender.RaiseCard(CardBin.Ring, "next-step", Verbs.FlightTarget(Code), "TIA900 waits to start render");
+    }
+
+    private FlightRow OnSender => _sender.Flights().Single(f => f.Code == Code);
+
+    private string OriginHead() => Git(Receiving, "ls-remote", "origin", $"refs/heads/{Branch}").Split('\t')[0];
+
+    /// <summary>The flight stayed on SE1: flying there, no leg started, nothing taken by DE1, and the reason on its row and on a Retry card.</summary>
+    private CardRow StayedWith(string failure)
+    {
+        var flight = OnSender;
+        (flight.State, flight.MovedTo).ShouldBe((FlightState.Flying, null));
+        flight.MoveFailure.ShouldBe(failure);
+        _sender.Legs(Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Planned);
+        _senderWorkers.Started.ShouldBeEmpty();
+        NothingTaken();
+        var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
+        (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Ring, "flight/TIA900", failure[..failure.IndexOf(": ", StringComparison.Ordinal)]));
+        var retry = card.Choices.ShouldHaveSingleItem();
+        (retry.Label, retry.Verb, retry.Target).ShouldBe(("Retry move", Verbs.MoveFlight, "flight/TIA900"));
+        return card;
+    }
+
+    private Task<CommandResult> Retry(CardRow card) =>
+        _senderLegs.RunAsync(new CommandRequest { Verb = card.Choices[0].Verb, Target = card.Choices[0].Target, Args = card.Choices[0].Args, Who = "tests" }, Ct);
+
+    /// <summary>The flight is DE1's now: landed here saying where it went, flying there, and only there.</summary>
+    private void MovedAway()
+    {
+        var flight = OnSender;
+        (flight.State, flight.MoveFailure).ShouldBe((FlightState.Landed, null));
+        flight.MovedTo.ShouldNotBeNull().Text.ShouldBe("moved to DE1 after leg parser");
+        _state.Flights().ShouldHaveSingleItem().State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    public async Task TheLegInFlightFinishesFirstThenTheFlightMovesAndTheNextLegStartsOnlyOnTheReceiver()
+    {
+        Fly(LegState.Flying, unpushedCommit: true);
+        SenderMaintenance(true);
+        var planeHead = Git(SenderPlane, "rev-parse", "HEAD");
+
+        // The leg is in flight: the sweep leaves it, and the flight, alone. Nothing is pushed or sent.
+        await _senderLegs.AdvanceAllAsync(Ct);
+        OnSender.State.ShouldBe(FlightState.Flying);
+        _peer.Sent.ShouldBeEmpty();
+        _senderWorkers.Started.ShouldBeEmpty();
+        OriginHead().ShouldBe(_pushedHead);
+
+        // Its leg finishes, and the flight goes out at once, in the same breath.
+        var finished = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(Code, "parser"), Args = ["done", "parser in"], Who = "tests" }, Ct);
+
+        finished.Ok.ShouldBeTrue(finished.Error);
+        // Made safe first: the plane's own commit is on origin, read back equal to the plane's head.
+        OriginHead().ShouldBe(planeHead);
+        _peer.Sent.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.ReceiveFlight);
+        MovedAway();
+        _sender.Legs(Code).Select(l => (l.Name, l.State)).ShouldBe([("parser", LegState.Done), ("render", LegState.Planned)]);
+        // The sender no longer flies it: no leg started here, the parser's worker was stopped, its plane is gone, its card closed and a line names DE1.
+        _senderWorkers.Started.ShouldBeEmpty();
+        _senderWorkers.Stopped.ShouldBe(["job-parser"]);
+        Directory.Exists(SenderPlane).ShouldBeFalse();
+        _sender.Cards(openOnly: true).ShouldBeEmpty();
+        var line = _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind);
+        (line.Bin, line.Title).ShouldBe((CardBin.Handled, "TIA900 moved to DE1 after leg parser"));
+        line.Detail.ShouldNotBeNull().ShouldContain("SE1 is in maintenance");
+
+        // The next leg starts only on the receiver, from the plane as pushed.
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-tia900-render-validator");
+        _state.Legs(Code).Single(l => l.Name == "render").Validation.ShouldBe(LegValidation.Pending);
+        Git(Plane, "rev-parse", "HEAD").ShouldBe(planeHead);
+        File.ReadAllText(Path.Combine(Plane, "render-prep.txt")).Trim().ShouldBe("prepared on SE1");
+        _state.Flights().Single().MovedFrom.ShouldNotBeNull().Text.ShouldBe("moved from SE1 after leg parser");
+
+        // Another sweep on SE1 starts and sends nothing: the flight is the receiver's alone.
+        await _senderLegs.AdvanceAllAsync(Ct);
+        _senderWorkers.Started.ShouldBeEmpty();
+        _peer.Sent.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AtNoPointDoBothNodesFlyTheFlight()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        var observed = new List<string>();
+        string? refusedStart = null;
+
+        // Before DE1 has the flight, SE1 has it and DE1 has not; a leg asked to start on SE1 meanwhile is refused.
+        _peer.BeforeReceive = async () =>
+        {
+            observed.Add($"before: sender {OnSender.State}, receiver {_state.Flights().Length} flights, sender starts {_senderWorkers.Started.Count}");
+            refusedStart = (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error;
+        };
+        // After DE1 has taken it, and before SE1 has written that down, SE1 still starts nothing.
+        _peer.AfterReceive = () =>
+            observed.Add($"after: sender {OnSender.State}, receiver {_state.Flights().Single().State}, sender starts {_senderWorkers.Started.Count}, sender legs flying {_sender.Legs(Code).Count(l => l.State == LegState.Flying)}");
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        observed.ShouldBe(["before: sender Flying, receiver 0 flights, sender starts 0", "after: sender Flying, receiver Flying, sender starts 0, sender legs flying 0"]);
+        refusedStart.ShouldNotBeNull().ShouldContain("the flight is being moved to another node");
+        MovedAway();
+        _senderWorkers.Started.ShouldBeEmpty();
+        // Moved, the flight on SE1 is no flying flight any sweep or leg verb takes up again.
+        await _senderLegs.AdvanceAllAsync(Ct);
+        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error.ShouldContain("landed");
+        _senderWorkers.Started.ShouldBeEmpty();
+        _peer.Sent.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        // Someone pushed to the branch from elsewhere: origin holds a commit the plane lacks.
+        Git(_root, "clone", "-q", Path.Combine(_root, "receiver", "origin.git"), "elsewhere");
+        var elsewhere = Path.Combine(_root, "elsewhere");
+        Git(elsewhere, "config", "user.email", "t@example.com");
+        Git(elsewhere, "config", "user.name", "t");
+        Git(elsewhere, "switch", "-q", Branch);
+        File.WriteAllText(Path.Combine(elsewhere, "fix.txt"), "a fix from the controller\n");
+        Git(elsewhere, "add", ".");
+        Git(elsewhere, "commit", "-q", "-m", "fix");
+        Git(elsewhere, "push", "-q", "origin", Branch);
+        var remoteHead = OriginHead();
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        var card = StayedWith("TIA900 could not move to DE1: the push was refused, the remote holds commits the plane lacks. Merge them in, or move it again.");
+        // Never forced: origin holds what it did.
+        OriginHead().ShouldBe(remoteHead);
+        _peer.Sent.ShouldBeEmpty();
+        // The sweep leaves it be: a failed move is moved again by a person's Retry, not retried every minute.
+        await _senderLegs.AdvanceAllAsync(Ct);
+        _senderWorkers.Started.ShouldBeEmpty();
+        _sender.Cards(openOnly: true).Count(c => c.Kind == LegCommander.MoveFailedKind).ShouldBe(1);
+
+        // Merged in, the Retry runs the move again, and it goes.
+        Git(SenderPlane, "fetch", "-q", "origin");
+        Git(SenderPlane, "merge", "--ff-only", "-q", $"origin/{Branch}");
+        var retried = await Retry(card);
+
+        retried.Ok.ShouldBeTrue(retried.Error);
+        retried.Made.ShouldBe("TIA900 moved to DE1 after leg parser");
+        MovedAway();
+        Git(Plane, "rev-parse", "HEAD").ShouldBe(remoteHead);
+        _sender.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APushTheRemoteRefusesLeavesTheFlightHereWithTheReason()
+    {
+        Fly(LegState.Done, unpushedCommit: true);
+        SenderMaintenance(true);
+        _senderGit.RefusePush = "! [remote rejected] flight/tia900 -> flight/tia900 (protected branch hook declined)";
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        var card = StayedWith("TIA900 could not move to DE1: the push was refused (! [remote rejected] flight/tia900 -> flight/tia900 (protected branch hook declined)). Look at flight/tia900 on origin, then move it again.");
+        OriginHead().ShouldBe(_pushedHead);
+        _peer.Sent.ShouldBeEmpty();
+
+        _senderGit.RefusePush = null;
+        (await Retry(card)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task ADirtyPlaneIsNotMovedAndTheFlightStaysHereWithTheReason()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        File.WriteAllText(Path.Combine(SenderPlane, "stray.txt"), "not committed\n");
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        var card = StayedWith("TIA900 could not move to DE1: the plane holds 1 change not committed (?? stray.txt). Commit or drop it, then move it again.");
+        _peer.Sent.ShouldBeEmpty();
+        OriginHead().ShouldBe(_pushedHead);
+
+        File.Delete(Path.Combine(SenderPlane, "stray.txt"));
+        (await Retry(card)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task WhenNoNodeTakesItTheFlightStaysHereAndNamesEachNodeAndWhy()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _peer.Maintenance = true;
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        var card = StayedWith("TIA900 could not move: no node of the fleet takes it (DE1: in maintenance). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later.");
+        _peer.Sent.ShouldBeEmpty();
+
+        _peer.Maintenance = false;
+        (await Retry(card)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task ANodeThatKnowsNoPeerKeepsItsFlightAndSaysSo()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _senderFlights.Fleet = null;
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        StayedWith("TIA900 could not move: this node knows no other node of the fleet. Grant it one, or fly the flight on here.");
+    }
+
+    [Fact]
+    public async Task WhenTheReceiverRefusesTheFlightStaysHereAndNoPlaneIsLeftOnTheReceiver()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        Fleet(false);
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        var card = StayedWith("TIA900 could not move to DE1: DE1 refused it (DE1 does not take a flight another node hands it (accept-fleet-flights is off)). Put that right there, or move it again.");
+        _peer.Sent.ShouldHaveSingleItem();
+        // The branch was pushed, harmlessly; the sender's plane is as it was.
+        Directory.Exists(SenderPlane).ShouldBeTrue();
+
+        Fleet(true);
+        (await Retry(card)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task AFlightWithALegFlyingIsRefusedAHandMoveAndNothingIsPushed()
+    {
+        Fly(LegState.Flying);
+
+        var refused = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldBe("TIA900/parser is flying: a flight moves once its leg has finished");
+        OnSender.MoveFailure.ShouldBeNull();
+        _sender.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.MoveFailedKind);
+        _peer.Sent.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AHandMoveOutsideMaintenanceMovesTheFlightAsWell()
+    {
+        Fly(LegState.Done);
+
+        var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+
+        moved.Ok.ShouldBeTrue(moved.Error);
+        MovedAway();
+        _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind).Detail.ShouldNotContain("maintenance");
+    }
+
+    [Fact]
+    public async Task ANodeOutOfMaintenanceKeepsItsFlightsAndFliesThemOn()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(false);
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        _peer.Sent.ShouldBeEmpty();
+        OnSender.State.ShouldBe(FlightState.Flying);
+        // Its next leg is read against the tree first, as on any node: the flight carries on here.
+        _senderWorkers.Started.ShouldHaveSingleItem().Name.ShouldBe("se1-tia900-render-validator");
+    }
+
+    [Fact]
+    public async Task AFlightThatWaitsForAMovedOneKeepsWaiting()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _sender.PutFlight(new FlightRow
+        {
+            Code = "TIA901", Repo = "tianwen", RepoPath = Sending, Issue = 901, Branch = "flight/tia901", Worktree = "/nowhere", Base = "origin/main", State = FlightState.Held,
+            Connections = [Code], CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        OnSender.MovedTo.ShouldNotBeNull().To.ShouldBe("DE1");
+        // TIA900 has left this node but has not landed: what waits for it is not let go.
+        (await _senderFlights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA901", Args = [Code], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        _sender.Flights().Single(f => f.Code == "TIA901").State.ShouldBe(FlightState.Held);
+    }
+
+    /// <summary>Git for the sending node, which a test makes refuse a push, as a remote that rejects it.</summary>
+    private sealed class RefusingGit(IGit inner) : IGit
+    {
+        public string? RefusePush { get; set; }
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            RefusePush is { } refused && args.Count > 0 && args[0] == "push" ? Task.FromResult(new GitRun(1, "", refused)) : inner.RunAsync(args, cwd, cancellationToken);
+    }
+
+    private sealed class MoveFleet(params IFleetPeer[] peers) : IFleet
+    {
+        public IReadOnlyList<IFleetPeer> Peers() => peers;
+    }
+
+    /// <summary>DE1 as SE1 reaches it: its node, its repos and load as it says them, and its receive-flight as this test node's.</summary>
+    private sealed class MovePeer(FlightCommander receiver) : IFleetPeer
+    {
+        public string Endpoint => "de1.local:47731";
+
+        public bool HasGrant => true;
+
+        public bool Maintenance { get; set; }
+
+        public string? Checkout { get; init; }
+
+        public Func<Task>? BeforeReceive { get; set; }
+
+        public Action? AfterReceive { get; set; }
+
+        public List<CommandRequest> Sent { get; } = [];
+
+        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => Task.FromResult(new NodeInfo
+        {
+            WireVersion = NodeWire.Version, Version = "0", MachineName = "DE1", MachinePrefix = "DE1", ProcessId = 1, StartedAt = DateTimeOffset.UtcNow,
+            DataFolder = "/data", SocketPath = "/sock", Stream = "s", Maintenance = Maintenance, AcceptsFleetFlights = true,
+        });
+
+        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<RepoInfo[]?>([new RepoInfo { Name = "tianwen", Path = Checkout!, GitHub = GitHub }]);
+
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(new FleetLoad(null, [], null));
+
+        public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
+        {
+            Sent.Add(command);
+            if (BeforeReceive is { } before)
+            {
+                await before();
+            }
+            var result = await receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
+            AfterReceive?.Invoke();
+            return result;
+        }
     }
 
     /// <summary>A peer whose receive-flight is this node's: what the sender's node reaches over the LAN, under its grant.</summary>

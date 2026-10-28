@@ -980,8 +980,9 @@ the settings as before.
 A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
 them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
 two switches, `on` or `off`. While `maintenance` is on the node takes no new flight: a `create-flight` is refused with
-`<machine> is in maintenance: it takes no new flights`, and flights already in the air, held flights, legs, go-arounds,
-reviews, landings and jobs carry on as they were. `accept-fleet-flights` (off unless set) says the node is willing to
+`<machine> is in maintenance: it takes no new flights`, and its flights are moved out (see **Moving a node's flights out**
+below) rather than left to carry on: a flight's leg flying finishes, reviews and landings of what is here carry on, jobs
+carry on, but no new leg starts here. `accept-fleet-flights` (off unless set) says the node is willing to
 take a flight another node of the fleet routes to it. Both are in `GET /api/v1/node` (`Maintenance`,
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
@@ -1040,6 +1041,41 @@ The plane is not in it: the sender pushes the flight's branch first (`FlightMove
   review once every leg is done. The result's `Made` is the code and its `Way` the same words as the card.
 
 An artifact a leg recorded keeps the sender's path or URL: the images it names are not copied to the receiver.
+
+**Moving a node's flights out (#376).** A node in maintenance hands its flights to the fleet at a leg boundary, by the node's own
+sweep (`LegCommander.AdvanceAsync`, the minute's `AdvanceAllAsync`, and the moment a leg's `finish` says done), and by hand with
+`move-flight flight/<code>` (`pilot flight move <code>`, the person's alone; it works out of maintenance too).
+- **When.** The leg flying finishes first (a hand move of a flight with a leg flying is refused: `TIA900/parser is flying: a flight
+  moves once its leg has finished`); in maintenance the sweep starts no new leg (nor the validator that reads one). A flight is due once
+  nothing of it is flying or being started: its legs done or planned (the next one is the receiver's to start), no reviewer
+  reading, no session of it working, no validator reading, no package it holds for, no overlap's answer pending, and no failed leg.
+  A flight due is moved instead of taking its next step (its next leg, its PR, its review), so a flight whose PR is open and
+  reviewed, waiting for its merge, moves too, with its PR, review and merge-when-green as they are.
+- **Make-safe** (`LegCommander.MakeSafeAsync`), under the flight's `Calling` guard with the lock let go: the plane must be clean
+  (`git status --porcelain`); origin's head of the branch is read (`git ls-remote`); a remote head the plane does not hold is a
+  refusal (`the push was refused, the remote holds commits the plane lacks`), never overwritten or forced; otherwise the branch
+  is pushed `git push -u origin <branch>`, with no `--force` and no lease, after GitHub's auto-merge on its PR is checked off
+  (nothing is pushed when origin has the plane's head already); then origin's head is read back and must equal the plane's head.
+- **Choice and send.** The target is chosen as `create-flight` routing chooses (`FleetChoice`: not in maintenance, willing, a
+  checkout of the repo's GitHub remote, then by headroom and flights in the air; no label preference yet, as #255's labels are not
+  here), and the flight is sent with `receive-flight` to each willing node in turn, its record as `FlightMoves.Gather` makes it, without
+  the sender's `MoveFailure` or its `move-failed` card.
+- **One node only.** From the check that nothing of it is flying until the move has ended, no session of the flight starts here
+  (`start-leg`, a go-around, a planner or a reviewer are refused `the flight is being moved to another node`), and its PR verbs are
+  refused as for any call out. Once the receiver has answered that it took the flight, the sender records at once (under its lock,
+  before anything else) `FlightRow.MovedTo` and puts it `Landed`, as a folded flight is: its plane is removed (its branch stays),
+  its sessions stopped, its cards closed with a Handled `moved-away` line naming the node (`TIA900 moved to DE1 after leg parser`),
+  and its `pilot node:` label taken off the item (the receiver adds its own). `pilot status` and the Flights page say `moved to DE1`
+  in place of `landed`, and a flight that waits for it keeps waiting. A code is one flight on a node for good, so a flight that
+  moved away is not taken back by the same node. The one window that remains is the receiver's answer being lost on the wire: the
+  receiver then flies a flight the sender still holds, and the sender's retry is refused by the receiver (`TIA900 is already here`).
+- **Failure.** Any failure (dirty plane, a push refused or behind the remote, origin's head not the plane's after the push, no node
+  willing, none known, a receiver that refuses or cannot be reached) keeps the flight here and no new leg starts while the node is in
+  maintenance. `FlightRow.MoveFailure` says what happened and what to do (`PIL294 could not move to DE1: the push was refused, the
+  remote holds commits the plane lacks. Merge them in, or move it again.`), and a Ring `move-failed` card carries the same with a
+  *Retry move* choice that runs `move-flight` again (the card stays open while it runs, and a second failure rewrites its text). The
+  sweep does not retry a failed move by itself; the flight's PR and review go on here as they do anywhere. Once the flight goes on
+  here again (the node is out of maintenance and its next step ran) the failure and its card are dropped.
 
 Any other setting's change restarts the node to run with it, once no
 job runs or waits (a job is its child): the node starts its

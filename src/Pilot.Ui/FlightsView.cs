@@ -102,10 +102,11 @@ internal sealed record FlightLine
             Code = flight.Code,
             Title = flight.Title ?? flight.Item.Noun,
             Where = $"{flight.Repo} {flight.Item.Display}",
-            State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => "landed" },
+            State = flight.State switch { FlightState.Flying => "flying", FlightState.Held => "held", _ => flight.MovedTo is null ? "landed" : "moved" },
             StateDetail = flight.State switch
             {
                 FlightState.Held => $"waiting for {FlightWaiting.For(flight)}",
+                FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),
                 // Merged through a queue is not landed yet: it waits for the queue's checks.
                 FlightState.Flying when flight.MergeQueue is { } queue => queue,
