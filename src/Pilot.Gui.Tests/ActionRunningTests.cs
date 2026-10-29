@@ -15,7 +15,7 @@ public sealed class ActionRunningTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact]
+    [Fact(Timeout = 60_000)]
     public async Task ASecondPressWhileTheFirstRunsSendsNothingAndAPressAfterItIsSentAgain()
     {
         // A node that takes the request and never answers it, until the first press is given up.
@@ -28,7 +28,7 @@ public sealed class ActionRunningTests
         using var first = CancellationTokenSource.CreateLinkedTokenSource(Ct);
 
         var pressed = DashboardCommands.ActAsync(client, move, "gui", first.Token);
-        using var held = await accepted;
+        var held = await accepted;
 
         (await DashboardCommands.ActAsync(client, move, "gui", Ct)).ShouldBe("already running: Retry move");
         // Another flight's move is its own button.
@@ -39,7 +39,9 @@ public sealed class ActionRunningTests
         await Should.ThrowAsync<OperationCanceledException>(pressed);
         await Should.ThrowAsync<OperationCanceledException>(other);
 
-        // Its first press over, the button is sent again: the node has gone, so this one fails, having tried.
+        // Its first press over, the button is sent again: the node has gone, so this one fails, having tried. The node's end of the
+        // first connection closes too, or on Linux the press went down that live connection and waited for an answer for good.
+        held.Dispose();
         listener.Stop();
         (await DashboardCommands.ActAsync(client, move, "gui", Ct)).ShouldStartWith("failed: Retry move: ");
     }
