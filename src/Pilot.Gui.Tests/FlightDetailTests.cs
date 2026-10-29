@@ -525,6 +525,57 @@ public sealed class FlightDetailTests
     }
 
     [Fact]
+    public void AFlightWhoseReviewAsksForChangesOffersAddressReviewWhichAnswersItsCardsGoAroundWithThePRPagesTooltipAndSaysStartingWhileItRuns()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var flights = chrome.Flights;
+        flights.CanCommand = true;
+        var words = PullRequestActions.FindingsWords + " (round 2 of 3)";
+        var card = new CardRow
+        {
+            Id = "c4", Bin = CardBin.Ring, Kind = "review-changes", Subject = "flight/TIA1611", Title = "TIA1611's review asks for changes",
+            At = Now, State = CardState.Open,
+            Choices =
+            [
+                new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = "flight/TIA1611", Args = ["pass", "ready anyway"] },
+                new CardChoice { Label = words, Verb = Verbs.GoAround, Target = "flight/TIA1611/render", Args = ["the review asked for changes: x"] },
+            ],
+        };
+        var line = FlightLine.Build([Flight() with { Review = Changes("- fix it") }], [], Now, Legs()).Single();
+        (CardRow Card, int Number)? answered = null;
+        chrome.Cards.OnAnswer = (c, number) => answered = (c, number);
+        chrome.Show(PilotPage.Flights);
+        flights.OpenDetail("TIA1611");
+        void Render(params CardRow[] cards) =>
+            chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([line], "test", Now), CardsScreen.From(cards), new RectF32(0, 0, 1600, 900));
+
+        Render(card);
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        var button = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:address-review" });
+        button.OnClick!.Invoke(InputModifier.None);
+        answered.ShouldBe((card, 2));
+        var offered = PullRequestActions.Offered(new PullRequestRow { Repo = "x/tianwen", Number = 7, Title = "T", Url = "https://github.com/x/tianwen/pull/7", Kind = PullRequestKind.Ready, Label = "Ready", Flight = "TIA1611", Review = PullRequestReview.Changes }, [card])
+            .Single(a => a.Kind == PullRequestActionKind.AddressReview);
+        flights.AddressReview(line).ShouldNotBeNull();
+        offered.Tooltip.ShouldBe("Send TIA1611's last leg round on the review's findings, as its card's Fix the review's findings does");
+
+        // While the card's press is with the node the button says Starting… and takes no second press.
+        chrome.Cards.NoteWorking("c4", "card:c4:2");
+        Render(card);
+        regions.Clear();
+        flights.CollectPaintedRegions(regions);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:address-review" }).ShouldBeFalse();
+        chrome.Cards.NoteWorking("c4", null);
+
+        // No open review-changes card, or a review that passed: nothing to press.
+        Render();
+        flights.AddressReview(line).ShouldBeNull();
+        flights.AddressReview(FlightLine.Build([Flight() with { Review = Changes("- fix it") with { State = ReviewState.Passed } }], [], Now, Legs()).Single()).ShouldBeNull();
+    }
+
+    [Fact]
     public void CapturesOfTheFlightPagesMergeIdleAndPendingAtNarrowAndWideWindows()
     {
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)

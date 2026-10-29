@@ -60,6 +60,10 @@ internal static class DashboardCommands
     public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) =>
         new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
 
+    /// <summary>What <c>pilot review fix</c> sends for <paramref name="pr"/>: a fixer on its branch with the review's findings.</summary>
+    public static CommandRequest FixPrRequest(PullRequestRow pr, string who) =>
+        new() { Verb = Verbs.FixPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
+
     /// <summary>Opens a file or a URL the way the platform does (the browser, the image viewer); false when it could not.</summary>
     public static bool Open(string location)
     {
