@@ -149,6 +149,26 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    public async Task TheReposOwnPilotMdIsReadByTheNodeAndNotRefusedByTheLimit()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, PilotMd.FileName)))
+        {
+            dir = dir.Parent;
+        }
+        dir.ShouldNotBeNull("no PILOT.md above the test's directory");
+        var text = File.ReadAllText(Path.Combine(dir.FullName, PilotMd.FileName));
+        text.ShouldNotContain("—");
+
+        await CommitAsync(text);
+        var read = await PilotMd.ReadAsync(_git, _flight, Ct);
+
+        read.TooLongBy.ShouldBeNull();
+        read.Text.ShouldBe(text.TrimEnd());
+        read.Text.ShouldNotBeNull().Split('\n').Length.ShouldBeLessThanOrEqualTo(PilotMd.MaxLines);
+    }
+
+    [Fact]
     public async Task APilotMdOfExactlyTheLimitIsQuoted()
     {
         await CommitAsync(Lines(PilotMd.MaxLines));
