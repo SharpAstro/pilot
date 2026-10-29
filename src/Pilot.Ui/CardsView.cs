@@ -312,6 +312,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
+    /// <summary>The ideas and flights a text names by id (<c>I381</c>), as links; null finds none.</summary>
+    public Func<string, IReadOnlyList<IdeaLink>>? IdeaLinks { get; set; }
+
+    /// <summary>Follows an idea link: a planned idea's goes to its flight, the others open the idea's issue.</summary>
+    public Action<IdeaLink>? OnIdeaLink { get; set; }
+
+    /// <summary>The links in <paramref name="text"/> as a row of small links, or null when it names no idea; <paramref name="key"/> keeps their hits apart.</summary>
+    private Layout.Node? IdeaLinkRow(string text, string key)
+    {
+        if (IdeaLinks?.Invoke(text) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. found.Select(link => Layout.Builder.Text(link.FlightCode is { } code ? $"{link.Text} → {code}" : link.Text + Followable.Away, 11f, Link)
+                .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
+    }
+
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
@@ -553,7 +570,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
+                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f);
+                blocks.Add(line);
+                if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
+                {
+                    blocks.Add(handledLinks);
+                }
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
@@ -731,6 +753,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
+        }
+        if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
+        {
+            lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);

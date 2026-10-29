@@ -108,6 +108,19 @@ public static class CardKinds
     /// </summary>
     public const string AssistantAsk = "assistant-ask";
 
+    /// <summary>
+    /// An edit of an idea that contradicts what GitHub has got since (<see cref="Verbs.EditIdea"/>): a For-you card naming the idea
+    /// (<c>I381: title</c>) with both versions in its detail, offering <c>Keep mine</c>, <c>Keep GitHub's</c> and <c>Keep the merge</c>
+    /// (the default, first). Its subject is the idea's target; nothing is written until it is answered.
+    /// </summary>
+    public const string IdeaConflict = "idea-conflict";
+
+    /// <summary>
+    /// A new idea that fits more than one repo equally (<see cref="Verbs.NoteIdea"/> with <see cref="Verbs.AnyRepo"/>): a For-you card
+    /// with one choice per likely repo, <c>File in tianwen</c>, each filing it there. Nothing is created until one is chosen.
+    /// </summary>
+    public const string IdeaRepo = "idea-repo";
+
     /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
     public const string AutopilotRan = "autopilot-ran";
 }

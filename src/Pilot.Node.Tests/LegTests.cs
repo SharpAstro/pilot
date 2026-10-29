@@ -211,6 +211,157 @@ internal sealed class FakeGitHub : IGitHub
     public Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(Issues.TryGetValue(number, out var title) ? title : null);
 
+    private static string RepoKey(string repoPath) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+
+    /// <summary>Each repo's open milestones, by its folder path.</summary>
+    public Dictionary<string, List<Milestone>> MilestonesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included.</summary>
+    public Dictionary<string, List<MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries; a minute on for each.</summary>
+    public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
+
+    /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
+    public List<(string Repo, string Title)> MilestonesMade { get; } = [];
+
+    /// <summary>Every issue moved to a milestone, in order.</summary>
+    public List<(int Number, string Milestone)> Moves { get; } = [];
+
+    /// <summary>Every issue closed as not planned, with its comment, in order.</summary>
+    public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
+
+    /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
+    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null)
+    {
+        var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
+        var milestone = new Milestone(list.Count + 1, title, dueOn);
+        list.Add(milestone);
+        return milestone;
+    }
+
+    /// <summary>Adds an issue (a number the fake has not given) to the repo, in <paramref name="milestone"/> or none.</summary>
+    public MilestoneIssue AddIssue(string repoPath, string title, string? milestone, bool open = true, string body = "", string author = "sebgod")
+    {
+        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
+        Issues[number] = title;
+        var at = IdeaClock;
+        IdeaClock = at.AddMinutes(1);
+        var issue = new MilestoneIssue(number, title, body, open, milestone, at, at, author, $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}");
+        (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestoneIssuesOf[RepoKey(repoPath)] = []).Add(issue);
+        return issue;
+    }
+
+    private void Replace(string repoPath, MilestoneIssue issue)
+    {
+        var list = MilestoneIssuesOf[RepoKey(repoPath)];
+        list[list.FindIndex(i => i.Number == issue.Number)] = issue;
+    }
+
+    public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
+        Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
+
+    public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)
+        {
+            return Task.FromResult(found);
+        }
+        MilestonesMade.Add((RepoKey(repoPath), IdeaIds.Milestone));
+        return Task.FromResult(AddMilestone(repoPath, IdeaIds.Milestone));
+    }
+
+    public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
+            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number)]
+            : []);
+
+    public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
+    {
+        IssuesCreated.Add((repoPath, title, body));
+        return Task.FromResult(AddIssue(repoPath, title, milestone, body: body ?? ""));
+    }
+
+    public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.FirstOrDefault(i => i.Number == number) : null);
+
+    /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
+    public Action? BeforeNextWrite { get; set; }
+
+    /// <summary>Every issue saved by EditIssueAsync, as (number, title, body), in order.</summary>
+    public List<(int Number, string Title, string Body)> Edits { get; } = [];
+
+    /// <summary>Changes an issue as someone on GitHub would: its updated_at moves on.</summary>
+    public MilestoneIssue ChangeElsewhere(string repoPath, int number, Func<MilestoneIssue, MilestoneIssue> change)
+    {
+        var at = IdeaClock;
+        IdeaClock = at.AddMinutes(1);
+        var changed = change(MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number)) with { UpdatedAt = at };
+        Replace(repoPath, changed);
+        return changed;
+    }
+
+    /// <summary>The guard of every write: true when the issue is still as it was at <paramref name="ifUpdatedAt"/>.</summary>
+    private bool Guard(string repoPath, int number, DateTimeOffset ifUpdatedAt)
+    {
+        var before = BeforeNextWrite;
+        BeforeNextWrite = null;
+        before?.Invoke();
+        return MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number).UpdatedAt == ifUpdatedAt;
+    }
+
+    public Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (!Guard(repoPath, number, ifUpdatedAt))
+        {
+            return Task.FromResult(false);
+        }
+        Moves.Add((number, milestone));
+        ChangeElsewhere(repoPath, number, i => i with { Milestone = milestone });
+        return Task.FromResult(true);
+    }
+
+    /// <summary>Every issue transferred, as (number, repo it went to as owner/name, the number it has there), in order.</summary>
+    public List<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
+
+    /// <summary>The fake keeps every repo of a test as a sibling folder, so a repo as owner/name is the folder of that name beside this one.</summary>
+    public Task<MilestoneIssue?> TransferIssueAsync(string repoPath, int number, string toRepo, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (!Guard(repoPath, number, ifUpdatedAt))
+        {
+            return Task.FromResult<MilestoneIssue?>(null);
+        }
+        var from = MilestoneIssuesOf[RepoKey(repoPath)];
+        var issue = from.Single(i => i.Number == number);
+        from.Remove(issue);
+        var there = RepoKey(Path.Combine(Path.GetDirectoryName(RepoKey(repoPath))!, toRepo[(toRepo.IndexOf('/') + 1)..]));
+        var moved = AddIssue(there, issue.Title, null, issue.Open, issue.Body, issue.Author);
+        Transfers.Add((number, toRepo, moved.Number));
+        return Task.FromResult<MilestoneIssue?>(moved);
+    }
+
+    public Task<bool> CloseIssueNotPlannedAsync(string repoPath, int number, string comment, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (!Guard(repoPath, number, ifUpdatedAt))
+        {
+            return Task.FromResult(false);
+        }
+        ClosedNotPlanned.Add((number, comment));
+        ChangeElsewhere(repoPath, number, i => i with { Open = false });
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (!Guard(repoPath, number, ifUpdatedAt))
+        {
+            return Task.FromResult(false);
+        }
+        Edits.Add((number, title, body));
+        ChangeElsewhere(repoPath, number, i => i with { Title = title, Body = body });
+        return Task.FromResult(true);
+    }
+
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>

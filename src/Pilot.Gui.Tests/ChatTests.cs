@@ -460,17 +460,17 @@ public sealed class ChatTests
 
         TextInputInteraction.HandleText(chat.Input, "first line");
         chat.HandleNewLine(new InputEvent.KeyDown(InputKey.Enter, InputModifier.Shift)).ShouldBeTrue();
-        // The line typed so far stands above the box, and nothing was sent.
-        chat.Before.ShouldBe(["first line"]);
-        chat.Input.Text.ShouldBe("");
+        // The line break is in the box's text, the caret on the second line, and nothing was sent.
+        chat.Input.Text.ShouldBe("first line\n");
+        chat.Input.LineCount.ShouldBe(2);
+        chat.Input.Line.ShouldBe(1);
         sent.ShouldBeEmpty();
-        Described(chat).ShouldContain("first line");
         TextInputInteraction.HandleText(chat.Input, "second line");
         TextInputInteraction.HandleKey(InputKey.Enter, InputModifier.None, new TextInputInteraction.KeyContext(tracker, focus, () => { }));
         await tracker.DrainAsync();
 
         sent.ShouldBe(["first line\nsecond line"]);
-        chat.Before.ShouldBeEmpty();
+        chat.Input.Text.ShouldBe("");
     }
 
     [Fact]
@@ -487,36 +487,42 @@ public sealed class ChatTests
         chat.HandleNewLine(new InputEvent.KeyDown(InputKey.Enter, InputModifier.Shift)).ShouldBeTrue();
         // Alt+Enter, for a terminal that cannot tell Shift.
         chat.HandleNewLine(new InputEvent.KeyDown(InputKey.Enter, InputModifier.Alt)).ShouldBeTrue();
-        chat.Before.Count.ShouldBe(2);
+        chat.Input.LineCount.ShouldBe(3);
     }
 
     [Fact]
-    public void BackspaceOnAnEmptyLineGoesBackToTheLineBefore()
+    public void BackspaceOnAnEmptyLineJoinsTheLineBefore()
     {
         var composer = new ChatComposer();
-        composer.Input.InsertText("one");
-        composer.NewLine();
+        composer.Input.InsertText("one\n");
 
-        composer.Input.OnKeyOverride!(TextInputKey.Backspace).ShouldBeTrue();
+        composer.Input.HandleKey(TextInputKey.Backspace);
 
         composer.Input.Text.ShouldBe("one");
         composer.Input.CursorPos.ShouldBe(3);
-        composer.Before.ShouldBeEmpty();
-        // With nothing before it, Backspace is the field's own.
-        composer.Input.OnKeyOverride!(TextInputKey.Backspace).ShouldBeFalse();
     }
 
     [Fact]
-    public void APasteOfSeveralLinesLandsAsSeveral()
+    public void APasteOfSeveralLinesIsOneMessageWithItsLineBreaks()
     {
         var composer = new ChatComposer();
 
         composer.Input.InsertText("a\nb\r\nc");
-        composer.Input.OnTextChanged!(composer.Input.Text);
 
-        composer.Before.ShouldBe(["a", "b"]);
-        composer.Input.Text.ShouldBe("c");
+        composer.Input.LineCount.ShouldBe(3);
         composer.Message.ShouldBe("a\nb\nc");
+    }
+
+    [Fact]
+    public void TheCaretMovesAcrossLinesAndALongMessageKeepsTheCap()
+    {
+        var composer = new ChatComposer();
+        composer.Input.InsertText(string.Join('\n', Enumerable.Range(1, ChatComposer.MaxLines + 4).Select(i => $"line {i}")));
+
+        composer.Input.Line.ShouldBe(ChatComposer.MaxLines + 3);
+        composer.Input.HandleKey(TextInputKey.Up);
+        composer.Input.Line.ShouldBe(ChatComposer.MaxLines + 2);
+        composer.Input.MaxLines.ShouldBe(ChatComposer.MaxLines);
     }
 
     [Fact]
@@ -574,7 +580,7 @@ public sealed class ChatTests
 
         var arranged = Arranged(chat);
 
-        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeFalse();
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor }).ShouldBeFalse();
         CellLayout.Describe(arranged).ShouldContain("The chat is read from a live node.");
     }
 
@@ -585,11 +591,12 @@ public sealed class ChatTests
         var chat = NewChat(renderer);
 
         var arranged = Arranged(chat);
-        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
+        var input = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor });
 
         // At the foot: under every other thing on the page.
         arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ShouldAllBe(a => a.Bounds.Y <= input.Bounds.Y + input.Bounds.Height);
-        CellLayout.TextInputs(arranged).ShouldContain(chat.Input);
+        // The box is the multi-line editor on the chat's own state (Console.Lib's TextInputs lists one-line fields only).
+        input.Node.ShouldBeOfType<Layout.Node.Leaf>().Content.ShouldBeOfType<Layout.Content.TextEditor>().State.ShouldBe(chat.Input);
     }
 
     [Fact]
@@ -631,7 +638,7 @@ public sealed class ChatTests
         chrome.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.Shift)).ShouldBeTrue();
         chrome.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeFalse();
 
-        chrome.Chat.Before.ShouldBe([""]);
+        chrome.Chat.Input.Text.ShouldBe("\n");
     }
 
     [Fact]
@@ -683,7 +690,7 @@ public sealed class ChatTests
         // The feed's scroll is the first; the question's card has its own under it.
         var feed = arranged.Where(a => a.Node.Scroll is not null).OrderBy(a => a.Bounds.Y).First().Bounds;
         var choice = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "chat:choice:1" }).Bounds;
-        var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+        var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor }).Bounds;
 
         // The choices are below the feed's last pixel and above the box: nothing of the conversation is under them.
         choice.Y.ShouldBeGreaterThanOrEqualTo(feed.Y + feed.Height);
@@ -745,7 +752,7 @@ public sealed class ChatTests
             }
 
             var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-            var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
+            var box = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor }).Bounds;
             // Two scrolls: the feed above and, under it, the card's own.
             var scrolls = arranged.Where(a => a.Node.Scroll is not null).Select(a => a.Bounds).OrderBy(b => b.Y).ToList();
             scrolls.Count.ShouldBe(2);
