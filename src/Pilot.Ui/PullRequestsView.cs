@@ -886,7 +886,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         // The link is the name and its ↗ only, as every link away from the window is; the rest of the header folds the group. With the
         // name taking the whole width the link covered the header and a click almost anywhere opened GitHub (the owner, 2026-10-29).
         var name = Layout.Builder.HStack(
-                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WStar().HStar(),
+                // Content-capped like the stack: a plain star adds nothing to a stack's natural width, and the name was arranged 0 wide.
+                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WStarUpToContent().HStar(),
                 Layout.Builder.Text(Followable.Away, TitleSize, P.Link).WAuto().HStar())
             .WithGap(4f)
             // As wide as the name and its ↗, never wider; on a narrow page it gives way and the name ends in an ellipsis.
