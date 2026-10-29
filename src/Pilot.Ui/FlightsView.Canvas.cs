@@ -18,8 +18,9 @@ internal sealed partial class FlightsView<TSurface>
 
     private RGBAColor32 GhostBg => P.GhostBg;
 
-    // The picked flight's chain on the canvas, its arrows lit and its cards marked: what it waits on and what waits on it.
-    private IReadOnlySet<string> _chain = new HashSet<string>();
+    // The picked flight's chain on the map, its connections lit and its routes marked: what it waits on and what waits on it, each
+    // by its node and code.
+    private IReadOnlySet<(string Node, string Code)> _chain = new HashSet<(string Node, string Code)>();
 
     /// <summary>Whether this host can paint the canvas: pilot-tui cannot draw lines, so it sets this false and keeps the list.</summary>
     public bool CanvasAvailable { get; set; } = true;
@@ -114,7 +115,7 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(10f, 8f)
             .Stretch();
         return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(StripeColor(line)).WFixed(ListTable.StripeWidth).HStar(), body)
-            .Bg(index == Selected ? (line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg) : line.MoveMark is not null ? P.FailedBg : !grid && _chain.Contains(line.Code) ? P.LinkedBg : PanelBg)
+            .Bg(index == Selected ? (line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg) : line.MoveMark is not null ? P.FailedBg : PanelBg)
             .BgHover(RowHoverBg)
             .BgFocus(line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))

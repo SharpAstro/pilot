@@ -88,11 +88,11 @@ public sealed class FlightMapLayersTests
 
         items.Select(i => i.Label).ShouldBe(["Landed", "Held", "Arcs only", "One node", "  DE1", "  SE1", "PR states"]);
         items.First(i => i.Label == "Held").IsOn.ShouldBeTrue();
-        items.First(i => i.Label == "Landed").IsOn.ShouldBeFalse();
+        items.First(i => i.Label == "Landed").IsOn.ShouldBeTrue();
         items.First(i => i.Label == "  DE1").IsAvailable.ShouldBeFalse();
 
         FlightMapLayerPalette.Press(state, items.First(i => i.Label == "Landed").Action).ShouldBeTrue();
-        state.ShowLanded.ShouldBeTrue();
+        state.ShowLanded.ShouldBeFalse();
 
         FlightMapLayerPalette.Press(state, items.First(i => i.Label == "One node").Action).ShouldBeTrue();
         state.OnlyNode.ShouldBe("de1");
@@ -130,33 +130,102 @@ public sealed class FlightMapLayersTests
     }
 
     [Fact]
-    public void LandedFlightsAreOffByDefaultAndBackWhenTheLayerIsOn()
+    public void LandedFlightsAreOnByDefaultAndGoneWhenTheLayerIsOff()
     {
+        // In play leaves the landed out of the page's lines already; Everything brings them, and the map draws them.
         var state = new FlightMapLayerState();
+        new MapLayerSettings().Landed.ShouldBeTrue();
 
-        FlightMap.Build(Lines(), state).Route("L").ShouldBeNull();
-
-        state.ShowLanded = true;
         FlightMap.Build(Lines(), state).Route("L").ShouldNotBeNull();
+
+        state.ShowLanded = false;
+        FlightMap.Build(Lines(), state).Route("L").ShouldBeNull();
+    }
+
+    [Fact]
+    public void EverythingShowsTheLandedOnTheMapAndInPlayLeavesThemOut()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, Play = new PlayFilter() };
+        var screen = new FlightsScreen(Lines(), "test", Live.At);
+
+        view.Play!.ShowEverything();
+        view.Render(screen, new RectF32(0, 0, 1280, 800));
+        view.Map.Route("L").ShouldNotBeNull();
+        view.Map.Routes.Count.ShouldBe(Lines().Length);
+
+        view.Play!.ShowInPlay();
+        view.Render(screen, new RectF32(0, 0, 1280, 800));
+        view.Map.Route("L").ShouldBeNull();
+    }
+
+    // The arranged text of the Flights page as the window lays it out.
+    private static List<string> Texts(RgbaImageRenderer renderer, FlightsView<RgbaImage> view, FlightsScreen screen) =>
+        [.. Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+
+    [Theory]
+    [InlineData("landed", "Landed is off")]
+    [InlineData("held", "Held is off")]
+    [InlineData("node", "One node shows a node not on the page")]
+    [InlineData("arcs", "Arcs only finds no arc between nodes")]
+    public void AMapTheLayersLeaveEmptySaysWhichLayerHidesItsFlightsAndKeepsTheMenu(string layer, string why)
+    {
+        // Only landed flights, only held ones, a node picked that is not on the page, and no arc between nodes.
+        FlightLine[] lines = layer switch
+        {
+            "landed" => [.. Lines().Where(l => l.Row.State == FlightState.Landed)],
+            "held" => [.. Lines().Where(l => l.Row.State == FlightState.Held)],
+            "arcs" => [.. Lines().Where(l => l.Node == De1)],
+            _ => Lines(),
+        };
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
+        (view.MapLayers.ShowLanded, view.MapLayers.ShowHeld, view.MapLayers.ArcsOnly) = (layer != "landed", layer != "held", layer == "arcs");
+        view.MapLayers.OnlyNode = layer == "node" ? "ne1" : null;
+        var screen = new FlightsScreen(lines, "test", Live.At);
+
+        view.Render(screen, new RectF32(0, 0, 1280, 800));
+
+        view.Map.Routes.ShouldBeEmpty();
+        view.MapShown.ShouldBeTrue();
+        var line = Texts(renderer, view, screen).Where(t => t.StartsWith("No flight on the map: ", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        line.ShouldContain(why);
+        // The menu that turns the layer back is still over the page.
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a == FlightMapLayerPalette.RowAction(FlightMapLayers.All[0])).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheHidingLineNamesTheNodePickedAndIsGoneOnceAFlightIsOnTheMap()
+    {
+        var state = new FlightMapLayerState { OnlyNode = "se1", Nodes = [("de1", "DE1"), ("se1", "SE1")], ShowHeld = false };
+        FlightLine[] lines = [Line(Flight("B", FlightState.Held), De1), Line(Flight("S"), Se1, Leg("S", "one", 1, LegState.Flying))];
+        var held = new[] { lines[0] };
+
+        FlightMapLayers.Hiding(held, state, FlightMap.Build(held, state)).ShouldBe("No flight on the map: Held is off; One node shows SE1, which has none. The LAYERS menu changes what it shows.");
+        FlightMapLayers.Hiding(lines, state, FlightMap.Build(lines, state)).ShouldBeNull();
+        FlightMapLayers.Hiding([], state, FlightMap.Build([], state)).ShouldBeNull();
     }
 
     [Fact]
     public void ALayerOffLeavesItsMarksOffTheMapAndItsHitRegionsGone()
     {
-        var all = FlightMap.Build(Lines(), new FlightMapLayerState { ShowLanded = true });
+        var all = FlightMap.Build(Lines(), new FlightMapLayerState());
         var gate = all.Route("B")!.Gate!;
         var landedAirport = all.Route("L")!.Airports[0];
         // The held plane sits at its gate, over it.
         all.At(gate.X, gate.Y)!.Value.Flight.ShouldBe("B");
         all.At(landedAirport.X, landedAirport.Y)!.Value.Flight.ShouldBe("L");
 
-        var noHeld = FlightMap.Build(Lines(), new FlightMapLayerState { ShowLanded = true, ShowHeld = false });
+        var noHeld = FlightMap.Build(Lines(), new FlightMapLayerState { ShowHeld = false });
         noHeld.Route("B").ShouldBeNull();
         noHeld.Routes.Count(r => r.Gate is not null).ShouldBe(0);
         noHeld.Continents.SelectMany(c => c.Flights).ShouldNotContain("B");
         noHeld.Route("L").ShouldNotBeNull();
 
-        var noLanded = FlightMap.Build(Lines(), new FlightMapLayerState());
+        var noLanded = FlightMap.Build(Lines(), new FlightMapLayerState { ShowLanded = false });
         noLanded.Route("L").ShouldBeNull();
         noLanded.Routes.SelectMany(r => r.Airports).ShouldAllBe(a => a.Flight != "L");
         noLanded.Routes.Select(r => r.Flight).ShouldNotContain("L");
@@ -195,7 +264,7 @@ public sealed class FlightMapLayersTests
             {
                 var state = new FlightMapLayerState();
                 file.Attach(state);
-                state.ShowLanded = true;
+                state.ShowLanded = false;
                 state.ShowPrStates = false;
                 state.OnlyNode = "se1";
                 // Where the palette was dragged to and that it was rolled up: a grip gesture writes the file too.
@@ -207,7 +276,7 @@ public sealed class FlightMapLayersTests
             using var reopened = GuiSettingsFile.Open(path);
             var restored = new FlightMapLayerState();
             reopened.Attach(restored);
-            restored.ShowLanded.ShouldBeTrue();
+            restored.ShowLanded.ShouldBeFalse();
             restored.ShowPrStates.ShouldBeFalse();
             restored.ShowHeld.ShouldBeTrue();
             restored.OnlyNode.ShouldBe("se1");

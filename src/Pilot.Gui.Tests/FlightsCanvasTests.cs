@@ -145,23 +145,43 @@ public sealed class FlightsCanvasTests
         }
     }
 
-    [Theory]
-    [InlineData(900)]
-    [InlineData(1800)]
-    public void AMapWiderThanTheWindowIsDrawnSmallerAndEveryTargetStaysInIt(int width)
+    // The map's stop targets (planes, airports, gates, destinations), each a small square with a tooltip.
+    private static List<ClickableRegion> Targets(FlightsView<RgbaImage> view)
     {
-        var rows = Enumerable.Range(0, 3).Select(i => Flight("F" + i)).ToArray();
-        var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, 9).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
-        var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
-        using var _ = renderer;
-
-        view.Map.Continents.Count.ShouldBe(2);
-        view.MapShown.ShouldBeTrue();
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
-        var targets = regions.Where(r => r.Tooltip is not null && r.Result is HitResult.ListItemHit or HitResult.ButtonHit && r.Width < 40f).ToList();
+        return [.. regions.Where(r => r.Tooltip is not null && r.Result is HitResult.ListItemHit or HitResult.ButtonHit && r.Width < 40f)];
+    }
+
+    [Theory]
+    [InlineData(900, 9)]
+    [InlineData(1800, 14)]
+    public void AMapWiderThanTheWindowIsDrawnSmallerAndEveryTargetStaysInIt(int width, int legs)
+    {
+        // Two continents of `legs` stops a route: wider than the window, and no wider than twice it, so the map is drawn smaller.
+        var rows = Enumerable.Range(0, 3).Select(i => Flight("F" + i)).ToArray();
+        var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, legs).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
+        using var _ = renderer;
+        // The same map in a window wide enough to hold it at its full size.
+        var full = (int)view.Map.Width + 200;
+        var (wideRenderer, wide) = Show(FlightsViewMode.Canvas, full, lines);
+        using var __ = wideRenderer;
+
+        view.Map.Width.ShouldBeGreaterThan(width);
+        view.Map.Continents.Count.ShouldBe(2);
+        view.MapShown.ShouldBeTrue();
+        var targets = Targets(view);
         targets.ShouldNotBeEmpty();
         targets.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
+        // Each stop is drawn at the window's share of the map's width, never under half: the first airport's square at the two sizes.
+        var first = targets.Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
+        var whole = Targets(wide).Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
+        whole.Width.ShouldBe(2f * FlightMap.AirportRadius, 0.5f);
+        var scale = first.Width / whole.Width;
+        scale.ShouldBeLessThan(1f);
+        scale.ShouldBeGreaterThanOrEqualTo(0.5f);
+        scale.ShouldBe(MathF.Min(1f, (width - 48f) / view.Map.Width), 0.03f);
     }
 
     [Theory]
@@ -240,11 +260,78 @@ public sealed class FlightsCanvasTests
             v.OnOpen = opened.Add;
         });
         using var _ = renderer;
-        var destination = Region(view, t => t.StartsWith("A PR #7"));
+        var destination = Region(view, t => t.StartsWith("tianwen PR #7: open\n", StringComparison.Ordinal));
 
         destination.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
         opened.ShouldBe(["https://github.com/x/y/pull/7"]);
         destination.OnContextMenu.ShouldNotBeNull().Invoke(Right(destination));
         view.MenuItems.Select(i => i.Label).ShouldContain("Open PR #7");
+    }
+
+    // The region a click at (x, y) reaches: the last painted that holds the point, as ClickableRegionTracker.HitTest answers.
+    private static ClickableRegion? TopAt(FlightsView<RgbaImage> view, float x, float y)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        for (var i = regions.Count - 1; i >= 0; i--)
+        {
+            var r = regions[i];
+            if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AClickOnADestinationWithItsPlaneParkedOnItOpensThePr(bool listed)
+    {
+        // Every leg done and the PR open: the plane waits on the destination, the usual state of a flight with an open PR.
+        var row = WithPr(Flight("A"));
+        var line = FlightLine.Build([row], [], Live.At, [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)])[0];
+        var opened = new List<string>();
+        var shown = new List<(string Repo, int Number)>();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, [line], v =>
+        {
+            v.CanCommand = true;
+            v.OnOpen = opened.Add;
+            if (listed)
+            {
+                v.OnPullRequest = (repo, number) => shown.Add((repo, number));
+                v.PullRequests = new PullRequestsRow
+                {
+                    Orgs = ["x"],
+                    ReadAt = Live.At,
+                    PullRequests = [new PullRequestRow { Repo = "x/y", Number = 7, Title = "A", Url = "https://github.com/x/y/pull/7", Kind = PullRequestKind.Ready, Label = "Ready", Flight = "A" }],
+                };
+            }
+        });
+        using var _ = renderer;
+        var route = view.Map.Route("A")!;
+        route.PlaneAtDestination.ShouldBeTrue();
+        var map = view.Map.At(route.Destination.X, route.Destination.Y).ShouldNotBeNull();
+        (map.Kind, map.PullRequest).ShouldBe((MapHitKind.Destination, 7));
+
+        // The sign's centre: the plane's ring is drawn there, and no target of the plane's is over the sign's.
+        var sign = Region(view, t => t.StartsWith("tianwen PR #7: open\n", StringComparison.Ordinal));
+        var top = TopAt(view, sign.X + sign.Width / 2f, sign.Y + sign.Height / 2f).ShouldNotBeNull();
+        top.Result.ShouldBe(new HitResult.ButtonHit(listed ? "flight:A:pr-chip" : "flight:A:pr"));
+        top.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+
+        if (listed)
+        {
+            shown.ShouldBe([("x/y", 7)]);
+            opened.ShouldBeEmpty();
+        }
+        else
+        {
+            opened.ShouldBe(["https://github.com/x/y/pull/7"]);
+        }
+        view.Selected.ShouldBe(0);
+        // The plane's own target is not drawn there, and its hover says the flight under the PR.
+        top.Tooltip.ShouldNotBeNull().ShouldContain("A · ");
     }
 }

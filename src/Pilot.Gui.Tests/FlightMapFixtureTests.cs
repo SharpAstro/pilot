@@ -29,7 +29,7 @@ public sealed class FlightMapFixtureTests
 
     private static FlightMap Map(Action<FlightMapLayerState>? layers = null)
     {
-        var state = new FlightMapLayerState { ShowLanded = true };
+        var state = new FlightMapLayerState();
         layers?.Invoke(state);
         return FlightMap.Build(Lines(), state);
     }
@@ -83,10 +83,17 @@ public sealed class FlightMapFixtureTests
     [InlineData("ORB15", "Merged", 115)]
     public void ADestinationIsInEachPrState(string flight, string status, int pr)
     {
-        var destination = Map().Route(flight)!.Destination;
+        var map = Map();
+        var route = map.Route(flight)!;
+        var destination = route.Destination;
 
         destination.Status.ToString().ShouldBe(status);
         destination.PullRequest.ShouldBe(pr);
+        // Every leg of these is done: the plane of an open PR waits on its sign, and the sign still answers its point.
+        route.Airports.ShouldAllBe(a => a.State == AirportState.Done);
+        route.PlaneAtDestination.ShouldBe(status != "Merged");
+        var hit = map.At(destination.X, destination.Y).ShouldNotBeNull();
+        (hit.Kind, hit.Flight, hit.PullRequest).ShouldBe((MapHitKind.Destination, flight, pr));
     }
 
     [Fact]
@@ -106,7 +113,6 @@ public sealed class FlightMapFixtureTests
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
-        view.MapLayers.ShowLanded = true;
         view.Render(new FlightsScreen(Lines(), "fixture", Live.At), new RectF32(0, 0, width, height));
 
         view.MapShown.ShouldBeTrue();
@@ -124,10 +130,13 @@ public sealed class FlightMapFixtureTests
                 }
             }
         }
-        // A plane's target is its ring's square: the words under its stop and the code over it stay outside it (at 14 it cut them).
+        // A plane's target is its ring's square, and a plane parked on its destination is in the destination's, as wide: the words
+        // under its stop and the code over it stay outside it (at 14 it cut them).
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
-        var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:") && a.EndsWith(":plane")).ToList();
+        var parked = view.Map.Routes.Where(r => r.PlaneAtDestination).Select(r => $"map:{r.Flight}:destination").ToHashSet();
+        parked.ShouldNotBeEmpty();
+        var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && (a.StartsWith("map:") && a.EndsWith(":plane") || parked.Contains(a))).ToList();
         planes.Count.ShouldBe(view.Map.Routes.Count(r => r.Plane is not null));
         foreach (var plane in planes)
         {
@@ -151,24 +160,34 @@ public sealed class FlightMapFixtureTests
     [InlineData(1800, 1000, true)]
     public void TheFixtureRendersInDayAndNight(int width, int height, bool night)
     {
-        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, Night = new NightSwitch { On = night } };
-        view.MapLayers.ShowLanded = true;
         view.Render(new FlightsScreen(Lines(), "fixture", Live.At), new RectF32(0, 0, width, height));
 
         // The map itself at both widths, not the grid a map too wide for the page falls back to.
         view.MapShown.ShouldBeTrue();
-        // Not blank: the page painted something other than its own background in the corner.
+        // Both continents in the palette's own land (here and the peer), and not a pixel of the other palette's.
+        var (own, other) = night ? (Palette.Night, Palette.Standard) : (Palette.Standard, Palette.Night);
         var image = renderer.Surface;
-        var colors = new HashSet<(byte, byte, byte, byte)>();
-        for (var y = 0; y < image.Height; y += 7)
+        Count(image, own.LandHere).ShouldBeGreaterThan(2000);
+        Count(image, own.Land).ShouldBeGreaterThan(2000);
+        Count(image, other.LandHere).ShouldBe(0);
+        Count(image, other.Land).ShouldBe(0);
+        // The routes and the plane in the palette's colours too: a passed run, and the flying leg's ring.
+        Count(image, own.RoutePassed).ShouldBeGreaterThan(20);
+        Count(image, own.Flying).ShouldBeGreaterThan(20);
+    }
+
+    private static int Count(RgbaImage image, RGBAColor32 c)
+    {
+        var n = 0;
+        for (var i = 0; i < image.Width * image.Height; i++)
         {
-            for (var x = 0; x < image.Width; x += 7)
+            if (image.Pixels[i * 4] == c.Red && image.Pixels[i * 4 + 1] == c.Green && image.Pixels[i * 4 + 2] == c.Blue)
             {
-                var o = (y * image.Width + x) * 4;
-                colors.Add((image.Pixels[o], image.Pixels[o + 1], image.Pixels[o + 2], image.Pixels[o + 3]));
+                n++;
             }
         }
-        colors.Count.ShouldBeGreaterThan(8);
+        return n;
     }
 }

@@ -821,8 +821,9 @@ selected. When the node answers again its cards come back from what it reports, 
 
 The flights of such a node are its last-known rows, and **Home** and **Flights** say so from the same state (`FleetPages.Merge`
 sets `FlightLine.Stale` from the feed's reachability, once per node per merge): the Home chip reads `ORB2 · stale (DE1
-unreachable)` on a grey chip, the list row, canvas card and grid card carry `stale (DE1 unreachable)` in their state line,
-and the flight's page has a wrapped line saying why its buttons are dead. A stale flight is not counted in Home's **Flying**
+unreachable)` on a grey chip, the list row and grid card carry `stale (DE1 unreachable)` in their state line, the map greys
+the node's routes and its continent's name with `(unreachable)` after it and a plane's hover opens with the stale mark, and
+the flight's page has a wrapped line saying why its buttons are dead. A stale flight is not counted in Home's **Flying**
 or **Waiting**. Its action buttons, the page's **Merge**, its transcript buttons and the menu's node commands are dead
 (drawn, not live; the menu entries disabled with the reason on hover); opening the page, a PR, a folder or copying a code
 stay. The marks go when the node answers again.

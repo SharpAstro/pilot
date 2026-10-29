@@ -15,6 +15,8 @@ internal sealed partial class FlightsView<TSurface>
     // One line of a stop's label band: the second starts where the first ends.
     private const float StopLine = FlightMap.LabelLineTwo - FlightMap.LabelBandTop;
     private const int LabelChars = 10;
+    // The destination's sign: its repo and PR number, a little wider than a leg's name as nothing stands to its right.
+    private const int SignChars = 12;
 
     // The window's width in design units as of the last frame, so a map wider than it is drawn smaller, down to half size.
     private float _viewWidth;
@@ -47,7 +49,14 @@ internal sealed partial class FlightsView<TSurface>
 
     private Layout.Node CanvasBody(FlightsScreen screen)
     {
-        _chain = Selected >= 0 && Selected < screen.Lines.Count ? _map.Chain(screen.Lines[Selected].Code) : new HashSet<string>();
+        _chain = Selected >= 0 && Selected < screen.Lines.Count ? _map.Chain(screen.Lines[Selected].Node?.Key ?? "", screen.Lines[Selected].Code) : new HashSet<(string Node, string Code)>();
+        var layers = FlightMapLayerPalette.Build(MapLayers, P, 11f, Scale, MapLayers.NoteChanged);
+        // The page has flights and the layers left none: one line says which layer hides them, under the menu that turns it back.
+        if (FlightMapLayers.Hiding(screen.Lines, MapLayers, _map) is { } hidden)
+        {
+            var note = Layout.Builder.VStack(Layout.Builder.Text(hidden, 14f, Dim).RowH(24f)).Pad(Gutter, 8f).Stretch();
+            return Layout.Builder.Overlay(note, layers).Stretch();
+        }
         var k = MapScale;
         var width = MathF.Max(1f, _map.Width * k);
         var height = MathF.Max(1f, _map.Height * k);
@@ -62,7 +71,7 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(Gutter, 8f)
             .Stretch();
         // The layer menu floats over the map, outside its scroll, as the sky map's does over the sky.
-        return Layout.Builder.Overlay(map, FlightMapLayerPalette.Build(MapLayers, P, 11f, Scale, MapLayers.NoteChanged)).Stretch();
+        return Layout.Builder.Overlay(map, layers).Stretch();
     }
 
     // The panel is the node carrying the palette's own hit, which FloatingPalette puts on it; its parent, the Anchored, was given
@@ -147,6 +156,27 @@ internal sealed partial class FlightsView<TSurface>
 
     private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
 
+    // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit; the repo alone
+    // before there is a PR.
+    private static string SignOf(string repo, int? pullRequest)
+    {
+        if (pullRequest is not { } pr)
+        {
+            return repo.Length > 0 ? Fit(repo, SignChars) : "PR";
+        }
+        var number = $" #{pr}";
+        return SignChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, SignChars - number.Length) + number;
+    }
+
+    // What a destination says on hover: its PR by repo and number and where it stands, then the flight's brief.
+    private string DestinationTip(FlightLine line, MapDestination d)
+    {
+        var repo = line.Row.Repo;
+        var sign = d.PullRequest is { } pr ? $"{repo} PR #{pr}" : $"{repo} PR";
+        var first = !MapLayers.ShowPrStates ? sign : d.PullRequest is null ? $"{repo}: {StatusWord(d.Status)}" : $"{sign}: {StatusWord(d.Status)}";
+        return first + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
+    }
+
     // A click target at a map point: a spacer at its own size, floated at its place in the map (scaled by k).
     private static Layout.Node Target(float cx, float cy, float r, float k, Func<Layout.Node, Layout.Node> make)
     {
@@ -167,7 +197,8 @@ internal sealed partial class FlightsView<TSurface>
         return -1;
     }
 
-    // Planes last, so they are over their airport as they are drawn.
+    // Planes last, so they are over their airport as they are drawn. A plane parked on its destination has no target of its own:
+    // the destination's, as wide as the plane's ring, is the one there, so a click on it opens the PR.
     private IEnumerable<Layout.Node> MapTargets(FlightsScreen screen, float k)
     {
         foreach (var c in _map.Continents)
@@ -213,11 +244,11 @@ internal sealed partial class FlightsView<TSurface>
             }
             var d = route.Destination;
             var url = line.Row.PullRequestUrl;
-            yield return Target(d.X, d.Y, FlightMap.AirportRadius, k, n =>
+            var parked = route.PlaneAtDestination;
+            yield return Target(d.X, d.Y, parked ? FlightMap.PlaneRadius : FlightMap.AirportRadius, k, n =>
             {
-                var status = MapLayers.ShowPrStates ? ": " + StatusWord(d.Status) : "";
-                var tip = d.PullRequest is { } pr ? $"{line.Code} PR #{pr}{status}" : MapLayers.ShowPrStates ? $"{line.Code}{status}" : $"{line.Code} PR";
-                var node = n.WithTooltip(tip)
+                var tip = DestinationTip(line, d);
+                var node = n.WithTooltip(parked && line.StaleMark is { } stale ? stale + "\n" + tip : tip)
                     .WithContextMenu(at => OpenMenu(line, index, at))
                     .DoubleClickable(_ =>
                     {
@@ -245,7 +276,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         foreach (var route in _map.Routes)
         {
-            if (route.Plane is { } p && IndexOf(screen, route) is >= 0 and var index)
+            if (route.Plane is { } p && !route.PlaneAtDestination && IndexOf(screen, route) is >= 0 and var index)
             {
                 var line = screen.Lines[index];
                 var leg = p.Leg;
@@ -270,7 +301,7 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
-    private bool InChain(MapConnection c) => _chain.Contains(c.From) && _chain.Contains(c.To);
+    private bool InChain(MapConnection c) => _chain.Contains((c.FromNode, c.From)) && _chain.Contains((c.ToNode, c.To));
 
     // The words the map painted last, each in the box it was drawn in: one Fill leaf paints them all, so the page's text check
     // (TextOverlap, which reads the arranged text leaves) never sees them, and a test holds them apart from these.
@@ -337,7 +368,7 @@ internal sealed partial class FlightsView<TSurface>
         var d = route.Destination;
         var c = _map.Continents.First(c => c.Key == route.Node);
         var rowTop = d.Y - FlightMap.RowHeight / 2f + 8f;
-        if (picked || _chain.Contains(route.Flight))
+        if (picked || _chain.Contains((route.Node, route.Flight)))
         {
             FillRect(X(c.X + 6f), Y(rowTop), (c.Width - 12f) * s, (FlightMap.RowHeight - 6f) * s, picked ? RowFocusBg : P.LinkedBg, 8f * s);
         }
@@ -415,7 +446,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(d.X) - r + 2f * s, Y(d.Y) - r + 2f * s, 2f * r - 4f * s, 2f * r - 4f * s, Ground, 1f * s);
         }
-        Label(d.PullRequest is { } pr ? $"PR #{pr}" : "PR", X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+        Label(SignOf(line?.Row.Repo ?? "", d.PullRequest), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
         if (MapLayers.ShowPrStates)
         {
             Label(StatusWord(d.Status), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, color, line: StopLine);

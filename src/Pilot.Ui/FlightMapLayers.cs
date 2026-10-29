@@ -1,12 +1,13 @@
 using System.Collections.Immutable;
 using DIR.Lib;
+using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
 /// <summary>The map layers as the settings file keeps them; <see cref="Node"/> is the one node shown, or null for all.</summary>
 internal sealed record MapLayerSettings
 {
-    public bool Landed { get; init; }
+    public bool Landed { get; init; } = true;
 
     public bool Held { get; init; } = true;
 
@@ -24,13 +25,13 @@ internal sealed record MapLayerSettings
 }
 
 /// <summary>
-/// Which layers of the flight map are on, and where the layer palette sits. Landed flights are off by default: a long-lived
-/// window collects many, and the map is for what is in play.
+/// Which layers of the flight map are on, and where the layer palette sits. Every layer but Arcs only and One node is on by
+/// default: the page's In play already leaves the landed out, so Everything shows them on the map as the list does.
 /// </summary>
 internal sealed class FlightMapLayerState
 {
     /// <summary>Landed flights, drawn as faded routes.</summary>
-    public bool ShowLanded { get; set; }
+    public bool ShowLanded { get; set; } = true;
 
     /// <summary>Held flights, parked at their gate.</summary>
     public bool ShowHeld { get; set; } = true;
@@ -118,6 +119,37 @@ internal static class FlightMapLayers
             static s => s.Nodes.Count > 1 || s.OnlyNode is not null),
         new("PR states", "pr", static s => s.ShowPrStates, static (s, v) => s.ShowPrStates = v),
     ];
+
+    /// <summary>
+    /// The line the map shows in its place when the page has flights and <paramref name="state"/> left none of them on
+    /// <paramref name="map"/>: each layer that hides some. Null when the map has a flight or the page has none.
+    /// </summary>
+    public static string? Hiding(IReadOnlyList<FlightLine> lines, FlightMapLayerState state, FlightMap map)
+    {
+        if (lines.Count == 0 || map.Routes.Count > 0)
+        {
+            return null;
+        }
+        var why = new List<string>();
+        if (!state.ShowLanded && lines.Any(l => l.Row.State == FlightState.Landed))
+        {
+            why.Add("Landed is off");
+        }
+        if (!state.ShowHeld && lines.Any(l => l.Row.State == FlightState.Held))
+        {
+            why.Add("Held is off");
+        }
+        if (state.OnlyNode is { } node && lines.Any(l => (l.Node?.Key ?? "") != node))
+        {
+            why.Add(state.Nodes.Where(n => n.Key == node).Select(n => n.Name).FirstOrDefault() is { } name
+                ? $"One node shows {name}, which has none" : "One node shows a node not on the page");
+        }
+        if (state.ArcsOnly)
+        {
+            why.Add("Arcs only finds no arc between nodes");
+        }
+        return why.Count == 0 ? null : $"No flight on the map: {string.Join("; ", why)}. The LAYERS menu changes what it shows.";
+    }
 
     /// <summary>Picks <paramref name="key"/> as the one node shown, when one is shown and it is a node on the page.</summary>
     public static bool PickNode(FlightMapLayerState state, string key)

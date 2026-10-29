@@ -45,14 +45,22 @@ internal sealed record MapGate(string Flight, string WaitsFor, float X, float Y)
 internal sealed record MapPlane(string Flight, string? Leg, float X, float Y);
 
 /// <summary>A flight's route: its gate (held only), airports in leg order, then its destination.</summary>
-internal sealed record MapRoute(string Flight, string Node, MapGate? Gate, IReadOnlyList<MapAirport> Airports, MapDestination Destination, MapPlane? Plane);
+internal sealed record MapRoute(string Flight, string Node, MapGate? Gate, IReadOnlyList<MapAirport> Airports, MapDestination Destination, MapPlane? Plane)
+{
+    /// <summary>
+    /// Whether the plane is parked on the destination (every leg done, the PR not merged): there the destination answers a point,
+    /// its click opening the PR, and the plane is only drawn.
+    /// </summary>
+    public bool PlaneAtDestination => Plane is { Leg: null } && Gate is null;
+}
 
 /// <summary>
-/// A connection from the flight waited for (<paramref name="From"/>, its destination) to the one it holds (<paramref name="To"/>,
-/// its gate or first airport). Domestic when both are on one node, else an intercontinental arc; <paramref name="Held"/> while it
-/// still holds, which draws it dashed.
+/// A connection from the flight waited for (<paramref name="From"/> on <paramref name="FromNode"/>, its destination) to the one it
+/// holds (<paramref name="To"/> on <paramref name="ToNode"/>, its gate or first airport). Domestic when both are on one node, else an
+/// intercontinental arc; <paramref name="Held"/> while it still holds, which draws it dashed. A code is unique on its node only, so
+/// each end carries its node.
 /// </summary>
-internal sealed record MapConnection(string From, string To, bool Domestic, bool Held, float X0, float Y0, float X1, float Y1)
+internal sealed record MapConnection(string FromNode, string From, string ToNode, string To, bool Domestic, bool Held, float X0, float Y0, float X1, float Y1)
 {
     /// <summary>
     /// A domestic connection's route as axis-aligned stops, out of the destination's right side, down to the corridor between two
@@ -62,8 +70,8 @@ internal sealed record MapConnection(string From, string To, bool Domestic, bool
     public IReadOnlyList<(float X, float Y)> Path { get; init; } = [];
 }
 
-/// <summary>What a point on the map is.</summary>
-internal readonly record struct MapHit(MapHitKind Kind, string Flight, string? Leg = null, int? PullRequest = null);
+/// <summary>What a point on the map is: the flight by its code and its node's key.</summary>
+internal readonly record struct MapHit(MapHitKind Kind, string Flight, string? Leg = null, int? PullRequest = null, string Node = "");
 
 /// <summary>
 /// The Flights page as a map in pure geometry (design units, no renderer): a continent per node, a route per flight, arcs between
@@ -115,27 +123,30 @@ internal sealed class FlightMap
     public float Height { get; private init; }
 
     /// <summary>
-    /// Every flight <paramref name="code"/> waits on or is waited on by, through any number of connections, itself among them
-    /// when it has any: what the map lights when a flight is picked.
+    /// Every flight <paramref name="code"/> on <paramref name="node"/> waits on or is waited on by, through any number of
+    /// connections, itself among them when it has any: what the map lights when a flight is picked. Keyed by (node, code), as one
+    /// code on two nodes is two flights.
     /// </summary>
-    public IReadOnlySet<string> Chain(string code)
+    public IReadOnlySet<(string Node, string Code)> Chain(string node, string code)
     {
-        var chain = new HashSet<string>(StringComparer.Ordinal) { code };
-        var next = new Queue<string>([code]);
+        var chain = new HashSet<(string Node, string Code)> { (node, code) };
+        var next = new Queue<(string Node, string Code)>([(node, code)]);
         while (next.TryDequeue(out var at))
         {
             foreach (var c in Connections)
             {
-                if ((c.From == at ? c.To : c.To == at ? c.From : null) is { } other && chain.Add(other))
+                var (from, to) = ((c.FromNode, c.From), (c.ToNode, c.To));
+                if ((from == at ? to : to == at ? from : ((string, string)?)null) is { } other && chain.Add(other))
                 {
                     next.Enqueue(other);
                 }
             }
         }
-        return chain.Count > 1 ? chain : new HashSet<string>();
+        return chain.Count > 1 ? chain : new HashSet<(string Node, string Code)>();
     }
 
-    public MapRoute? Route(string flight) => Routes.FirstOrDefault(r => r.Flight == flight);
+    /// <summary>The route of <paramref name="flight"/>, on <paramref name="node"/> when given, else the first of that code.</summary>
+    public MapRoute? Route(string flight, string? node = null) => Routes.FirstOrDefault(r => r.Flight == flight && (node is null || r.Node == node));
 
     /// <summary>
     /// The destination's status from what the row carries. Not told by the row: a PR's failing checks (only a merge waiting for
@@ -179,7 +190,7 @@ internal sealed class FlightMap
     /// </summary>
     public static FlightMap Build(IReadOnlyList<FlightLine> lines, FlightMapLayerState? layers = null)
     {
-        layers ??= new FlightMapLayerState { ShowLanded = true };
+        layers ??= new FlightMapLayerState();
         var shown = lines
             .Where(l => layers.ShowLanded || l.Row.State != FlightState.Landed)
             .Where(l => layers.ShowHeld || l.Row.State != FlightState.Held)
@@ -190,9 +201,9 @@ internal sealed class FlightMap
         {
             return map;
         }
-        // Only the flights an arc joins stay, and the arcs alone are drawn between them.
-        var ends = map.Arcs.SelectMany(c => new[] { c.From, c.To }).ToHashSet(StringComparer.Ordinal);
-        var arcs = LayMap([.. shown.Where(l => ends.Contains(l.Code))]);
+        // Only the flights an arc joins stay, each by its node and code, and the arcs alone are drawn between them.
+        var ends = map.Arcs.SelectMany(c => new[] { (c.FromNode, c.From), (c.ToNode, c.To) }).ToHashSet();
+        var arcs = LayMap([.. shown.Where(l => ends.Contains((l.Node?.Key ?? "", l.Code)))]);
         return new FlightMap
         {
             Continents = arcs.Continents,
@@ -320,7 +331,7 @@ internal sealed class FlightMap
                     (margin, entry.Item2), (entry.Item1 - AirportRadius, entry.Item2),
                 ];
             }
-            result.Add(new MapConnection(from.Code, holder.Code, domestic, holds && holder.Row.State == FlightState.Held, a.Destination.X, a.Destination.Y, entry.Item1, entry.Item2) { Path = path });
+            result.Add(new MapConnection(a.Node, from.Code, b.Node, holder.Code, domestic, holds && holder.Row.State == FlightState.Held, a.Destination.X, a.Destination.Y, entry.Item1, entry.Item2) { Path = path });
         }
 
         foreach (var line in lines.OrderBy(l => l.Node?.Key ?? "", StringComparer.Ordinal).ThenBy(l => l.Code, StringComparer.Ordinal))
@@ -340,34 +351,38 @@ internal sealed class FlightMap
         return result;
     }
 
-    /// <summary>What is at a design-unit point: the plane first (it is drawn over its airport), then a gate, an airport, a destination; null on empty sea.</summary>
+    /// <summary>
+    /// What is at a design-unit point: the plane first (it is drawn over its airport or gate), then a gate, an airport, a
+    /// destination; null on empty sea. A plane parked on its destination is the destination's, out to the plane's ring, so the
+    /// point opens the PR as the sign does.
+    /// </summary>
     public MapHit? At(float x, float y)
     {
         static bool Near(float px, float py, float cx, float cy, float r) => (px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r;
 
         foreach (var route in Routes)
         {
-            if (route.Plane is { } p && Near(x, y, p.X, p.Y, PlaneRadius))
+            if (route.Plane is { } p && !route.PlaneAtDestination && Near(x, y, p.X, p.Y, PlaneRadius))
             {
-                return new MapHit(MapHitKind.Plane, route.Flight, p.Leg);
+                return new MapHit(MapHitKind.Plane, route.Flight, p.Leg, Node: route.Node);
             }
         }
         foreach (var route in Routes)
         {
             if (route.Gate is { } g && Near(x, y, g.X, g.Y, AirportRadius))
             {
-                return new MapHit(MapHitKind.Gate, route.Flight);
+                return new MapHit(MapHitKind.Gate, route.Flight, Node: route.Node);
             }
             foreach (var a in route.Airports)
             {
                 if (Near(x, y, a.X, a.Y, AirportRadius))
                 {
-                    return new MapHit(MapHitKind.Airport, route.Flight, a.Leg);
+                    return new MapHit(MapHitKind.Airport, route.Flight, a.Leg, Node: route.Node);
                 }
             }
-            if (Near(x, y, route.Destination.X, route.Destination.Y, AirportRadius))
+            if (Near(x, y, route.Destination.X, route.Destination.Y, route.PlaneAtDestination ? PlaneRadius : AirportRadius))
             {
-                return new MapHit(MapHitKind.Destination, route.Flight, PullRequest: route.Destination.PullRequest);
+                return new MapHit(MapHitKind.Destination, route.Flight, PullRequest: route.Destination.PullRequest, Node: route.Node);
             }
         }
         return null;

@@ -51,7 +51,7 @@ internal sealed record GuiOptions
     /// <summary>With <c>--peer</c> and <c>--snapshot</c>: what this node is called on the page (a live capture takes its machine prefix).</summary>
     public string? HereName { get; init; }
 
-    /// <summary>With <c>--page flights</c>: the map's layers to set, a comma list (landed, arcs, no-held, no-pr, node=&lt;key&gt;, closed).</summary>
+    /// <summary>With <c>--page flights</c>: the map's layers to set, a comma list (no-landed, arcs, no-held, no-pr, node=&lt;key&gt;, closed).</summary>
     public string? Layers { get; init; }
 
     /// <summary>With <c>--capture</c>: paint the window red on black, as the header's Night switch does.</summary>
@@ -90,7 +90,7 @@ internal sealed record GuiOptions
         var select = new Option<string?>("--select") { Description = "With --flight: drag over the page's text in the capture, from the run starting with the words before the | to the run starting with those after it" };
         var peer = new Option<string[]>("--peer") { Description = "With --capture: another node on the page, NAME=snapshot.json or a node's name or host:port (repeatable)" };
         var hereName = new Option<string?>("--here-name") { Description = "With --peer and --snapshot: what this node is called on the page" };
-        var layers = new Option<string?>("--layers") { Description = "With --page flights: the map's layers, a comma list: landed, arcs, no-held, no-pr, node=<key>, closed" };
+        var layers = new Option<string?>("--layers") { Description = "With --page flights: the map's layers, a comma list: no-landed, arcs, no-held, no-pr, node=<key>, closed" };
         var night = new Option<bool>("--night") { Description = "With --capture: paint the window with the Night palette" };
         var fold = new Option<string?>("--fold") { Description = "With --page prs: fold these orgs (SharpAstro) or repos (SharpAstro/pilot), comma-separated, so the capture shows them folded" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };

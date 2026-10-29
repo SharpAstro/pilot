@@ -45,7 +45,7 @@ internal static class SessionsCapture
         new(SessionLine.Build(snapshot.Sessions, snapshot.At), source, snapshot.At);
 
     /// <summary>
-    /// The map's layers a capture sets, from a comma list: <c>landed</c>, <c>arcs</c>, <c>no-held</c>, <c>no-pr</c>, <c>node=&lt;key&gt;</c>,
+    /// The map's layers a capture sets, from a comma list: <c>no-landed</c>, <c>arcs</c>, <c>no-held</c>, <c>no-pr</c>, <c>node=&lt;key&gt;</c>,
     /// <c>closed</c> (the layer menu rolled up). The settings a window keeps are not read by a capture, so each starts at its default.
     /// </summary>
     private static void ApplyLayers(FlightMapLayerState state, string layers)
@@ -54,7 +54,7 @@ internal static class SessionsCapture
         {
             switch (layer)
             {
-                case "landed": state.ShowLanded = true; break;
+                case "no-landed": state.ShowLanded = false; break;
                 case "arcs": state.ArcsOnly = true; break;
                 case "no-held": state.ShowHeld = false; break;
                 case "no-pr": state.ShowPrStates = false; break;
