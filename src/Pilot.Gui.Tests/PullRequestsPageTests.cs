@@ -450,8 +450,33 @@ public sealed class PullRequestsPageTests
         header = Button(arranged, "prs:group:SharpAstro/pilot");
         ClickAt(arranged, header.X + 4f, header.Y + header.Height / 2f);
         page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
-        Arrange(renderer, page, Screen());
+        arranged = Arrange(renderer, page, Screen());
         Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
+
+        // The link is the name and its ↗ only, not the header's width: a click just past it folds, it does not open GitHub (the owner, 2026-10-29).
+        name = Button(arranged, "prs:repo:SharpAstro/pilot");
+        header = Button(arranged, "prs:group:SharpAstro/pilot");
+        name.Width.ShouldBeLessThan(header.Width / 3f);
+        // The name is drawn whole on a wide page: its text leaf is as wide as the name measures (a plain star inside the
+        // content-capped stack was arranged 0 wide, and the bounds above could not tell).
+        var (measured, _) = renderer.MeasureText("SharpAstro/pilot", SessionsCapture.FontPath, 14f);
+        NameLeaf(arranged, "SharpAstro/pilot").Width.ShouldBeGreaterThanOrEqualTo(measured - 0.5f);
+        ClickAt(arranged, name.X + name.Width + 40f, header.Y + header.Height / 2f);
+        opened.Count.ShouldBe(1);
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+
+        // On a narrow page it gives way, but is never squeezed away or wider than its header.
+        var narrow = Arrange(renderer, page, Screen(), width: 520f);
+        var squeezed = NameLeaf(narrow, "SharpAstro/pilot").Width;
+        squeezed.ShouldBeGreaterThan(0f);
+        squeezed.ShouldBeLessThanOrEqualTo(Button(narrow, "prs:group:SharpAstro/pilot").Width);
+    }
+
+    // The arranged bounds of a repo header's name text: the leaf whose text is exactly the repo's name.
+    private static Rect<float> NameLeaf(ImmutableArray<Layout.ArrangedNode<float>> arranged, string repo)
+    {
+        var leaf = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v == repo);
+        return leaf.Bounds;
     }
 
     [Fact]
