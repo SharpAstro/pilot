@@ -68,10 +68,9 @@ internal static class PullRequestActions
                 offered.Add(new(PullRequestActionKind.AddressReview, "Address review",
                     $"Start a fixer on {name}'s branch with the review's findings (pilot review fix)"));
             }
-            else if (FindingsChoice(cards, owner) is { } fix)
+            else if (AddressReviewOf(cards, owner) is { } fix)
             {
-                offered.Add(new(PullRequestActionKind.AddressReview, "Address review",
-                    $"Send {owner}'s last leg round on the review's findings, as its card's Fix the review's findings does", fix.Card, fix.Number));
+                offered.Add(fix);
             }
         }
         if (pr.Review is null)
@@ -81,6 +80,16 @@ internal static class PullRequestActions
         offered.Add(new(PullRequestActionKind.Open, "Open" + Followable.Away, $"Open {name} on GitHub"));
         return offered;
     }
+
+    /// <summary>
+    /// A flight's Address review: its open review-changes card's go-around, as the PR page offers it and the flight page does too
+    /// (one tooltip, one card lookup). Null when the flight has no such card open. The caller has checked that the review asks for changes.
+    /// </summary>
+    internal static PullRequestAction? AddressReviewOf(IReadOnlyList<CardRow> cards, string code) =>
+        FindingsChoice(cards, code) is { } fix
+            ? new(PullRequestActionKind.AddressReview, "Address review",
+                $"Send {code}'s last leg round on the review's findings, as its card's Fix the review's findings does", fix.Card, fix.Number)
+            : null;
 
     /// <summary>What the go-around of a review-changes card starts with when the review found things to fix (not a conflict's or a failed check's).</summary>
     internal const string FindingsWords = "Fix the review's findings";
