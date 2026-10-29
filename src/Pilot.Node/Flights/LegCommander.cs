@@ -86,6 +86,12 @@ public sealed partial class LegCommander(
         {
             return await RunQueuedCoreAsync(command, cancellationToken);
         }
+        catch (Exception ex) when (held.Code is { } code)
+        {
+            // Given up (cancelled, the node stopping) or failed outright mid-merge: the entry leaves the queue with why, before the turn goes.
+            EndUnfinished(code, ex);
+            throw;
+        }
         finally
         {
             if (held.Code is { } code)

@@ -248,7 +248,62 @@ public sealed class MergesTests
     }
 
     [Fact]
-    public async Task TheMirrorKeepsTheEntriesLikeJobsAndTheCliPrintsARowForEach()
+    public async Task ANodeStartedOnEntriesNothingDrivesEndsThemWithWhyAndLeavesAMergingOne()
+    {
+        // A journal a node that went away left: entries open in every state, and no merge command behind any of them.
+        var folder = Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        var at = DateTimeOffset.UtcNow.AddMinutes(-10);
+        using (var journal = new FileJournal(Path.Combine(folder, "data", "store")))
+        {
+            var state = new NodeState(journal, TimeProvider.System);
+            var place = 0;
+            foreach (var (code, entry) in new[] { ("TIA1", MergeEntryState.Merging), ("TIA2", MergeEntryState.Updating), ("TIA3", MergeEntryState.Batched), ("TIA4", MergeEntryState.Waiting), ("TIA5", MergeEntryState.Checks) })
+            {
+                place++;
+                state.PutMerge(new MergeRow { Flight = code, Repo = "tianwen", Pr = 60 + place, Head = PrHead, Method = "rebase", State = entry, Place = place, AddedAt = at.AddSeconds(place) });
+            }
+        }
+
+        await using var node = await NodeHarness.StartAsync(Ct, folder: folder);
+        await Until(() => node.State.Merges().Count(m => m.Open) == 1, "every entry nothing drives ended");
+
+        foreach (var code in new[] { "TIA2", "TIA3", "TIA4" })
+        {
+            (Entry(node, code).State, Entry(node, code).Place).ShouldBe((MergeEntryState.Dropped, null));
+            Entry(node, code).Why.ShouldNotBeNull().ShouldContain("node restarted");
+        }
+        // Waiting for checks with no merge armed on its flight: nothing would ever take it.
+        Entry(node, "TIA5").State.ShouldBe(MergeEntryState.Dropped);
+        Entry(node, "TIA5").Why.ShouldNotBeNull().ShouldContain("no longer armed");
+        // GitHub's own queue may hold a merging one: the landing ends it, and it is first in its repo's queue now.
+        (Entry(node, "TIA1").State, Entry(node, "TIA1").Place).ShouldBe((MergeEntryState.Merging, 1));
+    }
+
+    [Fact]
+    public async Task AtEachLookAnEntryWhoseArmIsGoneEndsWhileAnArmedOneAndOneWaitingForItsReviewStay()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var armed = Flight(node, "TIA1");
+        node.State.PutFlight(armed with { MergeWhenGreen = [PrHead, "rebase", LegCommander.ArmedByNode] });
+        Flight(node, "TIA2", review: ReviewState.Reviewing);
+        Flight(node, "TIA3");
+        var at = DateTimeOffset.UtcNow;
+        node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, Why = "merging when checks pass", AddedAt = at });
+        node.State.PutMerge(new MergeRow { Flight = "TIA2", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, AwaitsReview = true, AddedAt = at.AddSeconds(1) });
+        // TIA3's arm was cleared (GitHub showed its PR behind its base), and its entry still says it merges when checks pass.
+        node.State.PutMerge(new MergeRow { Flight = "TIA3", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, Why = "merging when checks pass", AddedAt = at.AddSeconds(2) });
+
+        await node.App.Services.GetRequiredService<LegCommander>().LookAtMergesAsync(Ct);
+
+        (Entry(node, "TIA1").State, Entry(node, "TIA1").Place).ShouldBe((MergeEntryState.Checks, 1));
+        (Entry(node, "TIA2").State, Entry(node, "TIA2").Place).ShouldBe((MergeEntryState.Checks, 2));
+        Entry(node, "TIA3").State.ShouldBe(MergeEntryState.Dropped);
+        Entry(node, "TIA3").Why.ShouldNotBeNull().ShouldContain("no longer armed");
+        node.GitHub.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheMirrorKeepsTheEntriesLikeJobsAndALineSaysEachEntrysFields()
     {
         var at = DateTimeOffset.UtcNow;
         var row = new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "squash", State = MergeEntryState.Checks, Why = "merging when checks pass", Place = 1, AddedAt = at };
@@ -264,6 +319,5 @@ public sealed class MergesTests
         mirror.Merges.Keys.ShouldBe(["TIA2"]);
 
         PilotCommand.MergeLine(row).ShouldBe($"TIA1  #63  tianwen  1  {PrHead[..8]}  checks  · merging when checks pass");
-        await Task.CompletedTask;
     }
 }

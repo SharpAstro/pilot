@@ -380,9 +380,21 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn (`updating`, `merging`, `batched`: a batch holds it while its CI runs), so an
   entry left by a node that went away holds nothing. An entry armed in `checks` (its command ended) leaves the turn on purpose: the next
   entry is updated and merged, and the armed one is brought up to date again, by the same plain merge, when its checks go green.
+  **No entry stands open with nothing driving it.** A merge command that ends in an exception (given up, the node stopping) drops its
+  entry with why on its way out (`EndUnfinished`), and a batch that ends that way puts its members back to waiting first. At node start
+  and at each look `EndLeftMerges` drops every `waiting`, `updating` or `batched` entry whose flight has no merge command under way, and
+  every `checks` entry not waiting for a review whose merge is no longer armed (an arm cleared for a conflict or a stale base drops its
+  entry too); `merging` rows are left to the landing, as GitHub's own queue may hold them. So `pilot merges` lists nothing in flight
+  that nobody works on, and no place is counted for it. **The node's look never waits for a repo's turn:** the armed merge at green
+  (`MergeWhenGreenAsync`), the autopilot's merge and `LookAtMergesAsync` skip a flight whose repo has a merge command under way
+  (`TurnHeld`) and ask at a later look, so a batch holding the turn through its CI stalls no other PR's look.
 - **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
   takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries with a passed review at their head and green
-  checks. With two or more ready, `MergeBatcher` builds `pilot/batch/<repo>-<n>` from `origin/<base>` in a throwaway worktree, merges
+  checks. **A batch forms only from merge commands that overlap:** one holds the repo's turn while at least two more wait behind it,
+  as Merges pressed while another merge of the repo is under way do. The node's own asks (armed at green, autopilot) come one at a
+  time and are skipped while the turn is held, so they never batch. With two or more ready, `MergeBatcher` builds
+  `pilot/batch/<repo>-<n>` from `origin/<base>` (the flight's `Base` is `origin/main`; the batcher is given the branch, `main`, as a
+  PR is) in a throwaway worktree, merges
   each PR head in with `git merge --no-edit` and pushes the branch plainly. A pushed branch starts no CI in these repos (`dotnet.yml`
   runs on a push to `main`, a `pull_request` to `main` and a merge group), so the batcher opens a **draft PR** from the batch branch
   to the base (`OpenDraftAsync`, titled `pilot merge batch: #a, #b`) and waits once for its CI: green is that PR's checks passed and

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -50,12 +51,13 @@ public sealed class MergeBatchTests
         }
     }
 
+    // A flight as the node keeps it: its base is the remote's branch (origin/main), as Planes.RemoteBaseAsync sets it.
     private static FlightRow Flight(NodeHarness node, string code, int pr)
     {
         var row = new FlightRow
         {
             Code = code, Repo = "tianwen", RepoPath = Path.Combine(node.Folder, "tianwen"), Issue = 1, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = Path.Combine(node.Folder, $"plane-{code}"),
-            Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = pr, PullRequestUrl = $"https://github.com/x/tianwen/pull/{pr}",
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = pr, PullRequestUrl = $"https://github.com/x/tianwen/pull/{pr}",
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead },
         };
         node.State.PutFlight(row);
@@ -79,8 +81,9 @@ public sealed class MergeBatchTests
     }
 
     // A node whose first merge (TIA9, alone) is held at GitHub, so the flights asked of next stand waiting in the queue together;
-    // the returned release lets TIA9 go, and the entries behind it are taken.
-    private static async Task<(NodeHarness Node, BatchGit Git, TaskCompletionSource Release, Task<CommandResult> Held, string[] Waiting)> QueueAsync(bool batch, string[] codes, string ci)
+    // the returned release lets TIA9 go, and the entries behind it are taken. Each of them is asked by merge (the client's Merge by default).
+    private static async Task<(NodeHarness Node, BatchGit Git, TaskCompletionSource Release, Task<CommandResult> Held, string[] Waiting)> QueueAsync(bool batch, string[] codes, string ci,
+        Func<NodeHarness, string, Task<CommandResult>>? merge = null)
     {
         var node = await NodeHarness.StartAsync(Ct);
         var git = new BatchGit();
@@ -114,7 +117,7 @@ public sealed class MergeBatchTests
         }
         foreach (var code in codes)
         {
-            _ = Merge(node, code);
+            _ = (merge ?? Merge)(node, code);
             await Until(() => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
         }
         return (node, git, release, held, codes);
@@ -149,6 +152,9 @@ public sealed class MergeBatchTests
 
         // Only TIA9 (alone) went through GitHub's merge: the batch's two PRs landed with the base's push.
         node.GitHub.Merged.ShouldHaveSingleItem().Number.ShouldBe(9);
+        // The flights' base is origin/main: the batch starts from it, its draft PR goes into main and the base pushed is main.
+        git.Calls.ShouldContain(c => c.StartsWith("worktree add -B pilot/batch/tianwen-1 ", StringComparison.Ordinal) && c.EndsWith(" origin/main", StringComparison.Ordinal));
+        git.Calls.ShouldNotContain(c => c.Contains("origin/origin/", StringComparison.Ordinal) || c.Contains("refs/heads/origin/", StringComparison.Ordinal));
         git.Calls.Count(c => c.StartsWith("merge --no-edit ", StringComparison.Ordinal)).ShouldBe(2);
         git.Calls.ShouldContain("push --quiet origin pilot/batch/tianwen-1");
         git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
@@ -288,6 +294,158 @@ public sealed class MergeBatchTests
         // The batch holds TIA1 and TIA3; TIA2's merge conflicted and was aborted, and it was merged as a single entry.
         git.Calls.ShouldContain("merge --abort");
         git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
+    }
+
+    [Fact]
+    public async Task ABatchOfARealRepoStartsFromOriginMainAndLandsBothPrsOnMainWithAPlainPush()
+    {
+        // The git the batch runs, against a bare origin: what a faked git cannot show (the remote's names, the merges, the pushes).
+        var root = Path.Combine(Path.GetTempPath(), "p2batch-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        try
+        {
+            var remote = Path.Combine(root, "remote.git");
+            var repo = Path.Combine(root, "repo");
+            Git(root, "init", "-q", "--bare", "-b", "main", "remote.git");
+            Git(root, "clone", "-q", remote, "repo");
+            Git(repo, "config", "user.email", "t@example.com");
+            Git(repo, "config", "user.name", "t");
+            File.WriteAllText(Path.Combine(repo, "base.txt"), "base\n");
+            Git(repo, "add", "-A");
+            Git(repo, "commit", "-q", "-m", "base");
+            Git(repo, "push", "-q", "origin", "main");
+            var heads = new List<string>();
+            foreach (var name in new[] { "one", "two" })
+            {
+                Git(repo, "checkout", "-q", "-b", $"flight/{name}", "main");
+                File.WriteAllText(Path.Combine(repo, $"{name}.txt"), name + "\n");
+                Git(repo, "add", "-A");
+                Git(repo, "commit", "-q", "-m", name);
+                Git(repo, "push", "-q", "origin", $"flight/{name}");
+                heads.Add(Git(repo, "rev-parse", "HEAD"));
+            }
+            Git(repo, "checkout", "-q", "main");
+            var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
+            var batcher = new MergeBatcher(new GitCli(), github) { PollEvery = TimeSpan.FromMilliseconds(5) };
+
+            var result = await batcher.RunAsync("tianwen", repo, "main", [new BatchEntry("TIA1", 10, heads[0]), new BatchEntry("TIA2", 11, heads[1])], Ct);
+
+            (result.Green, result.Landed).ShouldBe((true, true), result.Why);
+            result.Included.ShouldBe(["TIA1", "TIA2"]);
+            // main on the remote holds both PRs' heads: a fast-forward to the batch, so nothing of main was lost either.
+            var main = Git(remote, "rev-parse", "main");
+            foreach (var head in heads)
+            {
+                Git(remote, "merge-base", "--is-ancestor", head, main);
+            }
+            github.Drafts.ShouldHaveSingleItem().ShouldBe((901, "pilot/batch/tianwen-1", "main", "pilot merge batch: #10, #11"));
+            github.ClosedPrs.ShouldBe([901]);
+            // The batch is gone again: no remote or local branch of it, no worktree, and no branch named for the remote.
+            Git(remote, "branch", "--list", "pilot/batch/*").ShouldBeEmpty();
+            Git(remote, "branch", "--list", "origin/*").ShouldBeEmpty();
+            Git(repo, "branch", "--list", "pilot/batch/*").ShouldBeEmpty();
+            Git(repo, "worktree", "list", "--porcelain").Split('\n').Count(l => l.StartsWith("worktree ", StringComparison.Ordinal)).ShouldBe(1);
+        }
+        finally
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ABatchGivenUpWhileItsCiRunsPutsItsOtherMembersBackAndTheyMergeOneAtATime()
+    {
+        // TIA1 takes the turn and leads the batch; its command is the one given up, by its caller, while the batch's CI runs.
+        using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        Task<CommandResult>? leader = null;
+        var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2", "TIA3"], "success", (on, code) => code != "TIA1" ? Merge(on, code)
+            : (leader = on.App.Services.GetRequiredService<LegCommander>().RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead], Who = "tests" }, giveUp.Token)));
+        await using var disposing = node;
+        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+        node.App.Services.GetRequiredService<LegCommander>().Batcher.CiBudget = TimeSpan.FromHours(1);
+
+        release.TrySetResult();
+        await held;
+        await Until(() => new[] { "TIA1", "TIA2", "TIA3" }.All(code => Entry(node, code).State == MergeEntryState.Batched), "the batch of three waits on its CI");
+        await giveUp.CancelAsync();
+
+        (await Record.ExceptionAsync(() => leader!)).ShouldBeAssignableTo<OperationCanceledException>();
+        // The two left are not Batched waiting on each other for good: each takes its turn and merges on its own.
+        await Until(() => node.GitHub.Merged.Count == 3, "TIA2 and TIA3 merged one at a time after TIA9");
+        await Until(() => Entry(node, "TIA2").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging, "TIA2 and TIA3 merging");
+        Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Dropped);
+        Entry(node, "TIA1").Why.ShouldNotBeNull().ShouldContain("given up");
+        git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
+        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        node.GitHub.ClosedPrs.ShouldBe([901]);
+    }
+
+    [Fact]
+    public async Task TheNodesLookSkipsAMergeWhoseReposTurnIsHeldAndAsksItAtTheNextLook()
+    {
+        var node = await NodeHarness.StartAsync(Ct);
+        await using var disposing = node;
+        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        node.GitHub.Queues = true;
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = 0;
+        node.GitHub.OnCall = async call =>
+        {
+            if (call == nameof(IGitHub.MergeAsync) && Interlocked.Increment(ref first) == 1)
+            {
+                reached.TrySetResult();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+        };
+        // TIA9's merge holds tianwen's turn (as a batch holds it through its CI).
+        Flight(node, "TIA9", 9);
+        var held = Merge(node, "TIA9");
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        // TIA2 waits in the queue for a review that has now passed at its head; TIA1's merge was armed while its checks ran, and they
+        // are green now. TIA1 is made last, so the PR GitHub shows is its own.
+        Flight(node, "TIA2", 11);
+        node.State.PutMerge(new MergeRow
+        {
+            Flight = "TIA2", Repo = "tianwen", Pr = 11, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, AwaitsReview = true, AddedAt = DateTimeOffset.UtcNow,
+        });
+        var armed = Flight(node, "TIA1", 10);
+        node.State.PutFlight(armed with { MergeWhenGreen = [PrHead, "rebase", LegCommander.ArmedByNode] });
+        var checks = node.App.Services.GetRequiredService<PrChecks>();
+
+        // The look neither waits for the turn nor gives up the arm: it returns at once, and nothing of TIA1 or TIA2 is asked.
+        await checks.LookAsync(Ct).WaitAsync(TimeSpan.FromSeconds(4), Ct);
+
+        node.State.Merges().ShouldNotContain(m => m.Flight == "TIA1");
+        Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Checks);
+        node.State.Flights().Single(f => f.Code == "TIA1").MergeWhenGreen.ShouldNotBeNull();
+        node.GitHub.Merged.ShouldBeEmpty();
+
+        release.TrySetResult();
+        (await held).Error.ShouldBeNull();
+        await checks.LookAsync(Ct);
+
+        Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Merging);
+        Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Merging);
+        node.GitHub.Merged.Count.ShouldBe(3);
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
     [Fact]

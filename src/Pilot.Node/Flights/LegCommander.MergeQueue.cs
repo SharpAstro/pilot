@@ -93,9 +93,10 @@ public sealed partial class LegCommander
         return row;
     }
 
+    // Only an entry still in the queue moves: one that left (dropped when its command was given up mid-batch) is never opened again.
     private void SetEntry(string code, MergeEntryState to, string? why, bool awaitsReview = false, string? head = null)
     {
-        if (state.Merges().FirstOrDefault(m => m.Flight == code) is { } held)
+        if (state.Merges().FirstOrDefault(m => m.Flight == code) is { Open: true } held)
         {
             state.PutMerge(held with { State = to, Why = why, AwaitsReview = awaitsReview, Head = head ?? held.Head, ChangedAt = time.GetUtcNow() });
             state.Renumber(held.Repo);
@@ -104,6 +105,64 @@ public sealed partial class LegCommander
 
     /// <summary>Takes the entry out of its queue with <paramref name="why"/>: a conflict, a failed check, a refusal.</summary>
     public void DropMerge(string code, string why) => state.EndMerge(code, MergeEntryState.Dropped, why);
+
+    /// <summary>
+    /// Whether a merge command of <paramref name="repo"/> is under way: one asked there now would wait for the repo's turn inside its
+    /// command (for as long as a batch's CI runs), so the node's own look asks it at a later look instead of waiting on it.
+    /// </summary>
+    public bool TurnHeld(string repo)
+    {
+        lock (_turns)
+        {
+            return _active.Count > 0 && state.Merges().Any(m => m.Repo == repo && m.Open && _active.Contains(m.Flight));
+        }
+    }
+
+    /// <summary>
+    /// Ends every open entry that nothing drives, with a why: one waiting, updating or batched whose flight has no merge command under
+    /// way (left by a node that went away, or by a command given up) ends with <paramref name="why"/>, and one waiting for its checks
+    /// whose merge is no longer armed ends too. A merging one is left alone: GitHub's own queue may hold it, and the landing ends it.
+    /// Run at node start and at each look, so <c>pilot merges</c> lists no entry in flight that nobody works on, and no place is counted
+    /// for one.
+    /// </summary>
+    public void EndLeftMerges(string why)
+    {
+        lock (_turns)
+        {
+            // Under the turns' lock: a command adds itself before its entry is put, and sets its entry's last state before it leaves.
+            foreach (var entry in state.Merges().Where(m => m.Open && !_active.Contains(m.Flight)))
+            {
+                var left = entry.State switch
+                {
+                    MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Batched => why,
+                    MergeEntryState.Checks when !entry.AwaitsReview && state.Flights().FirstOrDefault(f => f.Code == entry.Flight) is not { MergeWhenGreen: not null }
+                        => "its merge is no longer armed: merge again once the PR is ready",
+                    _ => null,
+                };
+                if (left is not null)
+                {
+                    DropMerge(entry.Flight, left);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A merge command that ended in something other than an answer (given up, the node stopping, a failure past the queue's own): its
+    /// entry is not left waiting, updating or batched with no command behind it. One a green batch already landed ends merged.
+    /// </summary>
+    private void EndUnfinished(string code, Exception ex)
+    {
+        if (TakeLanded(code) is { } batch)
+        {
+            state.EndMerge(code, MergeEntryState.Merged, $"landed with {batch}; its merge command ended before the flight landed");
+            return;
+        }
+        if (state.Merges().FirstOrDefault(m => m.Flight == code) is { State: MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Batched })
+        {
+            DropMerge(code, ex is OperationCanceledException ? "its merge command was given up before it merged: merge again" : $"its merge command failed: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// Waits, without the lock, for the entry's turn in its repo: none of its repo's other entries under way is being updated or
@@ -188,11 +247,24 @@ public sealed partial class LegCommander
             {
                 SetEntry(member.Flight, MergeEntryState.Batched, $"in a batch of {members.Count} PRs: its CI runs once for them");
             }
-            result = await Batcher.RunAsync(repo, leader.RepoPath, leader.Base, members, cancellationToken);
+            // The batch takes the branch the PRs go into (origin/main is main): the batcher names the remote itself.
+            result = await Batcher.RunAsync(repo, leader.RepoPath, BaseBranch(leader), members, cancellationToken);
         }
         catch (FlightException ex)
         {
             result = new BatchResult("pilot/batch", [], [], false, false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            // Given up (the leader's command cancelled, the node stopping) or failed outright: no member stays Batched, each waiting
+            // on the others for good. The others wait for their turn again and the leader's command ends its own entry.
+            foreach (var (entry, _) in ready)
+            {
+                SetEntry(entry.Flight, entry.Flight == code ? MergeEntryState.Updating : MergeEntryState.Waiting,
+                    $"its batch ended unfinished ({(ex is OperationCanceledException ? "given up" : ex.Message)}): merged one at a time");
+            }
+            Signal();
+            throw;
         }
         if (result.NeverStarted)
         {
@@ -201,6 +273,16 @@ public sealed partial class LegCommander
         foreach (var (entry, _) in ready)
         {
             var left = result.LeftOut.FirstOrDefault(l => l.Flight == entry.Flight).Why;
+            bool driven;
+            lock (_turns)
+            {
+                driven = _active.Contains(entry.Flight);
+            }
+            if (!driven)
+            {
+                // Its command was given up while the batch ran, which ended its entry: nothing is left to hand it.
+                continue;
+            }
             if (result.Landed && result.Included.Contains(entry.Flight))
             {
                 _landedInBatch[entry.Flight] = result.Branch;
@@ -221,12 +303,14 @@ public sealed partial class LegCommander
     private string? TakeLanded(string code) => _landedInBatch.TryRemove(code, out var batch) ? batch : null;
 
     /// <summary>
-    /// What the node does of its own with the queue at each look: an entry waiting for a fresh review is merged once the review
-    /// has passed at its head (it goes through the queue again), dropped when the review asks for changes, and one whose flight
-    /// is gone leaves. Entries of a command under way are that command's.
+    /// What the node does of its own with the queue at each look: an entry nothing drives any more ends (<see cref="EndLeftMerges"/>);
+    /// an entry waiting for a fresh review is merged once the review has passed at its head (it goes through the queue again), dropped
+    /// when the review asks for changes, and one whose flight is gone leaves. Entries of a command under way are that command's, and one
+    /// whose repo's turn is held is asked at a later look rather than waited on here.
     /// </summary>
     public async Task LookAtMergesAsync(CancellationToken cancellationToken)
     {
+        EndLeftMerges("no merge command drives it any more (given up, or the node went away): merge again");
         foreach (var entry in state.Merges().Where(m => m is { Open: true, State: MergeEntryState.Checks, AwaitsReview: true }))
         {
             bool busy;
@@ -249,6 +333,11 @@ public sealed partial class LegCommander
                     DropMerge(entry.Flight, "its review asks for changes");
                     break;
                 case { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } reviewed } when flight.PullRequest is not null:
+                    // Another merge of its repo holds the turn: the look goes on, and this one is asked at a later look.
+                    if (TurnHeld(entry.Repo))
+                    {
+                        break;
+                    }
                     // GitHub still shows the head before the update: the entry waits for it to show the head the review carried to.
                     if (await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken) is not { } shown || !shown.Head.StartsWith(reviewed, StringComparison.OrdinalIgnoreCase))
                     {

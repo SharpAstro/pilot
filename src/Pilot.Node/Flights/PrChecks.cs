@@ -42,6 +42,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        // Merge entries a node that went away left open have no command behind them: they end before anything else is looked at.
+        legs?.EndLeftMerges("the node restarted while it waited: merge again");
         while (!stopping.IsCancellationRequested)
         {
             try
@@ -367,7 +369,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // queue cleared is told only that it was.
             string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
                 : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
-                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. The watchtower merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
                     : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
@@ -428,6 +430,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url,
                         summary: $"The PR #{number} of {flight.Code} fails its checks. The node could not send the last leg back to fix them (the detail says why). Redo the last leg from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.");
                 }
+                continue;
+            }
+            // Another merge of its repo holds the turn (a batch holds it through its CI): asked at a later look, as the merge stays armed,
+            // rather than waited on here while every other PR goes unlooked at.
+            if (dropped is null && legs is not null && legs.TurnHeld(flight.Repo))
+            {
                 continue;
             }
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
@@ -521,16 +529,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             state.PutFlight(now with { MergeWhenGreen = null });
         }
         var subject = Verbs.FlightTarget(flight.Code);
-        if (merge.Kind is not (MergeKinds.Conflicts or MergeKinds.Behind))
+        // The arm is gone, so its entry leaves the queue too: a conflicting or behind PR is brought up to date by the card loop and
+        // offered again, never merged from this entry.
+        legs?.DropMerge(flight.Code, merge.Kind switch
         {
-            legs?.DropMerge(flight.Code, merge.Kind switch
-            {
-                MergeKinds.Ready => "GitHub's auto-merge was turned off",
-                MergeKinds.ChangesRequested => "a review asks for changes",
-                MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
-                _ => $"GitHub shows it as {merge.Kind}",
-            });
-        }
+            MergeKinds.Ready => "GitHub's auto-merge was turned off",
+            MergeKinds.ChangesRequested => "a review asks for changes",
+            MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
+            MergeKinds.Conflicts => "it conflicts with its base: the base is merged in, and the merge offered again once that stands",
+            MergeKinds.Behind => "it is behind its base: the base is merged in, and the merge offered again once that stands",
+            _ => $"GitHub shows it as {merge.Kind}",
+        });
         if (legs is not null && ShowingMerge(subject) is { } card)
         {
             legs.ShowMergeState(card, merge, pr.Head);
@@ -724,6 +733,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         if (legs is not { Models.Autopilot: true } || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
+            // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
+            || legs.TurnHeld(flight.Repo)
             || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
         {
             return;
