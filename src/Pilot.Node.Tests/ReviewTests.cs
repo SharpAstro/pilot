@@ -520,7 +520,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((pr, true));
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s review asks for changes"));
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s PR fails its checks"));
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
@@ -930,6 +930,22 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AReviewerThatDoesNotStartRaisesAReviewAgainCardThatSendsNothingRound()
+    {
+        // The review of #453: this card said "found things to fix" when no review had run.
+        var flight = await NewFlight("71", "parser");
+        await Fly(flight, "parser");
+        _workers.Fail = new FlightException("claude --bg did not start: folder not trusted");
+
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA71"), "controller");
+
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
+        card.Title.ShouldBe("TIA71's review did not start");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Review again", Verbs.StartReview), ("Ready anyway", Verbs.Review)]);
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Review again starts it again");
+    }
+
+    [Fact]
     public async Task APassedPrWhoseChecksFailIsSentBackAsChangesOnceAHeadSoItsDoneLegGoesAround()
     {
         var flight = await NewFlight("7", "parser");
@@ -943,9 +959,11 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         F("TIA7").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        // Its button says the checks, not a review's findings (the review of #453).
+        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Fix the failing checks");
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's review asks for changes"));
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's PR fails its checks"));
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1599,6 +1617,14 @@ public sealed class ReviewTests3 : ReviewTestsBase
         // No one is asked: the node sends the done leg round to resolve it.
         _state.Legs("TIA8").ShouldHaveSingleItem().State.ShouldBe(LegState.Flying);
         Open().ShouldNotContain(c => c.Kind == "pr-conflicts");
+        // The card it raised (closed by the go-around) said what happened, with its own button, and told the worker the conflict,
+        // not "the review asked for changes" (the review of #453).
+        var card = _state.Cards().Last(c => c.Kind == LegCommander.ReviewChanges && c.Subject == Verbs.FlightTarget("TIA8"));
+        card.Title.ShouldBe("TIA8's PR conflicts with its base");
+        var resolve = card.Choices.Single(c => c.Verb == Verbs.GoAround);
+        resolve.Label.ShouldBe("Resolve the conflict");
+        resolve.Args.ShouldNotBeNull().Single().ShouldNotStartWith("the review asked");
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The PR of TIA8/parser conflicts with its base. Resolve the conflict has a worker do it");
     }
 
     [Fact]
@@ -1626,7 +1652,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AReviewAskingForChangesOfALegGoneAroundTwiceOffersARedoNamingRedo3AndOpus()
+    public async Task AReviewAskingForChangesOfALegGoneAroundTwiceOffersToFixItsFindingsNamingRound3AndOpus()
     {
         var flight = await NewFlight("2", "parser");
         await Fly(flight, "parser");
@@ -1637,9 +1663,10 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        var redo = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        redo.Label.ShouldContain("redo 3");
-        redo.Label.ShouldContain("Opus");
+        var fix = card.Choices.Single(c => c.Verb == Verbs.GoAround);
+        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29).
+        fix.Label.ShouldBe("Fix the review's findings (round 3, on Opus at xhigh)");
+        fix.Label.ShouldContain("Opus");
     }
 
     [Fact]
@@ -1653,7 +1680,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];

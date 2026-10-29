@@ -201,6 +201,13 @@ public sealed partial class RoleModels
         return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
     }
 
+    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
+    public string SendBackLabel(LegRow leg, string words)
+    {
+        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
+        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
+    }
+
     private static string Step(string? effort, int by, string whenUnset) =>
         Array.IndexOf(Efforts.ToArray(), effort) is var at and >= 0 ? Efforts[Math.Clamp(at + by, 0, Efforts.Count - 1)] : whenUnset;
 

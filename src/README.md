@@ -334,15 +334,15 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   rebases the plane `--onto` the base from that head (the merged commits drop out, squashed or not), pushes, opens the new
   PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
   done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
-- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
-  for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
+- `pilot review changes <changes>` rings with **Fix the review's findings** (a go-around of the last leg on its work as it stands, told the
+  changes, nothing thrown away; a done leg may go around for a review; from the second round the button names the round and the model) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
   before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
-  closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not update cleanly is taken as changes too: the ring's **Redo leg**
+  closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
+- A passed PR that conflicts with its base and does not update cleanly is taken as changes too: the ring's **Resolve the conflict**
   sends the last leg's worker to merge the base in (a squash or merge repo) or rebase onto it (a rebase-queue repo), keeping both sides' work.
 - **How a flight's branch is brought up to date** (`RebaseOntoBaseAsync`, before every push and before the merge queue) is read once per
   repo from GitHub and kept (`IGitHub.UpdateWayAsync`, like `AutoMergeAllowedAsync`): the default branch's ruleset `merge_queue`
