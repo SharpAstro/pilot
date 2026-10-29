@@ -135,6 +135,41 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Changed?.Invoke();
     }
 
+    /// <summary>The name of the node whose watchtower the page talks to: the chosen node's, else this window's own (its mark, else its machine).</summary>
+    internal string WatchtowerOwner => Node?.Name ?? Nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>Whether another node's chat can be read from here; null asks <see cref="LoadOn"/>. A node that cannot says so on its pill.</summary>
+    public Func<NodeMark, bool>? CanRead { get; set; }
+
+    private bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
+
+    // The top bar's node pills on this page: one choice of watchtower, the current one lit; none while there is one node.
+    private List<Layout.Node> NodePills()
+    {
+        var pills = new List<Layout.Node>();
+        if (Nodes is not { Choices.Count: > 1 } nodes)
+        {
+            return pills;
+        }
+        var night = Night?.Palette;
+        var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        var current = Node?.Where;
+        foreach (var choice in nodes.Choices)
+        {
+            var chosen = choice.Here ? current is null : choice.Where == current;
+            var down = nodes.Down.TryGetValue(choice.Key, out var since);
+            var label = NodeFilter.Label(choice, since, down);
+            if (!Readable(choice))
+            {
+                label += " · chat not readable";
+            }
+            var picked = choice;
+            pills.Add(CardsView<TSurface>.HeaderPill(label, $"chat:node:{choice.Key}", () => SwitchTo(picked), chosen ? lit : plain, down || !Readable(choice) ? night?.Dim ?? Palette.Current.Dim : night?.Bright));
+        }
+        return pills;
+    }
+
     // What the page reads and sends through now: this node's, or the chosen node's.
     private Func<int, CancellationToken, Task<ChatPage>>? CurrentLoad() => Node is { } node
         ? (after, ct) => LoadOn is { } on ? on(node, after, ct) : throw new InvalidOperationException($"{node.Name}'s chat cannot be read from here")
@@ -430,11 +465,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 Changed?.Invoke();
             }));
         }
-        if (Node is not null)
-        {
-            buttons.Add(CardsView<TSurface>.HeaderPill("This node's watchtower", "chat:back", () => SwitchTo(null)));
-        }
-        else if (OnRestart is not null && Load is not null)
+        if (Node is null && OnRestart is not null && Load is not null)
         {
             if (_confirmRestart)
             {
@@ -459,11 +490,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "chat")
+        var top = TopBar.Build(new PageHeader($"{WatchtowerOwner}'s watchtower")
         {
             Buttons = buttons,
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.

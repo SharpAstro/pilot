@@ -473,6 +473,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
         ? chat
         : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.CanRead = node => clients.For(node, command: false) is not null;
     chrome.Chat.OnSendOn = async (node, text) =>
     {
         if (clients.For(node) is not { } to)

@@ -68,6 +68,84 @@ public sealed class ChatTests
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
     }
 
+    private static readonly NodeMark Own = new("here", "/sock", "DE1", Here: true);
+    private static readonly NodeMark Other = new("se1", "http://se1", "SE1", Here: false);
+
+    private static ChatView<RgbaImage> TwoNodes(RgbaImageRenderer renderer, NodeFilter nodes, List<string> read)
+    {
+        var chat = NewChat(renderer);
+        chat.Nodes = nodes;
+        nodes.Choices = [Own, Other];
+        chat.LoadOn = (node, after, _) =>
+        {
+            read.Add($"{node.Name}@{after}");
+            return Task.FromResult(new ChatPage { Entries = after < 0 ? [new TranscriptEntry { Index = 0, Kind = TranscriptKind.Assistant, Text = "from SE1", At = At }] : [], Total = 1 });
+        };
+        return chat;
+    }
+
+    [Fact]
+    public async Task TheHeaderNamesWhoseWatchtowerItIsOwnNodeAndOtherAndSwitchingReadsTheOthersFeedFromItsStart()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var read = new List<string>();
+        var chat = TwoNodes(renderer, nodes, read);
+        await Read(chat, 6);
+
+        Described(chat).ShouldContain("DE1's watchtower");
+        chat.Input.Placeholder.ShouldBe("Message the watchtower");
+
+        chat.Open();
+        Click(chat, "chat:node:se1");
+        for (var i = 0; i < 100 && chat.Entries.Count != 1; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+
+        chat.Node.ShouldBe(Other);
+        chat.Entries.Single().Text.ShouldBe("from SE1");
+        read[0].ShouldBe("SE1@-1");
+        Described(chat).ShouldContain("SE1's watchtower");
+        Described(chat).ShouldNotContain("DE1's watchtower");
+        chat.Tree();
+        chat.Input.Placeholder.ShouldBe("Message SE1's watchtower");
+        nodes.Picked.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheTopBarOfTheChatPageHasOneChosenNodePillWhateverTheWindowFilterPicks()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var chat = TwoNodes(renderer, nodes, []);
+        nodes.Restore(["here", "se1"]);
+
+        var text = Described(chat);
+
+        text.ShouldNotContain("All nodes");
+        text.ShouldContain("DE1 (this)");
+        text.ShouldContain("SE1");
+        chat.Render(new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        chat.CollectPaintedRegions(regions);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("chat:node:")).ShouldBe(["chat:node:here", "chat:node:se1"]);
+        chat.Node.ShouldBeNull();
+        nodes.Picked.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void ANodeWhoseChatCannotBeReadSaysSoOnItsPill()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var chat = TwoNodes(renderer, nodes, []);
+        chat.CanRead = _ => false;
+
+        Described(chat).ShouldContain("SE1 · chat not readable");
+    }
+
     [Fact]
     public async Task NewWatchtowerAsksFirstThenRestartsItAndKeepItLeavesIt()
     {
