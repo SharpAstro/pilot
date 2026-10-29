@@ -847,7 +847,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
             var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
-            var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
+            var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}{(LegDetail.AttemptOf(leg) is { } attempt ? $" · {attempt}" : "")}";
             legs.Add(Layout.Builder.HStack(
                     Whole(Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WStar(1f, 0f, 150f), $"{leg.Order}. {leg.Name}", 0),
                     Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, 0))

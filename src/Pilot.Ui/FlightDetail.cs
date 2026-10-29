@@ -26,6 +26,9 @@ internal sealed record LegDetail
     /// <summary>Its go-arounds when it had any (<c>go-around 2</c>); null otherwise.</summary>
     public string? GoArounds { get; init; }
 
+    /// <summary>The attempt and the model and effort its current worker started on, from the leg row (<c>redo 3, on Opus</c>); null before a worker starts.</summary>
+    public string? Attempt { get; init; }
+
     public required string Goal { get; init; }
 
     public required string DoneWhen { get; init; }
@@ -44,6 +47,10 @@ internal sealed record LegDetail
     /// <summary>Each artifact at its latest, newest first.</summary>
     public required IReadOnlyList<ArtifactLine> Artifacts { get; init; }
 
+    /// <summary>The redo (go-arounds) its current worker is on, and the model and effort of the current worker, as recorded on the row; null when none is.</summary>
+    public static string? AttemptOf(LegRow leg) =>
+        Verbs.AttemptOf(leg);
+
     public static LegDetail From(LegRow leg, DateTimeOffset now) => new()
     {
         Row = leg,
@@ -51,6 +58,7 @@ internal sealed record LegDetail
         Order = leg.Order,
         State = leg.Hold is not null ? "holding" : leg.Wait is { } wait && leg.State == LegState.Flying ? FlightWaiting.WaitText(wait) : leg.State.ToString().ToLowerInvariant(),
         GoArounds = leg.GoArounds > 0 ? $"go-around {leg.GoArounds}" : null,
+        Attempt = AttemptOf(leg),
         Goal = leg.Goal,
         DoneWhen = leg.DoneWhen,
         Check = string.IsNullOrWhiteSpace(leg.Check) ? null : leg.Check,
@@ -117,7 +125,7 @@ internal sealed record FlightDetail
         var lines = new List<string> { Line.ToDumpLine() };
         foreach (var leg in Legs)
         {
-            lines.Add($"{leg.Order}. {leg.Name} | {string.Join(" · ", new[] { leg.State, leg.StepsText, leg.GoArounds }.OfType<string>())}");
+            lines.Add($"{leg.Order}. {leg.Name} | {string.Join(" · ", new[] { leg.State, leg.StepsText, leg.GoArounds, leg.Attempt }.OfType<string>())}");
             lines.Add($"   goal: {leg.Goal}");
             lines.Add($"   done when: {leg.DoneWhen}");
             lines.AddRange(leg.Steps.Select(s => $"   [{(s.Done ? "x" : " ")}] {s.Text}"));

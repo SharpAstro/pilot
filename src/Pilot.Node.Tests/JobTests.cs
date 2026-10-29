@@ -1449,12 +1449,12 @@ public sealed class JobTests : IDisposable
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
-        var id = Run(Busy(flag), timeoutSeconds: 8).Made!;
+        var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
         await Running(id);
 
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         // Past the deadline it would have had without the pause.
-        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(9))
+        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
         {
             await Task.Delay(100, Ct);
         }
@@ -1471,7 +1471,7 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
     {
-        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 5).Made!;
+        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 20).Made!;
         await Running(id);
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         await Task.Delay(500, Ct);
@@ -1479,7 +1479,7 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
     }
 
     [Fact]

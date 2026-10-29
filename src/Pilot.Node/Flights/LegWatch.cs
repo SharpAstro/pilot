@@ -20,6 +20,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The kinds of card the watch raises, all about a leg; the watch closes them when its worker works again.</summary>
     public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing];
 
+    /// <summary>The models the redo choice names for its next worker (the worker ladder, PIL402); the node sets it.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
+
     public const string Stopped = "worker-stopped";
     public const string Idle = "worker-idle";
     public const string Waiting = "worker-waiting";
@@ -136,7 +139,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     string.Create(inv, $"{worker.SpendWeighted:N0} of {budget:N0} weighted tokens; it keeps working until you choose"),
                     [
                         new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
-                        new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
+                        new CardChoice { Label = Models.RedoLabel(leg), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
                     ],
                     summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
             }
@@ -586,7 +589,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var goAround = new CardChoice
         {
-            Label = Verbs.RedoLeg(leg.Name),
+            Label = Models.RedoLabel(leg),
             Verb = Verbs.GoAround,
             Target = Subject(leg),
             Args = [$"the last worker stalled ({worker?.ApiError ?? worker?.State.ToString().ToLowerInvariant() ?? "never showed up"})"],

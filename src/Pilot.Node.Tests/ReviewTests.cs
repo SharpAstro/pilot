@@ -1605,6 +1605,23 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AReviewAskingForChangesOfALegGoneAroundTwiceOffersARedoNamingRedo3AndOpus()
+    {
+        var flight = await NewFlight("2", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA2"), "controller");
+        _state.PutLeg(_state.Legs("TIA2").Single() with { GoArounds = 2 });
+
+        (await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        var redo = card.Choices.Single(c => c.Verb == Verbs.GoAround);
+        redo.Label.ShouldContain("redo 3");
+        redo.Label.ShouldContain("Opus");
+    }
+
+    [Fact]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");

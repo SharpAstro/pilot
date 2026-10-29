@@ -50,6 +50,21 @@ public sealed class FlightDetailTests
     private static FlightLine Line() => FlightLine.Build([Flight()], [], Now, Legs()).Single();
 
     [Fact]
+    public void ALegReadsItsAttemptAndModelFromTheRow()
+    {
+        var legs = Legs().Select(l => l.Name == "render" ? l with { GoArounds = 3, AttemptModel = "opus" } : l).ToArray();
+        var line = FlightLine.Build([Flight()], [], Now, legs).Single();
+
+        var detail = FlightDetail.From(line, Now);
+
+        detail.Legs[0].Attempt.ShouldBeNull();
+        detail.Legs[1].Attempt.ShouldBe("redo 3, on Opus");
+        LegDetail.AttemptOf(legs[0]).ShouldBe("redo 3, on Opus");
+        LegDetail.AttemptOf(legs[0] with { GoArounds = 4, AttemptEffort = "xhigh" }).ShouldBe("redo 4, on Opus at xhigh");
+        LegDetail.AttemptOf(legs[0] with { GoArounds = 1, AttemptModel = "sonnet" }).ShouldBe("on Sonnet");
+    }
+
+    [Fact]
     public void ItsLegsComeInOrderWithTheirStateStepsAndGoArounds()
     {
         var detail = FlightDetail.From(Line(), Now);
