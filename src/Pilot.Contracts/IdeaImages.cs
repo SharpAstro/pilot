@@ -8,6 +8,9 @@ namespace Pilot.Contracts;
 /// <param name="Copy">The id of the node's copy, when <paramref name="Url"/> is a marker or the node's own file on GitHub; else null.</param>
 public sealed record IdeaImage(string Alt, string Url, string? Copy = null);
 
+/// <summary>An image as it is written in an idea's text: where it starts, how long it is, the text itself and what it points to.</summary>
+public sealed record IdeaImageSpan(int At, int Length, string Raw, string Url);
+
 /// <summary>
 /// The images an idea's text carries. A client that pastes one uploads it to the node and writes
 /// <c>![name](pilot-attachment:&lt;id&gt;.&lt;ext&gt;)</c> where it was pasted; filing the idea swaps each marker for the
@@ -84,6 +87,28 @@ public static partial class IdeaImages
             }
         }
         return [.. found.OrderBy(f => f.At).Select(f => f.Image)];
+    }
+
+    /// <summary>Where each Markdown image and <c>&lt;img&gt;</c> tag stands in <paramref name="body"/>, as written, in the order they stand.</summary>
+    public static IdeaImageSpan[] Spans(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            return [];
+        }
+        var found = new List<IdeaImageSpan>();
+        foreach (Match m in MarkdownImage().Matches(body))
+        {
+            found.Add(new IdeaImageSpan(m.Index, m.Length, m.Value, m.Groups["url"].Value.Trim()));
+        }
+        foreach (Match m in ImgTag().Matches(body))
+        {
+            if (SrcAttribute().Match(m.Value) is { Success: true } src)
+            {
+                found.Add(new IdeaImageSpan(m.Index, m.Length, m.Value, src.Groups["v"].Value.Trim()));
+            }
+        }
+        return [.. found.OrderBy(f => f.At)];
     }
 
     private static IdeaImage Make(string alt, string url) => new(alt.Trim(), url.Trim(), CopyOf(url.Trim()) is { } copy ? copy.Id : null);

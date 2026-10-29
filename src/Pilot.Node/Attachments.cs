@@ -75,6 +75,9 @@ public sealed class Attachments(string dataFolder)
     /// <summary>The owner of the images pasted into ideas: no flight or session, so no archive removes them.</summary>
     public const string IdeaOwner = "ideas";
 
+    /// <summary>The folder holding the idea images, which Claude is given to read.</summary>
+    public string IdeaFolder => Path.GetDirectoryName(PathOf(IdeaOwner, "x", "png"))!;
+
     /// <summary><paramref name="ext"/> (no dot, lower case) when it names an image the node keeps, else null.</summary>
     public static string? IdeaImageExtension(string? ext) =>
         ext?.TrimStart('.').ToLowerInvariant() is { } e && ImageExtensions.Contains(e) ? e : null;

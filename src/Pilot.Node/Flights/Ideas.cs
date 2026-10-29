@@ -479,6 +479,8 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         var tidying = tidier.TidyAsync(text, path, cancellationToken);
         var proposing = ProposalAsync(text, path, cancellationToken);
         var proposed = await tidying;
+        // A proposal never loses an image: one the tidy dropped is put back where it stood.
+        proposed = proposed with { Body = IdeaImagePrompt.Restore(issue.Body, proposed.Body) };
         var milestone = await proposing;
         return state.Complete(command, null, made: IdeaIds.Id(issue.Number),
             tidy: new IdeaTidyProposal(proposed.Title, proposed.Body, issue.Title, issue.Body, issue.UpdatedAt) { Milestone = milestone });
