@@ -19,11 +19,13 @@ public static class IdeaRows
     /// The rows of <paramref name="repo"/>'s Ideas milestone: an open issue is noted, or planned while a flight that came from it
     /// still flies, and a closed one is dropped.
     /// </summary>
-    public static IdeaRow[] Of(string repo, IEnumerable<MilestoneIssue> issues, IReadOnlyCollection<FlightRow> flights, DateTimeOffset now) =>
-        [.. issues.Select(issue =>
+    public static IdeaRow[] Of(string repo, IEnumerable<MilestoneIssue> issues, IReadOnlyCollection<FlightRow> flights, DateTimeOffset now)
+    {
+        var listed = issues.ToArray();
+        var rows = listed.Select(issue =>
         {
             var id = IdeaIds.Id(issue.Number);
-            var planned = issue.Open && flights.Any(f => f.State != FlightState.Landed && string.Equals(f.Repo, repo, StringComparison.OrdinalIgnoreCase) && f.FromIdea == id);
+            var planned = issue.Open && flights.Any(f => FliesIdea(f, repo, id));
             return new IdeaRow
             {
                 Id = id,
@@ -36,7 +38,46 @@ public static class IdeaRows
                 Origin = issue.Author,
                 Url = issue.Url,
             };
-        })];
+        }).ToList();
+
+        // Plan moves the issue out of the Ideas milestone, so it is no longer listed there: an idea whose flight has not landed
+        // stays as a Planned row, made from the flight, until the flight lands.
+        foreach (var flight in flights.Where(f => f.FromIdea is { Length: > 0 } && FliesIdea(f, repo, f.FromIdea!)))
+        {
+            if (!IdeaIds.TryNumber(flight.FromIdea!, out var number) || listed.Any(i => i.Number == number))
+            {
+                continue;
+            }
+            rows.Add(new IdeaRow
+            {
+                Id = IdeaIds.Id(number),
+                Repo = repo,
+                Title = flight.Title ?? flight.Code,
+                State = IdeaState.Planned,
+                UpdatedAt = flight.CreatedAt,
+                Age = IdeaIds.Age(flight.CreatedAt, now),
+                Url = IssueUrl(number, listed, flight),
+            });
+        }
+        return [.. rows];
+    }
+
+    private static bool FliesIdea(FlightRow flight, string repo, string id) =>
+        flight.State != FlightState.Landed && string.Equals(flight.Repo, repo, StringComparison.OrdinalIgnoreCase) && flight.FromIdea == id;
+
+    /// <summary>The issue's page, from a sibling issue's or the flight's PR's, which share its repo; empty when neither is known.</summary>
+    private static string IssueUrl(int number, MilestoneIssue[] siblings, FlightRow flight)
+    {
+        var sibling = siblings.FirstOrDefault(i => i.Url.LastIndexOf("/issues/", StringComparison.Ordinal) >= 0)?.Url;
+        if (sibling is not null)
+        {
+            return sibling[..(sibling.LastIndexOf("/issues/", StringComparison.Ordinal) + "/issues/".Length)] + number.ToString(CultureInfo.InvariantCulture);
+        }
+        var pull = flight.PullRequestUrl;
+        return pull is not null && pull.LastIndexOf("/pull/", StringComparison.Ordinal) is var at and >= 0
+            ? pull[..at] + "/issues/" + number.ToString(CultureInfo.InvariantCulture)
+            : "";
+    }
 }
 
 /// <summary>

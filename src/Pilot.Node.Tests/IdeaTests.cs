@@ -177,8 +177,21 @@ public sealed class IdeaTests : IDisposable
         _github.IssuesCreated.Count.ShouldBe(1);
         var flight = _state.Flights().Single();
         (flight.Code, flight.Issue, flight.Title, flight.FromIdea).ShouldBe(("PIL1", 1, "Ring shadows", "I1"));
-        // Out of the Ideas milestone: no longer an idea of the node's.
-        _state.Ideas().ShouldBeEmpty();
+        // Out of the Ideas milestone, but its row stays as Planned, pointing at the flight, until the flight lands.
+        var row = _state.Ideas().ShouldHaveSingleItem();
+        (row.Id, row.State, row.Title).ShouldBe(("I1", IdeaState.Planned, "Ring shadows"));
+        IdeaIds.FlightOf(_state.Flights(), _state.IdeaMoves(), row.Repo, row.Number).ShouldBe("PIL1");
+        // A later read of the milestone (as RepoWatch makes it, with the issue gone from it) keeps the row.
+        var again = IdeaRows.Of("pilot", await _github.MilestoneIssuesAsync(Repo, IdeaIds.Milestone, Ct), _state.Flights(), DateTimeOffset.UtcNow);
+        again.ShouldHaveSingleItem().State.ShouldBe(IdeaState.Planned);
+        again[0].Id.ShouldBe("I1");
+        // And it reaches a client as the node made it: through the snapshot, JSON and all, into the mirror the panes read.
+        var json = System.Text.Json.JsonSerializer.Serialize<NodeEvent>(_state.Snapshot(), PilotJsonContext.Default.NodeEvent);
+        var mirror = new NodeMirror();
+        mirror.Apply(System.Text.Json.JsonSerializer.Deserialize(json, PilotJsonContext.Default.NodeEvent).ShouldNotBeNull());
+        var seen = mirror.Ideas.ShouldHaveSingleItem();
+        (seen.Id, seen.State).ShouldBe(("I1", IdeaState.Planned));
+        IdeaIds.FlightOf(mirror.Flights.Values, mirror.IdeaMoves, seen.Repo, seen.Number).ShouldBe("PIL1");
         // The id still resolves: to the flight on the same issue.
         IdeaIds.FlightOf(_state.Flights(), _state.IdeaMoves(), "pilot", 1).ShouldBe("PIL1");
         IdeaIds.FlightOf(_state.Flights(), _state.IdeaMoves(), "pilot", 2).ShouldBeNull();
