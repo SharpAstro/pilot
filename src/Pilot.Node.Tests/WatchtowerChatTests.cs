@@ -375,4 +375,25 @@ public sealed class WatchtowerChatTests : IDisposable
         brief.ShouldContain("Allow card");
         brief.ShouldContain("Never go round it with gh or git directly");
     }
+
+    [Fact]
+    public void TheBriefFitsOnACommandLineWhateverCardsAreOpenRingsFirstEachInOneShortLine()
+    {
+        // 300 open cards each with a 2,000-character detail: whole, they made a 46,000-character brief, and every watchtower
+        // started with it died on ENAMETOOLONG (DE1, 2026-10-29).
+        var at = new DateTimeOffset(2026, 10, 29, 4, 0, 0, TimeSpan.Zero);
+        var detail = new string('x', 2000);
+        CardRow Card(int i, CardBin bin) => new() { Id = $"c{i}", Bin = bin, Kind = "stop", Subject = $"flight/PIL{i}", Title = $"PIL{i} needs something " + new string('y', 300), Detail = detail, At = at, State = CardState.Open };
+        var cards = Enumerable.Range(1, 290).Select(i => Card(i, CardBin.ForYou)).Concat(Enumerable.Range(291, 10).Select(i => Card(i, CardBin.Ring))).ToList();
+
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], cards, "pilot", machine: "DE1");
+
+        brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief + 200);
+        brief.ShouldNotContain(detail);
+        // The rings first, though they were opened last, and the rest named by count with where to read them.
+        brief.IndexOf("- c291 [ring]", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("- c1 [for you]", StringComparison.Ordinal));
+        brief.ShouldMatch(@"- and \d+ more: `pilot cards` lists them\.");
+        // One line a card, its title cut short.
+        brief.ReplaceLineEndings("\n").Split('\n').Where(l => l.StartsWith("- c", StringComparison.Ordinal)).ShouldAllBe(l => l.Length < 260);
+    }
 }

@@ -323,9 +323,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                 throw new FlightException($"{code} is already here ({here.State.ToString().ToLowerInvariant()} on {Machine}): a code is one flight on a node for good, unless the flight moved away from here and comes back");
             }
         }
-        if (sent.State != FlightState.Flying)
+        if (sent.State == FlightState.Landed)
         {
-            throw new FlightException($"{code} is {sent.State.ToString().ToLowerInvariant()}: only a flying flight is handed over");
+            throw new FlightException($"{code} is landed: only a flight in the air is handed over");
         }
         if (move.Legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying)
         {
@@ -344,7 +344,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
 
         var plane = await planes.MakeFromBranchAsync(repoPath, code, sent.Branch, sent.Base, cancellationToken);
         var moved = new FlightMoved { From = move.From, AfterLeg = move.AfterLeg, At = time.GetUtcNow() };
-        state.PutFlight(sent with
+        var taken = sent with
         {
             Repo = Path.GetFileName(repoPath),
             RepoPath = repoPath,
@@ -352,7 +352,10 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             Worktree = plane.Worktree,
             Base = plane.Base,
             MovedFrom = moved,
-        });
+        };
+        // A held flight's waits were sent as waits on nodes (the sender's flights among them): one naming this node is a flight of its own,
+        // so the flight is settled here, and flies at once when what it waited for has already landed here.
+        state.PutFlight(sent.State == FlightState.Held ? Settle(WaitsHere(taken)) : taken);
         foreach (var leg in move.Legs.Where(l => string.Equals(l.Flight, code, StringComparison.Ordinal)))
         {
             state.PutLeg(leg);
@@ -1024,6 +1027,19 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         // A flight that went to another node is Landed here but has not landed: what waits for it keeps waiting.
         var held = flight.PackageWaits.Length > 0 || flight.PeerConnections.Length > 0 || flight.Connections.Any(c => !flights.TryGetValue(c, out var other) || other.State != FlightState.Landed || other.MovedTo is not null);
         return flight with { State = held ? FlightState.Held : FlightState.Flying };
+    }
+
+    /// <summary>The flight with each wait for a flight on this very node (a moved flight's waits, or a waited-for flight that moved here) made a wait of its own node's.</summary>
+    private FlightRow WaitsHere(FlightRow flight)
+    {
+        var here = flight.PeerConnections.Where(c => string.Equals(c.Node, Machine, StringComparison.OrdinalIgnoreCase)).ToList();
+        return here.Count == 0
+            ? flight
+            : flight with
+            {
+                Connections = [.. flight.Connections.Union(here.Select(c => c.Code), StringComparer.Ordinal)],
+                PeerConnections = [.. flight.PeerConnections.Except(here)],
+            };
     }
 
     /// <summary>Whether <paramref name="flight"/> waits for <paramref name="code"/>, directly or through the flights it waits for.</summary>
