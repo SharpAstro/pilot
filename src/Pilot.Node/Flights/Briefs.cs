@@ -747,6 +747,11 @@ public static class Briefs
         text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: a");
         text.AppendLine("conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
         text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
+        // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
+        // round cap stay the person's until the node gives them to the watchtower (PIL433).
+        text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's. A design question a review raises,");
+        text.AppendLine("and a flight's leg past its round cap, are the person's: say so on the card and leave it to them.");
         text.AppendLine();
         if (model is { Length: > 0 })
         {
@@ -844,6 +849,8 @@ public static class Briefs
         text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
+        text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
+        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
