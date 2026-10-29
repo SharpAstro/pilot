@@ -414,6 +414,11 @@ public sealed class IdeaCliTests : IDisposable
         {
             await git.WaitForExitAsync(Ct);
         }
+        // Planning makes a flight, whose plane needs a commit to branch from.
+        using (var commit = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        {
+            await commit.WaitForExitAsync(Ct);
+        }
         await using var node = await NodeHarness.StartAsync(Ct);
         node.GitHub.AddMilestone(repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", 4);
         node.Milestoner.Answer = new MilestoneAnswer("v1", null, null, "it is about the GPU");
