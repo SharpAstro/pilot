@@ -361,6 +361,7 @@ public sealed class ChatAboutCardTests
         using var _ = renderer;
         var fleet = new FakeFleet();
         fleet.Wire(chrome, Said("this node's watchtower"), Said("SE1's watchtower"));
+        fleet.Granted.Add(Se1Node.Where);
         chrome.Nodes.Choices = [new NodeMark("node.sock", "node.sock", "DE1", Here: true), Se1Node];
         var summary = new NodeSummary
         {
@@ -451,6 +452,8 @@ public sealed class ChatAboutCardTests
         var fleet = new FakeFleet();
         fleet.Wire(chrome, Said("here"), Said("there"));
         chrome.Chat.SwitchTo(Se1Node);
+        chrome.Chat.Open();
+        await WaitForAsync(() => chrome.Chat.Entries.Count > 0);
         chrome.Chat.Render(new RectF32(0, 0, 1280, 900));
 
         await Typed(chrome, "anyone there?");
