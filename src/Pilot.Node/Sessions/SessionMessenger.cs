@@ -113,6 +113,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // take them for the node's and not a person's (NodeVoice).
             text = NodeVoice.Prefix + text;
         }
+        else if (FromAnotherWatchtower(command) is { } node)
+        {
+            // Another node's watchtower passing work on (fleet chat): marked with its node, so this one reports back with
+            // `tell --node` and does not take the words for the person's.
+            text = $"[From the watchtower of node {node}] {text}";
+        }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
@@ -145,6 +151,10 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             gate.Release();
         }
     }
+
+    /// <summary>The node whose watchtower sent <paramref name="command"/> over the LAN under its grant, else null.</summary>
+    internal static string? FromAnotherWatchtower(CommandRequest command) =>
+        command.Grant is { Length: > 0 } grant && command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? grant : null;
 
     /// <summary>
     /// The session a say names: by its row id, else by its name when one live session has it. A name was refused

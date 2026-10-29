@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Pilot.Commands;
 using Pilot.Contracts;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -176,6 +177,50 @@ public sealed class LanTests
         {
             Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
         }
+    }
+
+    private static async Task<NodeClient> GrantedAsync(NodeHarness node, int port, string label)
+    {
+        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
+        var ticket = (await asking.AskGrantAsync(label, Ct)).Response.ShouldNotBeNull();
+        var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
+        token.ShouldNotBeNullOrEmpty();
+        return NodeClient.Remote($"127.0.0.1:{port}", token);
+    }
+
+    private static async Task WatchtowerRowAsync(NodeHarness node, string name)
+    {
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, name, status: "busy"));
+        for (var i = 0; i < 100 && !node.State.Sessions().Any(s => s.Name == name); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        node.State.Sessions().Single(s => s.Name == name);
+    }
+
+    [Fact]
+    public async Task ATellFromAnotherNodesWatchtowerArrivesMarkedAsItsAndIsNotThePersonsAndTheTellBackIsMarkedAsTheSeconds()
+    {
+        var (portA, portB) = (FreePort(), FreePort());
+        await using var a = await NodeHarness.StartAsync(Ct, lanPort: portA);
+        await using var b = await NodeHarness.StartAsync(Ct, lanPort: portB);
+        var name = $"{a.Options.Machine.ToLowerInvariant()}-watchtower";
+        await WatchtowerRowAsync(a, name);
+        await WatchtowerRowAsync(b, name);
+        using var toB = await GrantedAsync(b, portB, "DE1");
+        using var toA = await GrantedAsync(a, portA, "SE1");
+
+        // DE1's watchtower asks SE1's (a grant labelled DE1 on SE1): it arrives marked with the sending node.
+        (await toB.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["how is PIL411?"], Who = name }, Ct)).Success.ShouldBeTrue();
+        var told = b.Delivery.Relays.ShouldHaveSingleItem();
+        told.Text.ShouldStartWith("[From the watchtower of node DE1] ");
+        told.Text.ShouldContain("how is PIL411?");
+
+        // SE1's watchtower tells back through its grant on DE1: marked as from the second.
+        (await toA.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["PIL411 is at review"], Who = name }, Ct)).Success.ShouldBeTrue();
+        a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
     }
 
     [Fact]

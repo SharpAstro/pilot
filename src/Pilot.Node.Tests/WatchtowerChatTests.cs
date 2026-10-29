@@ -122,6 +122,20 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public void TheBriefMakesTheChatTheFleetChatPassingWorkOnInTheBackgroundWithLimits()
+    {
+        var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", null, "DU1");
+
+        brief.ShouldContain("the Chat is the fleet chat, held here");
+        brief.ShouldContain("pilot tell --node <name>");
+        brief.ShouldContain("Say at once in the chat that you passed it on, and end your turn");
+        brief.ShouldContain("never wait on the answer");
+        brief.ShouldContain("post the outcome in the chat");
+        brief.ShouldContain("[From the watchtower of node <name>]");
+        brief.ShouldContain("Never edit or push another node's plane from here");
+    }
+
+    [Fact]
     public async Task TheNodesOwnMessagesAreNotesAndAPersonsAreNot()
     {
         await TwoWatchtowersAsync();
