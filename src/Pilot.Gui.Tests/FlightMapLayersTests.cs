@@ -199,6 +199,10 @@ public sealed class FlightMapLayersTests
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a == FlightMapLayerPalette.RowAction(FlightMapLayers.All[0])).ShouldBeTrue();
+        // And it is a line or two across the page, not a column of one word a row in a box it was given no width for.
+        var first = texts.FindIndex(t => t.Text.Value == "No ");
+        var last = texts.FindIndex(first, t => t.Text.Value == "shows. ");
+        texts[first..(last + 1)].Select(t => t.Box.Y).Distinct().Count().ShouldBeLessThanOrEqualTo(3);
         var panel = view.MapLayers.Palette.PanelRect;
         texts.Where(t => t.Text.FontSize == 14f)
             .Where(t => MathF.Min(t.Box.X + t.Box.Width, panel.X + panel.Width) - MathF.Max(t.Box.X, panel.X) > TextOverlap.Tolerance
