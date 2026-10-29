@@ -365,7 +365,8 @@ public sealed class ChatAboutCardTests
         var summary = new NodeSummary
         {
             Connected = true, Status = "live", Stream = "s1", LiveSessions = 1,
-            Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE1", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = "s1" },
+            Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE1", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = "s1",
+                Watchtower = new WatchtowerHealth { State = SessionState.Idle, Id = "3a1b2c3d4e5f", StartedAt = Live.At.AddHours(-2), ContextTokens = 41_000, ContextWindow = 200_000, StartsLast24h = 3 } },
         };
         var screen = new FleetScreen([FleetLine.From(Se1Node.Where, here: false, canCommand: true, null, summary)], Live.At);
         chrome.Show(PilotPage.Fleet);
@@ -453,6 +454,7 @@ public sealed class ChatAboutCardTests
         chrome.Chat.Tree();
 
         await Typed(chrome, "anyone there?");
+        await WaitForAsync(() => chrome.Chat.Notices.Count > 0);
 
         chrome.Chat.Notices.Single().ShouldContain("Connect to SE1 to steer");
         fleet.ToNode.ShouldBeEmpty();
