@@ -231,6 +231,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(ready);
         }
+        if (AddressReview(line) is { } address)
+        {
+            page.Add(address);
+        }
         page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
@@ -310,6 +314,29 @@ internal sealed partial class FlightsView<TSurface>
                 : Pill(CardsView<TSurface>.ChatAboutLabel, $"flight:{line.Code}:chat-card", () => about(card)));
         }
         return Layout.Builder.HStack([.. cells]).WithGap(12f).Pad(0f, 6f).Bg(RowFocusBg).RowH(40f);
+    }
+
+    /// <summary>
+    /// Address review for a flight whose PR's review asks for changes and whose review-changes card is open: the card's own go-around
+    /// (Fix the review's findings), as the Pull requests page's button presses it, with the same tooltip. While the card's press is with
+    /// the node it says Starting… and takes no second press. Past the leg's go-around cap the card still decides, so it is offered too:
+    /// the capped note below says the round is the person's. Null when there is nothing to press.
+    /// </summary>
+    internal Layout.Node? AddressReview(FlightLine line)
+    {
+        if (Cards is not { } cards || OnAnswerCard is not { } answer || !CanCommand || line.Row.PullRequestUrl is null
+            || line.Row.Review is not { State: ReviewState.Changes }
+            || PullRequestActions.AddressReviewOf(cards.Open, line.Code) is not { Card: { } card } action)
+        {
+            return null;
+        }
+        var button = line.Stale is not null
+            ? CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line))
+            : CardWorking?.Invoke(card.Id) is not null
+            ? Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center)
+                .Bg(P.Button).WithTooltip($"Asking the node to fix {line.Code}'s review findings").WFixed(104f).HStar()
+            : Pill(action.Label, $"flight:{line.Code}:address-review", () => answer(card, action.Choice)).WithTooltip(action.Tooltip);
+        return Layout.Builder.HStack(button, Layout.Builder.Spacer().WStar()).RowH(32f);
     }
 
     /// <summary>

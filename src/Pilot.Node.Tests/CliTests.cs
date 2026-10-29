@@ -842,4 +842,33 @@ public sealed class CliTests : IAsyncLifetime
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = now, PullRequests = [row.PullRequests[0]] }, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro.\n");
     }
+
+    [Fact]
+    public void PullRequestsHintHowToFixAReviewThatAsksForChangesInBothOutputsAndNothingElse()
+    {
+        var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        PullRequestRow Pr(int number, string? flight, string? review) => new()
+        {
+            Repo = "SharpAstro/pilot", Number = number, Title = $"T{number}", Url = $"https://github.com/SharpAstro/pilot/pull/{number}", Kind = PullRequestKind.Ready,
+            Label = "Ready", Author = "sebgod", UpdatedAt = now, Flight = flight, Review = review,
+        };
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro"], ReadAt = now,
+            PullRequests = [Pr(1, null, PullRequestReview.Changes), Pr(2, "PIL2", PullRequestReview.Changes), Pr(3, null, PullRequestReview.Passed), Pr(4, "PIL4", null)],
+        };
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now).ReplaceLineEndings("\n");
+        foreach (var (output, prefix) in new[] { (plain, "          -> "), (markdown, "- #") })
+        {
+            output.ShouldContain("pilot review fix SharpAstro/pilot#1");
+            output.ShouldContain("PIL2's review-changes card with Fix the review's findings");
+            // Two hints, for the two rows whose review asks for changes; none for a passed or an unreviewed one.
+            output.Split('\n').Count(l => l.Contains("review asks for changes")).ShouldBe(2);
+            output.ShouldNotContain("#3: review");
+            output.ShouldNotContain("PIL4's");
+        }
+        plain.ShouldContain("          -> review asks for changes: pilot review fix SharpAstro/pilot#1\n");
+        markdown.ShouldContain("- #1: review asks for changes: pilot review fix SharpAstro/pilot#1\n- #2: ");
+    }
 }
