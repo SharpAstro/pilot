@@ -700,9 +700,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (merge is null || legs is null)
             {
                 // Read again after the awaits above: a Merge pressed meanwhile armed or queued it, and writing the choices read
-                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI).
+                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI). Merged too:
+                // a merge done between its stamp and the card's closing read "passing" again (MergeMirrorTests, flaky in CI, #434).
                 if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is not { } current
-                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued)
+                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Merged)
                     || state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null)
                 {
                     continue;

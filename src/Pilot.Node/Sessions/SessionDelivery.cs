@@ -16,7 +16,8 @@ public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, s
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
 /// <param name="ReplyTo">The sender's session row, when it is one on this node: the recipient is told to answer with a say to it.</param>
-public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null);
+/// <param name="SessionId">The recipient's session id, which finds its intercom endpoint; null when not known (the CLI relay then).</param>
+public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null, string? SessionId = null);
 
 /// <summary>A delivery that did not happen, with why: the say's error.</summary>
 public sealed class SessionDeliveryException(string message) : Exception(message);
@@ -39,10 +40,10 @@ public interface ISessionDelivery
     Task<string> ResumeAsync(ResumeRequest request, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sends the text to a live session over Claude Code's intercom, as a cross-session message, by a throwaway
+    /// Sends the text to a live session over Claude Code's intercom, as a cross-session message: written to its endpoint, else by a throwaway
     /// <c>claude -p</c> session allowed SendMessage. Reaches a session mid-turn and an interactive one, stopping neither.
     /// </summary>
-    /// <returns>The relay's answer.</returns>
+    /// <returns>The route it took, for the log.</returns>
     Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken);
 }
 
@@ -50,7 +51,7 @@ public interface ISessionDelivery
 /// <see cref="ISessionDelivery"/> by the <c>claude</c> CLI. Port of v1's <c>say()</c> (stop, then
 /// <c>--bg --resume</c>) and its intercom (<c>RELAY</c>, <c>RELAY_PROMPT</c>).
 /// </summary>
-public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder) : ISessionDelivery
+public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder, ClaudeProfile? profile = null) : ISessionDelivery
 {
     /// <summary>The name a message from the person who runs these sessions comes from, whichever client they typed it in.</summary>
     public const string ControllerName = "controller";
@@ -250,7 +251,38 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     public static string ReplyNote(string replyTo) =>
         $"{RelayMark} To answer, run: pilot say {replyTo} \"<your answer>\". Not SendMessage: it cannot reach the sender.)";
 
+    /// <summary>The route a relay took when it wrote straight to the session's endpoint.</summary>
+    public const string RouteDirect = "direct";
+
+    /// <summary>
+    /// The text to the session over its intercom endpoint (<see cref="Intercom"/>), and only when that fails by the
+    /// <c>claude -p</c> relay (<see cref="RelayViaCliAsync"/>).
+    /// </summary>
+    /// <returns>The route: <c>direct</c>, or <c>cli-relay (direct: why not)</c>.</returns>
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
+    {
+        string why;
+        try
+        {
+            var endpoint = request.SessionId is { } id ? profile?.FindIntercom(id) : null;
+            if (endpoint is null)
+            {
+                throw new SessionDeliveryException(profile is null || request.SessionId is null ? "no profile to find its endpoint in" : "no live process has its session record");
+            }
+            await Intercom.SendAsync(endpoint, request.From, RelayText(request.Text, request.ReplyTo), cancellationToken);
+            return RouteDirect;
+        }
+        catch (SessionDeliveryException ex)
+        {
+            why = ex.Message;
+        }
+
+        await RelayViaCliAsync(request, cancellationToken);
+        return $"cli-relay (direct: {why})";
+    }
+
+    /// <summary>The fallback: a throwaway <c>claude -p</c> session allowed SendMessage carries the text.</summary>
+    protected virtual async Task<string> RelayViaCliAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         var mark = $"======== {Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()[..4])} ========";
         var kind = request.Kind == SessionKind.Background ? "bg" : "interactive";

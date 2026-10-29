@@ -13,7 +13,9 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class LockFreeStartTests : LegCommanderTestsBase
 {
-    private static readonly TimeSpan Quick = TimeSpan.FromSeconds(1);
+    // A backstop, not the claim: each test proves its order (answered while the launcher is still held). One second failed on a
+    // loaded Windows runner at 1.09 s (#434); a held launcher never lets go on its own, so a command that waited for it never answers.
+    private static readonly TimeSpan Quick = TimeSpan.FromSeconds(5);
 
     // Another flight's start-leg, while a launcher is held: it is not behind the hold if it answers long before the hold is let go
     // (the test lets it go only at its end). It readies a real plane with git, slower on a loaded machine, so the bound is far above
@@ -81,6 +83,8 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
 
         var (start, startTook) = await TimedFromLauncher(() => Leg(Verbs.StartLeg, "flight/TIA1/parser"));
         start.Ok.ShouldBeTrue(start.Error);
+        // The order is the claim: the start answered while the launcher was still held.
+        gate.Task.IsCompleted.ShouldBeFalse();
         startTook.ShouldBeLessThan(Quick);
         start.Made.ShouldNotBeNull().ShouldStartWith("started");
         // Not up yet: the leg reads planned until the session is, and a second start of it is refused while the first is out.
