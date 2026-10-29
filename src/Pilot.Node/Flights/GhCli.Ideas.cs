@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Pilot.Contracts;
 
@@ -185,5 +187,113 @@ public sealed partial class GhCli
             throw new FlightException($"gh could not save issue #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         return true;
+    }
+
+    public async Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
+    {
+        var path = $"ideas/{id}.{ext}";
+        var (nameExit, name, nameError) = await RunBytesAsync(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], repoPath, null, cancellationToken);
+        var repo = Encoding.UTF8.GetString(name).Trim();
+        if (nameExit != 0 || repo.Length == 0)
+        {
+            throw new FlightException($"gh could not tell which repo {repoPath} is: {nameError.Trim()}");
+        }
+        var content = Convert.ToBase64String(bytes);
+        var message = $"Idea image {id}";
+
+        var (exit, output, error) = await RunBytesAsync(["api", "-X", "PUT", $"repos/{{owner}}/{{repo}}/contents/{path}", "--input", "-"], repoPath,
+            Json(w => { w.WriteString("message", message); w.WriteString("content", content); w.WriteString("branch", IdeaImages.Branch); }), cancellationToken);
+        if (exit != 0)
+        {
+            // The branch is made on the first image: an orphan commit holding it, through the git data API.
+            if (!error.Contains("Branch", StringComparison.OrdinalIgnoreCase) || !error.Contains("not found", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FlightException($"gh could not commit the image to {IdeaImages.Branch}: {(error.Trim().Length > 0 ? error : Encoding.UTF8.GetString(output)).Trim()}");
+            }
+            var blob = await ApiShaAsync("git/blobs", repoPath, w => { w.WriteString("content", content); w.WriteString("encoding", "base64"); }, cancellationToken);
+            var tree = await ApiShaAsync("git/trees", repoPath, w =>
+            {
+                w.WriteStartArray("tree");
+                w.WriteStartObject();
+                w.WriteString("path", path);
+                w.WriteString("mode", "100644");
+                w.WriteString("type", "blob");
+                w.WriteString("sha", blob);
+                w.WriteEndObject();
+                w.WriteEndArray();
+            }, cancellationToken);
+            var commit = await ApiShaAsync("git/commits", repoPath, w => { w.WriteString("message", message); w.WriteString("tree", tree); w.WriteStartArray("parents"); w.WriteEndArray(); }, cancellationToken);
+            await ApiShaAsync("git/refs", repoPath, w => { w.WriteString("ref", $"refs/heads/{IdeaImages.Branch}"); w.WriteString("sha", commit); }, cancellationToken);
+        }
+        return $"https://github.com/{repo}/blob/{IdeaImages.Branch}/{path}?raw=true";
+    }
+
+    public async Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunBytesAsync(
+            ["api", "-H", "Accept: application/vnd.github.raw", $"repos/{{owner}}/{{repo}}/contents/ideas/{id}.{ext}?ref={IdeaImages.Branch}"], repoPath, null, cancellationToken);
+        return exit == 0
+            ? output
+            : error.Contains("Not Found", StringComparison.OrdinalIgnoreCase) || error.Contains("404", StringComparison.Ordinal)
+                ? null
+                : throw new FlightException($"gh could not read ideas/{id}.{ext} on {IdeaImages.Branch}: {error.Trim()}");
+    }
+
+    private static byte[] Json(Action<Utf8JsonWriter> write)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            write(writer);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
+    /// <summary>POSTs a git data object to the repo and returns the sha it answers.</summary>
+    private static async Task<string> ApiShaAsync(string endpoint, string repoPath, Action<Utf8JsonWriter> body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunBytesAsync(["api", "-X", "POST", $"repos/{{owner}}/{{repo}}/{endpoint}", "--input", "-"], repoPath, Json(body), cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not make {endpoint} for the {IdeaImages.Branch} branch: {(error.Trim().Length > 0 ? error : Encoding.UTF8.GetString(output)).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return TextOf(doc.RootElement, "sha") ?? throw new FlightException($"GitHub made {endpoint} for the {IdeaImages.Branch} branch but did not say its sha");
+    }
+
+    /// <summary>gh with bytes on stdin and bytes out: an image goes through a request body (too big for an argument) and comes back raw.</summary>
+    private static async Task<(int Exit, byte[] Output, string Error)> RunBytesAsync(IReadOnlyList<string> args, string cwd, byte[]? stdin, CancellationToken cancellationToken)
+    {
+        var start = new ProcessStartInfo("gh")
+        {
+            WorkingDirectory = cwd,
+            RedirectStandardInput = stdin is not null,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args)
+        {
+            start.ArgumentList.Add(arg);
+        }
+        start.Environment["GH_PROMPT_DISABLED"] = "1";
+        using var process = Process.Start(start) ?? throw new FlightException("gh did not start");
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromMinutes(5));
+        var output = new MemoryStream();
+        var read = process.StandardOutput.BaseStream.CopyToAsync(output, budget.Token);
+        var error = process.StandardError.ReadToEndAsync(budget.Token);
+        if (stdin is not null)
+        {
+            await process.StandardInput.BaseStream.WriteAsync(stdin, budget.Token);
+            process.StandardInput.Close();
+        }
+        await read;
+        await process.WaitForExitAsync(budget.Token);
+        return (process.ExitCode, output.ToArray(), await error);
     }
 }

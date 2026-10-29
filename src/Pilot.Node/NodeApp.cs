@@ -136,6 +136,7 @@ public static class NodeApp
         {
             var ideas = ActivatorUtilities.CreateInstance<IdeaCommander>(services);
             ideas.Error = logWriter;
+            ideas.Attachments = services.GetRequiredService<Attachments>();
             return ideas;
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
@@ -372,7 +373,7 @@ public static class NodeApp
                 || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
-                : (post && path == NodeWire.CommandsRoute) || granted ? NodeRouteAccess.Command
+                : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
                 : NodeRouteAccess.ThisMachineOnly;
         },
         MayCommand = async context =>
@@ -502,14 +503,15 @@ public static class NodeApp
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
 
         // The copy of an image an artifact names, as the file; the artifact (a leg's or a session's) says whose it is.
-        app.MapGet(NodeWire.AttachmentPattern, (string id, NodeState state, Attachments attachments) =>
+        IdeaImageRoutes.Map(app);
+        app.MapGet(NodeWire.AttachmentPattern, async (string id, NodeState state, Attachments attachments, RepoCatalog repos, IGitHub github, CancellationToken cancellationToken) =>
         {
             var found = state.Flights().SelectMany(f => state.Legs(f.Code).SelectMany(l => l.Artifacts).Select(a => (Owner: f.Code, Artifact: a)))
                 .Concat(state.Sessions().SelectMany(s => (s.Artifacts ?? []).Select(a => (Owner: s.Id, Artifact: a))))
                 .FirstOrDefault(x => x.Artifact?.Attachment == id);
             if (found.Artifact?.AttachmentExt is not { } ext || attachments.PathOf(found.Owner, id, ext) is not { } path || !File.Exists(path))
             {
-                return Results.NotFound();
+                return await IdeaImageRoutes.ServeAsync(id, state, attachments, repos, github, cancellationToken);
             }
             return Results.File(path, Attachments.ContentType(ext));
         });

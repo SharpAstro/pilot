@@ -653,7 +653,7 @@ public sealed class NodeState
     {
         var next = IdeaIds.Order(all).ToArray();
         // Age moves with the clock alone: a read that changes nothing else is no delta.
-        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
+        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [] } != pair.Second with { Age = "", Images = [] }))
         {
             Publish(new IdeasChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Ideas = next });
         }

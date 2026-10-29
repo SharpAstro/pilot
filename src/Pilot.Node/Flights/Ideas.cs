@@ -32,6 +32,7 @@ public static class IdeaRows
                 Repo = repo,
                 Title = issue.Title,
                 Body = issue.Body,
+                Images = IdeaImages.In(issue.Body),
                 State = !issue.Open ? IdeaState.Dropped : planned ? IdeaState.Planned : IdeaState.Noted,
                 UpdatedAt = issue.UpdatedAt,
                 Age = IdeaIds.Age(issue.CreatedAt, now),
@@ -92,6 +93,40 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
 
     /// <summary>Where this says how long each step of noting an idea took: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
+
+    /// <summary>The copies of the images pasted into ideas, which are filed on GitHub with the idea; none for one built without.</summary>
+    public Attachments? Attachments { get; set; }
+
+    /// <summary>
+    /// <paramref name="body"/> with each <see cref="IdeaImages.Marker"/> in it replaced, where it stood, by the image on GitHub. Each copy is
+    /// uploaded once (<paramref name="filed"/> remembers the URL, for a save that is tried again); an image already a URL is left as it is.
+    /// A marker whose copy the node does not hold refuses the whole text, before anything is uploaded.
+    /// </summary>
+    private async Task<string> FileImagesAsync(string path, string body, Dictionary<string, string> filed, CancellationToken cancellationToken)
+    {
+        if (!body.Contains(IdeaImages.Scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return body;
+        }
+        var wanted = new List<string>();
+        IdeaImages.ReplaceMarkers(body, (alt, id, _) =>
+        {
+            wanted.Add(id);
+            return alt;
+        });
+        var copies = new Dictionary<string, (string Path, string Ext)>();
+        foreach (var id in wanted.Distinct().Where(id => !filed.ContainsKey(id)))
+        {
+            copies[id] = Attachments?.FindIdeaImage(id)
+                ?? throw new FlightException($"the image {id} in the idea's text is not one this node holds: paste it again");
+        }
+        foreach (var (id, copy) in copies)
+        {
+            var bytes = await File.ReadAllBytesAsync(copy.Path, cancellationToken);
+            filed[id] = await github.UploadIdeaImageAsync(path, id, copy.Ext, bytes, cancellationToken);
+        }
+        return IdeaImages.ReplaceMarkers(body, (alt, id, _) => $"![{alt}]({filed[id]})");
+    }
 
     public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone;
 
@@ -201,6 +236,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         }
         var milestone = await github.IdeasMilestoneAsync(path, cancellationToken);
         Step("milestone found");
+        body = await FileImagesAsync(path, body, [], cancellationToken);
         var issue = await github.CreateIssueInMilestoneAsync(path, title, body.Length > 0 ? body : null, milestone.Title, cancellationToken);
         Step("issue made");
         state.CloseCardsAbout(RepoCardSubject(text), "filed", CardKinds.IdeaRepo);
@@ -418,8 +454,13 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
             throw new FlightException("edit-idea needs the idea's text: its first line is the title, the rest the body");
         }
         (var name, var path, number) = await ResolveAsync(given, number, cancellationToken);
+        var filed = new Dictionary<string, string>();
         var saved = await SaveAsync(name, path, number, mine, startedFrom,
-            (now, text) => github.EditIssueAsync(path, number, text!.Title, text.Body, now.UpdatedAt, cancellationToken), cancellationToken);
+            async (now, text) =>
+            {
+                var body = await FileImagesAsync(path, text!.Body, filed, cancellationToken);
+                return await github.EditIssueAsync(path, number, text.Title, body, now.UpdatedAt, cancellationToken);
+            }, cancellationToken);
         await RefreshAsync(name, path, cancellationToken);
         return saved.Card is { } card
             ? state.Complete(command, null, way: IdeaEditWays.Asked, made: card.Id)
