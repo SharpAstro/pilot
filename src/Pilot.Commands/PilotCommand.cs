@@ -1571,7 +1571,7 @@ public static class PilotCommand
             foreach (var leg in snapshot.Legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {
                 var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
-                var goArounds = leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "";
+                var goArounds = (leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "") + (Verbs.AttemptOf(leg) is { } attempt ? $", {attempt}" : "");
                 text.AppendLine($"  {leg.Order}. {leg.Name}: {FlightWaiting.LegState(leg)}{steps}{goArounds}{(leg.Worker is { } w && leg.State == LegState.Flying ? $", worker {w}" : "")}");
                 foreach (var artifact in leg.Artifacts)
                 {

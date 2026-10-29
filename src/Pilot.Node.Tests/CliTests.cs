@@ -564,6 +564,21 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public void StatusSaysTheRedoAndModelOfALegsCurrentWorker()
+    {
+        var flight = new FlightRow
+        {
+            Code = "TIA1", Repo = "o/r", RepoPath = "r", Issue = 1, Branch = "flight/tia1", Worktree = "w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        };
+        var leg = new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, GoArounds = 3, AttemptModel = "opus", AttemptEffort = "xhigh" };
+        var snapshot = SnapshotWith(null) with { Flights = [flight], Legs = [leg] };
+
+        PilotCommand.Status(snapshot).ShouldContain("go-around 3, redo 3, on Opus at xhigh");
+        StatusMarkdown.Build(snapshot).ShouldContain("go-around 3, redo 3, on Opus at xhigh");
+    }
+
+    [Fact]
     public void StatusLeavesTheGpuOutOfTheMachineLineWhenTheNodeHasNone()
     {
         const long Gb = 1L << 30;

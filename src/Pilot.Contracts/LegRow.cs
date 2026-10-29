@@ -43,6 +43,12 @@ public sealed record LegRow
     /// <summary>The effort its workers run at; null for the default.</summary>
     public string? Effort { get; init; }
 
+    /// <summary>The model its current worker was started on, as the worker ladder chose it for the attempt (PIL402); null before one starts.</summary>
+    public string? AttemptModel { get; init; }
+
+    /// <summary>The effort its current worker was started at, as the worker ladder chose it for the attempt; null when none was passed or before one starts.</summary>
+    public string? AttemptEffort { get; init; }
+
     /// <summary>Its current worker's session name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;</c> in lower case; null before it starts.</summary>
     public string? Worker { get; init; }
 
