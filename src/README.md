@@ -334,20 +334,21 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   merges the base as it now stands into the plane (`git merge --no-edit`, so the new PR holds only the plane's work past it, squashed or not), pushes plain, opens the new
   PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
   done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
-- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
-  for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
+- `pilot review changes <changes>` rings with **Fix the review's findings** (a go-around of the last leg on its work as it stands, told the
+  changes, nothing thrown away; a done leg may go around for a review; from the second round the button names the round and the model) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
   before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
-  closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
+  closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
 - A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
   `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
   card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
   watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
-  and push plain, then `pilot flight review <code>`. The card's **Redo leg** choice is the watchtower's only when it finds the conflict is
-  real work (two designs, a goal to drop); no leg goes round for a conflict by itself, and the review stays as it was.
+  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
+  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
+  by itself, and the review stays as it was.
 - **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
   in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
   no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.

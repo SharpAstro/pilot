@@ -826,9 +826,9 @@ public static class Briefs
         text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");
         text.AppendLine("  `git fetch origin`, `git merge origin/<base>`, resolve every file so both sides' work stays, build and run the tests the");
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (plain, always),");
-        text.AppendLine($"  then `{pilot} flight review <code>`. A conflict is a merge, not a reason to redo a leg: the card's Redo leg choice is for a conflict that turns out to be real work (two designs, a goal to drop), never for a merge you can resolve.");
+        text.AppendLine($"  then `{pilot} flight review <code>`. A conflict is a merge, not a reason to send a leg round: the card's Resolve the conflict choice (a worker on the leg's work as it stands) is for a conflict that turns out to be real work (two designs, a goal to drop), never for a merge you can resolve.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
-        text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
+        text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
