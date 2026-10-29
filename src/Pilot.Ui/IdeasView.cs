@@ -29,7 +29,7 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
 }
 
 /// <summary>What the node said to an idea verb, as the page needs it.</summary>
-internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null);
+internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null);
 
 /// <summary>
 /// The Ideas page: a box to note an idea in one line (Claude picks the repo, so there is no picker), the ideas newest first with
@@ -59,10 +59,18 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // A tidy proposal, kept with the idea it is for.
     private sealed record Proposal(string Key, IdeaTidyProposal Tidy);
 
+    // The milestones Plan offers for the idea it is open on, with Claude's proposal (Done is false until Claude has answered or failed).
+    private sealed record Choices(string Key, MilestoneProposal? Answer, bool Done);
+
+    // One line of the pick list: Key is "m:<title>" (an open milestone), "s" (Claude's suggested new one) or "n" (the typed new one).
+    private sealed record Item(string Key, string Title, string? Description, bool IsNew, string Meta, string? Reason);
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IdeasScreen _screen = IdeasScreen.Empty;
     private Open? _open;
     private Proposal? _proposal;
+    private Choices? _choices;
+    private string? _picked;
     private string? _editFrom;
     private string _said = "";
     private bool _saidRefusal;
@@ -287,7 +295,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         RowInput.Placeholder = mode switch
         {
-            Mode.Plan => "milestone (Enter plans it in the next open one)",
+            Mode.Plan => "filter the milestones, or type a new one's title",
             Mode.Drop => "why drop it?",
             _ => "",
         };
@@ -299,12 +307,135 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Ui.Focus.Focus(EditInput);
         }
+        _choices = null;
+        _picked = null;
         if (mode == Mode.Tidy)
         {
             _proposal = null;
             Run(() => TidyAsync(idea), $"tidy {idea.Id}");
         }
+        else if (mode == Mode.Plan)
+        {
+            if (_proposal is { Tidy.Milestone: { } kept } held && held.Key == key)
+            {
+                // A tidy already asked Claude where it belongs: Plan starts from that.
+                _choices = new Choices(key, kept, true);
+                Seed();
+            }
+            else
+            {
+                _choices = new Choices(key, null, false);
+                Run(() => ProposeAsync(idea), $"milestone for {idea.Id}");
+            }
+        }
         Changed?.Invoke();
+    }
+
+    private async Task ProposeAsync(IdeaRow idea)
+    {
+        var reply = await RunAsync(Verbs.ProposeMilestone, TargetOf(idea), []);
+        if (reply is null || _open is not { Mode: Mode.Plan } open || open.Key != KeyOf(idea))
+        {
+            return;
+        }
+        _choices = new Choices(open.Key, reply.Ok ? reply.Milestones : null, true);
+        Seed();
+        if (!reply.Ok)
+        {
+            Say($"no milestone proposed for {Name(idea)}: {reply.Error}", refusal: true);
+        }
+        Changed?.Invoke();
+    }
+
+    // The proposal is chosen at first: a milestone it names, else the new one it suggests. No proposal chooses nothing.
+    private void Seed()
+    {
+        _picked = null;
+        if (_choices?.Answer is not { } answer)
+        {
+            return;
+        }
+        if (Proposed(answer) is { } named)
+        {
+            _picked = "m:" + named.Title;
+        }
+        else if (answer.NewTitle is { Length: > 0 })
+        {
+            _picked = "s";
+        }
+    }
+
+    private static MilestoneChoice? Proposed(MilestoneProposal answer) =>
+        answer.Title is { Length: > 0 } title ? answer.Open.FirstOrDefault(m => string.Equals(m.Title, title, StringComparison.OrdinalIgnoreCase)) : null;
+
+    // What the list shows for the filter typed: the proposal first, then the rest; the typed text as a new milestone when nothing matches.
+    private List<Item> Items(string filter)
+    {
+        var items = new List<Item>();
+        if (_choices is not { Done: true })
+        {
+            // Claude is still choosing: typed text must not become a new milestone before the open ones are known.
+            return items;
+        }
+        if (_choices.Answer is { } answer)
+        {
+            var proposed = Proposed(answer);
+            Item? suggested = answer.NewTitle is { Length: > 0 } newTitle
+                ? new Item("s", newTitle, answer.NewDescription, true, proposed is null ? "proposed" : "suggested", proposed is null ? answer.Reason : null)
+                : null;
+            if (suggested is not null && proposed is null)
+            {
+                items.Add(suggested);
+            }
+            foreach (var m in answer.Open.OrderBy(m => proposed is not null && m.Title == proposed.Title ? 0 : 1))
+            {
+                var isProposed = proposed is not null && m.Title == proposed.Title;
+                var meta = string.Join(" · ", new[] { isProposed ? "proposed" : null, m.DueOn is { } due ? "due " + due.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : null, $"{m.OpenIssues} open" }.OfType<string>());
+                items.Add(new Item("m:" + m.Title, m.Title, null, false, meta, isProposed ? answer.Reason : null));
+            }
+            if (suggested is not null && proposed is not null)
+            {
+                items.Add(suggested);
+            }
+        }
+        var wanted = filter.Trim();
+        if (wanted.Length == 0)
+        {
+            return items;
+        }
+        items = [.. items.Where(i => i.Title.Contains(wanted, StringComparison.OrdinalIgnoreCase))];
+        if (items.Count == 0)
+        {
+            items.Add(new Item("n", wanted, null, true, "", null));
+        }
+        return items;
+    }
+
+    // The milestone Plan would use: the one picked while it is in the list, else, once something is typed, the first the filter leaves.
+    private Item? Chosen(List<Item> items)
+    {
+        if (_picked is { } picked && items.FirstOrDefault(i => i.Key == picked) is { } item)
+        {
+            return item;
+        }
+        return RowInput.Text.Trim().Length > 0 ? items.FirstOrDefault() : null;
+    }
+
+    /// <summary>Plans the idea into the milestone chosen in the list (or the new one typed or suggested); nothing chosen is not sent.</summary>
+    public async Task PlanChosenAsync(IdeaRow idea)
+    {
+        if (_open is { Mode: Mode.Plan } waiting && waiting.Key == KeyOf(idea) && _choices is not { Done: true })
+        {
+            Say("Claude is still choosing a milestone; pick one when the list is in", refusal: true);
+            return;
+        }
+        if (_open is not { Mode: Mode.Plan } open || open.Key != KeyOf(idea) || Chosen(Items(RowInput.Text)) is not { } chosen)
+        {
+            Say("pick a milestone to plan it in", refusal: true);
+            return;
+        }
+        string[] args = !chosen.IsNew ? [chosen.Title] : chosen.Description is { Length: > 0 } description ? [Verbs.NewMilestoneArg, chosen.Title, description] : [Verbs.NewMilestoneArg, chosen.Title];
+        await PlanAsync(idea, args);
     }
 
     /// <summary>Puts away the open action and its box.</summary>
@@ -312,16 +443,17 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         _open = null;
         _proposal = null;
+        _choices = null;
         Ui.Focus.BlurIfFocused(RowInput);
         Ui.Focus.BlurIfFocused(EditInput);
         Changed?.Invoke();
     }
 
-    /// <summary>Plans the idea: moved out of Ideas to <paramref name="milestone"/>, or the next open one when it is empty.</summary>
-    public async Task PlanAsync(IdeaRow idea, string milestone)
+    // Plans the idea: moved out of Ideas to the milestone the args name, or to the new one they ask for.
+    private async Task PlanAsync(IdeaRow idea, string[] args)
     {
         Close();
-        var reply = await RunAsync(Verbs.PlanIdea, TargetOf(idea), milestone.Trim().Length > 0 ? [milestone.Trim()] : []);
+        var reply = await RunAsync(Verbs.PlanIdea, TargetOf(idea), args);
         if (reply is not null)
         {
             Say(reply.Ok ? $"planned {Name(idea)}{(reply.Made is { Length: > 0 } flight ? $" as flight {flight}" : "")}" : $"{Name(idea)} not planned: {reply.Error}", !reply.Ok);
@@ -468,6 +600,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             _open = null;
             _proposal = null;
+            _choices = null;
         }
 
         var ideas = IdeaIds.Order(screen.Ideas).ToList();
@@ -534,7 +667,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         switch (open.Mode)
         {
             case Mode.Plan:
-                await PlanAsync(idea, text);
+                await PlanChosenAsync(idea);
                 break;
             case Mode.Drop:
                 await DropAsync(idea, text);
@@ -688,17 +821,55 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     if (mode == Mode.Plan)
                     {
                         // What the box is for, said: "plan in" over an empty box left the owner unsure what it wanted (2026-10-29).
-                        yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Type the milestone to put it in, or leave the box empty for the next open one.", 12f, P.Body).WStar();
+                        yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Pick the milestone to put it in.", 12f, P.Body).WStar();
                     }
                     yield return Layout.Builder.HStack(
-                            Layout.Builder.Text(mode == Mode.Plan ? "milestone (optional)" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).WAuto(),
                             Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
                         .WithGap(10f).RowH(30f);
+                }
+                Item? chosen = null;
+                if (mode == Mode.Plan)
+                {
+                    if (_choices is { Done: false })
+                    {
+                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).RowH(18f);
+                    }
+                    var items = Items(RowInput.Text);
+                    chosen = Chosen(items);
+                    foreach (var item in items)
+                    {
+                        var pick = item.Key;
+                        var label = (chosen?.Key == pick ? "● " : "") + (item.IsNew ? $"new milestone: {item.Title}" : item.Title) + (item.Meta.Length > 0 ? " · " + item.Meta : "");
+                        var rows = new List<Layout.Node>
+                        {
+                            CardsView<TSurface>.Pill(label, $"ideas:milestone:{KeyOf(idea)}:{pick}", () =>
+                            {
+                                _picked = pick;
+                                Changed?.Invoke();
+                            }, chosen?.Key == pick ? Lit : Tint, P.Bright),
+                        };
+                        if (item.Description is { Length: > 0 } description)
+                        {
+                            rows.Add(WrappedProse.Of(description, 12f, P.Dim).WStar());
+                        }
+                        if (item.Reason is { Length: > 0 } reason)
+                        {
+                            rows.Add(WrappedProse.Of(reason, 12f, P.Dim).WStar());
+                        }
+                        yield return Layout.Builder.VStack([.. rows]).WithGap(2f).WStar().HAuto();
+                    }
+                    if (_choices is { Done: true, Answer.Note: { Length: > 0 } note })
+                    {
+                        yield return WrappedProse.Of(note, 12f, P.Dim).WStar();
+                    }
                 }
                 var buttons = new List<Layout.Node>();
                 if (mode == Mode.Plan)
                 {
-                    buttons.Add(CardsView<TSurface>.Pill("Plan in the next open milestone", $"ideas:plan-next:{KeyOf(idea)}", () => Run(() => PlanAsync(idea, ""), $"plan {idea.Id}"), Lit, P.Bright));
+                    buttons.Add(chosen is null
+                        ? Layout.Builder.Text("Plan", 12f, P.Faint, TextAlign.Center).Pad(10f, 4f).Bg(P.GhostBg).WAuto()
+                        : CardsView<TSurface>.Pill("Plan", $"ideas:plan-go:{KeyOf(idea)}", () => Run(() => PlanChosenAsync(idea), $"plan {idea.Id}"), Lit, P.Bright));
                 }
                 if (mode == Mode.Edit)
                 {
@@ -709,7 +880,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 yield return Layout.Builder.Text(mode switch
                 {
                     Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels",
-                    Mode.Plan => "Enter plans it (an empty box: the next open milestone) · Esc cancels",
+                    Mode.Plan => "Type to filter · Enter plans the chosen milestone · Esc cancels",
                     _ => "Enter sends · Esc cancels",
                 }, 11f, P.Faint).RowH(16f);
                 break;
@@ -746,6 +917,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.Text(mark, 13f, color).WFixed(16f),
                     line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
                 .WStar().HAuto();
+        }
+        if (tidy.Milestone is { } plan && (Proposed(plan)?.Title ?? plan.NewTitle) is { Length: > 0 } where)
+        {
+            yield return WrappedProse.Of($"Plan it in: {(Proposed(plan) is null ? "new milestone " : "")}{where}" + (plan.Reason is { Length: > 0 } why ? $" ({why})" : ""), 12f, P.Dim).WStar();
         }
         yield return Layout.Builder.WrapH(
                 CardsView<TSurface>.Pill("Save", $"ideas:tidy-save:{KeyOf(idea)}", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit, P.Bright),
