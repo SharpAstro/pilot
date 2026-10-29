@@ -174,37 +174,29 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     public string? ReviewRefused { get; private set; }
 
     // The PRs a Review is running for: pressed again meanwhile does nothing.
-    private readonly HashSet<string> _reviewing = new(StringComparer.Ordinal);
+    private System.Collections.Immutable.ImmutableHashSet<string> _reviewing = System.Collections.Immutable.ImmutableHashSet.Create<string>(StringComparer.Ordinal);
     // The PRs whose review the node took since the list was last read, by URL: the row says "reviewing" at once rather than at the
     // next read, up to a minute on, which left a press of Review looking like nothing happened (the owner, 2026-10-29).
     // It lapses after StartedFor: the row cannot say "reviewing" for a review that never ran, nor lose its Review button until a restart.
-    // Both sets are touched from the UI thread and from the press's continuation, so each is read and written under its own lock.
-    private readonly Dictionary<string, long> _started = new(StringComparer.Ordinal);
+    // Both are touched from the UI thread and from the press's continuation, and the UI never waits (LayoutDrivenTests.NothingInTheUiWaits),
+    // so each is an immutable set swapped whole (ImmutableInterlocked), never locked.
+    private System.Collections.Immutable.ImmutableDictionary<string, long> _started = System.Collections.Immutable.ImmutableDictionary.Create<string, long>(StringComparer.Ordinal);
     internal TimeSpan StartedFor { get; set; } = TimeSpan.FromMinutes(2);
 
-    private bool IsReviewing(string url)
-    {
-        lock (_reviewing)
-        {
-            return _reviewing.Contains(url);
-        }
-    }
+    private bool IsReviewing(string url) => Volatile.Read(ref _reviewing).Contains(url);
 
     private bool IsStarted(string url)
     {
-        lock (_started)
+        if (!Volatile.Read(ref _started).TryGetValue(url, out var at))
         {
-            if (!_started.TryGetValue(url, out var at))
-            {
-                return false;
-            }
-            if (System.Diagnostics.Stopwatch.GetElapsedTime(at) < StartedFor)
-            {
-                return true;
-            }
-            _started.Remove(url);
             return false;
         }
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(at) < StartedFor)
+        {
+            return true;
+        }
+        System.Collections.Immutable.ImmutableInterlocked.TryRemove(ref _started, url, out _);
+        return false;
     }
 
     // The cards the last frame offered a Merge or a Go around from.
@@ -448,11 +440,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         {
             return;
         }
-        bool added;
-        lock (_reviewing)
-        {
-            added = _reviewing.Add(pr.Url);
-        }
+        var added = System.Collections.Immutable.ImmutableInterlocked.Update(ref _reviewing, set => set.Add(pr.Url));
         if (!added)
         {
             return;
@@ -463,10 +451,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         try
         {
             await review(pr, CancellationToken.None);
-            lock (_started)
-            {
-                _started[pr.Url] = System.Diagnostics.Stopwatch.GetTimestamp();
-            }
+            System.Collections.Immutable.ImmutableInterlocked.AddOrUpdate(ref _started, pr.Url, System.Diagnostics.Stopwatch.GetTimestamp(), (_, _) => System.Diagnostics.Stopwatch.GetTimestamp());
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
         {
@@ -474,10 +459,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         finally
         {
-            lock (_reviewing)
-            {
-                _reviewing.Remove(pr.Url);
-            }
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _reviewing, set => set.Remove(pr.Url));
         }
         Changed?.Invoke();
     }
@@ -1038,10 +1020,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         // A review the node took is said at once; the read that shows it (or its verdict) takes over from there.
         if (pr.Review is not null)
         {
-            lock (_started)
-            {
-                _started.Remove(pr.Url);
-            }
+            System.Collections.Immutable.ImmutableInterlocked.TryRemove(ref _started, pr.Url, out _);
         }
         else if (IsStarted(pr.Url))
         {
