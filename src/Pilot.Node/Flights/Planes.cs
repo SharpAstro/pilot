@@ -494,6 +494,13 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var tries = 0;
         while (!(remove = await git.RunAsync(force ? ["worktree", "remove", "--force", worktree] : ["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
         {
+            // git removes a worktree with submodules only with --force, clean or not; this one was found clean above
+            // (PDF439's plane kept the flight from landing, SE1 2026-10-29).
+            if (!force && remove.Why.Contains("containing submodules", StringComparison.OrdinalIgnoreCase))
+            {
+                force = true;
+                continue;
+            }
             // Torn down under us between the look and the remove: as gone as it gets.
             if (remove.Why.Contains("is not a working tree", StringComparison.OrdinalIgnoreCase))
             {
