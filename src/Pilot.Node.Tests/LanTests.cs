@@ -179,20 +179,22 @@ public sealed class LanTests
         }
     }
 
-    private static async Task<NodeClient> GrantedAsync(NodeHarness node, int port, string label)
+    private static async Task<NodeClient> GrantedAsync(NodeHarness node, int port, string label) =>
+        NodeClient.Remote($"127.0.0.1:{port}", await GrantTokenAsync(node, port, label));
+
+    private static async Task<string> GrantTokenAsync(NodeHarness node, int port, string label)
     {
         using var asking = NodeClient.Remote($"127.0.0.1:{port}");
         var ticket = (await asking.AskGrantAsync(label, Ct)).Response.ShouldNotBeNull();
         var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
         (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
-        token.ShouldNotBeNullOrEmpty();
-        return NodeClient.Remote($"127.0.0.1:{port}", token);
+        return token.ShouldNotBeNullOrEmpty();
     }
 
-    private static async Task WatchtowerRowAsync(NodeHarness node, string name)
+    private static async Task WatchtowerRowAsync(NodeHarness node, string name, string sessionId = AgentRows.SessionA)
     {
-        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, name, status: "busy"));
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(sessionId, 4242, name, status: "busy"));
         for (var i = 0; i < 100 && !node.State.Sessions().Any(s => s.Name == name); i++)
         {
             await Task.Delay(50, Ct);
@@ -223,6 +225,44 @@ public sealed class LanTests
         // SE1's watchtower tells back through its grant on DE1: marked as from the second.
         (await toA.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["PIL411 is at review"], Who = "se1-watchtower" }, Ct)).Success.ShouldBeTrue();
         a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
+    }
+
+    [Fact]
+    public async Task AWatchtowersTellThroughTheCliOverNodeIsNamedByThisMachinesNodeSoItArrivesMarked()
+    {
+        var (portA, portB) = (FreePort(), FreePort());
+        await using var a = await NodeHarness.StartAsync(Ct, lanPort: portA, machine: "DE1");
+        await using var b = await NodeHarness.StartAsync(Ct, lanPort: portB, machine: "SE1");
+        await WatchtowerRowAsync(a, "de1-watchtower", AgentRows.SessionA);
+        await WatchtowerRowAsync(b, "se1-watchtower", AgentRows.SessionB);
+        var tokens = Path.Combine(a.Options.DataFolder, "client-grants.json");
+        NodeTargets.Save($"127.0.0.1:{portB}", await GrantTokenAsync(b, portB, "someone@de1-host"), tokens);
+        NodeTargets.Save($"127.0.0.1:{portA}", await GrantTokenAsync(a, portA, "someone@se1-host"), tokens);
+        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
+        try
+        {
+            // The watchtower's own CLI: --node is the other node, --node-socket this machine's, where the session runs.
+            async Task Tell(NodeHarness from, int to, string sessionId, string words)
+            {
+                var output = new StringWriter();
+                var exit = await PilotCommand.RunAsync(["--node", $"127.0.0.1:{to}", "--node-socket", from.SocketPath, "tell", words], Path.GetTempPath(), output, output, Ct, agent: true, sessionId: sessionId);
+                exit.ShouldBe(0, output.ToString());
+            }
+
+            // DE1's watchtower asks SE1's: SE1's node has no session of that id, so DE1's node names it.
+            await Tell(a, portB, AgentRows.SessionA, "how is PIL411?");
+            var told = b.Delivery.Relays.ShouldHaveSingleItem();
+            told.Text.ShouldStartWith("[From the watchtower of node DE1] ");
+            told.Text.ShouldContain("how is PIL411?");
+
+            // SE1's watchtower tells back the same way: marked as SE1's.
+            await Tell(b, portA, AgentRows.SessionB, "PIL411 is at review");
+            a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
+        }
     }
 
     [Fact]

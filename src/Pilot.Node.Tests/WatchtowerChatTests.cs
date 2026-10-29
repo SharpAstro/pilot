@@ -132,6 +132,8 @@ public sealed class WatchtowerChatTests : IDisposable
         brief.ShouldContain("never wait on the answer");
         brief.ShouldContain("post the outcome in the chat");
         brief.ShouldContain("[From the watchtower of node <name>]");
+        brief.ShouldContain("A report back to a tell you sent is not a request: post it in the chat");
+        brief.ShouldContain("do not answer it, no thanks or acknowledgement tells");
         brief.ShouldContain("Never edit or push another node's plane from here");
     }
 

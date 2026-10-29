@@ -781,7 +781,9 @@ public static class Briefs
         text.AppendLine($"- To get something done on another node, pass it to that node's watchtower, which owns its planes: `{pilot} tell --node <name>");
         text.AppendLine("  \"<what and why, and ask it to tell back what came of it>\"`. Say at once in the chat that you passed it on, and end your turn:");
         text.AppendLine("  never wait on the answer, the controller keeps talking meanwhile. When that node's watchtower tells back, post the outcome in the chat.");
-        text.AppendLine($"- A message that begins `[From the watchtower of node <name>]` is that node's watchtower, not the controller: do it, then answer it with `{pilot} tell --node <name>`.");
+        text.AppendLine("- A message that begins `[From the watchtower of node <name>]` is that node's watchtower, not the controller. A request from it:");
+        text.AppendLine($"  do it, then answer it with `{pilot} tell --node <name>`. A report back to a tell you sent is not a request: post it in the chat");
+        text.AppendLine("  and do not answer it, no thanks or acknowledgement tells, or the two watchtowers answer each other without end.");
         text.AppendLine($"- `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant (pilot connect) and the card's");
         text.AppendLine("  choice is plainly the right one.");
         text.AppendLine("- Name the node where it matters in a reply (\"PIL411 on SE1 is at review\"). Never edit or push another node's plane from here; ask its watchtower.");
