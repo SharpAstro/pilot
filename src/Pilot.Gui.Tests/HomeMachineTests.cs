@@ -180,8 +180,9 @@ public sealed class HomeMachineTests : IAsyncDisposable
         var pages = await TwoNodes(new NodeFilter());
         using var renderer = new RgbaImageRenderer(1280, 2400);
         var home = new HomeView<RgbaImage>(renderer);
-        ImmutableArray<Layout.ArrangedNode<float>> Arrange(HomeScreen screen) =>
-            Layout.Engine.Arrange(home.Tree(screen), new Rect<float>(0, 0, 1280, 2400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        // Wide enough for all four gauges on one line (326 each and 28 between); a narrower page wraps the last one, as the chips wrap.
+        ImmutableArray<Layout.ArrangedNode<float>> Arrange(HomeScreen screen, float width = 1500) =>
+            Layout.Engine.Arrange(home.Tree(screen), new Rect<float>(0, 0, width, 2400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         Rect<float> Text(ImmutableArray<Layout.ArrangedNode<float>> arranged, string value) =>
             arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == value).Bounds;
 
@@ -193,6 +194,10 @@ public sealed class HomeMachineTests : IAsyncDisposable
         middles.ShouldAllBe(m => Math.Abs(m - middles[0]) < 0.6f);
         Text(full, "CPU").Height.ShouldBe(Text(full, "GPU").Height);
         Text(full, "CPU").Height.ShouldBeGreaterThan(0f);
+
+        // At the usual 1280 the net gauge wraps to a line of its own, whole and under the others, not over them.
+        var wrapped = Arrange(Home(pages) with { Machines = [pages.Machines![0]] }, 1280);
+        Text(wrapped, "2.3/0.4 Mbps (in/out)").Y.ShouldBeGreaterThanOrEqualTo(Text(wrapped, "21/32 GB").Y + Text(wrapped, "21/32 GB").Height - 0.5f);
 
         // The page ends at the same place whether the node has one busy process or five: nothing below the block moves.
         var one = Home(pages) with { Machines = [pages.Machines![0] with { Row = pages.Machines![0].Row with { Processes = [Process(1, "claude", 5, 1L << 20)] } }] };
