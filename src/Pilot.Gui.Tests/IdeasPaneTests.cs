@@ -424,7 +424,7 @@ public sealed class IdeasPaneTests
 
         // The answer lands: the filter now narrows the open milestones.
         hold.SetResult();
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         Draw(chrome, screen, 1280, 1200);
         text = Spoken(renderer, chrome, screen, 1280);
         text.ShouldContain("v2.3");
