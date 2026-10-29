@@ -159,7 +159,7 @@ public sealed partial class FlightCommander
                     var kept = now.PeerConnections.Where(c => !seen.PeerConnections.Any(s => s.Code == c.Code && s.Node == c.Node)).Concat(next).ToArray();
                     if (!kept.SequenceEqual(now.PeerConnections))
                     {
-                        state.PutFlight(Settle(now with { PeerConnections = kept }));
+                        state.PutFlight(Settle(WaitsHere(now with { PeerConnections = kept })));
                     }
                 }
             }
@@ -208,6 +208,11 @@ public sealed partial class FlightCommander
         }
         if (row.State == FlightState.Landed)
         {
+            // Moved to another node: landed there, not landed at all, so the wait follows it (to this node too, made a wait of its own then).
+            if (row.MovedTo is { } movedTo)
+            {
+                return (wait with { Node = movedTo.To, Note = null }, false);
+            }
             // Folded into another flight: its work is that one's now, so the wait is for that one.
             return row.FoldedInto is { } into
                 ? (wait with { Code = into, Note = null }, false)
