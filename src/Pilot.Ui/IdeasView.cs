@@ -908,6 +908,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
                 .WStar().HAuto();
         }
+        if (tidy.Milestone is { } plan && (Proposed(plan)?.Title ?? plan.NewTitle) is { Length: > 0 } where)
+        {
+            yield return WrappedProse.Of($"Plan it in: {(Proposed(plan) is null ? "new milestone " : "")}{where}" + (plan.Reason is { Length: > 0 } why ? $" ({why})" : ""), 12f, P.Dim).WStar();
+        }
         yield return Layout.Builder.WrapH(
                 CardsView<TSurface>.Pill("Save", $"ideas:tidy-save:{KeyOf(idea)}", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit, P.Bright),
                 CardsView<TSurface>.Pill("Discard", $"ideas:tidy-discard:{KeyOf(idea)}", Close, Tint, P.Body),
