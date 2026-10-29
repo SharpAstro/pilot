@@ -663,12 +663,40 @@ public static class Briefs
         text.AppendLine();
         // Said as work, not as state: a watchtower restarted with four rings open read them here and sat idle, since the node had
         // told them to the one before it and does not tell them again (DE1, 2026-10-28).
-        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards, yours to act on now as if the node had just said them (start with the rings):");
-        foreach (var card in open)
+        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards, yours to act on now as if the node had just said them (start with the rings; `pilot cards` has each one whole):");
+        // One short line a card, and no more of them than fit: the brief is the session's first prompt, passed on its command line,
+        // and with every card whole it grew past what Windows starts a process with (32,767 characters). Nine watchtowers in a
+        // row died on ENAMETOOLONG before writing a line, and the node's cards reached nobody (DE1, 2026-10-29).
+        var listed = 0;
+        foreach (var card in open.OrderBy(c => c.Bin == CardBin.Ring ? 0 : 1))
         {
-            text.AppendLine(CardLine(card));
+            var line = ShortCardLine(card);
+            if (text.Length + line.Length > MaxWatchtowerBrief)
+            {
+                break;
+            }
+            text.AppendLine(line);
+            listed++;
+        }
+        if (listed < open.Count)
+        {
+            text.AppendLine($"- and {open.Count - listed} more: `pilot cards` lists them.");
         }
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The most the watchtower brief holds, characters. The brief is the first prompt of a session the node starts, which goes on
+    /// that process's command line, and Windows refuses one over 32,767 characters (ENAMETOOLONG); this leaves room for the rest of it.
+    /// </summary>
+    public const int MaxWatchtowerBrief = 24_000;
+
+    /// <summary>A card in a line for the watchtower brief: its id, bin, subject and title, cut short; its detail and choices are for <c>pilot cards</c>.</summary>
+    public static string ShortCardLine(CardRow card)
+    {
+        var bin = card.Bin switch { CardBin.Ring => "ring", CardBin.ForYou => "for you", _ => "handled" };
+        var title = card.Title.ReplaceLineEndings(" ");
+        return $"- {card.Id} [{bin}] about {card.Subject}: {(title.Length > 160 ? title[..159] + "…" : title)}";
     }
 
     /// <summary>
