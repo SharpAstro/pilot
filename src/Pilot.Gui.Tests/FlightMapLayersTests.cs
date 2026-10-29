@@ -159,10 +159,11 @@ public sealed class FlightMapLayersTests
         view.Map.Route("L").ShouldBeNull();
     }
 
-    // The arranged text of the Flights page as the window lays it out.
-    private static List<string> Texts(RgbaImageRenderer renderer, FlightsView<RgbaImage> view, FlightsScreen screen) =>
-        [.. Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, 1280, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
-            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+    // The arranged text of the Flights page as the window lays it out, each with its box.
+    private static List<(Layout.Content.Text Text, Rect<float> Box)> Texts(RgbaImageRenderer renderer, FlightsView<RgbaImage> view, FlightsScreen screen, int width) =>
+        [.. Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f))
+            .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
+            .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content, a.Bounds))];
 
     [Theory]
     [InlineData("landed", "Landed is off")]
@@ -179,22 +180,31 @@ public sealed class FlightMapLayersTests
             "arcs" => [.. Lines().Where(l => l.Node == De1)],
             _ => Lines(),
         };
-        using var renderer = new RgbaImageRenderer(1280, 800);
+        // A narrow window, where a line at full length ran under the menu.
+        const int width = 900;
+        using var renderer = new RgbaImageRenderer(width, 800);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
         (view.MapLayers.ShowLanded, view.MapLayers.ShowHeld, view.MapLayers.ArcsOnly) = (layer != "landed", layer != "held", layer == "arcs");
         view.MapLayers.OnlyNode = layer == "node" ? "ne1" : null;
         var screen = new FlightsScreen(lines, "test", Live.At);
 
-        view.Render(screen, new RectF32(0, 0, 1280, 800));
+        view.Render(screen, new RectF32(0, 0, width, 800));
 
         view.Map.Routes.ShouldBeEmpty();
         view.MapShown.ShouldBeTrue();
-        var line = Texts(renderer, view, screen).Where(t => t.StartsWith("No flight on the map: ", StringComparison.Ordinal)).ShouldHaveSingleItem();
-        line.ShouldContain(why);
-        // The menu that turns the layer back is still over the page.
+        // The line, wrapped word by word (each word's leaf ends in its space), says the layer that hides them.
+        var texts = Texts(renderer, view, screen, width);
+        string.Concat(texts.Select(t => t.Text.Value)).ShouldContain($"No flight on the map: {why}. The LAYERS menu changes what it shows.");
+        // The menu that turns the layer back is still over the page, and no word of the line runs under it.
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a == FlightMapLayerPalette.RowAction(FlightMapLayers.All[0])).ShouldBeTrue();
+        var panel = view.MapLayers.Palette.PanelRect;
+        texts.Where(t => t.Text.FontSize == 14f)
+            .Where(t => MathF.Min(t.Box.X + t.Box.Width, panel.X + panel.Width) - MathF.Max(t.Box.X, panel.X) > TextOverlap.Tolerance
+                && MathF.Min(t.Box.Y + t.Box.Height, panel.Y + panel.Height) - MathF.Max(t.Box.Y, panel.Y) > TextOverlap.Tolerance)
+            .Select(t => t.Text.Value)
+            .ShouldBeEmpty();
     }
 
     [Fact]

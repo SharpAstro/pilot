@@ -51,10 +51,11 @@ internal sealed partial class FlightsView<TSurface>
     {
         _chain = Selected >= 0 && Selected < screen.Lines.Count ? _map.Chain(screen.Lines[Selected].Node?.Key ?? "", screen.Lines[Selected].Code) : new HashSet<(string Node, string Code)>();
         var layers = FlightMapLayerPalette.Build(MapLayers, P, 11f, Scale, MapLayers.NoteChanged);
-        // The page has flights and the layers left none: one line says which layer hides them, under the menu that turns it back.
+        // The page has flights and the layers left none: one line says which layer hides them, beside the menu that turns it back.
+        // It wraps clear of the menu's width on either side, where the menu may be docked, so no word of it runs under the menu.
         if (FlightMapLayers.Hiding(screen.Lines, MapLayers, _map) is { } hidden)
         {
-            var note = Layout.Builder.VStack(Layout.Builder.Text(hidden, 14f, Dim).RowH(24f)).Pad(Gutter, 8f).Stretch();
+            var note = Layout.Builder.VStack(Prose(hidden, 14f, Dim).WStar().HAuto()).Pad(FlightMapLayerPalette.PanelWidth + 2f * Gutter, 8f).Stretch();
             return Layout.Builder.Overlay(note, layers).Stretch();
         }
         var k = MapScale;
