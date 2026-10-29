@@ -520,7 +520,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((pr, true));
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s review asks for changes"));
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s PR fails its checks"));
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
@@ -945,7 +945,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         F("TIA7").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's review asks for changes"));
+        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's PR fails its checks"));
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1638,7 +1638,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
         var card = Open().ShouldHaveSingleItem();
         card.Kind.ShouldBe(LegCommander.ReviewChanges);
         var redo = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        redo.Label.ShouldContain("redo 3");
+        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29).
+        redo.Label.ShouldBe("Fix the review's findings (round 3, on Opus at xhigh)");
         redo.Label.ShouldContain("Opus");
     }
 

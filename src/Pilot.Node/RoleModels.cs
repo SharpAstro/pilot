@@ -202,10 +202,13 @@ public sealed partial class RoleModels
     }
 
     /// <summary>The review card's button for <paramref name="leg"/>: <see cref="Verbs.FixFindings"/>, naming the next worker's model as <see cref="RedoLabel"/> does.</summary>
-    public string FixFindingsLabel(LegRow leg)
+    public string FixFindingsLabel(LegRow leg) => SendBackLabel(leg, "Fix the review's findings");
+
+    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
+    public string SendBackLabel(LegRow leg, string words)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.FixFindings(leg.GoArounds + 1, model, effort);
+        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
     }
 
     private static string Step(string? effort, int by, string whenUnset) =>

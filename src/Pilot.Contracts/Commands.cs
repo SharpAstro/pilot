@@ -576,8 +576,15 @@ public static class Verbs
     /// stands, nothing is thrown away, so it is not "redo" (the owner, 2026-10-29). The verb stays <see cref="GoAround"/>; from the
     /// second go-around on it names what that worker runs on, as <see cref="RedoLeg(string, int, string?, string?)"/> does.
     /// </summary>
-    public static string FixFindings(int redo, string? model, string? effort = null) =>
-        redo >= 2 && model is not null ? $"Fix the review's findings ({AttemptText(redo, model, effort)})" : "Fix the review's findings";
+    public static string FixFindings(int redo, string? model, string? effort = null) => SendBack("Fix the review's findings", redo, model, effort);
+
+    /// <summary>
+    /// A button that sends a done leg round on what it says (<paramref name="words"/>: the review's findings, the failing checks, the
+    /// conflict), from the second go-around on with the round and the model the next worker runs on: <c>(round 3, on Opus)</c>.
+    /// Never "redo": the work is kept and built on (the owner, 2026-10-29).
+    /// </summary>
+    public static string SendBack(string words, int round, string? model, string? effort = null) =>
+        round >= 2 && model is not null ? $"{words} (round {round}, {OnModel(model, effort)})" : words;
 
     /// <summary>The redo (go-arounds) and the model (and effort) it runs on: <c>redo 3, on Opus</c>, or <c>on Sonnet</c> before the second redo.</summary>
     public static string AttemptText(int redo, string? model, string? effort = null)

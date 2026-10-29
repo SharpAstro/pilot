@@ -2115,7 +2115,7 @@ public sealed partial class LegCommander(
     {
         var row = FlightOf(Verbs.FlightTarget(code));
         state.PutFlight(row with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = ReviewerName(row), Report = why, StartedAt = time.GetUtcNow(), FinishedAt = time.GetUtcNow() } });
-        RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), why);
+        RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), why, SendBackReason.ReviewNotStarted);
     }
 
     private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -2196,7 +2196,7 @@ public sealed partial class LegCommander(
     /// failed two of its tests, and no verb could send it round (2026-10-23). Null when done; else why not.
     /// </summary>
     public Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken) =>
-        SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken);
+        SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken, SendBackReason.ChecksFailed);
 
     /// <summary>
     /// A reviewed PR whose rebase onto its base conflicts: taken as changes, as failed checks are, so the ring's go-around
@@ -2206,7 +2206,7 @@ public sealed partial class LegCommander(
     public async Task<string?> ConflictsAsync(string code, string why, CancellationToken cancellationToken)
     {
         var brief = await ConflictBriefAsync(code, why, cancellationToken);
-        return await SendBackAsync(code, _ => brief, "it conflicts with its base", cancellationToken);
+        return await SendBackAsync(code, _ => brief, "it conflicts with its base", cancellationToken, SendBackReason.Conflicts);
     }
 
     /// <summary>
@@ -2333,7 +2333,7 @@ public sealed partial class LegCommander(
             link: flight.PullRequestUrl);
     }
 
-    private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken)
+    private async Task<string?> SendBackAsync(string code, Func<int, string> changesFor, string closing, CancellationToken cancellationToken, SendBackReason reason = SendBackReason.Findings)
     {
         // The flight is this send-back's while GitHub is asked, as a rebase's: one under way on it is waited for, without the lock.
         var call = await EnterAsync(code, "being sent back for changes", cancellationToken);
@@ -2346,7 +2346,7 @@ public sealed partial class LegCommander(
             var changes = changesFor(number);
             await TurnToChangesAsync(flight, changes, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
-            RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes);
+            RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes, reason);
             return null;
         }
         catch (FlightException ex)
@@ -2380,9 +2380,28 @@ public sealed partial class LegCommander(
     /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
     public const int MaxReviewGoArounds = LegRow.MaxReviewGoArounds;
 
-    private void RaiseReviewChanges(FlightRow flight, string changes)
+    /// <summary>Why a done leg is sent back: what its card is worded for (the review's findings, failed checks, a conflict, or a reviewer that did not start).</summary>
+    private enum SendBackReason
+    {
+        Findings,
+        ChecksFailed,
+        Conflicts,
+        ReviewNotStarted,
+    }
+
+    private void RaiseReviewChanges(FlightRow flight, string changes, SendBackReason reason = SendBackReason.Findings)
     {
         var last = state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault();
+        var leg = last is null ? flight.Code : $"{flight.Code}/{last.Name}";
+        // Each card says what happened, not a review's findings it did not have (the review of #453): a check that failed, a base
+        // that conflicts and a reviewer that never started raise this card too.
+        var (title, words, said) = reason switch
+        {
+            SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks", "Fix the failing checks", $"The PR of {leg} fails its checks."),
+            SendBackReason.Conflicts => ($"{flight.Code}'s PR conflicts with its base", "Resolve the conflict", $"The PR of {leg} conflicts with its base."),
+            SendBackReason.ReviewNotStarted => ($"{flight.Code}'s review did not start", "Review again", $"The reviewer of {leg} did not start, so nothing was reviewed."),
+            _ => ($"{flight.Code}'s review asks for changes", "Fix the review's findings", $"The review of {leg} found things to fix."),
+        };
         // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
         // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
         var detail = changes;
@@ -2392,15 +2411,21 @@ public sealed partial class LegCommander(
             detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times on review findings: this is yours to decide (have them fixed once more, mark it ready, or change what the review asks).";
         }
         var choices = new List<CardChoice>();
-        if (last is not null)
+        if (reason == SendBackReason.ReviewNotStarted)
         {
-            // Not "Redo leg": the worker fixes the findings on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.FixFindingsLabel(last), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+            // Nothing was found, so nothing is sent round: the review is started again.
+            choices.Add(new CardChoice { Label = words, Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code) });
+        }
+        else if (last is not null)
+        {
+            // Not "Redo leg": the worker fixes what was found on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
+            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
-        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl,
-            summary: last is null ? $"The review of {flight.Code} asked for changes. Ready anyway lands it as it is."
-                : $"The review of {flight.Code}/{last.Name} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Ready anyway lands it as it is.");
+        state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
+            summary: reason == SendBackReason.ReviewNotStarted || last is null
+                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}Ready anyway lands it as it is."
+                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; Ready anyway lands it as it is.");
     }
 
     /// <summary>
