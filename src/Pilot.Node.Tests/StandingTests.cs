@@ -211,6 +211,8 @@ public sealed class StandingTests
         // autopilot merges all the same (the person on Remote Control talks to it past the node, #344).
         (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
+        // So does a fixer on a PR whose review asked for changes, which was the lookout's never (DE1, 2026-10-29).
+        (await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("SharpAstro/pilot", 467), lookout, true)) ?? "").ShouldNotContain("not the watchtower's");
         // The node's settings stay the person's.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
 

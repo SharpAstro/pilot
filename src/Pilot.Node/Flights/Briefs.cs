@@ -731,6 +731,10 @@ public static class Briefs
         text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: a");
         text.AppendLine("conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
         text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
+        text.AppendLine("That holds for every PR the node reviewed, a flight's or not: findings are fixed (Fix the review's findings on a");
+        text.AppendLine("flight's card, `pilot review fix <owner/repo#n>` on any other PR), a question a review raises is answered by the fix");
+        text.AppendLine("(it takes the plainer reading and says so in its report), and from a PR's third review round what happens is yours to");
+        text.AppendLine("decide (pass it with the findings noted, make the fix yourself, or allow one more round), never the person's.");
         text.AppendLine();
         if (model is { Length: > 0 })
         {

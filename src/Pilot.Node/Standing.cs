@@ -50,11 +50,16 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// What the lookout does as the person's assistant when the autopilot is on (see NodeCommands.RunAsync): a flight's merge,
-    /// its landing, a rerun of its checks, and a card's answer or dismissal. The node's settings, setup, grants and updates stay the person's.
+    /// its landing, a rerun of its checks, a card's answer or dismissal, and a fixer on a PR whose review asked for changes (a
+    /// card's Fix it runs it too). The node's settings, setup, grants and updates stay the person's.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Verbs.FixPr"/> was the lookout's never: told overnight to get every PR with review findings fixed, the watchtower
+    /// answered #467's Fix it card and was refused, and the PRs outside a flight waited on the person (DE1, 2026-10-29).
+    /// </remarks>
     public static readonly IReadOnlySet<string> LookoutOnAutopilot = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss,
+        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss, Verbs.FixPr,
     };
 
     /// <summary>
