@@ -26,6 +26,48 @@ public sealed class GitCli : IGit
 
     public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
     {
+        var skipPushCheck = args.Count > 0 && args[0] == "push" && await PushChangesNoLfsAsync(args, cwd, cancellationToken);
+        return await RunCoreAsync(args, cwd, skipPushCheck, cancellationToken);
+    }
+
+    /// <summary>
+    /// True when the commits a plain <c>git push [remote [refspec]]</c> would send change no path git says is
+    /// <c>filter=lfs</c>, so git-lfs's pre-push upload check has nothing to find. Anything not understood (several
+    /// refspecs, a failing git) answers false and the check stays.
+    /// </summary>
+    private async Task<bool> PushChangesNoLfsAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var positional = args.Skip(1).Where(a => !a.StartsWith('-')).ToList();
+        if (positional.Count is 0 or > 2)
+        {
+            return false;
+        }
+        var remote = positional[0];
+        var source = positional.Count == 2 ? positional[1].TrimStart('+').Split(':')[0] : "HEAD";
+        if (source.Length == 0)
+        {
+            return false;
+        }
+        var log = await RunCoreAsync(["log", "-z", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
+        if (!log.Ok)
+        {
+            return false;
+        }
+        var paths = log.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct().ToList();
+        for (var i = 0; i < paths.Count; i += 200)
+        {
+            List<string> attr = ["check-attr", "filter", "--", .. paths.Skip(i).Take(200)];
+            var run = await RunCoreAsync(attr, cwd, false, cancellationToken);
+            if (!run.Ok || run.Output.Contains(": filter: lfs", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken)
+    {
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = cwd,
@@ -42,6 +84,14 @@ public sealed class GitCli : IGit
         }
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
+        // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need.
+        start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+        // git-lfs's pre-push hook honours GIT_LFS_SKIP_PUSH (unlike --no-verify, it leaves a repo's own hooks running).
+        if (skipPushCheck)
+        {
+            start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
+        }
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

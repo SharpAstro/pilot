@@ -94,6 +94,7 @@ public static class Briefs
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
         text.Append(PilotMdSection(pilotMd));
+        text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine(CiRule);
         text.AppendLine(MachineLoadRule(run));
@@ -200,6 +201,28 @@ public static class Briefs
         $"- Outside work to wait for (a file another tool writes, a time of day): `{run} leg wait --for-file <path> [--until <time>] [why...]`, then end\n" +
         "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
         "  it holds a slot of the queue and blocks every job behind it.";
+
+    /// <summary>
+    /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node
+    /// never smudges them, and one <c>git lfs pull</c> fills the shared store. Nothing for a repo without LFS.
+    /// </summary>
+    internal static string LfsRule(string? plane)
+    {
+        try
+        {
+            var attributes = plane is null ? null : Path.Combine(plane, ".gitattributes");
+            if (attributes is null || !File.Exists(attributes) || !File.ReadAllText(attributes).Contains("filter=lfs", StringComparison.Ordinal))
+            {
+                return "";
+            }
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+        return "\nThis repo uses git LFS: the plane's LFS files are pointers. When the step needs their content, run `git lfs pull` once in the plane " +
+            "(it fills the shared store, so other planes reuse it), never per file or per build.\n";
+    }
 
     /// <summary>The repo's PILOT.md quoted whole under one heading; nothing when it has none.</summary>
     internal static string PilotMdSection(string? pilotMd) =>
@@ -344,6 +367,7 @@ public static class Briefs
         text.AppendLine("A step the plane cannot do by the repo's PILOT.md rules is not planned, or is planned with the way round it named in the leg.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(PilotMdSection(pilotMd));
+        text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine("How legs fly: one at a time, in order, each by a fresh worker that sees only its own leg, the legs before it and");
         text.AppendLine("what the branch holds. So each leg must stand on its own: a goal a worker can do in one sitting, a Done-when");
