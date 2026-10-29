@@ -143,6 +143,34 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    public async Task AFlightThatMovedToAnotherNodeIsWaitedForThereAndOneThatMovedHereAsAFlightOfThisNode()
+    {
+        await TwoFlights();
+        _flights.Machine = "SE1";
+        var moved = Theirs("PIL294", 294, FlightState.Landed) with { MovedTo = new FlightMovedTo { To = "SE2", At = DateTimeOffset.UtcNow } };
+        var de1 = Peer("DE1", Theirs("PIL294", 294));
+        var se2 = Peer("SE2");
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+
+        // Landed on DE1 only as far as DE1 goes: it flies on SE2, so the wait follows it there and the flight stays held.
+        de1.Flights = [moved];
+        se2.Flights = [Theirs("PIL294", 294)];
+        (await _flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        var wait = held.PeerConnections.ShouldHaveSingleItem();
+        (wait.Code, wait.Node, wait.Note).ShouldBe(("PIL294", "SE2", null));
+
+        // Moved on to this very node: a wait of its own node's, held until it lands here.
+        se2.Flights = [moved with { MovedTo = new FlightMovedTo { To = "SE1", At = DateTimeOffset.UtcNow } }];
+        _state.PutFlight(Theirs("PIL294", 294) with { RepoPath = Repo });
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+        held = F("TIA2");
+        (held.State, held.PeerConnections.Length).ShouldBe((FlightState.Held, 0));
+        held.Connections.ShouldBe(["PIL294"]);
+    }
+
+    [Fact]
     public async Task ConnectToAFlightNoNodeListsOrAnUnreachableNodeIsRefusedWithTheReason()
     {
         await TwoFlights();
