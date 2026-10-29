@@ -42,6 +42,9 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
     /// <summary>The listing once the copy runs.</summary>
     public string? ListingAfterResume { get; set; }
 
+    /// <summary>The route a relay reports: what the real one names in the log.</summary>
+    public string RelayRoute { get; set; } = "direct";
+
     /// <summary>What the relay answers, or the failure it throws.</summary>
     public SessionDeliveryException? RelayFailure { get; set; }
 
@@ -83,7 +86,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         {
             Relays.Add(request);
         }
-        return RelayFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult("delivered");
+        return RelayFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult(RelayRoute);
     }
 
     private void Record(string call)
@@ -229,7 +232,7 @@ public sealed class SayTests : IDisposable
         result.Way.ShouldBe(SayWays.Relayed);
         result.SessionId.ShouldBeNull();
         _delivery.Calls.ShouldBe(["relay pil5-say-bg"]);
-        _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn", "tests"));
+        _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn", "tests", SessionId: AgentRows.SessionB));
     }
 
     [Fact]
@@ -434,6 +437,18 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task ARelayedSaysLogLineNamesTheRouteItTookAndWhyNotTheDirectOne()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"));
+        _delivery.RelayRoute = "cli-relay (direct: its session record has no messagingSocketPath)";
+
+        await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
+
+        _log.ToString().ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
+        _log.ToString().ShouldContain(" ms)");
+    }
+
+    [Fact]
     public async Task EverySayIsLoggedWithWhoTheTargetTheWayAndTheOutcome()
     {
         _agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, "pil5-say-int"));
@@ -443,7 +458,7 @@ public sealed class SayTests : IDisposable
 
         var lines = _log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         lines.Length.ShouldBe(2);
-        lines[0].ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed delivered (");
+        lines[0].ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed route=direct delivered (");
         lines[1].ShouldStartWith("say: who=tests target=session/nobody way=none refused: There is no session nobody: ");
     }
 
