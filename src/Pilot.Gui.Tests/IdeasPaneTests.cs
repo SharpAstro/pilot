@@ -171,6 +171,10 @@ public sealed class IdeasPaneTests
         answer.SetResult(new IdeaReply(true, Made: "pilot I448"));
         await Task.WhenAll(first, second);
         Spoken(renderer, chrome, screen, 1280).ShouldNotContain("ideating…");
+        // Each idea says its repo first on its second line, whichever repo the page shows (the owner, 2026-10-29).
+        var spoken = Spoken(renderer, chrome, screen, 1280);
+        spoken.ShouldContain("pilot · ");
+        spoken.ShouldContain("tianwen · ");
     }
 
     [Fact]

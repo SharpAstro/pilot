@@ -583,7 +583,8 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private string Meta(IdeaRow idea)
     {
-        var parts = new[] { idea.Age.Length > 0 ? $"{idea.Age} ago" : null, idea.Origin.Length > 0 ? $"by {idea.Origin}" : null };
+        // The repo first, always: the id alone does not say where the idea was filed (the owner, 2026-10-29).
+        var parts = new[] { idea.Repo.Length > 0 ? idea.Repo : null, idea.Age.Length > 0 ? $"{idea.Age} ago" : null, idea.Origin.Length > 0 ? $"by {idea.Origin}" : null };
         return string.Join(" · ", parts.OfType<string>());
     }
 
