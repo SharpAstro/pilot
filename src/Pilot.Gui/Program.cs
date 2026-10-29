@@ -298,7 +298,6 @@ if (feed is not null && client is not null && clients is not null)
             view.SayStatus = FleetClients.WatchOnly(line.Node);
             return;
         }
-        view.SayStatus = $"saying to {line.Name}…";
         loop.RequestRedraw();
         var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         view.SayStatus = result;
@@ -474,6 +473,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
         ? chat
         : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.CanRead = node => clients.For(node, command: false) is not null;
     chrome.Chat.OnSendOn = async (node, text) =>
     {
         if (clients.For(node) is not { } to)

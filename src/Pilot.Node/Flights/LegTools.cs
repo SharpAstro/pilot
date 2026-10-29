@@ -462,6 +462,10 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken);
 
+    /// <summary>Makes a milestone called <paramref name="title"/> in the repo.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken);
+
     /// <summary>The repo's <see cref="IdeaIds.Milestone"/> milestone, made when it has none.</summary>
     /// <exception cref="FlightException">gh could not read or make it.</exception>
     Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken);

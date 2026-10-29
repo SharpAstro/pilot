@@ -57,6 +57,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
+    /// <summary>The idea milestone proposal: what it answers is the test's; Claude is never run.</summary>
+    public FakeIdeaMilestoner Milestoner { get; private init; } = new();
+
     /// <summary>nuget.org: what it lists is the test's.</summary>
     public FakeNuGetFeed NuGet { get; private init; } = new();
 
@@ -90,6 +93,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var github = new FakeGitHub();
         var nuget = new FakeNuGetFeed();
         var summary = new FakeSummaryModel();
+        var milestoner = new FakeIdeaMilestoner();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -106,6 +110,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
+                builder.Services.AddSingleton<Pilot.Node.Flights.IIdeaMilestoner>(milestoner);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -113,7 +118,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner };
         }
         catch
         {

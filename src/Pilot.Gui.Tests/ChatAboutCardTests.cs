@@ -323,8 +323,7 @@ public sealed class ChatAboutCardTests
         chrome.Chat.Node.ShouldBe(Se1Node);
         chrome.Chat.Entries.Single().Text.ShouldBe("SE1's watchtower");
         fleet.Read.ShouldNotContain("here");
-        Described(chrome.Chat).ShouldContain("watchtower · SE1");
-        Described(chrome.Chat).ShouldContain("This node's watchtower");
+        Described(chrome.Chat).ShouldContain("SE1's watchtower");
 
         await Typed(chrome, "why did it land?");
 
@@ -347,11 +346,12 @@ public sealed class ChatAboutCardTests
         chrome.Show(PilotPage.Chat);
         chrome.Chat.Node.ShouldBeNull("the rail's Chat opens this node's chat");
 
+        chrome.Nodes.Choices = [new NodeMark("here", "/sock", "DE1", Here: true), Se1Node];
         chrome.Chat.SwitchTo(Se1Node);
         chrome.Chat.Render(new RectF32(0, 0, 1280, 900));
         var regions = new List<ClickableRegion>();
         chrome.Chat.CollectPaintedRegions(regions);
-        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "chat:back" }).OnClick!.Invoke(InputModifier.None);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "chat:node:here" }).OnClick!.Invoke(InputModifier.None);
         await WaitForAsync(() => chrome.Chat.Entries.Count > 0 && chrome.Chat.Entries[0].Text == "this node's watchtower");
 
         chrome.Chat.Node.ShouldBeNull();

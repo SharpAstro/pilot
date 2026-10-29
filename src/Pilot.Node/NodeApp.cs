@@ -130,6 +130,7 @@ public static class NodeApp
         builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
         builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
+        builder.Services.AddSingleton<IIdeaMilestoner, ClaudeIdeaMilestoner>();
         builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
         builder.Services.AddSingleton(services =>
         {
@@ -331,7 +332,7 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
-            services.GetRequiredService<IClaudeAgents>(), relayFolder));
+            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton(services => new SessionMessenger(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
