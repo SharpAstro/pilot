@@ -116,7 +116,8 @@ public sealed partial class LegCommander
                 }
                 var mine = state.Merges().FirstOrDefault(m => m.Flight == code);
                 var others = state.Merges().Where(m => m.Repo == repo && m.Flight != code && m.Open && _active.Contains(m.Flight)).ToList();
-                var running = others.Any(m => m.State is MergeEntryState.Updating or MergeEntryState.Merging);
+                // A batch waiting on its CI holds the repo's turn as a merge does: its entries are Batched until it ends.
+                var running = others.Any(m => m.State is MergeEntryState.Updating or MergeEntryState.Merging or MergeEntryState.Batched);
                 var ahead = mine is not null && others.Any(m => m.State == MergeEntryState.Waiting && (m.AddedAt, m.Flight).CompareTo((mine.AddedAt, mine.Flight)) < 0);
                 if (!running && !ahead)
                 {

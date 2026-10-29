@@ -157,6 +157,28 @@ public sealed class MergeBatchTests
     }
 
     [Fact]
+    public async Task AMergeAskedWhileABatchWaitsOnItsCiWaitsForTheBatchToEnd()
+    {
+        var (node, _, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
+        await using var disposing = node;
+        node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
+
+        release.TrySetResult();
+        await held;
+        await Until(() => Entry(node, "TIA1").State == MergeEntryState.Batched, "the batch waits on its CI");
+        Flight(node, "TIA3", 13);
+        _ = Merge(node, "TIA3");
+        await Until(() => node.State.Merges().Any(m => m.Flight == "TIA3"), "TIA3 joined the queue");
+
+        await Task.Delay(100, Ct);
+        Entry(node, "TIA3").State.ShouldBe(MergeEntryState.Waiting);
+        node.GitHub.Merged.ShouldNotContain(p => p.Number == 13);
+
+        // The batch's CI never ends inside its budget: the batch falls back and TIA3 then takes its turn.
+        await Until(() => Entry(node, "TIA3").State is MergeEntryState.Merging or MergeEntryState.Merged, "TIA3 merged once the batch ended");
+    }
+
+    [Fact]
     public async Task ABaseThatTakesNoDirectPushMergesEachPrOfAGreenBatchOnItsOwn()
     {
         var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
