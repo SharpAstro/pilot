@@ -114,6 +114,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // take them for the node's and not a person's (NodeVoice).
             text = NodeVoice.Prefix + text;
         }
+        else if (FromAnotherWatchtower(command) is { } node)
+        {
+            // Another node's watchtower passing work on (fleet chat): marked with its node, so this one reports back with
+            // `tell --node` and does not take the words for the person's.
+            text = $"[From the watchtower of node {node}] {text}";
+        }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
@@ -145,6 +151,23 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// The node whose watchtower sent <paramref name="command"/> over the LAN under its grant, else null. The node is named by
+    /// the watchtower's own session name (<c>de1-watchtower</c> after the grant's <c>/</c>), which is the prefix <c>--node</c>
+    /// resolves; the grant's label (<c>user@machine</c> by default) is no node's name, so it is only the fallback.
+    /// </summary>
+    internal static string? FromAnotherWatchtower(CommandRequest command)
+    {
+        if (command.Grant is not { Length: > 0 } grant || !command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var session = command.Who[(command.Who.LastIndexOf('/') + 1)..];
+        var node = session[..^"-watchtower".Length].ToUpperInvariant();
+        return node.Length > 0 ? node : grant;
     }
 
     /// <summary>
