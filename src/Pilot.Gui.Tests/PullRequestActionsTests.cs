@@ -362,6 +362,32 @@ public sealed class PullRequestActionsTests
     }
 
     [Fact]
+    public async Task AReviewTheNodeTookButNothingShowsLapsesSoTheRowIsNotStuckOnReviewing()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        page.OnReview = (_, _) => Task.CompletedTask;
+        var changed = 0;
+        page.Changed = () => changed++;
+        var screen = Screen();
+        var pr = screen.Row!.PullRequests[4];
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+
+        await page.ReviewAsync(pr);
+        // The press said "Starting…" and then the taking: two redraws asked.
+        changed.ShouldBe(2);
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("reviewing");
+
+        // No read ever shows the review (it never ran): after its time the row is as before and the Review button is back.
+        page.StartedFor = TimeSpan.Zero;
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldNotContain("reviewing");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task AReviewTheNodeRefusesIsSaidInItsWordsAndNoPressChangesTheRowsState()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
