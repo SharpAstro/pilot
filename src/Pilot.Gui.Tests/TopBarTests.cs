@@ -85,9 +85,9 @@ public sealed class TopBarTests
 
             // The brand and the page's name share a baseline, and the brand stands in the same place on every page.
             var pilot = Text(arranged, "pilot v2");
-            // The Chat page names whose watchtower it is, and shows its nodes as one choice rather than the window's filter.
+            // The Chat page is the fleet chat, and shows its nodes as one choice rather than the window's filter.
             var chatPage = page == "chat";
-            var name = Text(arranged, chatPage ? $"{chrome.Chat.WatchtowerOwner}'s watchtower" : page);
+            var name = Text(arranged, chatPage ? chrome.Chat.Title : page);
             (name.Y + name.Height).ShouldBe(pilot.Y + pilot.Height, page);
             brand ??= pilot;
             (pilot.X, pilot.Y, pilot.Width, pilot.Height).ShouldBe((brand.Value.X, brand.Value.Y, brand.Value.Width, brand.Value.Height), page);

@@ -802,13 +802,21 @@ public static class Briefs
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
         // DE1's watchtower told the controller it could not read SE1's cards (2026-10-29): nothing here said --node reaches them.
-        text.AppendLine("## The other nodes");
-        text.AppendLine("You can read every node on the LAN, not only this one, so never say you cannot see another node's flights or cards:");
+        // The Chat is the fleet's (PIL468): each node's own watchtower chat stays, as its own page.
+        text.AppendLine("## The other nodes: the Chat is the fleet chat, held here");
+        text.AppendLine("You hold the fleet chat: the controller asks you about every node on the LAN, not only this one, so");
+        text.AppendLine("never say you cannot see another node's flights or cards.");
         text.AppendLine($"- `{pilot} nodes` lists them by name; add `--node <name>` to any reading command for another: `{pilot} status --node SE1`,");
         text.AppendLine($"  `{pilot} cards --node SE1`, `{pilot} repos --node SE1`.");
-        text.AppendLine($"- To get something done on another node's flight or card, tell its watchtower, which owns that node's planes: `{pilot} tell --node <name>");
-        text.AppendLine($"  \"<what and why>\"`. `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant");
-        text.AppendLine("  (pilot connect) and the card's choice is plainly the right one. Never edit or push another node's plane from here.");
+        text.AppendLine($"- To get something done on another node, pass it to that node's watchtower, which owns its planes: `{pilot} tell --node <name>");
+        text.AppendLine("  \"<what and why, and ask it to tell back what came of it>\"`. Say at once in the chat that you passed it on, and end your turn:");
+        text.AppendLine("  never wait on the answer, the controller keeps talking meanwhile. When that node's watchtower tells back, post the outcome in the chat.");
+        text.AppendLine("- A message that begins `[From the watchtower of node <name>]` is that node's watchtower, not the controller. A request from it:");
+        text.AppendLine($"  do it, then answer it with `{pilot} tell --node <name>`. A report back to a tell you sent is not a request: post it in the chat");
+        text.AppendLine("  and do not answer it, no thanks or acknowledgement tells, or the two watchtowers answer each other without end.");
+        text.AppendLine($"- `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant (pilot connect) and the card's");
+        text.AppendLine("  choice is plainly the right one.");
+        text.AppendLine("- Name the node where it matters in a reply (\"PIL411 on SE1 is at review\"). Never edit or push another node's plane from here; ask its watchtower.");
         text.AppendLine();
         text.AppendLine("## The chat: you are the controller's assistant in the window too");
         text.AppendLine("The GUI's chat is one conversation with you, in place of a command bar: what the controller types there reaches you as");

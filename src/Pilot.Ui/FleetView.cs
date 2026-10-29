@@ -406,6 +406,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
     public Action<FleetLine>? OnConnect { get; set; }
 
+    /// <summary>Opens the Chat page on a reached node's own watchtower (this node's row: the fleet chat). Null leaves the row without the button.</summary>
+    public Action<FleetLine>? OnChat { get; set; }
+
     /// <summary>
     /// Takes a row's "N waiting on you" to those sessions (the Sessions page, filtered to that node); null (the default)
     /// leaves the count as plain text.
@@ -544,6 +547,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Off unless the host sets it: the merged lists steer every node from this window.
             // Open in its own window stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Open in its own window", $"fleet:{line.Where}:open", () => open(line)));
+        }
+        if (line.Connected && line.Watchtower is { } tower && tower != "—" && OnChat is { } chat)
+        {
+            buttons.Add(Pill("Watchtower", $"fleet:{line.Where}:chat", () => chat(line)));
         }
         if (!line.CanCommand && OnConnect is { } connect)
         {
