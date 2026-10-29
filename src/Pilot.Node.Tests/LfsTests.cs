@@ -110,20 +110,60 @@ public sealed class LfsTests : IDisposable
         Git(Main, "lfs", "pull");
         var git = new GitCli();
 
-        // The remote's lfs url points nowhere, so a pre-push upload check that runs fails the push.
-        Git(Main, "config", "lfs.url", new Uri(Path.Combine(_root, "nowhere")).AbsoluteUri);
+        // An LFS server that records every request it gets (lock verification, batch), so a skipped check shows as silence.
+        var port = FreePort();
+        var prefix = $"http://127.0.0.1:{port}/";
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+        using var stop = new CancellationTokenSource();
+        var serving = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                System.Net.HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync();
+                }
+                catch (Exception ex) when (ex is System.Net.HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                {
+                    return;
+                }
+                seen.Enqueue($"{context.Request.HttpMethod} {context.Request.Url!.AbsolutePath}");
+                context.Response.StatusCode = 500;
+                context.Response.Close();
+            }
+        });
+        Git(Main, "config", "lfs.url", prefix + "lfs");
 
         File.WriteAllText(Path.Combine(Main, "note.txt"), "plain\n");
         Git(Main, "add", ".");
         Git(Main, "commit", "-m", "plain");
         var plain = await git.RunAsync(["push", "origin", "HEAD:refs/heads/plain"], Main, CancellationToken.None);
         plain.Ok.ShouldBeTrue(plain.Error);
+        seen.ShouldBeEmpty("a push that changes no LFS file never asks the LFS server anything");
 
         File.WriteAllText(Path.Combine(Main, "big.bin"), "changed large content\n");
         Git(Main, "add", ".");
         Git(Main, "commit", "-m", "lfs change");
         var lfs = await git.RunAsync(["push", "origin", "HEAD:refs/heads/lfs"], Main, CancellationToken.None);
-        lfs.Ok.ShouldBeFalse("a push that changes an LFS file keeps the upload check");
+        seen.ShouldNotBeEmpty("a push that changes an LFS file keeps the upload check, which asks the server");
+        lfs.Ok.ShouldBeFalse("the server answers 500, so the upload fails the push");
+
+        await stop.CancelAsync();
+        listener.Close();
+        await serving;
+    }
+
+    private static int FreePort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
     }
 
     [Fact]
@@ -144,14 +184,26 @@ public sealed class LfsTests : IDisposable
             CreatedAt = DateTimeOffset.UnixEpoch,
         };
 
-        Briefs.Plan(flight, [], "pilot").ShouldNotContain("git lfs pull");
+        var leg = new LegRow { Flight = "PIL1", Name = "one", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
+        string[] Briefed() => [Briefs.Plan(flight, [], "pilot"), Briefs.For(flight, leg, [leg])];
+
+        foreach (var brief in Briefed())
+        {
+            brief.ShouldNotContain("git lfs pull");
+        }
         Briefs.LfsRule(plane).ShouldBe("");
 
         File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.txt text\n");
-        Briefs.Plan(flight, [], "pilot").ShouldNotContain("git lfs pull");
+        foreach (var brief in Briefed())
+        {
+            brief.ShouldNotContain("git lfs pull");
+        }
 
         File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
-        Briefs.Plan(flight, [], "pilot").ShouldContain("run `git lfs pull` once in the plane");
+        foreach (var brief in Briefed())
+        {
+            brief.ShouldContain("run `git lfs pull` once in the plane");
+        }
         Briefs.LfsRule(plane).ShouldContain("never per file or per build");
     }
 }

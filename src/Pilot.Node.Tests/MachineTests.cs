@@ -305,6 +305,34 @@ public sealed class MachineTests
         new(Now.AddSeconds(seconds), received, sent, interfaces);
 
     [Fact]
+    public void MachineNetCountsTheCarrierNicOnceAndTakesItsSpeedNotATunnels()
+    {
+        const long gig = 1_000_000_000, tunnel = 100_000_000_000;
+        const long rx = 329_362_941_393, tx = 9_000_000_000;
+        MachineSampler.NicSnapshot Filter(string name) => new(name, true, false, 0, gig, rx, tx);
+        var nics = new[]
+        {
+            new MachineSampler.NicSnapshot("Loopback Pseudo-Interface 1", true, true, 0, 1_073_741_824, 5, 5),
+            new MachineSampler.NicSnapshot("Ethernet", true, false, 1, gig, rx, tx),
+            Filter("Ethernet-WFP Native MAC Layer LightWeight Filter-0000"),
+            Filter("Ethernet-QoS Packet Scheduler-0000"),
+            Filter("Ethernet-WFP 802.3 MAC Layer LightWeight Filter-0000"),
+            new MachineSampler.NicSnapshot("vEthernet (Default Switch)", true, false, 0, tunnel, 111, 222),
+            new MachineSampler.NicSnapshot("vEthernet (WSL)", true, false, 0, tunnel, 333, 444),
+            new MachineSampler.NicSnapshot("Twingate Tunnel", true, false, 0, tunnel, 555, 666),
+            new MachineSampler.NicSnapshot("Wi-Fi", false, false, 1, 300_000_000, 777, 888),
+        };
+
+        var sum = MachineSampler.SumCarriers(nics).ShouldNotBeNull();
+
+        sum.Received.ShouldBe(rx);
+        sum.Sent.ShouldBe(tx);
+        sum.Interfaces.ShouldBe(1);
+        sum.LinkBits.ShouldBe(gig);
+        MachineSampler.SumCarriers([nics[0], nics[2]]).ShouldBeNull();
+    }
+
+    [Fact]
     public void MachineNetRateIsTheCountersGrowthOverTheWindow()
     {
         // 6 000 000 bytes in and 1 200 000 out over a minute: 100 000 and 20 000 a second.

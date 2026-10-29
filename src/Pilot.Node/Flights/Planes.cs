@@ -20,9 +20,39 @@ public interface IGit
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli : IGit
+public sealed class GitCli(NodeTraffic? traffic = null) : IGit
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+
+    // A command line over 32767 characters fails to start on Windows; stay well under it.
+    private const int MaxPathChars = 24000;
+
+    private readonly NodeTraffic _traffic = traffic ?? NodeTraffic.Shared;
+
+    /// <summary>Whether a git run can use the network, by its verb (options such as <c>-c k=v</c> and <c>-C dir</c> skipped).</summary>
+    public static bool UsesNetwork(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (a is "-c" or "-C" or "--git-dir" or "--work-tree" or "--namespace")
+            {
+                i++;
+                continue;
+            }
+            if (a.StartsWith('-'))
+            {
+                continue;
+            }
+            return a switch
+            {
+                "fetch" or "pull" or "push" or "clone" or "ls-remote" or "lfs" => true,
+                "remote" => args.Skip(i + 1).Contains("update"),
+                _ => false,
+            };
+        }
+        return false;
+    }
 
     public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
     {
@@ -33,7 +63,7 @@ public sealed class GitCli : IGit
     /// <summary>
     /// True when the commits a plain <c>git push [remote [refspec]]</c> would send change no path git says is
     /// <c>filter=lfs</c>, so git-lfs's pre-push upload check has nothing to find. Anything not understood (several
-    /// refspecs, a failing git) answers false and the check stays.
+    /// refspecs, a failing or slow git, a command line too long to start) answers false and the check stays.
     /// </summary>
     private async Task<bool> PushChangesNoLfsAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
     {
@@ -48,25 +78,44 @@ public sealed class GitCli : IGit
         {
             return false;
         }
-        var log = await RunCoreAsync(["log", "-z", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
-        if (!log.Ok)
+        try
         {
-            return false;
-        }
-        var paths = log.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct().ToList();
-        for (var i = 0; i < paths.Count; i += 200)
-        {
-            List<string> attr = ["check-attr", "filter", "--", .. paths.Skip(i).Take(200)];
-            var run = await RunCoreAsync(attr, cwd, false, cancellationToken);
-            if (!run.Ok || run.Output.Contains(": filter: lfs", StringComparison.Ordinal))
+            var log = await RunCoreAsync(["log", "-z", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
+            if (!log.Ok)
             {
                 return false;
             }
+            var chunk = new List<string>();
+            var chars = 0;
+            foreach (var path in log.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct().Append(null))
+            {
+                if ((path is null || chars + path.Length + 3 > MaxPathChars) && chunk.Count > 0)
+                {
+                    List<string> attr = ["check-attr", "filter", "--", .. chunk];
+                    var run = await RunCoreAsync(attr, cwd, false, cancellationToken);
+                    if (!run.Ok || run.Output.Contains(": filter: lfs", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    chunk.Clear();
+                    chars = 0;
+                }
+                if (path is not null)
+                {
+                    chunk.Add(path);
+                    chars += path.Length + 3;
+                }
+            }
+            return true;
         }
-        return true;
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return false;
+        }
     }
 
-    private static async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken)
+    private async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -93,7 +142,7 @@ public sealed class GitCli : IGit
             start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
         }
 
-        var (process, counted) = NodeTraffic.Shared.Start("git", start);
+        var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
         using var _ = process;
         using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

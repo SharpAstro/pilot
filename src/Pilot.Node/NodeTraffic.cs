@@ -22,7 +22,8 @@ namespace Pilot.Node;
 /// estimate</b>, in and out together. A grandchild that left before the child was put in the job is missed. On Linux
 /// nothing per process is readable, so the bytes are unknown (null) and only the runs are counted.</item>
 /// </list>
-/// Wherever the figures are shown the child part is labelled an estimate.
+/// Only runs that can use the network add bytes (every gh run; git fetch, pull, push, clone, ls-remote, remote update and
+/// lfs); any other git run is counted as a run with no bytes. Wherever the figures are shown the child part is labelled an estimate.
 /// </remarks>
 public sealed class NodeTraffic
 {
@@ -45,8 +46,19 @@ public sealed class NodeTraffic
     private long _httpIn, _httpOut, _childBytes;
     private int _gitRuns, _ghRuns;
 
-    /// <summary>The clock the buckets are cut by; a test sets a fake one.</summary>
-    public TimeProvider Time { get; init; } = TimeProvider.System;
+    private TimeProvider _time = TimeProvider.System;
+    private DateTimeOffset _startedHour = HourOf(TimeProvider.System.GetUtcNow());
+
+    /// <summary>The clock the buckets are cut by; a test sets a fake one. Setting it also restarts the note of when the node began.</summary>
+    public TimeProvider Time
+    {
+        get => _time;
+        init
+        {
+            _time = value;
+            _startedHour = HourOf(value.GetUtcNow());
+        }
+    }
 
     public long HttpInSinceStart => Interlocked.Read(ref _httpIn);
 
@@ -131,10 +143,18 @@ public sealed class NodeTraffic
         }
     }
 
-    /// <summary>The last full clock hour as the node's summary row carries it; its child bytes are null where this platform cannot say.</summary>
-    public NodeTrafficRow LastHourRow()
+    /// <summary>
+    /// The last full clock hour as the node's summary row carries it; its child bytes are null where this platform cannot say.
+    /// Null until a clock hour the node was running in has ended, so a node that just started does not report the empty hour
+    /// before it as if it were idle.
+    /// </summary>
+    public NodeTrafficRow? LastHourRow()
     {
         var hour = HourOf(Time.GetUtcNow()).AddHours(-1);
+        if (hour < _startedHour)
+        {
+            return null;
+        }
         var t = Hour(hour);
         return new NodeTrafficRow
         {
@@ -176,11 +196,11 @@ public sealed class NodeTraffic
         private readonly string _tool;
         private nint _job;
 
-        internal Child(NodeTraffic traffic, string tool, Process process)
+        internal Child(NodeTraffic traffic, string tool, Process process, bool countBytes)
         {
             _traffic = traffic;
             _tool = tool;
-            if (CanMeasureChildren)
+            if (countBytes && CanMeasureChildren)
             {
                 _job = DetachedShell.CreateAccountingJob(process);
             }
@@ -199,11 +219,15 @@ public sealed class NodeTraffic
         }
     }
 
-    /// <summary>Starts <paramref name="start"/> as a counted child of kind <c>git</c> or <c>gh</c>; dispose the counter once the process has ended.</summary>
-    public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start)
+    /// <summary>
+    /// Starts <paramref name="start"/> as a counted child of kind <c>git</c> or <c>gh</c>; dispose the counter once the process has ended.
+    /// With <paramref name="canUseNetwork"/> false (a local git run: status, log, diff) the run is counted but its bytes are
+    /// not, since the job's figure is then local file I/O, which would swamp the network share the figure is for.
+    /// </summary>
+    public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start, bool canUseNetwork = true)
     {
         var process = Process.Start(start) ?? throw new InvalidOperationException($"{tool} did not start");
-        return (process, new Child(this, tool, process));
+        return (process, new Child(this, tool, process, canUseNetwork));
     }
 }
 

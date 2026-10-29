@@ -462,34 +462,56 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     {
         try
         {
-            long received = 0, sent = 0, link = 0;
-            var count = 0;
+            var snapshots = new List<NicSnapshot>();
             foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up
-                    || nic.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
-                {
-                    continue;
-                }
                 try
                 {
-                    var stats = nic.GetIPStatistics();
-                    received += stats.BytesReceived;
-                    sent += stats.BytesSent;
-                    count++;
-                    link = Math.Max(link, nic.Speed);
+                    var up = nic.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up;
+                    var loopback = nic.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback;
+                    // Only a carrier interface is worth its counters, so skip the reads for the rest.
+                    var gateways = up && !loopback ? nic.GetIPProperties().GatewayAddresses.Count : 0;
+                    var stats = gateways > 0 ? nic.GetIPStatistics() : null;
+                    snapshots.Add(new NicSnapshot(nic.Name, up, loopback, gateways, nic.Speed, stats?.BytesReceived ?? 0, stats?.BytesSent ?? 0));
                 }
                 catch (Exception ex) when (ex is System.Net.NetworkInformation.NetworkInformationException or PlatformNotSupportedException or NotSupportedException)
                 {
                     // An interface that will not say its counters is left out.
                 }
             }
-            return count == 0 ? null : (received, sent, count, link > 0 ? link : null);
+            return SumCarriers(snapshots);
         }
         catch (Exception ex) when (ex is System.Net.NetworkInformation.NetworkInformationException or PlatformNotSupportedException or NotSupportedException)
         {
             return null;
         }
+    }
+
+    /// <summary>One network interface as the OS lists it: what <see cref="SumCarriers"/> chooses by.</summary>
+    internal readonly record struct NicSnapshot(string Name, bool Up, bool Loopback, int Gateways, long SpeedBitsPerSecond, long Received, long Sent);
+
+    /// <summary>
+    /// The counters and link speed of the interfaces that carry the machine's traffic out: up, not loopback, with a default
+    /// gateway. Windows lists each adapter again for every NDIS filter bound to it (same counters, no address, no gateway) and
+    /// virtual adapters and tunnels sit on top of the NIC that carries their traffic, so summing every up interface counts one
+    /// NIC several times and takes a tunnel's 100 Gbps for the link speed. Null where none qualifies.
+    /// </summary>
+    internal static (long Received, long Sent, int Interfaces, long? LinkBits)? SumCarriers(IEnumerable<NicSnapshot> nics)
+    {
+        long received = 0, sent = 0, link = 0;
+        var count = 0;
+        foreach (var nic in nics)
+        {
+            if (!nic.Up || nic.Loopback || nic.Gateways <= 0)
+            {
+                continue;
+            }
+            received += nic.Received;
+            sent += nic.Sent;
+            link = Math.Max(link, nic.SpeedBitsPerSecond);
+            count++;
+        }
+        return count == 0 ? null : (received, sent, count, link > 0 ? link : null);
     }
 
     /// <summary>

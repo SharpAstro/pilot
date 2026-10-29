@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Updates;
 using Shouldly;
 using Xunit;
 
@@ -54,18 +55,17 @@ public sealed class NodeTrafficTests
     [Fact]
     public async Task AGitRunAndAGhRunAddToTheCountByTheJobObjectOrAsUnknown()
     {
-        var git = NodeTraffic.Shared.GitRunsSinceStart;
-        var gh = NodeTraffic.Shared.GhRunsSinceStart;
-        var before = NodeTraffic.Shared.ChildBytesSinceStart;
+        // Its own counter, so the git runs of the other test classes (they share NodeTraffic.Shared) cannot move the figure.
+        var traffic = new NodeTraffic();
 
-        // GitCli starts git through the counter.
-        (await new GitCli().RunAsync(["--version"], Path.GetTempPath(), Ct)).Ok.ShouldBeTrue();
-        NodeTraffic.Shared.GitRunsSinceStart.ShouldBe(git + 1);
-        NodeTraffic.Shared.GhRunsSinceStart.ShouldBe(gh);
+        (await new GitCli(traffic).RunAsync(["--version"], Path.GetTempPath(), Ct)).Ok.ShouldBeTrue();
+        traffic.GitRunsSinceStart.ShouldBe(1);
+        traffic.GhRunsSinceStart.ShouldBe(0);
+        traffic.ChildBytesSinceStart.ShouldBe(0, "a local git run is a run with no bytes");
 
         // gh's helper starts through the same method; git stands in for the binary, which may not be installed.
         var start = new ProcessStartInfo("git", ["--version"]) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-        var (process, counted) = NodeTraffic.Shared.Start("gh", start);
+        var (process, counted) = traffic.Start("gh", start);
         using (process)
         using (counted)
         {
@@ -73,13 +73,65 @@ public sealed class NodeTrafficTests
             await process.WaitForExitAsync(Ct);
         }
 
-        NodeTraffic.Shared.GhRunsSinceStart.ShouldBe(gh + 1);
-        NodeTraffic.Shared.ChildBytesSinceStart.ShouldBeGreaterThanOrEqualTo(before);
-        if (!NodeTraffic.CanMeasureChildren)
+        traffic.GhRunsSinceStart.ShouldBe(1);
+        traffic.GitRunsSinceStart.ShouldBe(1);
+        if (NodeTraffic.CanMeasureChildren)
         {
-            NodeTraffic.Shared.ChildBytesSinceStart.ShouldBe(before);
-            NodeTraffic.Shared.LastHourRow().ChildBytes.ShouldBeNull();
+            traffic.ChildBytesSinceStart.ShouldBeGreaterThan(0);
         }
+        else
+        {
+            traffic.ChildBytesSinceStart.ShouldBe(0);
+        }
+    }
+
+    [Theory]
+    [InlineData("fetch --quiet origin", true)]
+    [InlineData("-C some/dir push origin HEAD", true)]
+    [InlineData("-c user.name=x pull --ff-only", true)]
+    [InlineData("ls-remote origin", true)]
+    [InlineData("lfs pull", true)]
+    [InlineData("remote update", true)]
+    [InlineData("clone https://example.org/r.git", true)]
+    [InlineData("status --porcelain", false)]
+    [InlineData("log -n 3", false)]
+    [InlineData("remote get-url origin", false)]
+    [InlineData("--version", false)]
+    public void OnlyAGitRunThatCanUseTheNetworkAddsBytes(string command, bool expected) =>
+        GitCli.UsesNetwork(command.Split(' ')).ShouldBe(expected);
+
+    [Fact]
+    public async Task ARunThroughTheUpdateFeedsGhIsCounted()
+    {
+        var traffic = new NodeTraffic();
+        // git stands in for gh: "git api ..." fails, which the feed answers with nothing, and the run is counted all the same.
+        var feed = new GhReleaseFeed("SharpAstro/pilot", "git", traffic: traffic);
+
+        (await feed.LatestAsync(Ct)).ShouldBeNull();
+
+        traffic.GhRunsSinceStart.ShouldBe(1);
+        traffic.GitRunsSinceStart.ShouldBe(0);
+        if (NodeTraffic.CanMeasureChildren)
+        {
+            traffic.ChildBytesSinceStart.ShouldBeGreaterThan(0);
+        }
+    }
+
+    [Fact]
+    public void ANodeThatJustStartedHasNoLastHourRowUntilAHourItRanInHasEnded()
+    {
+        var clock = new Clock(new DateTimeOffset(2026, 10, 30, 10, 20, 0, TimeSpan.Zero));
+        var traffic = new NodeTraffic { Time = clock };
+        traffic.AddHttp(100, 10);
+
+        traffic.LastHourRow().ShouldBeNull();
+        clock.Now = new DateTimeOffset(2026, 10, 30, 10, 59, 0, TimeSpan.Zero);
+        traffic.LastHourRow().ShouldBeNull();
+
+        clock.Now = new DateTimeOffset(2026, 10, 30, 11, 0, 1, TimeSpan.Zero);
+        var row = traffic.LastHourRow().ShouldNotBeNull();
+        row.Hour.ShouldBe(new DateTimeOffset(2026, 10, 30, 10, 0, 0, TimeSpan.Zero));
+        row.HttpIn.ShouldBe(100);
     }
 
     [Fact]
