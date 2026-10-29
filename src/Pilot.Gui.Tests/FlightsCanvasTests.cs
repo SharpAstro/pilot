@@ -334,4 +334,34 @@ public sealed class FlightsCanvasTests
         // The plane's own target is not drawn there, and its hover says the flight under the PR.
         top.Tooltip.ShouldNotBeNull().ShouldContain("A · ");
     }
+
+    [Fact]
+    public void ASignSaysItsRepoAndNumberAndAConnectionsDropPassesClearOfIt()
+    {
+        // Each flight waits for the one before it, so a connection drops out right of every sign but the last.
+        FlightRow Pr(string code, string repo, int? number, params string[] waits) =>
+            Flight(code, FlightState.Flying, waits) with { Repo = repo, PullRequest = number, PullRequestUrl = number is { } n ? $"https://github.com/SharpAstro/{repo}/pull/{n}" : null };
+        var rows = new[]
+        {
+            Pr("A", "tianwen", 7), Pr("B", "tianwen", 1896, "A"), Pr("C", "SdlVulkan.Renderer", 12, "B"), Pr("D", "pilot", 447, "C"), Pr("E", "orbit", null, "D"), Pr("F", "x", 3, "E"),
+        };
+        var lines = rows.Select(r => FlightLine.Build([r], [], Live.At, [Leg(r.Code, "one", 1, LegState.Flying)])[0]).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, lines);
+        using var _ = renderer;
+
+        // The repo and number where both fit a leg label's ten characters, the repo cut for the number where not.
+        var signs = new[] { "tianwen #7", "tia… #1896", "SdlVu… #12", "pilot #447", "orbit", "x #3" };
+        var words = view.MapWords.Select(w => w.Text).ToList();
+        foreach (var sign in signs)
+        {
+            words.ShouldContain(sign);
+        }
+        view.Map.Domestic.Count().ShouldBe(rows.Length - 1);
+        // The ink of each sign is narrower than the drop: half its width stays left of where a connection drops out of it.
+        var measure = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        foreach (var text in signs.Append("SdlVulkan…"))
+        {
+            (measure.MeasureText(text, 9f).Width / 2f).ShouldBeLessThan(FlightMap.DropOffset, text);
+        }
+    }
 }

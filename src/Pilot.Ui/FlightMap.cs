@@ -90,6 +90,11 @@ internal sealed class FlightMap
     public const float LabelLineTwo = 23f;
     public const float LabelBandBottom = 36f;
     public const float CorridorOffset = 40f;
+    /// <summary>
+    /// How far right of a destination a domestic connection drops to its corridor: past the words of the sign under it, which are no
+    /// wider than a leg's name, and short of the next continent.
+    /// </summary>
+    public const float DropOffset = 30f;
     /// <summary>Half the width of an airport's label: a leg name cut to ten characters at 9 units.</summary>
     public const float LabelHalfWidth = 26f;
     /// <summary>The flight code's box above a route's first stop: left aligned at the slot's left edge.</summary>
@@ -327,7 +332,7 @@ internal sealed class FlightMap
                 var margin = entry.Item1 - Slot / 2f - 6f - 4f * (result.Count % 3);
                 path =
                 [
-                    (dx + AirportRadius, dy), (dx + 30f, dy), (dx + 30f, corridor), (margin, corridor),
+                    (dx + AirportRadius, dy), (dx + DropOffset, dy), (dx + DropOffset, corridor), (margin, corridor),
                     (margin, entry.Item2), (entry.Item1 - AirportRadius, entry.Item2),
                 ];
             }

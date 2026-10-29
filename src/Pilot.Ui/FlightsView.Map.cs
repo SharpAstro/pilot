@@ -15,8 +15,6 @@ internal sealed partial class FlightsView<TSurface>
     // One line of a stop's label band: the second starts where the first ends.
     private const float StopLine = FlightMap.LabelLineTwo - FlightMap.LabelBandTop;
     private const int LabelChars = 10;
-    // The destination's sign: its repo and PR number, a little wider than a leg's name as nothing stands to its right.
-    private const int SignChars = 12;
 
     // The window's width in design units as of the last frame, so a map wider than it is drawn smaller, down to half size.
     private float _viewWidth;
@@ -157,16 +155,17 @@ internal sealed partial class FlightsView<TSurface>
 
     private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
 
-    // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit; the repo alone
+    // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit (tia… #1896); as wide
+    // as a leg's name, so a connection's drop out of the sign (FlightMap.LabelHalfWidth) passes clear of it. The repo alone
     // before there is a PR.
     private static string SignOf(string repo, int? pullRequest)
     {
         if (pullRequest is not { } pr)
         {
-            return repo.Length > 0 ? Fit(repo, SignChars) : "PR";
+            return repo.Length > 0 ? Fit(repo, LabelChars) : "PR";
         }
         var number = $" #{pr}";
-        return SignChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, SignChars - number.Length) + number;
+        return LabelChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, LabelChars - number.Length) + number;
     }
 
     // What a destination says on hover: its PR by repo and number and where it stands, then the flight's brief.
