@@ -56,6 +56,12 @@ internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, Autopilo
 /// </summary>
 internal static class TopBar
 {
+    /// <summary>The name of this window's node, for a page that shows only that node's rows.</summary>
+    public static string ThisNodeName(NodeFilter? nodes) => nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>The title of a page whose rows are this window's node's only, e.g. "DE1's ideas (this machine)".</summary>
+    public static string ThisNodeTitle(NodeFilter? nodes, string page) => $"{ThisNodeName(nodes)}'s {page} (this machine)";
+
     /// <summary>The row of the bar itself, design units.</summary>
     public const float RowHeight = 32f;
 
