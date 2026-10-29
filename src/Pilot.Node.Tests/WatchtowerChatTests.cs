@@ -332,6 +332,18 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public void TheBriefSaysOtherNodesAreReadWithNodeAndActedOnThroughTheirWatchtower()
+    {
+        // DE1's watchtower said it could not read SE1's cards (2026-10-29).
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+
+        brief.ShouldContain("never say you cannot see another node's flights or cards");
+        brief.ShouldContain("`pilot cards --node SE1`");
+        brief.ShouldContain("`pilot tell --node <name>");
+        brief.ShouldContain("Never edit or push another node's plane");
+    }
+
+    [Fact]
     public void TheBriefMakesItTheAssistantInTheWindowAnswersInPlainWordsAndLaunchesAFlightInThreeSteps()
     {
         var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot");
