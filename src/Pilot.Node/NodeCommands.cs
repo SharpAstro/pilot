@@ -152,6 +152,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb) && Get<RoleModels>().Autopilot)
         {
             standing = new Standing(StandingKind.Assistant);
+            // Its fixer is marked as the autopilot's, so the node's own guards on fixers hold for it (PrReviews.FixAsync).
+            if (command.Verb == Verbs.FixPr)
+            {
+                command = command with { Autopilot = true };
+            }
         }
         if (standing.Refusal(command, state) is { } refused)
         {
