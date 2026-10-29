@@ -131,7 +131,12 @@ public static class NodeApp
         builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
         builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
         builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
-        builder.Services.AddSingleton<IdeaCommander>();
+        builder.Services.AddSingleton(services =>
+        {
+            var ideas = ActivatorUtilities.CreateInstance<IdeaCommander>(services);
+            ideas.Error = logWriter;
+            return ideas;
+        });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();

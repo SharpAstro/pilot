@@ -90,6 +90,9 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
     // Two plans of one idea must not both make a flight.
     private readonly SemaphoreSlim _one = new(1, 1);
 
+    /// <summary>Where this says how long each step of noting an idea took: the node's log (pilot #416), nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -160,10 +163,19 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         {
             throw new FlightException("note-idea needs the idea's text: its first line is the title, the rest the body");
         }
+        // Each step's time in the log: noting one took most of a minute and nothing said where it went (the owner, 2026-10-29).
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var steps = new List<string>();
+        void Step(string what)
+        {
+            steps.Add($"{what} {clock.ElapsedMilliseconds} ms");
+            clock.Restart();
+        }
         string name, path;
         if (chosen)
         {
             var picked = await ChooseAsync(new IdeaText(title, body), string.Join(' ', args.Skip(1)), cancellationToken);
+            Step("repo chosen");
             if (picked.Length > 1)
             {
                 // Two fit equally: nothing is created until the person answers.
@@ -176,9 +188,13 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
             (name, path) = await RepoOfAsync(given, cancellationToken);
         }
         var milestone = await github.IdeasMilestoneAsync(path, cancellationToken);
+        Step("milestone found");
         var issue = await github.CreateIssueInMilestoneAsync(path, title, body.Length > 0 ? body : null, milestone.Title, cancellationToken);
+        Step("issue made");
         state.CloseCardsAbout(RepoCardSubject(text), "filed", CardKinds.IdeaRepo);
         await RefreshAsync(name, path, cancellationToken);
+        Step("ideas read again");
+        await Error.WriteLineAsync($"idea: noted {name} {IdeaIds.Id(issue.Number)}: {string.Join(", ", steps)}");
         return state.Complete(command, null, made: $"{name} {IdeaIds.Id(issue.Number)}");
     }
 
