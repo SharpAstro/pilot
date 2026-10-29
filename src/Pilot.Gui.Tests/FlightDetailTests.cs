@@ -556,7 +556,7 @@ public sealed class FlightDetailTests
         var button = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:address-review" });
         button.OnClick!.Invoke(InputModifier.None);
         answered.ShouldBe((card, 2));
-        var offered = PullRequestActions.Offered(new PullRequestRow { Repo = "x/tianwen", Number = 7, Flight = "TIA1611", Review = PullRequestReview.Changes }, [card])
+        var offered = PullRequestActions.Offered(new PullRequestRow { Repo = "x/tianwen", Number = 7, Title = "T", Url = "https://github.com/x/tianwen/pull/7", Kind = PullRequestKind.Ready, Label = "Ready", Flight = "TIA1611", Review = PullRequestReview.Changes }, [card])
             .Single(a => a.Kind == PullRequestActionKind.AddressReview);
         flights.AddressReview(line).ShouldNotBeNull();
         offered.Tooltip.ShouldBe("Send TIA1611's last leg round on the review's findings, as its card's Fix the review's findings does");

@@ -806,7 +806,7 @@ public sealed class CliTests : IAsyncLifetime
     public void PullRequestsHintHowToFixAReviewThatAsksForChangesInBothOutputsAndNothingElse()
     {
         var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
-        PullRequestRow Pr(int number, string? flight, PullRequestReview? review) => new()
+        PullRequestRow Pr(int number, string? flight, string? review) => new()
         {
             Repo = "SharpAstro/pilot", Number = number, Title = $"T{number}", Url = $"https://github.com/SharpAstro/pilot/pull/{number}", Kind = PullRequestKind.Ready,
             Label = "Ready", Author = "sebgod", UpdatedAt = now, Flight = flight, Review = review,
