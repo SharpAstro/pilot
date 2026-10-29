@@ -2405,10 +2405,11 @@ public sealed partial class LegCommander(
         // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
         // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
         var detail = changes;
-        if (last is { ReviewGoArounds: >= MaxReviewGoArounds })
+        // Not for a review that did not start: nothing is sent round from that card, so there is no round to decide on.
+        if (last is { ReviewGoArounds: >= MaxReviewGoArounds } && reason != SendBackReason.ReviewNotStarted)
         {
             // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
-            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times on review findings: this is yours to decide (have them fixed once more, mark it ready, or change what the review asks).";
+            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times: this is yours to decide ({words} once more, mark it ready, or change what is asked).";
         }
         var choices = new List<CardChoice>();
         if (reason == SendBackReason.ReviewNotStarted)
@@ -2419,7 +2420,7 @@ public sealed partial class LegCommander(
         else if (last is not null)
         {
             // Not "Redo leg": the worker fixes what was found on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
-            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+            choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
