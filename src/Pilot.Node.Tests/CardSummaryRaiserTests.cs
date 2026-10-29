@@ -9,7 +9,7 @@ namespace Pilot.Node.Tests;
 public sealed class CardSummaryRaiserTests : ReviewTestsBase
 {
     [Fact]
-    public async Task AReviewThatAsksForChangesSaysWhichLegIsRedone()
+    public async Task AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone()
     {
         var flight = await NewFlight("41", "parser");
         await Fly(flight, "parser");
@@ -19,7 +19,10 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Redo leg");
+        // The findings are fixed on the leg's work as it stands: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
+        card.Summary.ShouldContain("Fix the review's findings");
+        card.Summary.ShouldContain("nothing thrown away");
+        card.Summary.ShouldNotContain("Redo");
     }
 
     [Fact]

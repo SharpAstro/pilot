@@ -2389,17 +2389,18 @@ public sealed partial class LegCommander(
         if (last is { ReviewGoArounds: >= MaxReviewGoArounds })
         {
             // The findings first: a card shows its first lines, and this note there hid the problem it was about (PIL294's #357, 2026-10-27).
-            detail = $"{changes}\n{last.Name} has been redone {last.ReviewGoArounds} times on review findings: this is yours to decide (redo the leg once more, mark it ready, or change what the review asks).";
+            detail = $"{changes}\n{last.Name} has been sent back {last.ReviewGoArounds} times on review findings: this is yours to decide (have them fixed once more, mark it ready, or change what the review asks).";
         }
         var choices = new List<CardChoice>();
         if (last is not null)
         {
-            choices.Add(new CardChoice { Label = Models.RedoLabel(last), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
+            // Not "Redo leg": the worker fixes the findings on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
+            choices.Add(new CardChoice { Label = Models.FixFindingsLabel(last), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [$"the review asked for changes: {changes}"] });
         }
         choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review asks for changes", detail, choices, link: flight.PullRequestUrl,
             summary: last is null ? $"The review of {flight.Code} asked for changes. Ready anyway lands it as it is."
-                : $"The review of {flight.Code}/{last.Name} asked for changes. Redo leg sends a fresh worker to make them; Ready anyway lands it as it is.");
+                : $"The review of {flight.Code}/{last.Name} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Ready anyway lands it as it is.");
     }
 
     /// <summary>

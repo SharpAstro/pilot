@@ -201,6 +201,13 @@ public sealed partial class RoleModels
         return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
     }
 
+    /// <summary>The review card's button for <paramref name="leg"/>: <see cref="Verbs.FixFindings"/>, naming the next worker's model as <see cref="RedoLabel"/> does.</summary>
+    public string FixFindingsLabel(LegRow leg)
+    {
+        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
+        return Verbs.FixFindings(leg.GoArounds + 1, model, effort);
+    }
+
     private static string Step(string? effort, int by, string whenUnset) =>
         Array.IndexOf(Efforts.ToArray(), effort) is var at and >= 0 ? Efforts[Math.Clamp(at + by, 0, Efforts.Count - 1)] : whenUnset;
 
