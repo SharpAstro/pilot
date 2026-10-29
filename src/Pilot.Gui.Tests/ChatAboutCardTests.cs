@@ -290,6 +290,7 @@ public sealed class ChatAboutCardTests
 
     private static async Task Typed(PilotChrome<RgbaImage> chrome, string words)
     {
+        chrome.Chat.Ui.Focus.Focus(chrome.Chat.Input);
         var tracker = new BackgroundTaskTracker();
         TextInputInteraction.HandleText(chrome.Chat.Input, words);
         TextInputInteraction.HandleKey(InputKey.Enter, InputModifier.None, new TextInputInteraction.KeyContext(tracker, chrome.Chat.Ui.Focus, () => { }));
