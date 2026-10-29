@@ -353,10 +353,23 @@ public sealed class IdeasPaneTests
         var (chrome, sent, tasks) = Chrome(renderer, ok ? new IdeaReply(true, Milestones: proposal) : new IdeaReply(false, "claude is offline"));
         var screen = Sample();
         var idea = screen.Ideas.First(i => i.Number == 381);
+        // Claude's answer is held back until the test has seen the page waiting for it.
+        var gate = new TaskCompletionSource();
+        var answer = chrome.Ideas.Send!;
+        chrome.Ideas.Send = async (verb, target, args, token) =>
+        {
+            var reply = await answer(verb, target, args, token);
+            if (verb == Verbs.ProposeMilestone)
+            {
+                await gate.Task;
+            }
+            return reply;
+        };
         Draw(chrome, screen, 1280, 1200);
         chrome.Ideas.OpenOn(idea, IdeasView<RgbaImage>.Mode.Plan);
         Draw(chrome, screen, 1280, 1200);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("Claude is choosing a milestone…");
+        gate.SetResult();
         await Task.WhenAll(tasks);
         Draw(chrome, screen, 1280, 1200);
         sent.Last().Verb.ShouldBe(Verbs.ProposeMilestone);
