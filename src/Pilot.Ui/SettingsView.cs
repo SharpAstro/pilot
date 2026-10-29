@@ -368,7 +368,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     }
 
     /// <summary>Whose settings these are: this machine's node, named as the Chat page names its watchtower's owner.</summary>
-    internal string Owner => Nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+    internal string Owner => TopBar.ThisNodeName(Nodes);
 
     /// <summary>The line under the bar while the window knows more than one node: the settings route is this machine's only.</summary>
     internal const string OtherNodesLine = "another node's settings are changed on that machine";
