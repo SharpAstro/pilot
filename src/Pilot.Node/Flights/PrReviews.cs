@@ -1060,6 +1060,12 @@ public sealed class PrReviews(
         {
             throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
         }
+        // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
+        // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
+        if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
+        {
+            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+        }
         await StartFixerAsync(pr, review, cancellationToken);
     }
 

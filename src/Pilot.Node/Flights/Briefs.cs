@@ -831,9 +831,10 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("## What you may do");
         text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
-        text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card, start a");
-        text.AppendLine("  fixer on a PR whose review asked for changes (`review fix`). The node runs");
+        text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
+        text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
+        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
