@@ -110,7 +110,13 @@ internal sealed record FleetLine
     /// <summary>The mark's words, which stay text beside the wrench.</summary>
     public const string MaintenanceWord = "maintenance";
 
-    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>); <c>—</c> for a node not reached, null for one that keeps none.</summary>
+    /// <summary>The node's own network use in its last full hour (<see cref="TrafficWords"/>); null for a node that does not say, or one never reached.</summary>
+    public string? Traffic { get; init; }
+
+    /// <summary><see cref="Traffic"/> as the two lines the machine cell draws (the node's HTTP, then its git and gh children), each short enough for the column; empty without traffic.</summary>
+    public string[] TrafficLines => Traffic?.Split(" · ") ?? [];
+
+    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>);<c>—</c> for a node not reached, null for one that keeps none.</summary>
     public string? Watchtower { get; init; }
 
     /// <summary>Whether the node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>); false for a node not reached.</summary>
@@ -155,7 +161,16 @@ internal sealed record FleetLine
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
-        + (WatchtowerSummary is { } summary ? " | " + summary : "");
+        + (WatchtowerSummary is { } summary ? " | " + summary : "")
+        + (Traffic is { } traffic ? " | " + traffic : "");
+
+    /// <summary>The traffic row in words: the node's HTTP is exact, what its git and gh children moved is an upper estimate (unknown off Windows).</summary>
+    public static string TrafficWords(NodeTrafficRow row)
+    {
+        static string Mb(long bytes) => (bytes / 1_000_000d).ToString(bytes < 10_000_000 ? "0.0" : "0", System.Globalization.CultureInfo.InvariantCulture);
+        var children = row.ChildBytes is { } moved ? $"up to {Mb(moved)} MB/h (est.)" : "unknown";
+        return $"node http {Mb(row.HttpIn)}/{Mb(row.HttpOut)} MB/h (in/out) · git+gh {children}";
+    }
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary, DateTimeOffset? now = null)
     {
@@ -183,6 +198,7 @@ internal sealed record FleetLine
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
+            Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
@@ -517,6 +533,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         (line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
         + (line.Connected ? 0f : 16f)
         + (line.StateLines.Length > 1 ? 16f : 0f)
+        + line.TrafficLines.Length * 16f
         + LastKnownUsageHeight(line);
 
     private Layout.Node Row(FleetLine line, int index)
@@ -548,7 +565,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Whole(line.Machine).RowH(22f),
-                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f)),
+                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f),
+                Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
+                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null

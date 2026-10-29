@@ -57,6 +57,8 @@ public static class NodeApp
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton(NodeTraffic.Shared);
+        builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
         builder.Services.AddSingleton(services => new NodeState(
@@ -78,7 +80,7 @@ public static class NodeApp
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
-        builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));
+        builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate } }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddSingleton<PackageReleases>();
         builder.Services.AddSingleton(services =>
         {
@@ -97,7 +99,7 @@ public static class NodeApp
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
             var models = services.GetRequiredService<RoleModels>();
-            var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
+            var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
             {
                 trackers.Add(new GitHubTracker(gitHub));
@@ -426,7 +428,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, NodeTraffic traffic) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -443,6 +445,7 @@ public static class NodeApp
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 Watchtower = watchtower.Health(),
+                Traffic = traffic.LastHourRow(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

@@ -62,6 +62,9 @@ public sealed record NodeInfo
 
     /// <summary>How the node's watchtower is doing; null when it keeps none (<c>--no-watchtower</c>) or an older node did not say.</summary>
     public WatchtowerHealth? Watchtower { get; init; }
+
+    /// <summary>The node's own network use in the last full clock hour; null when an older node did not say.</summary>
+    public NodeTrafficRow? Traffic { get; init; }
 }
 
 /// <summary>How a node's watchtower is doing: its state, how often it has had to be started again, and why the last one ended.</summary>

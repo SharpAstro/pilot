@@ -66,7 +66,7 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="localOnly">Starts the node local-only, as <c>--local-only</c> does, whatever <paramref name="lanPort"/> asks for.</param>
     /// <param name="folder">A folder to start on (a disposed node's, to start its successor on the same socket path and data); default a new temp one.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null)
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
@@ -106,6 +106,10 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
+                if (traffic is not null)
+                {
+                    builder.Services.AddSingleton(traffic);
+                }
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),

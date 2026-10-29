@@ -63,6 +63,38 @@ public sealed class FleetTests
         screen.Summary.ShouldBe("2 nodes · 2 live");
     }
 
+    /// <summary>Each node's last-hour traffic is a line under its machine, drawn in full and clear of the line above, narrow and wide.</summary>
+    [Theory]
+    [InlineData(1280)]
+    [InlineData(700)]
+    public void EachNodesLastHourTrafficIsShownAndNeverOverlaps(int width)
+    {
+        var row = new NodeTrafficRow { Hour = Live.At, HttpIn = 3_000_000, HttpOut = 1_000_000, ChildBytes = 9_000_000, GitRuns = 4, GhRuns = 20 };
+        var withTraffic = Summary("s2", "bo@example.org") with { Node = Summary("s2").Node! with { Traffic = row } };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, withTraffic, Live.At);
+        var without = FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("s1", "ada@example.org"), Live.At);
+
+        line.Traffic.ShouldBe("node http 3.0/1.0 MB/h (in/out) · git+gh up to 9.0 MB/h (est.)");
+        without.Traffic.ShouldBeNull();
+        FleetLine.TrafficWords(row with { ChildBytes = null }).ShouldEndWith("git+gh unknown");
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line, without], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
+        string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
+        var previousBottom = leaves.Where(a => TextOf(a).StartsWith("10.0.0.9:47731", StringComparison.Ordinal)).ShouldHaveSingleItem() is var where ? where.Bounds.Y + where.Bounds.Height : 0f;
+        line.TrafficLines.Length.ShouldBe(2);
+        foreach (var part in line.TrafficLines)
+        {
+            var leaf = leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem();
+            leaf.Bounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, part);
+            leaf.Bounds.Width.ShouldBeGreaterThanOrEqualTo(renderer.MeasureText(part.AsSpan(), SessionsCapture.FontPath, 11f).Width - 0.5f, part);
+            previousBottom = leaf.Bounds.Y + leaf.Bounds.Height;
+        }
+    }
+
     [Fact]
     public void ARowOffersOpenAndConnectAsItsGrantAllows()
     {

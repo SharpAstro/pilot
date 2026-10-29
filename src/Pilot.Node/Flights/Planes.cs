@@ -93,7 +93,9 @@ public sealed class GitCli : IGit
             start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
         }
 
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+        var (process, counted) = NodeTraffic.Shared.Start("git", start);
+        using var _ = process;
+        using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);
