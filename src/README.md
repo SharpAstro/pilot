@@ -42,7 +42,10 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
 - **Rail:** the left rail, as tianwen's, its chords counting down it: Home (Ctrl+1), Chat (Ctrl+2), Sessions (Ctrl+3),
-  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7) and Settings (Ctrl+8).
+  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7), Settings (Ctrl+8) and 💡 Ideas (Ctrl+9), whose entry carries the count of noted ideas. The Ideas page
+  notes an idea from a one-line box (Claude picks its repo, and asks inline with "File in <repo>" buttons when two fit), lists the
+  noted ideas newest first with their bodies as Markdown, and per idea offers Plan, Drop, Edit, Tidy, Move to repo… and Open on
+  GitHub; planned and dropped ideas are folded below.
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,

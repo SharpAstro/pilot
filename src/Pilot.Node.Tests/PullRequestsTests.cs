@@ -248,22 +248,22 @@ public sealed class PullRequestsTests : IDisposable
 
         var groups = row.Groups();
 
-        // Ready first (0), then changes requested (1, in "mixed"), then running (7), then drafts (9).
-        groups.Select(g => g.Repo).ShouldBe(["SharpAstro/ready", "SharpAstro/mixed", "SharpAstro/running", "SharpAstro/draftsonly"]);
-        // A repo is one group however GitHub cases it, and its PRs go the same way: ready, then behind.
-        groups[0].PullRequests.Select(p => p.Number).ShouldBe([6, 7]);
+        // The repos by name, whatever their PRs' states, so a group never moves when one changes.
+        groups.Select(g => g.Repo).ShouldBe(["SharpAstro/draftsonly", "SharpAstro/mixed", "SharpAstro/ready", "SharpAstro/running"]);
+        // A repo is one group however GitHub cases it; within it the PR that most needs the person first: ready, then behind.
+        groups[2].PullRequests.Select(p => p.Number).ShouldBe([6, 7]);
         groups[1].PullRequests.Select(p => p.Number).ShouldBe([5, 3, 4]);
     }
 
     [Fact]
-    public void ReposThatRankAlikeGoTheMostRecentlyUpdatedFirstThenByName()
+    public void ReposGoByNameWhateverWasUpdatedLast()
     {
         var row = RowOf(
             Row("SharpAstro/b", 1, PullRequestKind.Ready, 5),
             Row("SharpAstro/a", 2, PullRequestKind.Ready, 5),
             Row("SharpAstro/c", 3, PullRequestKind.Ready, 1));
 
-        row.Groups().Select(g => g.Repo).ShouldBe(["SharpAstro/c", "SharpAstro/a", "SharpAstro/b"]);
+        row.Groups().Select(g => g.Repo).ShouldBe(["SharpAstro/a", "SharpAstro/b", "SharpAstro/c"]);
     }
 
     [Fact]
@@ -303,15 +303,15 @@ public sealed class PullRequestsTests : IDisposable
 
         var orgs = row.OrgGroups();
 
-        // Ready in acme (older) and SharpAstro (newer) tie on rank: the more recently updated first, then the conflicts.
-        orgs.Select(o => o.Org).ShouldBe(["SharpAstro", "acme", "sebgod"]);
-        // Each org's repos are Groups' order, the repos of an org as Groups has them.
-        orgs[0].Repos.Select(g => g.Repo).ShouldBe(["SharpAstro/ready", "SharpAstro/draft"]);
-        orgs[2].Repos.Select(g => g.Repo).ShouldBe(["sebgod/b", "sebgod/a"]);
+        // The orgs by name, whatever their PRs' states, so an org never moves when one changes.
+        orgs.Select(o => o.Org).ShouldBe(["acme", "sebgod", "SharpAstro"]);
+        // Each org's repos are Groups' order (by name), the repos of an org as Groups has them.
+        orgs[2].Repos.Select(g => g.Repo).ShouldBe(["SharpAstro/draft", "SharpAstro/ready"]);
+        orgs[1].Repos.Select(g => g.Repo).ShouldBe(["sebgod/a", "sebgod/b"]);
         orgs.SelectMany(o => o.Repos).Select(g => g.Repo).ShouldBe(row.Groups().Select(g => g.Repo), ignoreOrder: true);
         // The words of the summary, over the org's PRs, so header and summary read alike.
-        orgs[0].Counts.ShouldBe("3 open · 1 ready · 1 checks running");
-        orgs[2].Counts.ShouldBe("2 open · 2 conflicts");
+        orgs[2].Counts.ShouldBe("3 open · 1 ready · 1 checks running");
+        orgs[1].Counts.ShouldBe("2 open · 2 conflicts");
         row.Summary().ShouldBe(PullRequestsRow.Counts(row.PullRequests));
         orgs.All(o => o.Error is null).ShouldBeTrue();
     }

@@ -502,6 +502,18 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
+    // The Ideas page: every button is an idea verb on this window's node; a question about an idea (which repo, which version) is
+    // answered through the card's own answer, as the panel's buttons are.
+    chrome.Ideas.Send = async (verb, target, args, ct) =>
+    {
+        var reply = await IdeaCommands.SendAsync(client, verb, target, args, GuiSay.Who, ct);
+        Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
+        return reply;
+    };
+    chrome.Ideas.OnAnswer = chrome.Cards.OnAnswer;
+    chrome.Ideas.OnOpen = url => OpenAway(url);
+    chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
+    chrome.Ideas.Changed = loop.RequestRedraw;
     chrome.Chat.Changed = loop.RequestRedraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
@@ -774,6 +786,7 @@ CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
+IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At);
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
@@ -824,7 +837,7 @@ if (feed is not null)
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
+                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) is PilotPage.Repos or PilotPage.Ideas);
                 var hereSummary = feed.Summary(now);
                 var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
@@ -884,6 +897,7 @@ void RenderFrame()
             repos = pages.Repos;
             chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
+            ideas = pages.Ideas;
             pullRequests = pages.PullRequests;
             fleet = made.Item2;
         }
@@ -891,7 +905,7 @@ void RenderFrame()
 
     view.Ui.FrameId++;
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();

@@ -338,6 +338,13 @@ public static class Briefs
         text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
         text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
         text.AppendLine(WaitRule(run));
+        if (flight.FromIdea is { Length: > 0 } idea)
+        {
+            text.AppendLine();
+            text.AppendLine($"This flight was made from the idea {idea}: its issue is the idea's own, and its first words are the person's. Your plan goes in the");
+            text.AppendLine("legs and the PR, not over those words. If the issue's body needs more, add a section under the idea's words (a heading of");
+            text.AppendLine("your own, then the addition); never replace, shorten or reword what is there.");
+        }
         if (legs.Count > 0)
         {
             text.AppendLine();
@@ -756,6 +763,20 @@ public static class Briefs
         text.AppendLine("- \"Plan a leg on <code>: …\" is a leg for that flight. Work its goal, what it is done when, any check and its steps out of what they");
         text.AppendLine($"  said, then `{pilot} leg plan <code> <name> --goal … --done-when … [--check …] [--item …]`, then `{pilot} flight planned <code> \"<the plan in a line>\"`,");
         text.AppendLine("  so the plan card comes back to them with the leg and offers to start it. Say what you planned, in a line.");
+        text.AppendLine("- Ideas: an idea is an issue in a repo's Ideas milestone, id I<issue number> (`I381`, or `tianwen I1829` in another repo). The controller");
+        text.AppendLine("  talks of them by id, and you act on the id:");
+        text.AppendLine($"  - \"note an idea: …\" is `{pilot} idea \"<their words, as they said them>\"`: Claude chooses the repo as the CLI does (`--repo <name>` when they named one),");
+        text.AppendLine("    and you never reword, expand or restructure what they said. Say the id it got, with its link.");
+        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan [--milestone <name>]`: the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
+        text.AppendLine($"    (the repo's flight prefix and the same number); then `{pilot} flight plan <code>`. NEVER plan an idea on your own: only when the controller said to");
+        text.AppendLine("    in so many words. When they only seem to want it, ask with an ask block whose choice names it in full: `Plan I381: <its title>`.");
+        text.AppendLine($"  - \"fold I384 into PIL294\" is `{pilot} idea I384 fold PIL294`: the idea's text goes into PIL294's issue as a comment, then the idea is dropped as folded.");
+        text.AppendLine($"  - \"drop I382, done by #377\" is `{pilot} idea I382 drop \"done by #377\"`: the reason is the issue's closing comment.");
+        text.AppendLine($"  - \"tidy I381\" is `{pilot} idea I381 tidy`: Claude's proposal as a diff, saved only by `tidy --save` when they say so (`tidy --discard` forgets it).");
+        text.AppendLine($"  - \"move I381 to tianwen\" is `{pilot} idea I381 move tianwen`: a transfer, so the number changes and the old id points to the new one.");
+        text.AppendLine($"  - `{pilot} ideas [--all] [--repo <name>]` lists them. Once planned, an idea's id names its flight (I381 is PIL381): `{pilot} idea I381 edit …` says so.");
+        text.AppendLine("  Every idea write is checked against GitHub first, and the node tells you when it merged or asked; say that plainly.");
+        text.AppendLine("  Write an idea or its flight as a link wherever you name it.");
         text.AppendLine();
         text.AppendLine("## Getting reviewed work in");
         text.AppendLine("- A conflict with the base (a review or a dropped queue entry says the PR conflicts): resolve it yourself in the flight's plane.");

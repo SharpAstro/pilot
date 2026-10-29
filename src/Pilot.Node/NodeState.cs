@@ -55,6 +55,8 @@ public sealed class NodeState
     private PullRequestsRow? _pullRequests;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
+    private IdeaRow[] _ideas = [];
+    private IdeaMoveRow[] _ideaMoves = [];
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
@@ -584,12 +586,76 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The ideas of every repo the node reads, newest first.</summary>
+    public IdeaRow[] Ideas()
+    {
+        lock (_gate)
+        {
+            return _ideas;
+        }
+    }
+
+    /// <summary>Every idea moved to another repo, oldest first: an old id finds the new one through <see cref="IdeaIds.Follow"/>.</summary>
+    public IdeaMoveRow[] IdeaMoves()
+    {
+        lock (_gate)
+        {
+            return _ideaMoves;
+        }
+    }
+
+    /// <summary>Remembers that an idea was moved, so its old id keeps resolving; a move already remembered is no delta.</summary>
+    public void PutIdeaMove(IdeaMoveRow move)
+    {
+        lock (_gate)
+        {
+            if (!_ideaMoves.Contains(move))
+            {
+                Publish(new IdeaMovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Move = move });
+            }
+        }
+    }
+
     /// <summary>The summaries made, one per scope: the fleet's first, then each flight's by code.</summary>
     public SummaryRow[] Summaries()
     {
         lock (_gate)
         {
             return [.. _summaries.Values.OrderBy(s => s.Scope != SummaryRow.FleetScope).ThenBy(s => s.Scope, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Puts the ideas of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the ideas when they differ, nothing when they are the same.
+    /// </summary>
+    public void PutIdeas(string repo, IEnumerable<IdeaRow> read)
+    {
+        lock (_gate)
+        {
+            PutIdeasLocked([.. _ideas.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]);
+        }
+    }
+
+    /// <summary>
+    /// Puts the ideas of every repo read at once: the repos named in <paramref name="repos"/> take the rows of <paramref name="read"/>
+    /// (so an idea gone from GitHub goes), every other repo's rows stay.
+    /// </summary>
+    public void PutIdeas(IReadOnlyCollection<string> repos, IEnumerable<IdeaRow> read)
+    {
+        lock (_gate)
+        {
+            PutIdeasLocked([.. _ideas.Where(i => !repos.Contains(i.Repo, StringComparer.OrdinalIgnoreCase)), .. read]);
+        }
+    }
+
+    private void PutIdeasLocked(IEnumerable<IdeaRow> all)
+    {
+        var next = IdeaIds.Order(all).ToArray();
+        // Age moves with the clock alone: a read that changes nothing else is no delta.
+        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
+        {
+            Publish(new IdeasChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Ideas = next });
         }
     }
 
@@ -735,15 +801,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null)
     {
         var result = new CommandResult
         {
@@ -756,6 +822,7 @@ public sealed class NodeState
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,
+            Tidy = error is null ? tidy : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,
@@ -885,6 +952,12 @@ public sealed class NodeState
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
                 break;
+            case IdeasChangedEvent ideas:
+                _ideas = ideas.Ideas;
+                break;
+            case IdeaMovedEvent moved:
+                _ideaMoves = [.. _ideaMoves, moved.Move];
+                break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;
                 break;
@@ -925,6 +998,8 @@ public sealed class NodeState
         {
             _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
         }
+        _ideas = snapshot.Ideas;
+        _ideaMoves = snapshot.IdeaMoves;
         foreach (var summary in snapshot.Summaries ?? [])
         {
             _summaries[summary.Scope] = summary;
@@ -947,6 +1022,8 @@ public sealed class NodeState
         PullRequests = _pullRequests,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],
+        Ideas = _ideas,
+        IdeaMoves = _ideaMoves,
         Summaries = [.. _summaries.Values],
     };
 
