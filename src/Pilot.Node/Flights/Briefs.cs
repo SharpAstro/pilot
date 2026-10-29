@@ -96,6 +96,7 @@ public static class Briefs
         text.Append(PilotMdSection(pilotMd));
         text.AppendLine();
         text.AppendLine(CiRule);
+        text.AppendLine(MachineLoadRule(run));
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (CiShape.Of(flight.Worktree) is { } ci)
         {
@@ -227,6 +228,18 @@ public static class Briefs
     internal const string CiRule =
         "Checks, and your own builds and test runs, build as the repo's CI does: for a SharpAstro dotnet repo that is `-c Release`, not the Debug a bare\n" +
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
+
+    /// <summary>
+    /// The line the planner and the worker are told, in autopilot as much as out of it: the machine is the person's, so nothing
+    /// loads it on purpose without their okay on a card. TIA1910 ran a 24-process CPU burner to imitate a busy CI runner while
+    /// it measured a flaky test (DE1 2026-10-29), and the person found it in Task Manager.
+    /// </summary>
+    internal static string MachineLoadRule(string run) =>
+        "Never load the machine on purpose without the person's explicit okay, in autopilot too: no CPU or GPU burner, no stress or\n" +
+        "soak loop, no pool of processes spinning to imitate a busy machine, nothing that holds many cores or the GPU for the load's\n" +
+        $"own sake. Ask first with `{run} ring \"<what load, for how long, and why>\"`, and go on with the rest of the leg; only the\n" +
+        "person's answer on that card is the okay, never a guess that they would agree. A build or a test run that is merely heavy is\n" +
+        "not load in this sense.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
@@ -423,6 +436,8 @@ public static class Briefs
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
         text.AppendLine(CiRule);
+        // A leg whose way to a number is loading the machine plans the ask, never the load (TIA1910).
+        text.AppendLine(MachineLoadRule(run));
         // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
         text.AppendLine(CheckWhereRule);
         if (CiShape.Of(flight.Worktree) is { } ci)
