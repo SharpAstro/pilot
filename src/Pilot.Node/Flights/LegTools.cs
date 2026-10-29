@@ -1109,8 +1109,13 @@ public sealed partial class GhCli : IGitHub
 
     public async Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(
-            ["pr", "create", "--draft", "--head", branch, "--base", baseBranch, "--title", title, "--body", body], repoPath, cancellationToken);
+        string[] args = ["pr", "create", "--draft", "--head", branch, "--base", baseBranch, "--title", title, "--body", body];
+        var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
+        if (exit != 0 && error.Contains("draft", StringComparison.OrdinalIgnoreCase) && error.Contains("not supported", StringComparison.OrdinalIgnoreCase))
+        {
+            // A repo whose plan has no draft PRs (a private repo on GitHub Free): an ordinary PR runs the same checks.
+            (exit, output, error) = await RunAsync([.. args.Where(a => a != "--draft")], repoPath, cancellationToken);
+        }
         if (exit != 0)
         {
             throw new FlightException($"gh could not open {branch}'s draft PR: {(error.Trim().Length > 0 ? error : output).Trim()}");
