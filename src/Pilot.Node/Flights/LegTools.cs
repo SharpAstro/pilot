@@ -1582,7 +1582,9 @@ public sealed partial class GhCli : IGitHub
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        using var process = Process.Start(start) ?? throw new FlightException("gh did not start");
+        var (process, counted) = NodeTraffic.Shared.Start("gh", start);
+        using var _ = process;
+        using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(timeout ?? Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);
