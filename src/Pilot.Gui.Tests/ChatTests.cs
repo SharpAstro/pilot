@@ -124,6 +124,42 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task AMessageRelayedThroughTheNodeIsShownAsFromItsSenderWithoutItsEnvelope()
+    {
+        // The owner (2026-10-29): "why is it still this weird cross xml thing?" The node relays words wrapped in Claude Code's envelope.
+        const string fromYou = """
+            <cross-session-message from="uds:\\.\pipe\LOCAL\cc-msg-4aca" from-name="controller" from-mode="prompting">
+            https://github.com/SharpAstro/pilot/pull/457 this one has priority.
+
+            (Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)
+            </cross-session-message>
+            """;
+        const string fromWorker = """
+            <cross-session-message from="uds:x" from-name="de1-tia1910-measure-spread" from-mode="prompting">
+            measured: 1.6 frames a second
+
+            (Sent through the pilot node. To answer, run: pilot say 2ca9 "<your answer>". Not SendMessage: it cannot reach the sender.)
+            </cross-session-message>
+            """;
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, Page([
+            new() { Index = 0, Kind = TranscriptKind.User, Text = fromYou, At = At },
+            new() { Index = 1, Kind = TranscriptKind.User, Text = fromWorker, At = At.AddMinutes(1) },
+        ]));
+        await Read(chat, 2);
+
+        var text = Described(chat);
+
+        // The person's words as theirs (a long link is drawn in pieces, so it is checked by its ends).
+        text.ShouldContain("you https:");
+        text.ShouldContain("457 this one has priority.");
+        text.ShouldContain("de1-tia1910-measure-spread measured: 1.6 frames a second");
+        text.ShouldNotContain("cross-session-message");
+        text.ShouldNotContain("Sent through the pilot node");
+        CrossSessionMessage.Parse("just words").ShouldBeNull();
+    }
+
+    [Fact]
     public async Task TheChatShowsAPersonsMessageAReplyInMarkdownAFoldedCallAWorkingLineAndTheDivider()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
