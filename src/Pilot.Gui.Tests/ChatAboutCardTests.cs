@@ -305,12 +305,11 @@ public sealed class ChatAboutCardTests
     }
 
     [Fact]
-    public async Task AnotherNodesCardIsChattedAboutWithThatNodeAndNotThisOne()
+    public async Task AnotherNodesCardIsChattedAboutInTheFleetChatAndToldThisNodesWatchtower()
     {
         var chrome = NewChrome(out var renderer);
         using var _ = renderer;
         var fleet = new FakeFleet();
-        fleet.Granted.Add(Se1Node.Where);
         fleet.Wire(chrome, Said("this node's watchtower"), Said("SE1's watchtower"));
         chrome.Cards.CanSteer = _ => true;
         var screen = CardsScreen.Merge([(Se1Node, CardsScreen.From([Card("c1")], [], Now))], null);
@@ -320,18 +319,99 @@ public sealed class ChatAboutCardTests
         await WaitForAsync(() => chrome.Chat.Entries.Count > 0);
 
         chrome.Page.ShouldBe(PilotPage.Chat);
-        chrome.Chat.Node.ShouldBe(Se1Node);
-        chrome.Chat.Entries.Single().Text.ShouldBe("SE1's watchtower");
-        fleet.Read.ShouldNotContain("here");
-        Described(chrome.Chat).ShouldContain("watchtower · SE1");
-        Described(chrome.Chat).ShouldContain("This node's watchtower");
+        chrome.Chat.Node.ShouldBeNull();
+        chrome.Chat.Entries.Single().Text.ShouldBe("this node's watchtower");
+        fleet.Read.ShouldNotContain("SE1");
+        Described(chrome.Chat).ShouldContain("fleet chat");
+        Described(chrome.Chat).ShouldContain("about card c1 · SE1: card c1");
 
         await Typed(chrome, "why did it land?");
 
-        fleet.ToHere.ShouldBeEmpty();
-        fleet.ToNode["SE1"].Single().ShouldContain("why did it land?");
-        fleet.ToNode["SE1"].Single().ShouldContain("card c1");
+        fleet.ToNode.ShouldBeEmpty();
+        var told = fleet.ToHere.Single();
+        told.ShouldContain("why did it land?");
+        told.ShouldContain("card c1");
+        told.ShouldContain("SE1");
         chrome.Chat.Close();
+    }
+
+    [Fact]
+    public void TheFleetChatSaysItIsHeldByThisNodesWatchtowerAndAnotherNodesChatSaysWhose()
+    {
+        var chrome = NewChrome(out var renderer);
+        using var _ = renderer;
+        chrome.Nodes.Choices = [new NodeMark("node.sock", "node.sock", "DE1", Here: true), Se1Node];
+
+        var fleetChat = Described(chrome.Chat);
+        fleetChat.ShouldContain("fleet chat");
+        fleetChat.ShouldContain("held by DE1's watchtower");
+        chrome.Chat.Input.Placeholder.ShouldBe("Message the fleet chat");
+
+        chrome.Chat.SwitchTo(Se1Node);
+        var other = Described(chrome.Chat);
+        other.ShouldContain("watchtower · SE1");
+        other.ShouldContain("Fleet chat");
+        chrome.Chat.Input.Placeholder.ShouldBe("Message SE1's watchtower");
+    }
+
+    [Fact]
+    public async Task TheFleetRowsWatchtowerButtonOpensThatNodesChatAndTheWayBackTheFleetChat()
+    {
+        var chrome = NewChrome(out var renderer);
+        using var _ = renderer;
+        var fleet = new FakeFleet();
+        fleet.Wire(chrome, Said("this node's watchtower"), Said("SE1's watchtower"));
+        chrome.Nodes.Choices = [new NodeMark("node.sock", "node.sock", "DE1", Here: true), Se1Node];
+        var summary = new NodeSummary
+        {
+            Connected = true, Status = "live", Stream = "s1", LiveSessions = 1,
+            Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE1", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = "s1" },
+        };
+        var screen = new FleetScreen([FleetLine.From(Se1Node.Where, here: false, canCommand: true, null, summary)], Live.At);
+        chrome.Show(PilotPage.Fleet);
+        chrome.Render(new SessionsScreen([], "test", Now), null, null, null, screen, new RectF32(0, 0, 1600, 800));
+        var regions = new List<ClickableRegion>();
+        chrome.Fleet.CollectPaintedRegions(regions);
+
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"fleet:{Se1Node.Where}:chat").OnClick!.Invoke(InputModifier.None);
+        await WaitForAsync(() => chrome.Chat.Entries.Count > 0);
+
+        chrome.Page.ShouldBe(PilotPage.Chat);
+        chrome.Chat.Node.ShouldBe(Se1Node);
+        chrome.Chat.Entries.Single().Text.ShouldBe("SE1's watchtower");
+        Described(chrome.Chat).ShouldContain("watchtower · SE1");
+        await Typed(chrome, "status?");
+        fleet.ToNode["SE1"].ShouldBe(["status?"]);
+
+        chrome.Chat.Render(new RectF32(0, 0, 1280, 900));
+        var chat = new List<ClickableRegion>();
+        chrome.Chat.CollectPaintedRegions(chat);
+        chat.Single(r => r.Result is HitResult.ButtonHit { Action: "chat:back" }).OnClick!.Invoke(InputModifier.None);
+        chrome.Chat.Node.ShouldBeNull();
+        chrome.Chat.Close();
+    }
+
+    [Fact]
+    public void AMessageFromAnotherNodesWatchtowerIsShownAsThatNodesNotThePersons()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var entry = new TranscriptEntry { Index = 0, Kind = TranscriptKind.User, At = Now, Text = "[From the watchtower of node SE1] please rebase the PR" };
+        chat.Load = (_, _) => Task.FromResult(new ChatPage { Entries = [entry], Total = 1 });
+        chat.OnSend = _ => Task.FromResult<string?>(null);
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count < 1; i++)
+        {
+            Thread.Sleep(50);
+        }
+        chat.Close();
+
+        var text = Described(chat);
+
+        text.ShouldContain("SE1's watchtower");
+        text.ShouldContain("please rebase the PR");
+        text.ShouldNotContain("[From the watchtower");
+        text.ShouldNotContain("you ");
     }
 
     [Fact]
@@ -369,10 +449,7 @@ public sealed class ChatAboutCardTests
         using var _ = renderer;
         var fleet = new FakeFleet();
         fleet.Wire(chrome, Said("here"), Said("there"));
-        chrome.Cards.CanSteer = _ => true;
-        var screen = CardsScreen.Merge([(Se1Node, CardsScreen.From([Card("c1")], [], Now))], null);
-        Buttons(chrome, screen);
-        Press(chrome, "card:c1:chat");
+        chrome.Chat.SwitchTo(Se1Node);
         chrome.Chat.Tree();
 
         await Typed(chrome, "anyone there?");

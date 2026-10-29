@@ -27,6 +27,16 @@ internal static partial class CrossSessionMessage
         return (match.Groups["name"].Value, body);
     }
 
+    /// <summary>The node and the words of a message another node's watchtower passed on (<c>[From the watchtower of node SE1] words</c>), else null.</summary>
+    public static (string Node, string Body)? TryParseWatchtower(string text)
+    {
+        var match = FromWatchtower().Match(text.TrimStart());
+        return match.Success ? (match.Groups["node"].Value, match.Groups["body"].Value.Trim()) : null;
+    }
+
+    [GeneratedRegex(@"^\[From the watchtower of node (?<node>[^\]]+)\]\s*(?<body>.*)$", RegexOptions.Singleline)]
+    private static partial Regex FromWatchtower();
+
     [GeneratedRegex("""^<cross-session-message\b[^>]*\bfrom-name="(?<name>[^"]*)"[^>]*>(?<body>.*)</cross-session-message>$""", RegexOptions.Singleline)]
     private static partial Regex Envelope();
 

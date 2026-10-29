@@ -326,10 +326,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         // A message about a card goes through the card's tell, and the card is dropped with it, as the box is emptied.
         if (!string.IsNullOrWhiteSpace(message) && OnSendAboutCard is { } aboutCard && Interlocked.Exchange(ref _about, null) is { } quoted)
         {
+            // Another node's card goes to this node's watchtower as plain words naming the card and its node: it passes the work
+            // on with tell --node. Only this node's card has a tell card/<id> here.
+            if (quoted.Node is { Here: false } other && CurrentSend() is { } send)
+            {
+                return SendAsync(message, words => send(AboutOtherNodesCard(quoted.Card, other, words)));
+            }
             return SendAsync(message, words => aboutCard(quoted.Card, quoted.Node, words));
         }
         return SendAsync(message);
     }
+
+    /// <summary>What is told this node's watchtower about a card of another node: the card, its node and its title, and then the words.</summary>
+    internal static string AboutOtherNodesCard(CardRow card, NodeMark node, string words) =>
+        $"About card {card.Id} of node {node.Name} ({card.Title.ReplaceLineEndings(" ")}): {words}";
 
     /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
     public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
@@ -412,7 +422,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";
+        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
         var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
@@ -425,7 +435,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }
         if (Node is not null)
         {
-            buttons.Add(CardsView<TSurface>.HeaderPill("This node's watchtower", "chat:back", () => SwitchTo(null)));
+            buttons.Add(CardsView<TSurface>.HeaderPill("Fleet chat", "chat:back", () => SwitchTo(null)));
         }
         else if (OnRestart is not null && Load is not null)
         {
@@ -452,10 +462,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "chat")
+        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "fleet chat")
         {
             Buttons = buttons,
-            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {Nodes?.Choices.FirstOrDefault(n => n.Here)?.Name is { } here ? $"{here}'s" : "this node's"} watchtower"),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
