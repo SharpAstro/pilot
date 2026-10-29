@@ -189,7 +189,8 @@ public sealed class LanTests
         var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
         (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
-        return token.ShouldNotBeNullOrEmpty();
+        token.ShouldNotBeNullOrEmpty();
+        return token!;
     }
 
     private static async Task WatchtowerRowAsync(NodeHarness node, string name, string sessionId = AgentRows.SessionA)
