@@ -135,7 +135,7 @@ public sealed class LfsTests : IDisposable
                 context.Response.StatusCode = 500;
                 context.Response.Close();
             }
-        });
+        }, TestContext.Current.CancellationToken);
         Git(Main, "config", "lfs.url", prefix + "lfs");
 
         File.WriteAllText(Path.Combine(Main, "note.txt"), "plain\n");
