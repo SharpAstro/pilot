@@ -297,6 +297,12 @@ internal sealed class TranscriptEntryView
 
     private Layout.Node Row(TranscriptEntry entry)
     {
+        // A message relayed from another session (or from the person, through the node) is said as from its sender, without its envelope.
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && CrossSessionMessage.Parse(entry.Text) is { } relayed)
+        {
+            var mine = relayed.From == CrossSessionMessage.Controller;
+            return Said(entry, mine ? PromptLabel : relayed.From, mine ? Prompt : Tool, mine ? Bright : Body, relayed.Body);
+        }
         var (label, labelColor, textColor, lines) = entry switch
         {
             { Kind: TranscriptKind.User, From: { } from } => (from, Tool, Body, 12),
@@ -331,6 +337,15 @@ internal sealed class TranscriptEntryView
         // Claude's words, its thinking and a prompt stand apart from the tool lines around them.
         return entry.Kind is TranscriptKind.Assistant or TranscriptKind.Thinking or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
     }
+
+    // A prompt row with its own label and words: a relayed message's sender and body.
+    private Layout.Node Said(TranscriptEntry entry, string label, RGBAColor32 labelColor, RGBAColor32 textColor, string text) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.VStack([.. Folded(entry, text, textColor, 12, "")]).WStar(BodyWeight),
+                ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
+            .WithGap(10f)
+            .Pad(0f, ProseSpace);
 
     // An entry's text, its first lines only until it is opened: the line saying how many more is what opens it, and
     // closes it again.
