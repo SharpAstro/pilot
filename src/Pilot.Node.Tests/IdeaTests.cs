@@ -404,4 +404,34 @@ public sealed class IdeaCliTests : IDisposable
         bad.Exit.ShouldBe(1);
         bad.Output.ShouldContain("I77 is no idea of tianwen");
     }
+
+    [Fact]
+    public async Task IdeaPlanWithoutAMilestoneProposesOneAndPlansNothingAndNewMilestoneMakesIt()
+    {
+        var repo = Path.Combine(_root, "tianwen");
+        Directory.CreateDirectory(repo);
+        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        {
+            await git.WaitForExitAsync(Ct);
+        }
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AddMilestone(repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", 4);
+        node.Milestoner.Answer = new MilestoneAnswer("v1", null, null, "it is about the GPU");
+        await Pilot(node, _root, "idea", "--repo", repo, "Planets on the GPU");
+
+        var proposed = await Pilot(node, _root, "idea", "--repo", repo, "I1", "plan");
+
+        proposed.Exit.ShouldBe(0, proposed.Output + proposed.Error);
+        proposed.Output.ShouldContain("I1: proposed milestone v1: it is about the GPU");
+        proposed.Output.ShouldContain("v1 (4 open, due 2026-11-01): The GPU work");
+        node.GitHub.Moves.ShouldBeEmpty();
+        node.State.Flights().ShouldBeEmpty();
+
+        var made = await Pilot(node, _root, "idea", "--repo", repo, "I1", "plan", "--new-milestone", "Rings", "--milestone-description", "Ring shadows and tilt");
+
+        made.Exit.ShouldBe(0, made.Output + made.Error);
+        node.GitHub.MilestonesMade.Select(m => m.Title).ShouldContain("Rings");
+        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
+        node.GitHub.Moves.ShouldBe([(1, "Rings")]);
+    }
 }

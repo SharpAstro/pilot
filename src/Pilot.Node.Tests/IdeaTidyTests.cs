@@ -111,6 +111,25 @@ public sealed class IdeaTidyTests : IDisposable
     }
 
     [Fact]
+    public async Task TidyCarriesTheMilestoneProposalAndTheOpenListOrSaysThereIsNoOneToPropose()
+    {
+        await NotedAsync();
+        _github.AddMilestone(Repo, "v1", null, "The GPU work", 3);
+        var planes = new Planes(new GitCli());
+        var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
+        var milestoner = new FakeIdeaMilestoner { Answer = new MilestoneAnswer("v1", null, null, "it is the GPU") };
+        var proposing = new IdeaCommander(_state, planes, catalog, _github, _merger, _tidier, new FakeIdeaRepoChooser(), new FlightCommander(_state, planes, TimeProvider.System, github: _github), TimeProvider.System, milestoner);
+
+        var withOne = (await proposing.RunAsync(new CommandRequest { Verb = Verbs.TidyIdea, Target = IdeaIds.Target("pilot", 1), Who = "tests" }, Ct)).Tidy.ShouldNotBeNull().Milestone.ShouldNotBeNull();
+        var withNone = (await Tidy(1)).Tidy.ShouldNotBeNull().Milestone.ShouldNotBeNull();
+
+        withOne.Open.Select(m => m.Title).ShouldBe(["v1"]);
+        (withOne.Title, withOne.Reason).ShouldBe(("v1", "it is the GPU"));
+        (withNone.Title, withNone.NewTitle).ShouldBe((null, null));
+        withNone.Note.ShouldBe("no proposal: this node has no one to propose with");
+    }
+
+    [Fact]
     public async Task SavingAProposalWritesItThroughTheGuardedPathAsIsOverAnUnchangedIdea()
     {
         await NotedAsync();

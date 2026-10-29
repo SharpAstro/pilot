@@ -45,7 +45,7 @@ public sealed class IdeaMilestoneTests : IDisposable
         var catalog = new RepoCatalog(_state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
         _commander = new IdeaCommander(_state, planes, catalog, _github, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System, _milestoner);
         _github.AddMilestone(Repo, IdeaIds.Milestone);
-        _github.AddMilestone(Repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
+        _github.AddMilestone(Repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", 4);
         _github.AddMilestone(Repo, "v2");
         _github.AddIssue(Repo, "Ring shadows", IdeaIds.Milestone, body: "on the planet");
         _github.AddIssue(Repo, "Fix the GPU crash", "v1");
@@ -98,6 +98,7 @@ public sealed class IdeaMilestoneTests : IDisposable
         proposal.Open.Select(m => m.Title).ShouldBe(["v1", "v2"]);
         (proposal.Title, proposal.Reason, proposal.Note).ShouldBe(("v1", "it is about the GPU", null));
         proposal.Open[0].DueOn.ShouldNotBeNull();
+        (proposal.Open[0].Description, proposal.Open[0].OpenIssues).ShouldBe(("The GPU work", 4));
         _milestoner.Asked.Single()[0].IssueTitles.ShouldBe(["Fix the GPU crash"]);
         _github.Moves.ShouldBeEmpty();
         _state.Flights().ShouldBeEmpty();
@@ -158,7 +159,7 @@ public sealed class IdeaMilestoneTests : IDisposable
     [Fact]
     public async Task PlanningIntoAnExistingMilestoneMakesNoneEvenWhenAskedAsNew()
     {
-        (await Run(Verbs.PlanIdea, "v2")).Ok.ShouldBeTrue();
+        (await Run(Verbs.PlanIdea, Verbs.NewMilestoneArg, "V2")).Ok.ShouldBeTrue();
         _github.MilestonesMade.ShouldBeEmpty();
         _github.Moves.ShouldBe([(1, "v2")]);
     }

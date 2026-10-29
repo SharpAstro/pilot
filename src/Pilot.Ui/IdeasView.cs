@@ -372,7 +372,12 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private List<Item> Items(string filter)
     {
         var items = new List<Item>();
-        if (_choices?.Answer is { } answer)
+        if (_choices is not { Done: true })
+        {
+            // Claude is still choosing: typed text must not become a new milestone before the open ones are known.
+            return items;
+        }
+        if (_choices.Answer is { } answer)
         {
             var proposed = Proposed(answer);
             Item? suggested = answer.NewTitle is { Length: > 0 } newTitle
@@ -419,6 +424,11 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Plans the idea into the milestone chosen in the list (or the new one typed or suggested); nothing chosen is not sent.</summary>
     public async Task PlanChosenAsync(IdeaRow idea)
     {
+        if (_open is { Mode: Mode.Plan } waiting && waiting.Key == KeyOf(idea) && _choices is not { Done: true })
+        {
+            Say("Claude is still choosing a milestone; pick one when the list is in", refusal: true);
+            return;
+        }
         if (_open is not { Mode: Mode.Plan } open || open.Key != KeyOf(idea) || Chosen(Items(RowInput.Text)) is not { } chosen)
         {
             Say("pick a milestone to plan it in", refusal: true);

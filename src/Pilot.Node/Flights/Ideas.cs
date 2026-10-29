@@ -97,6 +97,18 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        // Proposing writes nothing, so it must not queue behind (or hold up) the verbs that do: it runs Claude for minutes.
+        if (command.Verb == Verbs.ProposeMilestone)
+        {
+            try
+            {
+                return await ProposeAsync(command, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                return state.Complete(command, ex.Message);
+            }
+        }
         await _one.WaitAsync(cancellationToken);
         try
         {
@@ -106,7 +118,6 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
                 Verbs.PlanIdea => await PlanAsync(command, cancellationToken),
                 Verbs.EditIdea or Verbs.SaveTidyIdea => await EditAsync(command, cancellationToken),
                 Verbs.TidyIdea => await TidyAsync(command, cancellationToken),
-                Verbs.ProposeMilestone => await ProposeAsync(command, cancellationToken),
                 Verbs.MoveIdea => await MoveAsync(command, cancellationToken),
                 Verbs.FoldIdea => await FoldAsync(command, cancellationToken),
                 _ => await DropAsync(command, cancellationToken),
@@ -422,8 +433,12 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
     private async Task<CommandResult> TidyAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (_, path, issue) = await IdeaOfAsync(command, cancellationToken);
-        var proposed = await tidier.TidyAsync(new IdeaText(issue.Title, issue.Body), path, cancellationToken);
-        var milestone = await ProposalAsync(new IdeaText(issue.Title, issue.Body), path, cancellationToken);
+        var text = new IdeaText(issue.Title, issue.Body);
+        // Both are Claude runs and neither needs the other: together they take the longer one, not the sum (the CLI waits 100 s).
+        var tidying = tidier.TidyAsync(text, path, cancellationToken);
+        var proposing = ProposalAsync(text, path, cancellationToken);
+        var proposed = await tidying;
+        var milestone = await proposing;
         return state.Complete(command, null, made: IdeaIds.Id(issue.Number),
             tidy: new IdeaTidyProposal(proposed.Title, proposed.Body, issue.Title, issue.Body, issue.UpdatedAt) { Milestone = milestone });
     }
@@ -463,14 +478,13 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         }
         try
         {
-            var contexts = new List<MilestoneContext>();
-            foreach (var m in open)
+            var contexts = await Task.WhenAll(open.Select(async m =>
             {
                 var titles = (await github.MilestoneIssuesAsync(path, m.Title, cancellationToken))
                     .Where(i => i.Open).Take(ClaudeIdeaMilestoner.IssuesShown).Select(i => i.Title).ToArray();
-                contexts.Add(new MilestoneContext(m, titles));
-            }
-            var answer = await milestoner.ProposeAsync(idea, [.. contexts], path, cancellationToken);
+                return new MilestoneContext(m, titles);
+            }));
+            var answer = await milestoner.ProposeAsync(idea, contexts, path, cancellationToken);
             return new MilestoneProposal(choices, answer.Title, answer.NewTitle, answer.NewDescription, answer.Reason.Length > 0 ? answer.Reason : null);
         }
         catch (FlightException ex)

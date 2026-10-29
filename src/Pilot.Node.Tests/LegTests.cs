@@ -232,10 +232,10 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
-    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null)
+    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0)
     {
         var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn);
+        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues);
         list.Add(milestone);
         return milestone;
     }

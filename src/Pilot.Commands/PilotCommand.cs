@@ -1260,7 +1260,7 @@ public static class PilotCommand
             }
             if (at == 0 && words.Length == 1)
             {
-                throw new UsageException($"{words[at]} is an idea's id: say what to do with it, pilot idea {words[at]} edit <text>, pilot idea {words[at]} plan [--milestone <name>] or pilot idea {words[at]} drop \"<why>\"");
+                throw new UsageException($"{words[at]} is an idea's id: say what to do with it, pilot idea {words[at]} edit <text>, pilot idea {words[at]} plan --milestone <name> (or --new-milestone <title>) or pilot idea {words[at]} drop \"<why>\"");
             }
         }
         return new IdeaCall(null, 0, null, string.Join(' ', words));
@@ -1276,7 +1276,6 @@ public static class PilotCommand
         return client.IsRemote || !(named.AsSpan().IndexOfAny('/', '\\') >= 0 || Directory.Exists(Path.GetFullPath(named, cwd))) ? named : Path.GetFullPath(named, cwd);
     }
 
-    /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
     /// <summary>The proposal for an idea's milestone, its reason and the open milestones, or why there is no proposal.</summary>
     internal static async Task WriteMilestonesAsync(TextWriter output, string id, MilestoneProposal proposal)
     {
@@ -1301,6 +1300,7 @@ public static class PilotCommand
         }
     }
 
+    /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
     internal static string Ideas(IEnumerable<IdeaRow> ideas, bool all, string? repo)
     {
         var shown = IdeaIds.Order(ideas.Where(i => (all || i.State != IdeaState.Dropped) && (repo is null || string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)))).ToList();

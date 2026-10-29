@@ -347,14 +347,14 @@ public sealed class IdeasPaneTests
         [new MilestoneChoice("v2.2", "", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), 2), new MilestoneChoice("v2.3", "", new DateTimeOffset(2026, 12, 5, 0, 0, 0, TimeSpan.Zero), 7), new MilestoneChoice("Rings", "", null, 0)],
         title, newTitle, newDescription, "it touches the pane v2.3 reworks");
 
-    private static async Task<(PilotChrome<RgbaImage> Chrome, List<(string Verb, string Target, string[] Args)> Sent, IdeasScreen Screen, IdeaRow Idea, RgbaImageRenderer Renderer)> OpenPlan(MilestoneProposal? proposal, bool ok = true)
+    private static async Task<(PilotChrome<RgbaImage> Chrome, List<(string Verb, string Target, string[] Args)> Sent, IdeasScreen Screen, IdeaRow Idea, RgbaImageRenderer Renderer)> OpenPlan(MilestoneProposal? proposal, bool ok = true, TaskCompletionSource? hold = null)
     {
         var renderer = new RgbaImageRenderer(1280, 1200);
         var (chrome, sent, tasks) = Chrome(renderer, ok ? new IdeaReply(true, Milestones: proposal) : new IdeaReply(false, "claude is offline"));
         var screen = Sample();
         var idea = screen.Ideas.First(i => i.Number == 381);
         // Claude's answer is held back until the test has seen the page waiting for it.
-        var gate = new TaskCompletionSource();
+        var gate = hold ?? new TaskCompletionSource();
         var answer = chrome.Ideas.Send!;
         chrome.Ideas.Send = async (verb, target, args, token) =>
         {
@@ -369,6 +369,10 @@ public sealed class IdeasPaneTests
         chrome.Ideas.OpenOn(idea, IdeasView<RgbaImage>.Mode.Plan);
         Draw(chrome, screen, 1280, 1200);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("Claude is choosing a milestone…");
+        if (hold is not null)
+        {
+            return (chrome, sent, screen, idea, renderer);
+        }
         gate.SetResult();
         await Task.WhenAll(tasks);
         Draw(chrome, screen, 1280, 1200);
@@ -399,6 +403,34 @@ public sealed class IdeasPaneTests
         Click(Regions(chrome, screen), "ideas:milestone:pilot I381:m:Rings");
         await chrome.Ideas.RowInput.OnCommit!("");
         sent.Last().Args.ShouldBe(["Rings"]);
+    }
+
+    [Fact]
+    public async Task TypingWhileClaudeIsStillChoosingOffersAndPlansNothing()
+    {
+        var hold = new TaskCompletionSource();
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(Proposal(), hold: hold);
+        using var _ = renderer;
+        chrome.Ideas.RowInput.Text = "v2";
+        var text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("Claude is choosing a milestone…");
+        text.ShouldNotContain("new milestone: v2");
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:plan-go:pilot I381");
+        var before = sent.Count;
+        await chrome.Ideas.RowInput.OnCommit!("v2");
+        sent.Count.ShouldBe(before);
+        sent.Any(s => s.Verb == Verbs.PlanIdea).ShouldBeFalse();
+        chrome.Ideas.Said.ShouldContain("still choosing");
+
+        // The answer lands: the filter now narrows the open milestones.
+        hold.SetResult();
+        await Task.Delay(50);
+        Draw(chrome, screen, 1280, 1200);
+        text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("v2.3");
+        text.ShouldContain("v2.2");
+        text.ShouldNotContain("new milestone: v2");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:plan-go:pilot I381");
     }
 
     [Fact]
@@ -450,8 +482,7 @@ public sealed class IdeasPaneTests
         var (chrome, sent, screen, idea, renderer) = await OpenPlan(offline ? null : new MilestoneProposal([new MilestoneChoice("v2.3", "", null, 1)], Note: "Claude gave no answer"), ok: !offline);
         using var _ = renderer;
         var text = Spoken(renderer, chrome, screen, 1280);
-        text.ShouldNotContain("●  ");
-        text.ShouldNotContain("● v2.3");
+        text.ShouldNotContain("● ");
         var actions = Actions(Regions(chrome, screen)).ToList();
         actions.ShouldNotContain("ideas:plan-go:pilot I381");
         if (!offline)
