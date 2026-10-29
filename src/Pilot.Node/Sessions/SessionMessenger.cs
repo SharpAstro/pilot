@@ -152,9 +152,22 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
     }
 
-    /// <summary>The node whose watchtower sent <paramref name="command"/> over the LAN under its grant, else null.</summary>
-    internal static string? FromAnotherWatchtower(CommandRequest command) =>
-        command.Grant is { Length: > 0 } grant && command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? grant : null;
+    /// <summary>
+    /// The node whose watchtower sent <paramref name="command"/> over the LAN under its grant, else null. The node is named by
+    /// the watchtower's own session name (<c>de1-watchtower</c> after the grant's <c>/</c>), which is the prefix <c>--node</c>
+    /// resolves; the grant's label (<c>user@machine</c> by default) is no node's name, so it is only the fallback.
+    /// </summary>
+    internal static string? FromAnotherWatchtower(CommandRequest command)
+    {
+        if (command.Grant is not { Length: > 0 } grant || !command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var session = command.Who[(command.Who.LastIndexOf('/') + 1)..];
+        var node = session[..^"-watchtower".Length].ToUpperInvariant();
+        return node.Length > 0 ? node : grant;
+    }
 
     /// <summary>
     /// The session a say names: by its row id, else by its name when one live session has it. A name was refused

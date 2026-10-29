@@ -209,17 +209,19 @@ public sealed class LanTests
         var name = $"{a.Options.Machine.ToLowerInvariant()}-watchtower";
         await WatchtowerRowAsync(a, name);
         await WatchtowerRowAsync(b, name);
-        using var toB = await GrantedAsync(b, portB, "DE1");
-        using var toA = await GrantedAsync(a, portA, "SE1");
+        // Grants carry the label `pilot connect` defaults to, user@machine, which is no node's name: the marker names the
+        // node from the sending watchtower's own session name.
+        using var toB = await GrantedAsync(b, portB, "someone@de1-host");
+        using var toA = await GrantedAsync(a, portA, "someone@se1-host");
 
-        // DE1's watchtower asks SE1's (a grant labelled DE1 on SE1): it arrives marked with the sending node.
-        (await toB.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["how is PIL411?"], Who = name }, Ct)).Success.ShouldBeTrue();
+        // DE1's watchtower asks SE1's: it arrives marked with the sending node.
+        (await toB.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["how is PIL411?"], Who = "de1-watchtower" }, Ct)).Success.ShouldBeTrue();
         var told = b.Delivery.Relays.ShouldHaveSingleItem();
         told.Text.ShouldStartWith("[From the watchtower of node DE1] ");
         told.Text.ShouldContain("how is PIL411?");
 
         // SE1's watchtower tells back through its grant on DE1: marked as from the second.
-        (await toA.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["PIL411 is at review"], Who = name }, Ct)).Success.ShouldBeTrue();
+        (await toA.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["PIL411 is at review"], Who = "se1-watchtower" }, Ct)).Success.ShouldBeTrue();
         a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
     }
 
