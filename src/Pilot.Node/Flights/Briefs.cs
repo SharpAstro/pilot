@@ -816,7 +816,7 @@ public static class Briefs
         text.AppendLine("  talks of them by id, and you act on the id:");
         text.AppendLine($"  - \"note an idea: …\" is `{pilot} idea \"<their words, as they said them>\"`: Claude chooses the repo as the CLI does (`--repo <name>` when they named one),");
         text.AppendLine("    and you never reword, expand or restructure what they said. Say the id it got, with its link.");
-        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan [--milestone <name>]`: the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
+        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan --milestone <name>` (or `--new-milestone <title> [--milestone-description <line>]`; with neither it only prints a proposal and plans nothing): the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
         text.AppendLine($"    (the repo's flight prefix and the same number); then `{pilot} flight plan <code>`. NEVER plan an idea on your own: only when the controller said to");
         text.AppendLine("    in so many words. When they only seem to want it, ask with an ask block whose choice names it in full: `Plan I381: <its title>`.");
         text.AppendLine($"  - \"fold I384 into PIL294\" is `{pilot} idea I384 fold PIL294`: the idea's text goes into PIL294's issue as a comment, then the idea is dropped as folded.");

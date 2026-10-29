@@ -71,7 +71,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.SaveTidyIdea, Verbs.FoldIdea,
+        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea,
     };
 
     /// <summary>
@@ -80,7 +80,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.SaveTidyIdea, Verbs.FoldIdea,
+        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea,
     };
 
     /// <summary>

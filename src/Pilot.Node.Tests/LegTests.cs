@@ -261,6 +261,15 @@ internal sealed class FakeGitHub : IGitHub
     public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
         Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
 
+    public Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
+    {
+        MilestonesMade.Add((RepoKey(repoPath), title));
+        var made = AddMilestone(repoPath, title);
+        var list = MilestonesOf[RepoKey(repoPath)];
+        list[list.IndexOf(made)] = made = made with { Description = description };
+        return Task.FromResult(made);
+    }
+
     public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
     {
         if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)

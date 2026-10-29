@@ -162,13 +162,13 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    public async Task PlanningMovesTheIdeaToTheNextOpenMilestoneAndMakesItsFlightRememberingTheIdea()
+    public async Task PlanningMovesTheIdeaToTheNamedMilestoneAndMakesItsFlightRememberingTheIdea()
     {
         _github.AddMilestone(Repo, "v2", dueOn: new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
         _github.AddMilestone(Repo, "v1", dueOn: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
         await Note("Ring shadows");
 
-        var planned = await Plan("I1");
+        var planned = await Plan("I1", "v1");
 
         planned.Ok.ShouldBeTrue(planned.Error);
         planned.Made.ShouldBe("PIL1");
@@ -215,7 +215,7 @@ public sealed class IdeaTests : IDisposable
         _github.AddMilestone(Repo, "v1");
         await Note("Ring shadows");
         await Note("Ring tilt\nseen edge on");
-        (await Plan("I1")).Ok.ShouldBeTrue();
+        (await Plan("I1", "v1")).Ok.ShouldBeTrue();
 
         var folded = await _commander.RunAsync(new CommandRequest { Verb = Verbs.FoldIdea, Target = IdeaIds.Target(IdeaIds.DefaultRepo, 2), Args = ["PIL1"], Who = "tests" }, Ct);
 
