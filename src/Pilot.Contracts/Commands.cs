@@ -90,6 +90,10 @@ public sealed record CommandResult
     /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
     public string? Made { get; init; }
 
+    /// <summary>A <c>tidy-idea</c>'s proposal; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IdeaTidyProposal? Tidy { get; init; }
+
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
@@ -383,6 +387,68 @@ public static class Verbs
     public const string CreateIssue = "create-issue";
 
     /// <summary>
+    /// <c>note-idea repo/&lt;path or repo name&gt; &lt;text…&gt;</c>: an issue in the repo's Ideas milestone (made on the first idea),
+    /// its first line the title and the rest its body; the result's <see cref="CommandResult.Made"/> is its id, <c>I381</c>.
+    /// </summary>
+    /// <remarks>
+    /// With <see cref="AnyRepo"/> as the repo (<c>repo/*</c>) Claude chooses it from the repos the node tracks: <see cref="CommandRequest.Args"/>
+    /// are then the text and, optionally, the context (the page or flight the person was on). One repo fits: the issue is filed there. Several
+    /// fit equally: a <see cref="CardKinds.IdeaRepo"/> card asks, and nothing is created (<see cref="CommandResult.Way"/> is <see cref="IdeaEditWays.Asked"/>,
+    /// <see cref="CommandResult.Made"/> the card's id). Filed, <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; I&lt;n&gt;</c>.
+    /// </remarks>
+    public const string NoteIdea = "note-idea";
+
+    /// <summary>The repo of a <see cref="NoteIdea"/> target (<c>repo/*</c>) that Claude chooses.</summary>
+    public const string AnyRepo = "*";
+
+    /// <summary>
+    /// <c>move-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;repo&gt;</c>: the idea's issue transferred to another repo and put in its Ideas milestone, through the same
+    /// up-to-date save as an edit. Its number changes; the old id keeps resolving to the new one. The result's <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; I&lt;n&gt;</c>.
+    /// </summary>
+    public const string MoveIdea = "move-idea";
+
+    /// <summary>
+    /// <c>fold-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;flight code&gt;</c>: the idea's text added to the flight's issue as a comment, then the idea dropped as
+    /// folded into that flight. The result's <see cref="CommandResult.Made"/> is the idea's id.
+    /// </summary>
+    public const string FoldIdea = "fold-idea";
+
+    /// <summary>
+    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; [milestone…]</c>: the idea's issue moved out of Ideas (to the named milestone, else the next open
+    /// one) and a flight created on it, which remembers it came from the idea; the result's <see cref="CommandResult.Made"/> is the flight's code.
+    /// </summary>
+    public const string PlanIdea = "plan-idea";
+
+    /// <summary>
+    /// <c>drop-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;why…&gt;</c>: the idea's issue closed as not planned, with why as its comment.
+    /// </summary>
+    public const string DropIdea = "drop-idea";
+
+    /// <summary>
+    /// <c>edit-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;updated_at&gt; &lt;text…&gt;</c>: the idea's title (the text's first line) and body (the rest) saved, from the
+    /// version whose GitHub <c>updated_at</c> (ISO 8601, round-trip) the edit started from. The node reads the issue now first: unchanged
+    /// since, it saves as is; changed elsewhere, it saves Claude's merge of both; contradicting, it raises a card to choose. The result's
+    /// <see cref="CommandResult.Way"/> is <see cref="IdeaEditWays.Saved"/>, <see cref="IdeaEditWays.Merged"/> or <see cref="IdeaEditWays.Asked"/>
+    /// (then <see cref="CommandResult.Made"/> is the card's id).
+    /// </summary>
+    public const string EditIdea = "edit-idea";
+
+    /// <summary>
+    /// <c>tidy-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: Claude formats the idea as short Markdown and fills obvious gaps. Nothing is written: the result's
+    /// <see cref="CommandResult.Tidy"/> carries the proposal and the <c>updated_at</c> it was made from.
+    /// </summary>
+    public const string TidyIdea = "tidy-idea";
+
+    /// <summary>
+    /// <c>save-tidy-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;updated_at&gt; &lt;text…&gt;</c>: a tidy proposal saved, with the <c>updated_at</c> it was made from.
+    /// It goes the way <see cref="EditIdea"/> does, so a change on GitHub since the proposal is merged, or asked about. Discarding is sending nothing.
+    /// </summary>
+    public const string SaveTidyIdea = "save-tidy-idea";
+
+    /// <summary>What an idea target starts with: <c>idea/&lt;repo&gt;/I381</c> (see <see cref="IdeaIds.Target"/>).</summary>
+    public const string IdeaTargetPrefix = "idea/";
+
+    /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
     /// </summary>
@@ -555,6 +621,22 @@ public static class MergeWays
     /// </summary>
     public const string Updated = "updated";
 }
+
+/// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
+public static class IdeaEditWays
+{
+    /// <summary>Saved as given: GitHub had not changed the idea since the edit started.</summary>
+    public const string Saved = "saved";
+
+    /// <summary>GitHub had changed it elsewhere: Claude's merge of both versions is saved.</summary>
+    public const string Merged = "merged";
+
+    /// <summary>The two versions contradict: nothing is written, a card asks which to keep (<see cref="CommandResult.Made"/> is its id).</summary>
+    public const string Asked = "asked";
+}
+
+/// <summary>What Claude proposes for an idea's text (<see cref="Verbs.TidyIdea"/>), beside the text it read, and the <c>updated_at</c> of the issue it read, which saving it goes from.</summary>
+public sealed record IdeaTidyProposal(string Title, string Body, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt);
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>
 public static class SayWays

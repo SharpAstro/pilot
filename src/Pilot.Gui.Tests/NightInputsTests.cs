@@ -196,7 +196,7 @@ public sealed class NightInputsTests
         {
             var glyph = PilotChrome<RgbaImage>.NightGlyph(page, icon);
             // The colour emoji are astral; the plane and the cog are in the face, and the rest become a letter.
-            glyph.ShouldBeOneOf(["H", "C", "S", "R", "B", "F", "P", "✈", "⚙"], label);
+            glyph.ShouldBeOneOf(["H", "C", "S", "R", "B", "F", "P", "I", "✈", "⚙"], label);
         }
     }
 }

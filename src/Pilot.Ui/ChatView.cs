@@ -213,10 +213,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public NodeFilter? Nodes { get; set; }
 
     /// <summary>The box the message is typed in: the host focuses it to give the page the keyboard.</summary>
-    public TextInputState Input => _composer.Input;
-
-    /// <summary>The lines typed before the one in the box, as shown above it.</summary>
-    internal IReadOnlyList<string> Before => _composer.Before;
+    public TextEditorState Input => _composer.Input;
 
     /// <summary>Whether the page is open and following the feed.</summary>
     public bool IsOpen => _following is not null;
@@ -240,8 +237,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public void Prefill(string text)
     {
         _composer.Clear();
-        Input.Text = text;
-        Input.CursorPos = text.Length;
+        Input.InsertText(text);
         Ui.Focus.Focus(Input);
     }
 
@@ -612,23 +608,17 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>How many lines the quoted card takes above the box.</summary>
     internal const int QuoteLines = 2;
 
-    // The box: the lines typed above the one being edited, read-only, and the field under them.
+    // The box: DIR.Lib's multi-line editor, and a line saying how it sends.
     private Layout.Node Foot()
     {
-        var before = _composer.Before;
+        var lines = _composer.Input.LineCount;
         var rows = new List<Layout.Node>();
-        var skipped = Math.Max(0, before.Count - ChatComposer.ShownLines);
-        if (skipped > 0)
-        {
-            rows.Add(Layout.Builder.Text($"… {skipped} earlier {(skipped == 1 ? "line" : "lines")}", 11f, Dim).RowH(16f));
-        }
-        rows.AddRange(before.Skip(skipped).Select(line => Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, Body).RowH(18f)));
         if (OnSendAboutCard is not null && Volatile.Read(ref _about) is { } quoted)
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
-        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, Palette.Input, focusOnOpen: true).RowH(30f));
-        rows.Add(Layout.Builder.Text(before.Count > 0 ? $"{before.Count + 1} lines · Enter sends · Backspace on an empty line goes back" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
+        rows.Add(Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
+        rows.Add(Layout.Builder.Text(lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }
 

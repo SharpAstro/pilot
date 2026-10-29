@@ -51,6 +51,19 @@ public sealed class NodeMirror
     /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
     public IReadOnlyDictionary<string, PrReviewRow> PrReviews => _prReviews;
 
+    private IdeaRow[] _ideas = [];
+
+    private IdeaMoveRow[] _ideaMoves = [];
+
+    /// <summary>The ideas moved to another repo: an old id finds the new one through <see cref="IdeaIds.Follow"/>.</summary>
+    public IReadOnlyList<IdeaMoveRow> IdeaMoves => _ideaMoves;
+
+    /// <summary>The ideas of every repo the node reads, newest first.</summary>
+    public IReadOnlyList<IdeaRow> Ideas => _ideas;
+
+    /// <summary>How many of <see cref="Ideas"/> are noted.</summary>
+    public int NotedIdeas => _ideas.Count(i => i.State == IdeaState.Noted);
+
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     /// <summary>The summaries, by scope (<see cref="SummaryRow.FleetScope"/> or a flight's code).</summary>
@@ -99,6 +112,8 @@ public sealed class NodeMirror
             {
                 _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
             }
+            _ideas = snapshot.Ideas;
+            _ideaMoves = snapshot.IdeaMoves;
             _summaries.Clear();
             foreach (var summary in snapshot.Summaries ?? [])
             {
@@ -164,6 +179,12 @@ public sealed class NodeMirror
                 break;
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
+                break;
+            case IdeasChangedEvent ideas:
+                _ideas = ideas.Ideas;
+                break;
+            case IdeaMovedEvent moved:
+                _ideaMoves = [.. _ideaMoves, moved.Move];
                 break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;

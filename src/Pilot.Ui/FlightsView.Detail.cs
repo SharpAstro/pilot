@@ -166,6 +166,11 @@ internal sealed partial class FlightsView<TSurface>
         {
             WrappedProse.Of($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim, selectable: true).WAuto(),
         };
+        if (flight.FromIdea is { Length: > 0 } fromIdea)
+        {
+            // The idea it was promoted from: the same issue, so its id is the flight's issue number.
+            facts.Add(Layout.Builder.Text($"from {fromIdea}", 12f, Dim).WAuto());
+        }
         if (flight.Review is { } review)
         {
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,

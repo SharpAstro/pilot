@@ -128,6 +128,10 @@ public static class NodeApp
             return sync;
         });
         builder.Services.AddSingleton<RepoCommander>();
+        builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
+        builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
+        builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
+        builder.Services.AddSingleton<IdeaCommander>();
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();

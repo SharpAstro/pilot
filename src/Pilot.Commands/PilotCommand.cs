@@ -312,6 +312,74 @@ public static class PilotCommand
                 p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
         var issueCommand = new Command("issue", "Issues: create") { Subcommands = { issueCreate } };
 
+        // idea, ideas: issues in a repo's Ideas milestone, id I<issue number>
+        var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");
+        var ideaRepo = new Option<string?>("--repo") { Description = $"The repo, by its folder's name or the path of its checkout; a new idea without it goes where Claude chooses among the node's repos, an idea's id without it is in {IdeaIds.DefaultRepo}" };
+        var ideaContext = new Option<string?>("--context") { Description = "A new idea: the page or flight you were on, which helps Claude choose its repo" };
+        var ideaMilestone = new Option<string?>("--milestone") { Description = "plan: the open milestone to move the idea to; else the next open one" };
+        var ideaSave = new Option<bool>("--save") { Description = "tidy: save the proposal the last tidy showed (through the same up-to-date check as an edit)" };
+        var ideaDiscard = new Option<bool>("--discard") { Description = "tidy: forget the proposal the last tidy showed; nothing is written" };
+        var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan: moves it to a milestone and creates its flight), drop one (I<n> drop <why>) or fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded)")
+            { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaSave, ideaDiscard } },
+            async (p, client, ct) =>
+            {
+                var call = ReadIdea(p.GetValue(ideaWords) ?? []);
+                var named = call.Repo ?? IdeaRepoOf(client, p.GetValue(ideaRepo), cwd, call.Action is null ? Verbs.AnyRepo : IdeaIds.DefaultRepo);
+                switch (call.Action)
+                {
+                    case null:
+                        // Without --repo Claude chooses the repo: the node is given the text and the context, and files nothing under a guess.
+                        return await Send(client, Verbs.NoteIdea, Verbs.RepoTarget(named),
+                            named == Verbs.AnyRepo && p.GetValue(ideaContext) is { Length: > 0 } context ? [call.Rest, context] : [call.Rest], who, ct);
+                    case "move":
+                        return await Send(client, Verbs.MoveIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                    case "edit":
+                        // The edit starts from the idea as the node has read it now: its updated_at is what the node compares with GitHub's.
+                        var snapshot = await SnapshotAsync(client, ct);
+                        // An idea that was moved to another repo is read where it is now.
+                        var (readRepo, readNumber) = IdeaIds.Follow(snapshot.IdeaMoves, Path.GetFileName(named.TrimEnd('/', '\\')), call.Number);
+                        var read = snapshot.Ideas.FirstOrDefault(i => i.Number == readNumber && string.Equals(i.Repo, readRepo, StringComparison.OrdinalIgnoreCase))
+                            ?? throw new UsageException(IdeaIds.FlightOf(snapshot.Flights, snapshot.IdeaMoves, Path.GetFileName(named.TrimEnd('/', '\\')), call.Number) is { } planned
+                                ? $"{IdeaIds.Id(call.Number)} of {named} is planned: it is the flight {planned}"
+                                : $"the node has not read {IdeaIds.Id(call.Number)} of {named}: pilot ideas lists the ideas it has");
+                        return await Send(client, Verbs.EditIdea, IdeaIds.Target(named, call.Number), [read.UpdatedAt.ToString("O", CultureInfo.InvariantCulture), call.Rest], who, ct);
+                    case "tidy":
+                        var tidyTarget = IdeaIds.Target(named, call.Number);
+                        if (p.GetValue(ideaDiscard))
+                        {
+                            await output.WriteLineAsync(IdeaTidyCache.Discard(tidyTarget) ? $"discarded the tidy of {IdeaIds.Id(call.Number)}: nothing was written" : $"no tidy of {IdeaIds.Id(call.Number)} is waiting");
+                            return 0;
+                        }
+                        if (p.GetValue(ideaSave))
+                        {
+                            var kept = IdeaTidyCache.Read(tidyTarget)
+                                ?? throw new UsageException($"no tidy of {IdeaIds.Id(call.Number)} is waiting to save: run pilot idea {IdeaIds.Id(call.Number)} tidy first");
+                            var saved = await Send(client, Verbs.SaveTidyIdea, tidyTarget,
+                                [kept.UpdatedAt.ToString("O", CultureInfo.InvariantCulture), IdeaTidyCache.Joined(kept.Title, kept.Body)], who, ct);
+                            if (saved == 0)
+                            {
+                                IdeaTidyCache.Discard(tidyTarget);
+                            }
+                            return saved;
+                        }
+                        return await Send(client, Verbs.TidyIdea, tidyTarget, [], who, ct);
+                    case "fold":
+                        return await Send(client, Verbs.FoldIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                    case "plan":
+                        return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), p.GetValue(ideaMilestone) is { Length: > 0 } milestone ? [milestone] : [], who, ct);
+                    default:
+                        return await Send(client, Verbs.DropIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                }
+            });
+        var ideasAll = new Option<bool>("--all") { Description = "Dropped ideas too, not only the noted and planned ones" };
+        var ideasRepo = new Option<string?>("--repo") { Description = "Only this repo's, by its folder's name" };
+        var ideas = Action(new Command("ideas", "The ideas the node has read, newest first, with their ids") { Options = { ideasAll, ideasRepo } },
+            async (p, client, ct) =>
+            {
+                await output.WriteAsync(Ideas((await SnapshotAsync(client, ct)).Ideas, p.GetValue(ideasAll), p.GetValue(ideasRepo)));
+                return 0;
+            });
+
         // flight
         var issue = Arg("issue", "The issue the flight flies");
         var title = Words("title", "What it is for, in a line", required: false);
@@ -1048,7 +1116,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1135,6 +1203,85 @@ public static class PilotCommand
     internal static string RepoPath(NodeClient client, string? named, string cwd) => client.IsRemote
         ? named ?? throw new UsageException("a flight on a node on the LAN needs --repo <its checkout, as that machine names it>")
         : Path.GetFullPath(named ?? cwd, cwd);
+
+    /// <summary>What <c>pilot idea</c> was given: an idea to note (<see cref="Action"/> null, its text in <see cref="Rest"/>), or one to <c>plan</c> or <c>drop</c> (<see cref="Number"/>, with <see cref="Rest"/> the why).</summary>
+    internal sealed record IdeaCall(string? Repo, int Number, string? Action, string Rest);
+
+    /// <summary>
+    /// Reads <c>pilot idea</c>'s words: <c>I381 plan</c>, <c>tianwen I1829 drop why…</c> act on an idea, any other words are the text of
+    /// one to note. Only an id followed by plan or drop is an action, so a note that starts with one (<c>I381 is wrong</c>) is still a note.
+    /// </summary>
+    internal static IdeaCall ReadIdea(string[] words)
+    {
+        for (var at = 0; at <= 1 && at < words.Length; at++)
+        {
+            if (!IdeaIds.TryNumber(words[at], out var number))
+            {
+                continue;
+            }
+            if (at + 1 < words.Length && words[at + 1] is "plan" or "drop" or "edit" or "tidy" or "move" or "fold")
+            {
+                var action = words[at + 1];
+                var rest = string.Join(' ', words.Skip(at + 2));
+                if (action == "move" && (rest.Length == 0 || rest.Contains(' ', StringComparison.Ordinal)))
+                {
+                    throw new UsageException($"idea {words[at]} move takes the one repo to move it to: pilot idea {words[at]} move <repo>");
+                }
+                if (action == "fold" && (rest.Length == 0 || rest.Contains(' ', StringComparison.Ordinal)))
+                {
+                    throw new UsageException($"idea {words[at]} fold takes the one flight to fold it into: pilot idea {words[at]} fold <flight code>");
+                }
+                if (action == "tidy" && rest.Length > 0)
+                {
+                    throw new UsageException($"idea {words[at]} tidy takes no more words: pilot idea {words[at]} tidy shows the proposal, tidy --save saves it, tidy --discard drops it");
+                }
+                if (action == "plan" && rest.Length > 0)
+                {
+                    throw new UsageException($"idea {words[at]} plan takes no more words: the milestone is --milestone <name>");
+                }
+                if (action == "edit" && rest.Length == 0)
+                {
+                    throw new UsageException($"idea {words[at]} edit needs the new text: pilot idea {words[at]} edit \"<title, then the body on its lines>\"");
+                }
+                if (action == "drop" && rest.Length == 0)
+                {
+                    throw new UsageException($"idea {words[at]} drop needs why: pilot idea {words[at]} drop \"<why>\", which is the issue's closing comment");
+                }
+                return new IdeaCall(at == 1 ? words[0] : null, number, action, rest);
+            }
+            if (at == 0 && words.Length == 1)
+            {
+                throw new UsageException($"{words[at]} is an idea's id: say what to do with it, pilot idea {words[at]} edit <text>, pilot idea {words[at]} plan [--milestone <name>] or pilot idea {words[at]} drop \"<why>\"");
+            }
+        }
+        return new IdeaCall(null, 0, null, string.Join(' ', words));
+    }
+
+    /// <summary>The repo an idea is in when its id names none: <c>--repo</c> as a path when it is one, else by name, else <see cref="IdeaIds.DefaultRepo"/>.</summary>
+    internal static string IdeaRepoOf(NodeClient client, string? named, string cwd, string fallback = IdeaIds.DefaultRepo)
+    {
+        if (named is not { Length: > 0 })
+        {
+            return fallback;
+        }
+        return client.IsRemote || !(named.AsSpan().IndexOfAny('/', '\\') >= 0 || Directory.Exists(Path.GetFullPath(named, cwd))) ? named : Path.GetFullPath(named, cwd);
+    }
+
+    /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
+    internal static string Ideas(IEnumerable<IdeaRow> ideas, bool all, string? repo)
+    {
+        var shown = IdeaIds.Order(ideas.Where(i => (all || i.State != IdeaState.Dropped) && (repo is null || string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)))).ToList();
+        if (shown.Count == 0)
+        {
+            return "no ideas: pilot idea \"<text>\" notes one\n";
+        }
+        var text = new System.Text.StringBuilder();
+        foreach (var idea in shown)
+        {
+            text.AppendLine($"{idea.Id}  {idea.Repo}  {idea.State.ToString().ToLowerInvariant()}  {idea.Age}  {idea.Title}");
+        }
+        return text.ToString();
+    }
 
     /// <summary>
     /// The flight whose plane holds <paramref name="cwd"/>, and who is asking: its reviewer while a review is on, as a
@@ -1277,6 +1424,59 @@ public static class PilotCommand
             {
                 await output.WriteLineAsync($"created issue #{issueNumber}");
             }
+            if (verb is Verbs.NoteIdea or Verbs.MoveIdea && result.Made is { Length: > 0 } ideaId)
+            {
+                // "<repo> I<n>" when filed or moved; when two repos fit, the card that asks which.
+                await output.WriteLineAsync(result.Way == IdeaEditWays.Asked
+                    ? $"asked: card {ideaId} offers the repos it fits (File in <repo>); nothing is filed until you choose"
+                    : ideaId);
+            }
+            if (verb == Verbs.TidyIdea && result.Tidy is { } tidy)
+            {
+                var id = result.Made ?? target;
+                IdeaTidyCache.Write(target, tidy);
+                if (IdeaDiff.Unified(IdeaTidyCache.Joined(tidy.CurrentTitle, tidy.CurrentBody), IdeaTidyCache.Joined(tidy.Title, tidy.Body), $"{id} (GitHub)", $"{id} (tidied)") is { Length: > 0 } diff)
+                {
+                    await output.WriteAsync(diff);
+                    await output.WriteLineAsync($"nothing is saved: pilot idea {id} tidy --save writes it (through the same up-to-date check as an edit), pilot idea {id} tidy --discard drops it");
+                }
+                else
+                {
+                    IdeaTidyCache.Discard(target);
+                    await output.WriteLineAsync($"{id} is tidy already: nothing to change");
+                }
+            }
+            if (verb == Verbs.SaveTidyIdea && result.Made is { Length: > 0 } tidied)
+            {
+                if (result.Way == IdeaEditWays.Asked)
+                {
+                    await output.WriteLineAsync($"asked: the tidy and GitHub's contradict, nothing is saved until card {tidied} is answered");
+                }
+                else
+                {
+                    await output.WriteLineAsync($"{tidied} {result.Way}");
+                }
+            }
+            if (verb == Verbs.EditIdea && result.Made is { Length: > 0 } edited)
+            {
+                if (result.Way == IdeaEditWays.Asked)
+                {
+                    await output.WriteLineAsync($"asked: your edit and GitHub's contradict, nothing is saved until card {edited} is answered");
+                    if ((await SnapshotAsync(client, cancellationToken)).Cards.FirstOrDefault(c => c.Id == edited) is { } asked)
+                    {
+                        await output.WriteLineAsync($"{asked.Id}  {asked.Title}");
+                        if (asked.Detail is { Length: > 0 } detail)
+                        {
+                            await output.WriteLineAsync(detail);
+                        }
+                        await output.WriteLineAsync($"choices: {string.Join(", ", asked.Choices.Select((c, i) => $"{i + 1} {c.Label}"))}");
+                    }
+                }
+                else
+                {
+                    await output.WriteLineAsync($"{edited} {result.Way}");
+                }
+            }
             if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
@@ -1287,9 +1487,9 @@ public static class PilotCommand
                 // no row to show here, only where it went.
                 await output.WriteLineAsync(routed);
             }
-            else if (verb is Verbs.CreateFlight or Verbs.OpenPr)
+            else if (verb is Verbs.CreateFlight or Verbs.PlanIdea or Verbs.OpenPr)
             {
-                await output.WriteAsync(Status(await SnapshotAsync(client, cancellationToken), newestOnly: verb == Verbs.CreateFlight, code: verb == Verbs.OpenPr ? target[Verbs.FlightTargetPrefix.Length..] : null));
+                await output.WriteAsync(Status(await SnapshotAsync(client, cancellationToken), newestOnly: verb != Verbs.OpenPr, code: verb == Verbs.OpenPr ? target[Verbs.FlightTargetPrefix.Length..] : null));
             }
             return 0;
         }
@@ -1339,6 +1539,10 @@ public static class PilotCommand
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {
             text.AppendLine($"machine  {machine.Line()}");
+        }
+        if (!newestOnly && code is null && snapshot.Ideas.Count(i => i.State == IdeaState.Noted) is > 0 and var noted)
+        {
+            text.AppendLine($"ideas  {noted} noted (pilot ideas)");
         }
         var flights = snapshot.Flights.OrderBy(f => f.State == FlightState.Landed).ThenByDescending(f => f.CreatedAt).ToList();
         if (newestOnly)
