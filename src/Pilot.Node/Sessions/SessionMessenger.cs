@@ -40,10 +40,11 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         var clock = Stopwatch.StartNew();
         string? way = null;
         string? sessionId = null;
+        string? route = null;
         string? error;
         try
         {
-            (way, sessionId) = await DeliverAsync(command, compact, cancellationToken);
+            (way, sessionId, route) = await DeliverAsync(command, compact, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -57,7 +58,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
         var result = state.Complete(command, error, way, sessionId);
         var outcome = error is null ? "delivered" + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
-        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
     }
@@ -91,7 +92,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         return state.Complete(command, null);
     }
 
-    private async Task<(string? Way, string? SessionId)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
+    private async Task<(string? Way, string? SessionId, string? Route)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
@@ -133,11 +134,11 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             switch (Choose(row))
             {
                 case SayWays.Resumed:
-                    return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken));
+                    return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken), null);
                 default:
                     RefuseAmbiguous(row, rows);
-                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who)), cancellationToken);
-                    return (SayWays.Relayed, null);
+                    var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId), cancellationToken);
+                    return (SayWays.Relayed, null, route);
             }
         }
         finally

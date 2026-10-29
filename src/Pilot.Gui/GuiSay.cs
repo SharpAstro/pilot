@@ -66,7 +66,7 @@ internal static class GuiSay
     public static string Describe(CommandResult? result, string? error) => result switch
     {
         { Ok: true, Way: SayWays.Resumed } => $"resumed it with your text{(result.SessionId is { } sid ? $" (now {sid[..Math.Min(8, sid.Length)]})" : "")}",
-        { Ok: true, Way: SayWays.Relayed } => "delivered as a message; its answer shows in its own turn",
+        { Ok: true, Way: SayWays.Relayed } => "delivered at once as a message; its answer shows in its own turn",
         { Ok: true } => "delivered",
         { Error: { Length: > 0 } refused } => $"refused: {refused}",
         _ => $"refused: {(string.IsNullOrEmpty(error) ? "the node gave no reason" : error)}",
