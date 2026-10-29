@@ -57,6 +57,8 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(CommandRequest))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(IdeaTidyProposal))]
+[JsonSerializable(typeof(MilestoneProposal))]
+[JsonSerializable(typeof(MilestoneChoice))]
 [JsonSerializable(typeof(BlackBoxLine))]
 [JsonSerializable(typeof(NodeInfo))]
 [JsonSerializable(typeof(WatchtowerHealth))]
