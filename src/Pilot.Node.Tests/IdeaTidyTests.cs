@@ -159,7 +159,7 @@ public sealed class IdeaTidyTests : IDisposable
     public async Task DiscardingWritesNothingAndTheCliForgetsTheProposal()
     {
         await NotedAsync();
-        var tidy = (await Tidy(1)).Tidy.ShouldNotBeNull();
+        var tidy = (await Tidy(1)).Tidy.ShouldNotBeNull() with { Milestone = null };
         var target = IdeaIds.Target("pilot", 1) + "/" + Guid.NewGuid().ToString("N");
         IdeaTidyCache.Write(target, tidy);
 
