@@ -237,7 +237,7 @@ public static class Briefs
     internal static string MachineLoadRule(string run) =>
         "Never load the machine on purpose without the person's explicit okay, in autopilot too: no CPU or GPU burner, no stress or\n" +
         "soak loop, no pool of processes spinning to imitate a busy machine, nothing that holds many cores or the GPU for the load's\n" +
-        $"own sake. Ask first with `{run} ring \"<what load, for how long, and why>\"`, and go on with the rest of the leg; only the\n" +
+        $"own sake. Ask first with `{run} ring flight/<code>[/<leg>] \"<what load, for how long, and why>\"`, and go on with the rest; only the\n" +
         "person's answer on that card is the okay, never a guess that they would agree. The answer does not reach you by itself: if none\n" +
         "has reached your session when the rest of the leg is done, finish without the load and say in your report that it was not run\n" +
         "and why. A build or a test run that is merely heavy is not load in this sense.";
