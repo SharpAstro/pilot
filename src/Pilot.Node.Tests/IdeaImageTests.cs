@@ -137,6 +137,34 @@ public sealed class IdeaImageTests : IDisposable
     }
 
     [Fact]
+    public async Task NoteIdeaTakesAMarkerThatIsTheWholeFirstLineAsBodyAndTheNextTextAsTitle()
+    {
+        var id = _attachments.AddIdeaImage(Png, "png");
+
+        var result = await Note($"![screenshot]({IdeaImages.Scheme}{id}.png)\nThe real title\nmore words");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _github.ImageUploads.ShouldHaveSingleItem().Id.ShouldBe(id);
+        var created = _github.IssuesCreated.ShouldHaveSingleItem();
+        created.Title.ShouldBe("The real title");
+        created.Body.ShouldBe($"![screenshot]({Url(id)})\nmore words");
+    }
+
+    [Fact]
+    public async Task NoteIdeaTakesAMarkerInsideTheFirstLineOutOfTheTitle()
+    {
+        var id = _attachments.AddIdeaImage(Png, "png");
+
+        var result = await Note($"Fix the ![screenshot]({IdeaImages.Scheme}{id}.png) glitch\nbody");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _github.ImageUploads.ShouldHaveSingleItem().Id.ShouldBe(id);
+        var created = _github.IssuesCreated.ShouldHaveSingleItem();
+        created.Title.ShouldBe("Fix the glitch");
+        created.Body.ShouldBe($"![screenshot]({Url(id)})\nbody");
+    }
+
+    [Fact]
     public async Task NoteIdeaRefusesAMarkerWhoseCopyTheNodeDoesNotHoldAndFilesNothing()
     {
         var result = await Note("A look\n\n![gone](pilot-attachment:ffffffffffff.png)");

@@ -205,7 +205,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         var chosen = given == Verbs.AnyRepo;
         var args = command.Args ?? [];
         var text = (chosen ? args.FirstOrDefault() ?? "" : string.Join(' ', args)).Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
-        var (title, body) = text.IndexOf('\n') is var cut and >= 0 ? (text[..cut].Trim(), text[(cut + 1)..].Trim()) : (text, "");
+        var (title, body) = IdeaText.Typed(text);
         if (title.Length == 0)
         {
             throw new FlightException("note-idea needs the idea's text: its first line is the title, the rest the body");
@@ -448,7 +448,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         {
             throw new FlightException("edit-idea takes the updated_at the edit started from (ISO 8601) and then the idea's text");
         }
-        var mine = IdeaText.Of(string.Join(' ', args.Skip(1)));
+        var mine = IdeaText.Typed(string.Join(' ', args.Skip(1)));
         if (mine.Title.Length == 0)
         {
             throw new FlightException("edit-idea needs the idea's text: its first line is the title, the rest the body");
