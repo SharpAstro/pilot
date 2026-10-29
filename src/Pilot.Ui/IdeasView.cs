@@ -685,8 +685,13 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 }
                 else
                 {
+                    if (mode == Mode.Plan)
+                    {
+                        // What the box is for, said: "plan in" over an empty box left the owner unsure what it wanted (2026-10-29).
+                        yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Type the milestone to put it in, or leave the box empty for the next open one.", 12f, P.Body).WStar();
+                    }
                     yield return Layout.Builder.HStack(
-                            Layout.Builder.Text(mode == Mode.Plan ? "plan in" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.Text(mode == Mode.Plan ? "milestone (optional)" : "why?", 12f, P.Dim).WAuto(),
                             Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
                         .WithGap(10f).RowH(30f);
                 }
@@ -701,7 +706,12 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 }
                 buttons.Add(CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body));
                 yield return Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar();
-                yield return Layout.Builder.Text(mode == Mode.Edit ? "First line is the title · Ctrl+Enter saves · Esc cancels" : "Enter sends · Esc cancels", 11f, P.Faint).RowH(16f);
+                yield return Layout.Builder.Text(mode switch
+                {
+                    Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels",
+                    Mode.Plan => "Enter plans it (an empty box: the next open milestone) · Esc cancels",
+                    _ => "Enter sends · Esc cancels",
+                }, 11f, P.Faint).RowH(16f);
                 break;
             case Mode.Tidy:
                 foreach (var node in TidyRows(idea))

@@ -298,6 +298,11 @@ public sealed class IdeasPaneTests
         // Plan: the next open milestone by default.
         Click(regions, "ideas:plan:pilot I381");
         chrome.Ideas.OpenAction.ShouldBe(("pilot I381", IdeasView<RgbaImage>.Mode.Plan));
+        // The box says what it wants and that it may stay empty (the owner, 2026-10-29: "not sure what it wants from me").
+        var said = Spoken(renderer, chrome, screen, 1280);
+        said.ShouldContain("Plan makes I381 a flight: its issue goes into a milestone and a planner starts on it.");
+        said.ShouldContain("milestone (optional)");
+        said.ShouldContain("Enter plans it (an empty box: the next open milestone)");
         regions = Regions(chrome, screen);
         Click(regions, "ideas:plan-next:pilot I381");
         await Task.WhenAll(tasks);
