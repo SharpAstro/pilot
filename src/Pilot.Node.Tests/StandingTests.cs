@@ -211,8 +211,18 @@ public sealed class StandingTests
         // autopilot merges all the same (the person on Remote Control talks to it past the node, #344).
         (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
-        // So does a fixer on a PR whose review asked for changes, which was the lookout's never (DE1, 2026-10-29).
-        (await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("SharpAstro/pilot", 467), lookout, true)) ?? "").ShouldNotContain("not the watchtower's");
+        // So does a fixer on a PR whose review asked for changes, which was the lookout's never (DE1, 2026-10-29), but only within the
+        // node's own fixer guards: the node marks it as the autopilot's, so another author's PR without Fix it is refused as the
+        // person's (the review of #470; without that mark the refusal would be the untracked repo's, not the autopilot's).
+        node.State.PutPrReview(new PrReviewRow
+        {
+            Repo = "acme/widget", Number = 7, Author = "someone-else", Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "cafe0000",
+            ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-widget-7", Reviewer = "review-widget-7", State = PrReviewState.Reviewed, Verdict = "changes",
+            StartedAt = DateTimeOffset.UnixEpoch,
+        });
+        var fix = await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("acme/widget", 7), lookout, true));
+        fix.ShouldNotBeNull().ShouldNotContain("not the watchtower's");
+        fix.ShouldContain("not started on the autopilot");
         // The node's settings stay the person's.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
 

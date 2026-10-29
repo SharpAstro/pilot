@@ -734,7 +734,7 @@ public static class Briefs
         // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
-        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`, or the card's Fix it) and see it re-reviewed. A design question a review raises,");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's. A design question a review raises,");
         text.AppendLine("and a flight's leg past its round cap, are the person's: say so on the card and leave it to them.");
         text.AppendLine();
         if (model is { Length: > 0 })
