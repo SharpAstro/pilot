@@ -337,6 +337,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return SendAsync(message);
     }
 
+    // This window's node by name, for the fleet chat's header; "this node" until the node selection knows it.
+    private string HolderName => Nodes?.Choices.FirstOrDefault(n => n.Here)?.Name ?? "this node";
+
     /// <summary>What is told this node's watchtower about a card of another node: the card, its node and its title, and then the words.</summary>
     internal static string AboutOtherNodesCard(CardRow card, NodeMark node, string words) =>
         $"About card {card.Id} of node {node.Name} ({card.Title.ReplaceLineEndings(" ")}): {words}";
@@ -465,7 +468,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "fleet chat")
         {
             Buttons = buttons,
-            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {Nodes?.Choices.FirstOrDefault(n => n.Here)?.Name is { } here ? $"{here}'s" : "this node's"} watchtower"),
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {HolderName}'s watchtower"),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
