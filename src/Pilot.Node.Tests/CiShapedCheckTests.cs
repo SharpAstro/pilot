@@ -265,6 +265,7 @@ public sealed class CiShapedCheckTests : IDisposable
         Briefs.Plan(Flight, [], "pilot").ShouldContain(rule);
         Briefs.For(Flight, leg, [leg]).ShouldContain(rule);
         Briefs.For(Flight, leg, [leg]).ShouldContain("ring \"<what load, for how long, and why>\"");
+        Briefs.For(Flight, leg, [leg]).ShouldContain("say in your report that it was not run");
     }
 
     [Fact]
