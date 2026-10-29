@@ -450,8 +450,16 @@ public sealed class PullRequestsPageTests
         header = Button(arranged, "prs:group:SharpAstro/pilot");
         ClickAt(arranged, header.X + 4f, header.Y + header.Height / 2f);
         page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
-        Arrange(renderer, page, Screen());
+        arranged = Arrange(renderer, page, Screen());
         Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
+
+        // The link is the name and its ↗ only, not the header's width: a click just past it folds, it does not open GitHub (the owner, 2026-10-29).
+        name = Button(arranged, "prs:repo:SharpAstro/pilot");
+        header = Button(arranged, "prs:group:SharpAstro/pilot");
+        name.Width.ShouldBeLessThan(header.Width / 3f);
+        ClickAt(arranged, name.X + name.Width + 40f, header.Y + header.Height / 2f);
+        opened.Count.ShouldBe(1);
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
     }
 
     [Fact]
