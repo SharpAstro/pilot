@@ -137,6 +137,43 @@ public sealed class IdeasPaneTests
     }
 
     [Fact]
+    public async Task AnIdeaBeingNotedIsInTheListAtOnceAsIdeatingAndTheNextOneIsNotedAlongside()
+    {
+        // The owner (2026-10-29): the box stayed typable while one was noted, and "working…" did not say whether a second would
+        // queue; better the idea in the list at once, said to be "ideating" until it is filed.
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        var answer = new TaskCompletionSource<IdeaReply>();
+        var sent = 0;
+        chrome.Ideas.Send = (_, _, _, _) =>
+        {
+            Interlocked.Increment(ref sent);
+            return answer.Task;
+        };
+        var screen = Sample();
+        Draw(chrome, screen);
+
+        chrome.Ideas.NoteInput.InsertText("Scale status images to the terminal's width, up to three times");
+        var first = chrome.Ideas.NoteInput.OnCommit!("");
+        chrome.Ideas.NoteInput.InsertText("A second idea");
+        var second = chrome.Ideas.NoteInput.OnCommit!("");
+
+        // Both went to the node at once: the second did not wait for the first.
+        sent.ShouldBe(2);
+        var line = Spoken(renderer, chrome, screen, 1280);
+        // Both in the list, the newest first, each "ideating…" in place of an id; the box keeps its hint, not "working…".
+        line.ShouldContain("ideating…A second idea");
+        line.ShouldContain("ideating…Scale status images to the terminal's width, up to three times");
+        line.IndexOf("A second idea", StringComparison.Ordinal).ShouldBeLessThan(line.IndexOf("Scale status images", StringComparison.Ordinal));
+        line.ShouldNotContain("working…");
+        line.ShouldContain("Ctrl+Enter notes it · Enter starts a line · Claude picks the repo");
+
+        answer.SetResult(new IdeaReply(true, Made: "pilot I448"));
+        await Task.WhenAll(first, second);
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain("ideating…");
+    }
+
+    [Fact]
     public async Task AMultiLineIdeaIsNotedWhole()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);

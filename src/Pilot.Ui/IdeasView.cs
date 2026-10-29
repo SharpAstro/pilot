@@ -67,6 +67,9 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private string _said = "";
     private bool _saidRefusal;
     private int _working;
+    // The ideas sent to be noted whose answer has not come back, oldest first: the box is emptied at once and the next one may be
+    // noted beside them, so the line under it names them rather than only saying it is working (the owner, 2026-10-29).
+    private System.Collections.Immutable.ImmutableList<string> _noting = [];
     
     /// <summary>Whether the planned and dropped ideas, folded below by default, are listed.</summary>
     public bool ShowFolded { get; set; }
@@ -150,6 +153,26 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         ? new Layout.MarkdownStyle { Text = P.Body, Strong = P.Bright, Emphasis = P.Body, Link = Link, Muted = P.Dim, Code = P.Body, CodeBackground = P.PanelBg }
         : TranscriptEntryView.Prose with { OnLink = null };
 
+    /// <summary>
+    /// An idea sent to be noted whose answer has not come back: in the list at once, at the top, its words as typed and "ideating…"
+    /// where an id goes, until the node has chosen its repo and filed it, when the read brings its real row (the owner, 2026-10-29).
+    /// </summary>
+    private Layout.Node Ideating(string text)
+    {
+        var lines = text.ReplaceLineEndings("\n").Split('\n', 2);
+        var parts = new List<Layout.Node>
+        {
+            Layout.Builder.HStack(
+                Layout.Builder.Text("ideating…", 13f, P.Held).WithTooltip("Claude is choosing its repo and the node is filing it in that repo's Ideas milestone").WAuto(),
+                WrappedProse.Of(lines[0], 14f, P.Bright).WStar()).WithGap(10f).WStar(),
+        };
+        if (lines.Length > 1 && lines[1].Trim().Length > 0)
+        {
+            parts.Add(WrappedProse.Of(lines[1].Trim(), 13f, P.Dim).WStar());
+        }
+        return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(10f, 8f).Bg(P.RowAltBg).WStar().HAuto();
+    }
+
     /// <summary>Notes what is in the box as an idea, as Enter does. The box is emptied at once; Claude picks the repo.</summary>
     public async Task NoteAsync()
     {
@@ -160,7 +183,17 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         NoteInput.Clear();
         string[] args = Context is { Length: > 0 } context ? [text, context] : [text];
-        var reply = await RunAsync(Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _noting, list => list.Add(text));
+        IdeaReply? reply;
+        try
+        {
+            reply = await RunAsync(Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
+        }
+        finally
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _noting, list => list.Remove(text));
+            Changed?.Invoke();
+        }
         if (reply is null)
         {
             return;
@@ -453,7 +486,8 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (Send is not null)
         {
             rows.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
-            rows.Add(Layout.Builder.Text(Working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo", 11f, Working ? P.Held : P.Dim).RowH(16f));
+            // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
+            rows.Add(Layout.Builder.Text(Working && _noting.IsEmpty ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo", 11f, Working && _noting.IsEmpty ? P.Held : P.Dim).RowH(16f));
         }
         if (_said.Length > 0)
         {
@@ -463,7 +497,9 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             rows.Add(Ask(ask));
         }
-        if (noted.Count == 0)
+        var ideating = Volatile.Read(ref _noting);
+        rows.AddRange(ideating.Reverse().Select(Ideating));
+        if (noted.Count == 0 && ideating.IsEmpty)
         {
             rows.Add(WrappedProse.Of(ideas.Count == 0
                 ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
