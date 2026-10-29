@@ -1,3 +1,5 @@
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -196,6 +198,9 @@ public sealed class FlightMapLayersTests
                 state.ShowLanded = true;
                 state.ShowPrStates = false;
                 state.OnlyNode = "se1";
+                // Where the palette was dragged to and that it was rolled up: a grip gesture writes the file too.
+                state.Palette.Placement = new PalettePlacement(Layout.DockSide.Left, 64f, 0f);
+                state.Palette.Collapsed = true;
                 state.NoteChanged();
             }
 
@@ -206,11 +211,127 @@ public sealed class FlightMapLayersTests
             restored.ShowPrStates.ShouldBeFalse();
             restored.ShowHeld.ShouldBeTrue();
             restored.OnlyNode.ShouldBe("se1");
+            restored.Palette.Placement.ShouldBe(new PalettePlacement(Layout.DockSide.Left, 64f, 0f));
+            restored.Palette.Collapsed.ShouldBeTrue();
         }
         finally
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void AFileWithoutAPlaceLeavesThePaletteOnTheRightEdge()
+    {
+        var state = new FlightMapLayerState();
+
+        state.Restore(new MapLayerSettings { Palette = "somewhere:1:2" });
+
+        state.Palette.Side.ShouldBe(Layout.DockSide.Right);
+        state.Palette.OffsetAlong.ShouldBe(0f);
+        state.Palette.Collapsed.ShouldBeFalse();
+    }
+
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Map(int width = 1280, int height = 800)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
+        return (renderer, view);
+    }
+
+    private static void Render(FlightsView<RgbaImage> view, int width = 1280, int height = 800) =>
+        view.Render(new FlightsScreen(Lines(), "test", Live.At), new RectF32(0, 0, width, height));
+
+    private static ClickableRegion PanelRegion(FlightsView<RgbaImage> view)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Single(r => r.Result is HitResult.ButtonHit { Action: FlightMapLayerPalette.GripAction + ":Panel" });
+    }
+
+    [Fact]
+    public void ThePaletteStaysWhereItIsFrameAfterFrame()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+
+        // The page's header is over the map: an offset measured from the window's top slid the panel down by it on each frame.
+        Render(view);
+        var first = view.MapLayers.Palette.PanelRect;
+        var along = view.MapLayers.Palette.OffsetAlong;
+        first.Y.ShouldBeGreaterThan(40f);
+        for (var frame = 0; frame < 3; frame++)
+        {
+            Render(view);
+            view.MapLayers.Palette.PanelRect.ShouldBe(first);
+            view.MapLayers.Palette.OffsetAlong.ShouldBe(along);
+        }
+    }
+
+    [Fact]
+    public void ThePaletteIsFoundByItsOwnRegionAndKeepsItsRect()
+    {
+        var (renderer, view) = Map(1280, 240);
+        using var _ = renderer;
+
+        // A window so short the engine cuts the panel to fit: the rect noted is still the panel's own.
+        Render(view, 1280, 240);
+
+        var panel = PanelRegion(view);
+        var noted = view.MapLayers.Palette.PanelRect;
+        noted.X.ShouldBe(panel.X, 0.5f);
+        noted.Y.ShouldBe(panel.Y, 0.5f);
+        noted.Width.ShouldBe(panel.Width, 0.5f);
+        noted.Height.ShouldBe(panel.Height, 0.5f);
+    }
+
+    [Fact]
+    public void WhileThePaletteFadesTheViewAsksForFrames()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+        var asked = 0;
+        view.Changed = () => asked++;
+
+        // Just opened, the panel is wholly there and starts to fade: each frame asks for the next.
+        Render(view);
+
+        view.MapLayers.Palette.IsFading.ShouldBeTrue();
+        asked.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public void ThePointerOverThePaletteHoldsItAndLeavingItAsksForAFrame()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+        Render(view);
+        var asked = 0;
+        view.Changed = () => asked++;
+        var panel = view.MapLayers.Palette.PanelRect;
+
+        view.NotePointer(panel.X + panel.Width / 2f, panel.Y + panel.Height / 2f);
+        view.MapLayers.Palette.IsEngaged.ShouldBeTrue();
+        asked.ShouldBe(1);
+
+        view.NotePointer(panel.X - 40f, panel.Y + panel.Height / 2f);
+        view.MapLayers.Palette.IsEngaged.ShouldBeFalse();
+        asked.ShouldBe(2);
+    }
+
+    [Fact]
+    public void ThePointerIsNotHeldAgainstAPaletteThePageDoesNotShow()
+    {
+        var (renderer, view) = Map();
+        using var _ = renderer;
+        Render(view);
+        var panel = view.MapLayers.Palette.PanelRect;
+
+        view.Mode = FlightsViewMode.Grid;
+        Render(view);
+        view.NotePointer(panel.X + panel.Width / 2f, panel.Y + panel.Height / 2f);
+
+        view.MapLayers.Palette.IsEngaged.ShouldBeFalse();
     }
 
     [Fact]

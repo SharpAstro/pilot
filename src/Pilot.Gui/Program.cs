@@ -276,6 +276,8 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();
 chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
+// The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
+chrome.Flights.Changed = loop.RequestRedraw;
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
@@ -382,7 +384,6 @@ if (feed is not null && client is not null && clients is not null)
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);
-    chrome.Flights.Changed = loop.RequestRedraw;
     // The ? card: this window and the node it talks to, asked again each time it opens.
     NodeInfo? nodeInfo = null;
     chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);

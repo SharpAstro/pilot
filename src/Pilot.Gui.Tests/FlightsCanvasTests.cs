@@ -156,11 +156,37 @@ public sealed class FlightsCanvasTests
         using var _ = renderer;
 
         view.Map.Continents.Count.ShouldBe(2);
+        view.MapShown.ShouldBeTrue();
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         var targets = regions.Where(r => r.Tooltip is not null && r.Result is HitResult.ListItemHit or HitResult.ButtonHit && r.Width < 40f).ToList();
         targets.ShouldNotBeEmpty();
         targets.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
+    }
+
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1280)]
+    public void AMapWiderThanTwiceThePageShowsTheGridWithEveryFlightInReach(int width)
+    {
+        // Two continents of 24 legs a route: the map is wider than twice the page, so at half size its far side would be cut off.
+        var rows = Enumerable.Range(0, 4).Select(i => Flight("F" + i)).ToArray();
+        var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, 24).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
+        using var _ = renderer;
+
+        view.Map.Width.ShouldBeGreaterThan(2f * width);
+        view.CanvasShown.ShouldBeTrue();
+        view.MapShown.ShouldBeFalse();
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        // The grid's cards, one a flight, each inside the page; and no map target and no layer menu.
+        var cards = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ToList();
+        cards.Select(r => ((HitResult.ListItemHit)r.Result).Index).Distinct().Count().ShouldBe(rows.Length);
+        cards.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
+        regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action ?? "")
+            .Where(a => a.StartsWith("map:", StringComparison.Ordinal) || a.StartsWith(FlightMapLayerPalette.GripAction, StringComparison.Ordinal))
+            .ShouldBeEmpty();
     }
 
     private static ClickableRegion Region(FlightsView<RgbaImage> view, Func<string, bool> tooltip)

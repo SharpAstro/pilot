@@ -78,6 +78,8 @@ internal sealed class FlightMap
     /// starts 45 down: the corridor connections run in lies between, 40 down.
     /// </summary>
     public const float LabelBandTop = 12f;
+    /// <summary>The second line's box under a stop: its state, or what a gate waits for.</summary>
+    public const float LabelLineTwo = 23f;
     public const float LabelBandBottom = 36f;
     public const float CorridorOffset = 40f;
     /// <summary>Half the width of an airport's label: a leg name cut to ten characters at 9 units.</summary>
@@ -90,7 +92,11 @@ internal sealed class FlightMap
     public const float Pad = 24f;
     public const float ContinentGap = 96f;
     public const float AirportRadius = 10f;
-    public const float PlaneRadius = 14f;
+    /// <summary>
+    /// The plane's ring, its stroke inside it: no further out than the label band under its stop and the flight code over it, so it
+    /// never cuts their words (at 14 it ran into both).
+    /// </summary>
+    public const float PlaneRadius = 11f;
 
     public IReadOnlyList<MapContinent> Continents { get; private init; } = [];
 

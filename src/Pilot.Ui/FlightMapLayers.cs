@@ -15,6 +15,12 @@ internal sealed record MapLayerSettings
     public string? Node { get; init; }
 
     public bool PrStates { get; init; } = true;
+
+    /// <summary>Where the layer palette sits, as <see cref="PalettePlacement"/> writes it (<c>right:40:0</c>); null for its default.</summary>
+    public string? Palette { get; init; }
+
+    /// <summary>Whether the layer palette is rolled up to its title bar.</summary>
+    public bool PaletteRolledUp { get; init; }
 }
 
 /// <summary>
@@ -44,17 +50,35 @@ internal sealed class FlightMapLayerState
     /// <summary>Where the palette sits and whether it is rolled up; pinned to the right edge by default.</summary>
     public FloatingPaletteState Palette { get; } = new() { Side = Layout.DockSide.Right };
 
-    /// <summary>A layer was changed: the settings file writes itself and the window asks for a frame.</summary>
+    /// <summary>
+    /// A layer was changed, or the palette was moved or rolled up: the settings file writes itself (once the pointer is still) and
+    /// the window asks for a frame.
+    /// </summary>
     public event Action? Changed;
 
     public void NoteChanged() => Changed?.Invoke();
 
-    public MapLayerSettings Snapshot() => new() { Landed = ShowLanded, Held = ShowHeld, ArcsOnly = ArcsOnly, Node = OnlyNode, PrStates = ShowPrStates };
+    public MapLayerSettings Snapshot() => new()
+    {
+        Landed = ShowLanded,
+        Held = ShowHeld,
+        ArcsOnly = ArcsOnly,
+        Node = OnlyNode,
+        PrStates = ShowPrStates,
+        Palette = Palette.Placement.ToString(),
+        PaletteRolledUp = Palette.Collapsed,
+    };
 
     public void Restore(MapLayerSettings? saved)
     {
         saved ??= new MapLayerSettings();
         (ShowLanded, ShowHeld, ArcsOnly, OnlyNode, ShowPrStates) = (saved.Landed, saved.Held, saved.ArcsOnly, saved.Node, saved.PrStates);
+        // A place the file cannot read leaves the palette where it starts, on the right edge.
+        if (PalettePlacement.TryParse(saved.Palette, out var placement))
+        {
+            Palette.Placement = placement;
+        }
+        Palette.Collapsed = saved.PaletteRolledUp;
     }
 }
 
@@ -149,21 +173,20 @@ internal static class FlightMapLayerPalette
         return items.ToImmutable();
     }
 
-    /// <summary>Does what a row's click does: toggles its layer, or picks its node. False when the action is no row's.</summary>
+    /// <summary>
+    /// Does what a row's click does: toggles its layer, or picks its node, and holds the panel opaque, as any use of it does (the
+    /// sky map's palette the same). False when the action is no row's.
+    /// </summary>
     public static bool Press(FlightMapLayerState state, string action)
     {
-        if (action.StartsWith(NodePrefix, StringComparison.Ordinal))
+        var done = action.StartsWith(NodePrefix, StringComparison.Ordinal)
+            ? FlightMapLayers.PickNode(state, action[NodePrefix.Length..])
+            : FlightMapLayers.All.FirstOrDefault(l => RowAction(l) == action) is { Id: not null } layer && layer.Toggle(state);
+        if (done)
         {
-            return FlightMapLayers.PickNode(state, action[NodePrefix.Length..]);
+            state.Palette.NoteEngaged();
         }
-        foreach (var layer in FlightMapLayers.All)
-        {
-            if (RowAction(layer) == action)
-            {
-                return layer.Toggle(state);
-            }
-        }
-        return false;
+        return done;
     }
 
     public static Layout.Node Build(FlightMapLayerState state, Palette palette, float fontSize, DesignScale scale, Action? onChanged = null)

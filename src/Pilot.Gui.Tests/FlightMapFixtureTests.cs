@@ -95,6 +95,55 @@ public sealed class FlightMapFixtureTests
         FlightMap.Build(Lines(), new FlightMapLayerState { ShowLanded = false }).Route("ORB15").ShouldBeNull();
     }
 
+    private static bool Overlap(RectF32 a, RectF32 b, float tolerance) =>
+        MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > tolerance
+        && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > tolerance;
+
+    [Theory]
+    [InlineData(900, 800)]
+    [InlineData(1800, 1000)]
+    public void NoWordOnTheMapIsDrawnOverAnotherOrUnderAPlane(int width, int height)
+    {
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
+        view.MapLayers.ShowLanded = true;
+        view.Render(new FlightsScreen(Lines(), "fixture", Live.At), new RectF32(0, 0, width, height));
+
+        view.MapShown.ShouldBeTrue();
+        var words = view.MapWords;
+        words.ShouldNotBeEmpty();
+        // Each in the box it was drawn in: the words of one row, of two rows, of a gate and its airport, and the continent's name.
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                if (Overlap(words[i].Box, words[j].Box, TextOverlap.Tolerance))
+                {
+                    faults.Add($"'{words[i].Text}' {words[i].Box} over '{words[j].Text}' {words[j].Box}");
+                }
+            }
+        }
+        // A plane's target is its ring's square: the words under its stop and the code over it stay outside it (at 14 it cut them).
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:") && a.EndsWith(":plane")).ToList();
+        planes.Count.ShouldBe(view.Map.Routes.Count(r => r.Plane is not null));
+        foreach (var plane in planes)
+        {
+            var ring = new RectF32(plane.X, plane.Y, plane.Width, plane.Height);
+            faults.AddRange(words.Where(w => Overlap(ring, w.Box, TextOverlap.Tolerance)).Select(w => $"'{w.Text}' {w.Box} under the plane {ring}"));
+        }
+        faults.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ThePlanesRingReachesNeitherTheLabelsUnderItsStopNorTheCodeOverIt()
+    {
+        FlightMap.PlaneRadius.ShouldBeLessThanOrEqualTo(FlightMap.LabelBandTop);
+        FlightMap.PlaneRadius.ShouldBeLessThanOrEqualTo(-FlightMap.CodeBottom);
+    }
+
     [Theory]
     [InlineData(900, 800, false)]
     [InlineData(1800, 1000, false)]
@@ -107,9 +156,10 @@ public sealed class FlightMapFixtureTests
         view.MapLayers.ShowLanded = true;
         view.Render(new FlightsScreen(Lines(), "fixture", Live.At), new RectF32(0, 0, width, height));
 
+        // The map itself at both widths, not the grid a map too wide for the page falls back to.
+        view.MapShown.ShouldBeTrue();
         // Not blank: the page painted something other than its own background in the corner.
         var image = renderer.Surface;
-        
         var colors = new HashSet<(byte, byte, byte, byte)>();
         for (var y = 0; y < image.Height; y += 7)
         {

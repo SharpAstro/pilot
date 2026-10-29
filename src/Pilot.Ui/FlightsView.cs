@@ -626,7 +626,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             DrawSelection(fill);
         });
         _arranged = arranged;
-        NoteLayersArranged(arranged, bounds);
+        NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
         if (RevealLeg(arranged))
         {
@@ -1010,7 +1010,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown)
+        if (CanvasShown && MapFits(screen))
         {
             return CanvasBody(screen);
         }

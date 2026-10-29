@@ -521,6 +521,12 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
+        // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
+        if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
+        {
+            Flights.NotePointer(move.X, move.Y);
+        }
+
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
         switch (NavigationInput.Classify(evt))
         {

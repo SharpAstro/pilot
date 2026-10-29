@@ -12,20 +12,41 @@ internal sealed partial class FlightsView<TSurface>
     // The scrollbar's lane and the page's gutters, taken off the width the map is fitted to.
     private const float MapSideRoom = 2f * Gutter + 16f;
     private const float LabelSize = 9f;
+    // One line of a stop's label band: the second starts where the first ends.
+    private const float StopLine = FlightMap.LabelLineTwo - FlightMap.LabelBandTop;
     private const int LabelChars = 10;
 
     // The window's width in design units as of the last frame, so a map wider than it is drawn smaller, down to half size.
     private float _viewWidth;
 
+    // Whether the last tree drew the map: the Canvas view, with a map that fits the page at half size.
+    private bool _mapFits;
+
+    // Whether the last render arranged the layer menu, so the pointer is held against where it is.
+    private bool _layersOnShow;
+
     // How much of its design size the map is drawn at.
     private float MapScale => _viewWidth <= 0f || _map.Width <= 0f ? 1f : Math.Clamp((_viewWidth - MapSideRoom) / _map.Width, MinMapScale, 1f);
 
-    private Layout.Node CanvasBody(FlightsScreen screen)
+    /// <summary>
+    /// Whether the page shows the map now: the Canvas view, and a map that fits the page at half size. One that does not is shown
+    /// as the grid, as the canvas of cards was: the map scrolls down only, so its far side would be cut off out of reach.
+    /// </summary>
+    public bool MapShown => CanvasShown && _mapFits;
+
+    // Builds the map for the page and says whether it fits at half size.
+    private bool MapFits(FlightsScreen screen)
     {
         MapLayers.Nodes = [.. screen.Lines.GroupBy(l => l.Node?.Key ?? "").OrderByDescending(g => g.First().Node?.Here ?? true).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => (g.Key, g.First().Node?.Name ?? "this node"))];
         // A node picked and not on the page (its feed has not arrived yet, or its flights landed) keeps the choice: the map shows
         // nothing for it until it appears, and only an explicit pick changes it.
         _map = FlightMap.Build(screen.Lines, MapLayers);
+        _mapFits = _viewWidth <= 0f || _map.Width * MinMapScale <= _viewWidth - MapSideRoom;
+        return _mapFits;
+    }
+
+    private Layout.Node CanvasBody(FlightsScreen screen)
+    {
         _chain = Selected >= 0 && Selected < screen.Lines.Count ? _map.Chain(screen.Lines[Selected].Code) : new HashSet<string>();
         var k = MapScale;
         var width = MathF.Max(1f, _map.Width * k);
@@ -44,21 +65,61 @@ internal sealed partial class FlightsView<TSurface>
         return Layout.Builder.Overlay(map, FlightMapLayerPalette.Build(MapLayers, P, 11f, Scale, MapLayers.NoteChanged)).Stretch();
     }
 
-    // Where the palette landed, handed back so its stored offset follows the engine's clamp.
-    private void NoteLayersArranged(IReadOnlyList<Layout.ArrangedNode<float>> arranged, RectF32 bounds)
+    // The panel is the node carrying the palette's own hit, which FloatingPalette puts on it; its parent, the Anchored, was given
+    // the rect the palette floats in (the map's body, under the page's header), and its offset is measured from that rect's top.
+    // Measured from the window's top instead, each frame moved it a header's height further down.
+    private static readonly HitResult LayersPanelHit = new HitResult.ButtonHit(FlightMapLayerPalette.GripAction + ":Panel");
+
+    // Where the palette landed, handed back so its stored offset follows the engine's clamp; and while it fades, a frame asked
+    // for, or the fade stops wherever the last event left it (nothing else redraws while the pointer is still).
+    private void NoteLayersArranged(IReadOnlyList<Layout.ArrangedNode<float>> arranged)
     {
-        if (!CanvasShown)
+        _layersOnShow = false;
+        if (!MapShown)
         {
             return;
         }
-        var width = FlightMapLayerPalette.PanelWidth * Scale.ToSurfaceX(1f);
-        foreach (var node in arranged)
+        for (var i = 0; i < arranged.Count; i++)
         {
-            if (node.Node is Layout.Node.Stack { Axis: Layout.Axis.Vertical } && MathF.Abs(node.Bounds.Width - width) < 1f)
+            if (!Equals(arranged[i].Node.Hit, LayersPanelHit))
             {
-                MapLayers.Palette.NoteArranged(new RectF32(node.Bounds.X, node.Bounds.Y, node.Bounds.Width, node.Bounds.Height), bounds, Scale);
-                break;
+                continue;
             }
+            var parent = i - 1;
+            while (parent >= 0 && arranged[parent].Depth >= arranged[i].Depth)
+            {
+                parent--;
+            }
+            if (parent < 0)
+            {
+                return;
+            }
+            var (panel, inside) = (arranged[i].Bounds, arranged[parent].Bounds);
+            MapLayers.Palette.NoteArranged(new RectF32(panel.X, panel.Y, panel.Width, panel.Height), new RectF32(inside.X, inside.Y, inside.Width, inside.Height), Scale);
+            _layersOnShow = true;
+            if (MapLayers.Palette.IsFading)
+            {
+                Changed?.Invoke();
+            }
+            return;
+        }
+    }
+
+    /// <summary>
+    /// Where the pointer is, for the map's layer menu: over it, the menu holds itself opaque, and off it, it fades again. A frame is
+    /// asked for when that changes, so the fade starts without waiting for another event.
+    /// </summary>
+    public void NotePointer(float x, float y)
+    {
+        if (!_layersOnShow)
+        {
+            return;
+        }
+        var was = MapLayers.Palette.IsEngaged;
+        MapLayers.Palette.NotePointer(x, y);
+        if (MapLayers.Palette.IsEngaged != was)
+        {
+            Changed?.Invoke();
         }
     }
 
@@ -109,7 +170,7 @@ internal sealed partial class FlightsView<TSurface>
     // Planes last, so they are over their airport as they are drawn.
     private IEnumerable<Layout.Node> MapTargets(FlightsScreen screen, float k)
     {
-                foreach (var c in _map.Continents)
+        foreach (var c in _map.Continents)
         {
             // The continent's name: its node's flights, picked by a click on the first.
             var first = _map.Routes.FirstOrDefault(r => r.Node == c.Key);
@@ -211,8 +272,21 @@ internal sealed partial class FlightsView<TSurface>
 
     private bool InChain(MapConnection c) => _chain.Contains(c.From) && _chain.Contains(c.To);
 
-    private void Label(string text, float x, float y, float w, float s, float size, RGBAColor32 color, TextAlign align = TextAlign.Center) =>
-        DrawText(text, FontPath, x, y, w, size * 1.4f * s, size * s, color, align, TextAlign.Center);
+    // The words the map painted last, each in the box it was drawn in: one Fill leaf paints them all, so the page's text check
+    // (TextOverlap, which reads the arranged text leaves) never sees them, and a test holds them apart from these.
+    private readonly List<(string Text, RectF32 Box)> _words = [];
+
+    /// <summary>The words the last frame painted on the map and their boxes, surface units.</summary>
+    internal IReadOnlyList<(string Text, RectF32 Box)> MapWords => _words;
+
+    // A word in a box of its line's height: by default its size and the room around it; a line under a stop is given StopLine, so the
+    // band's two lines meet and never share a pixel.
+    private void Label(string text, float x, float y, float w, float s, float size, RGBAColor32 color, TextAlign align = TextAlign.Center, float line = 0f)
+    {
+        var h = (line > 0f ? line : size * 1.4f) * s;
+        _words.Add((text, new RectF32(x, y, w, h)));
+        DrawText(text, FontPath, x, y, w, h, size * s, color, align, TextAlign.Center);
+    }
 
     // The map, in the leaf's rect: the leaf is as big as the map in design units times the fit, so its rect says the scale.
     private void DrawCanvas(Layout.Content.Fill fill, RectF32 rect)
@@ -221,6 +295,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             return;
         }
+        _words.Clear();
         var s = rect.Width / _map.Width;
         float X(float v) => rect.X + v * s;
         float Y(float v) => rect.Y + v * s;
@@ -268,7 +343,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         var landed = line?.Row.State == FlightState.Landed || line?.Stale is not null;
         var startX = route.Gate?.X ?? route.Airports.FirstOrDefault()?.X ?? d.X;
-        Label(route.Flight, X(startX - FlightMap.Slot / 2f), Y(d.Y - 27f), (FlightMap.Slot * 2f) * s, s, 11f, landed ? Dim : Bright, TextAlign.Near);
+        Label(route.Flight, X(startX - FlightMap.Slot / 2f), Y(d.Y + FlightMap.CodeTop), (FlightMap.Slot * 2f) * s, s, 11f, landed ? Dim : Bright, TextAlign.Near);
 
         // Segments: a leg reached (done or flying) makes the run into it passed; the rest is ahead, dashed.
         var stops = new List<(float X, float Y, bool Reached)>();
@@ -296,8 +371,8 @@ internal sealed partial class FlightsView<TSurface>
         if (route.Gate is { } g)
         {
             FillRect(X(g.X) - r, Y(g.Y) - r, 2f * r, 2f * r, Held, 3f * s);
-            Label("gate", X(g.X - FlightMap.Slot / 2f), Y(g.Y + 12f), FlightMap.Slot * s, s, LabelSize, Held);
-            Label(Fit(g.WaitsFor, LabelChars), X(g.X - FlightMap.Slot / 2f), Y(g.Y + 23f), FlightMap.Slot * s, s, LabelSize, Dim);
+            Label("gate", X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Held, line: StopLine);
+            Label(Fit(g.WaitsFor, LabelChars), X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, Dim, line: StopLine);
         }
         foreach (var a in route.Airports)
         {
@@ -321,8 +396,8 @@ internal sealed partial class FlightsView<TSurface>
                     Renderer.FillEllipse(new RectInt(new PointInt((int)(cx + inner), (int)(cy + inner)), new PointInt((int)(cx - inner), (int)(cy - inner))), Ground);
                     break;
             }
-            Label(Fit(a.Leg, LabelChars), X(a.X - FlightMap.Slot / 2f), Y(a.Y + 12f), FlightMap.Slot * s, s, LabelSize, Body);
-            Label(StateWord(a.State), X(a.X - FlightMap.Slot / 2f), Y(a.Y + 23f), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim);
+            Label(Fit(a.Leg, LabelChars), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+            Label(StateWord(a.State), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.
@@ -340,10 +415,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(d.X) - r + 2f * s, Y(d.Y) - r + 2f * s, 2f * r - 4f * s, 2f * r - 4f * s, Ground, 1f * s);
         }
-        Label(d.PullRequest is { } pr ? $"PR #{pr}" : "PR", X(d.X - FlightMap.Slot / 2f), Y(d.Y + 12f), FlightMap.Slot * s, s, LabelSize, Body);
+        Label(d.PullRequest is { } pr ? $"PR #{pr}" : "PR", X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
         if (MapLayers.ShowPrStates)
         {
-            Label(StatusWord(d.Status), X(d.X - FlightMap.Slot / 2f), Y(d.Y + 23f), FlightMap.Slot * s, s, LabelSize, color);
+            Label(StatusWord(d.Status), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, color, line: StopLine);
         }
     }
 
@@ -356,8 +431,10 @@ internal sealed partial class FlightsView<TSurface>
         var color = held ? Held : Flying;
         var (cx, cy, r) = (X(p.X), Y(p.Y), FlightMap.PlaneRadius * s);
         var thick = Math.Max(2, (int)MathF.Round(2f * s));
-        // A ring around the stop, and a plane in it: fuselage, wing, tail.
-        Renderer.DrawEllipse(new RectInt(new PointInt((int)(cx + r), (int)(cy + r)), new PointInt((int)(cx - r), (int)(cy - r))), color, thick);
+        // A ring around the stop, its stroke inside the plane's radius (the renderer centres a stroke on the radius it is given),
+        // and a plane in it: fuselage, wing, tail.
+        var ring = r - thick / 2;
+        Renderer.DrawEllipse(new RectInt(new PointInt((int)(cx + ring), (int)(cy + ring)), new PointInt((int)(cx - ring), (int)(cy - ring))), color, thick);
         Renderer.DrawLine(cx - r * 0.55f, cy, cx + r * 0.6f, cy, Bright, thick);
         Renderer.DrawLine(cx - r * 0.1f, cy, cx - r * 0.45f, cy - r * 0.5f, Bright, thick);
         Renderer.DrawLine(cx - r * 0.1f, cy, cx - r * 0.45f, cy + r * 0.5f, Bright, thick);
