@@ -154,6 +154,47 @@ public sealed class MergeBatchTests
         git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
         git.Calls.ShouldNotContain(c => c.StartsWith("push", StringComparison.Ordinal) && c.Contains("--force", StringComparison.Ordinal) || c.StartsWith("rebase", StringComparison.Ordinal));
         git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        // A pushed branch starts no CI here (the workflow runs on a pull_request to main): a draft PR does, and is closed again.
+        node.GitHub.Drafts.ShouldHaveSingleItem().ShouldBe((901, "pilot/batch/tianwen-1", "main", "pilot merge batch: #10, #11"));
+        node.GitHub.ClosedPrs.ShouldBe([901]);
+    }
+
+    [Fact]
+    public async Task ABatchWhoseCiNeverStartsFallsBackAtOnceAndReleasesTheRepoWithoutWaitingOutItsBudget()
+    {
+        var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
+        await using var disposing = node;
+        // Neither a run of the batch head nor a check on its draft PR ever appears: CI that does not run for the batch.
+        node.GitHub.Runs.Remove(BatchHead);
+        node.GitHub.SummaryOf[901] = null;
+        var batcher = node.App.Services.GetRequiredService<LegCommander>().Batcher;
+        batcher.StartBudget = TimeSpan.FromMilliseconds(50);
+        batcher.CiBudget = TimeSpan.FromHours(1);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        release.TrySetResult();
+        await held;
+        await Until(() => node.GitHub.Merged.Count == 3, "every PR merged one at a time, long before the batch's CI budget");
+
+        clock.Elapsed.ShouldBeLessThan(batcher.CiBudget);
+        git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
+        node.GitHub.ClosedPrs.ShouldBe([901]);
+        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2").ShouldAllBe(m => m.State == MergeEntryState.Merging || m.State == MergeEntryState.Merged);
+    }
+
+    [Fact]
+    public async Task ABatchWithNoCheckOrRunWithinItsStartBudgetSaysItNeverStarted()
+    {
+        var github = new FakeGitHub();
+        github.SummaryOf[901] = null;
+        var batcher = new MergeBatcher(new BatchGit(), github) { PollEvery = TimeSpan.FromMilliseconds(5), StartBudget = TimeSpan.FromMilliseconds(50), CiBudget = TimeSpan.FromHours(1) };
+
+        var result = await batcher.RunAsync("tianwen", "repo", "main", [new BatchEntry("TIA1", 10, "aaaa"), new BatchEntry("TIA2", 11, "bbbb")], Ct);
+
+        (result.Green, result.Landed, result.NeverStarted).ShouldBe((false, false, true));
+        result.Why.ShouldNotBeNull().ShouldContain("never started");
+        github.ClosedPrs.ShouldBe([901]);
     }
 
     [Fact]

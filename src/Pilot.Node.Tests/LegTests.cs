@@ -394,10 +394,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What ChecksSummaryAsync answers for any PR, and so what ChecksAsync's status is; null to derive it from <see cref="Checks"/>, with no counts.</summary>
     public ChecksSummary? Summary { get; set; }
 
-    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Summary?.Status ?? Checks);
+    /// <summary>What ChecksSummaryAsync answers for one PR, by number, over <see cref="Summary"/>: null for a PR with no checks (yet).</summary>
+    public Dictionary<int, ChecksSummary?> SummaryOf { get; } = [];
+
+    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks);
 
     public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
 
     /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
     public bool AutoMergeAllowed { get; set; }
@@ -548,6 +552,31 @@ internal sealed class FakeGitHub : IGitHub
         Created.Add((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
+    }
+
+    /// <summary>Every draft PR opened (a merge batch's), as (number, branch, base, title); numbered from 901, apart from <see cref="Pr"/>.</summary>
+    public List<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
+
+    public Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        lock (Drafts)
+        {
+            var number = 901 + Drafts.Count;
+            Drafts.Add((number, branch, baseBranch, title));
+            return Task.FromResult(number);
+        }
+    }
+
+    /// <summary>Every PR closed unmerged, by number.</summary>
+    public List<int> ClosedPrs { get; } = [];
+
+    public Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        lock (ClosedPrs)
+        {
+            ClosedPrs.Add(number);
+        }
+        return Task.CompletedTask;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>

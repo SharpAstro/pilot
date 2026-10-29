@@ -1774,7 +1774,7 @@ public sealed partial class LegCommander(
         {
             choices.Add(new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
         }
-        // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that rebases it, and no Merge to refuse.
+        // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that merges its base in, and no Merge to refuse.
         if (mergeAgain)
         {
             choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });

@@ -276,8 +276,8 @@ public sealed class PrRecheckTests : IDisposable
 
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
-        card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to rebase");
-        Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to rebase: a card asks you"]);
+        card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to update");
+        Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to update: a card asks you"]);
         _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
         _github.Merged.ShouldBeEmpty();
     }
@@ -311,7 +311,7 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsIsRebasedAndReviewedAfresh()
+    public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsGetsItsBaseMergedInAndIsReviewedAfresh()
     {
         var (head, main) = OwnBranch(touchesReadme: false, mainEditsReadme: false);
         await ReviewedAsync();
@@ -319,18 +319,20 @@ public sealed class PrRecheckTests : IDisposable
 
         await LookAsync();
 
-        var rebased = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
-        rebased.ShouldNotBe(head);
-        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, rebased).ShouldBeEmpty();
-        Handled().ShouldBe(["recheck of widget#7: rebased onto main, review restarted"]);
+        var updated = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
+        updated.ShouldNotBe(head);
+        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, updated).ShouldBeEmpty();
+        // The base was merged in, not rebased onto: the head read is kept, and the push was a plain fast-forward of it.
+        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", head, updated).ShouldBeEmpty();
+        Handled().ShouldBe(["recheck of widget#7: main merged in, review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);
-        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "rebase-widget-7")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "update-widget-7")).ShouldBeFalse();
     }
 
     [Fact]
-    public async Task AReviewedPrOnTheControllersOwnBranchWhoseRebaseConflictsGetsTheCardAndTheConflictsLabel()
+    public async Task AReviewedPrOnTheControllersOwnBranchWhoseBaseMergeConflictsGetsTheCardAndTheConflictsLabel()
     {
         var (head, _) = OwnBranch(touchesReadme: true, mainEditsReadme: true);
         await ReviewedAsync();
@@ -342,7 +344,7 @@ public sealed class PrRecheckTests : IDisposable
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
         card.Detail.ShouldNotBeNull().ShouldContain("conflicts");
-        Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, not rebased (rebasing feature/seven onto main conflicts");
+        Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, its base not merged in (merging main into feature/seven conflicts");
         _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
     }
 

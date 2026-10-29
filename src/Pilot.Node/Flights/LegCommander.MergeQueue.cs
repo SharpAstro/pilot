@@ -35,6 +35,13 @@ public sealed partial class LegCommander
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _landedInBatch = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _batchTried = new(StringComparer.Ordinal);
 
+    // Repos whose last batch's CI never started, until when they are not batched again: each new merge command would otherwise build
+    // a batch there and hold the repo's turn for the start budget, only to fall back again.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _batchCold = new(StringComparer.Ordinal);
+
+    /// <summary>How long a repo is not batched after a batch whose CI never started.</summary>
+    public static readonly TimeSpan BatchColdFor = TimeSpan.FromHours(1);
+
     /// <summary>Builds and checks batch branches; a test sets how often it looks at the batch's CI.</summary>
     public MergeBatcher Batcher
     {
@@ -139,6 +146,10 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task BatchAsync(string code, string repo, CancellationToken cancellationToken)
     {
+        if (_batchCold.TryGetValue(repo, out var cold) && time.GetUtcNow() < cold)
+        {
+            return;
+        }
         var ready = new List<(MergeRow Entry, FlightRow Flight)>();
         foreach (var entry in state.Merges().Where(m => m.Repo == repo && m.Open && m.Pr is not null && (m.Flight == code || m.State == MergeEntryState.Waiting))
             .OrderBy(m => m.AddedAt).ThenBy(m => m.Flight, StringComparer.Ordinal).ToList())
@@ -183,6 +194,10 @@ public sealed partial class LegCommander
         {
             result = new BatchResult("pilot/batch", [], [], false, false, ex.Message);
         }
+        if (result.NeverStarted)
+        {
+            _batchCold[repo] = time.GetUtcNow() + BatchColdFor;
+        }
         foreach (var (entry, _) in ready)
         {
             var left = result.LeftOut.FirstOrDefault(l => l.Flight == entry.Flight).Why;
@@ -196,7 +211,7 @@ public sealed partial class LegCommander
                 var back = entry.Flight == code ? MergeEntryState.Updating : MergeEntryState.Waiting;
                 SetEntry(entry.Flight, back, left is not null ? $"left out of {result.Branch}: {left}; merged one at a time"
                     : result.Green ? $"{result.Branch} was green: merged on its own, already proven green ({result.Why})"
-                    : $"{result.Branch} did not pass ({result.Why}): merged one at a time");
+                    : $"{result.Branch} did not pass ({result.Why}): merged one at a time{(result.NeverStarted ? $"; {repo} is not batched again for {BatchColdFor.TotalMinutes:0} min" : "")}");
             }
         }
         Signal();

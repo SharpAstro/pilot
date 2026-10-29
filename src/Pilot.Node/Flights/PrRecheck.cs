@@ -438,19 +438,19 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             string? tried = null;
             if (own)
             {
-                // The controller's own branch in the base repo: pilot rebases it, as it does a flight's.
+                // The controller's own branch in the base repo: pilot merges its base in and pushes plainly, as it does a flight's.
                 var parts = entry.Repo.Split('/');
-                switch (await reviews.RebaseOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
+                switch (await reviews.MergeBaseIntoOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
                 {
                     case null:
                         var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
                         if (!started.Ok)
                         {
-                            Fail(entry, $"rebased onto {pr.Base}, but the review did not start: {started.Error}", pr.Url);
+                            Fail(entry, $"{pr.Base} merged in, but the review did not start: {started.Error}", pr.Url);
                             return Outcome.Kept;
                         }
-                        state.CloseCardsAbout(subject, "rebased", ConflictKind);
-                        return await FinishAsync(entry, pr, $"rebased onto {pr.Base}, review restarted", PilotMarks.Reviewing, cancellationToken);
+                        state.CloseCardsAbout(subject, "its base merged in", ConflictKind);
+                        return await FinishAsync(entry, pr, $"{pr.Base} merged in, review restarted", PilotMarks.Reviewing, cancellationToken);
                     case { Why: var why }:
                         tried = why;
                         break;
@@ -458,8 +458,8 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
             state.CloseCardsAbout(subject, "looked at again", ConflictKind);
             state.RaiseCard(CardBin.ForYou, ConflictKind, subject, $"{Short(entry.Repo, entry.Number)} {what}",
-                $"It is not pilot's branch to rebase{(tried is null ? (string.IsNullOrEmpty(pr.Author) ? "" : $": it is {pr.Author}'s") : $" (yours, but {tried})")}. Rebase it and push, and it is looked at again with the label.", link: pr.Url);
-            return await FinishAsync(entry, pr, tried is null ? $"{what}, not pilot's branch to rebase: a card asks you" : $"{what}, not rebased ({tried}): a card asks you", PilotMarks.Conflicts, cancellationToken);
+                $"It is not pilot's branch to update{(tried is null ? (string.IsNullOrEmpty(pr.Author) ? "" : $": it is {pr.Author}'s") : $" (yours, but {tried})")}. Bring it up to date with its base and push, and it is looked at again with the label.", link: pr.Url);
+            return await FinishAsync(entry, pr, tried is null ? $"{what}, not pilot's branch to update: a card asks you" : $"{what}, its base not merged in ({tried}): a card asks you", PilotMarks.Conflicts, cancellationToken);
         }
 
         if (review.State != PrReviewState.Reviewing && review.Verdict is "approve" or "comment" && review.QueuedAt is null)

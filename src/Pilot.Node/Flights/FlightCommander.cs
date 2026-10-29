@@ -693,7 +693,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
         state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
-            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (rebased onto the base, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
+            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
             link: flight.PullRequestUrl);
         return marked;
     }

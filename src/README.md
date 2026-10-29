@@ -382,13 +382,19 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
 - **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
   takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries with a passed review at their head and green
   checks. With two or more ready, `MergeBatcher` builds `pilot/batch/<repo>-<n>` from `origin/<base>` in a throwaway worktree, merges
-  each PR head in with `git merge --no-edit`, pushes the branch plainly and waits once for its CI (`WorkflowRunsAsync` on the batch
-  head; no run before the budget counts as red). The entries show state `batched`, the why naming the batch. On green the base is
+  each PR head in with `git merge --no-edit` and pushes the branch plainly. A pushed branch starts no CI in these repos (`dotnet.yml`
+  runs on a push to `main`, a `pull_request` to `main` and a merge group), so the batcher opens a **draft PR** from the batch branch
+  to the base (`OpenDraftAsync`, titled `pilot merge batch: #a, #b`) and waits once for its CI: green is that PR's checks passed and
+  every run of the batch head completed; a failed check or run is red. No check and no run within `StartBudget` (5 min) is a batch
+  whose CI never started: it falls back at once instead of holding the repo's turn for the whole `CiBudget` (45 min), and the repo
+  is not batched again for an hour. The entries show state `batched`, the why naming the batch. On green the base is
   pushed to the batch head (a plain push: it lands only as a fast-forward the repo allows a direct push for), GitHub shows each PR
-  merged and each entry's command takes it as its merge; where the base takes no direct push, each PR is merged as a single entry
-  already proven green. A PR that conflicts in the batch is aborted and left out (merged on its own); a red batch, or one with fewer
-  than two clean entries, is dropped. In every case the batch branch is deleted again (worktree, local, remote) and the entries go
-  on one at a time, none lost (`MergeBatchTests`; a flight a batch was tried for is never batched twice).
+  merged and each entry's command takes it as its merge. **A batch lands its PRs as merge commits, whatever the merge method**
+  (`merge-method`, or the method a merge named): the base takes the batch's own merges. Where the base takes no direct push, each PR is
+  merged as a single entry already proven green, by its own method. A PR that conflicts in the batch is aborted and left out (merged
+  on its own); a red batch, or one with fewer than two clean entries, is dropped. In every case the draft PR is closed and the batch
+  branch deleted again (worktree, local, remote), and the entries go on one at a time, none lost (`MergeBatchTests`; a flight a
+  batch was tried for is never batched twice).
 - `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
   (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
 - **The remote's commits are taken in, never refused or dropped.** `TakeRemoteAsync` merges what `origin/<branch>` holds that the
@@ -505,9 +511,9 @@ grant for does (a peer that does not answer holds nothing). A PR a peer holds is
 - **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review
   (*head ab12cd34 was not the one reviewed (0f9e8d7c), review restarted*, label `pilot: reviewing`); a conflict or a PR
   behind its base on the controller's own branch (author is the gh login, branch in the base repo, not a fork, no fixer
-  on it) is rebased onto its base in a throwaway worktree of the clone pilot holds, pushed with `--force-with-lease`, and
-  reviewed afresh (*rebased onto main, review restarted*, label `pilot: reviewing`); anyone else's, or one whose rebase
-  conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
+  on it) gets its base merged in (`git merge --no-edit`) in a throwaway worktree of the clone pilot holds, is pushed plainly (a
+  fast-forward of the head read: never a rebase, never a force push, as with a flight's branch), and reviewed afresh (*main merged
+  in, review restarted*, label `pilot: reviewing`); anyone else's, or one whose base merge conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
   `pilot: conflicts`; an approved or commented review at
   its head whose checks are green goes to the merge queue through the same rule as #279 (`QueueWhenGreenAsync`, which
   keeps a no-auto-merge repo and a base without a merge queue as a card for you), label `pilot: queued`; anything else
@@ -1192,7 +1198,8 @@ Two per-repo settings (#254) are lists, keyed by the repo's folder name and in f
   PR-ready card there rings the controller as for any repo. The person's own merge (the card's **Allow**, the **Merge**
   button, `pilot flight merge` by hand) is not held.
 - `merge-batch` (`on` or `off`, off by default) merges a repo's ready merge queue entries as one batch: a branch of the base
-  plus each PR, its CI run once, the PRs landed together on green; a red or conflicting batch falls back to one at a time.
+  plus each PR, its CI run once on a draft PR from it, the PRs landed together on green as merge commits (whatever the merge
+  method); a red or conflicting batch, or one whose CI never starts, falls back to one at a time.
 
 `shortcut-token` is in force at once, and the setup checklist has an optional **Shortcut token** line saying whether one
 is present (the variable or the setting).

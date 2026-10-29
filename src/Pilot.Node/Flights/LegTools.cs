@@ -294,6 +294,17 @@ public interface IGitHub
     Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Opens a draft PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>, so the checks a
+    /// <c>pull_request</c> starts run on it (a merge batch's branch, whose push alone starts no CI); returns its number.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not open it.</exception>
+    Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
+
+    /// <summary>Closes PR <paramref name="number"/> unmerged, with <paramref name="comment"/>; one closed or merged already is left as it is.</summary>
+    /// <exception cref="FlightException">gh could not close it.</exception>
+    Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
     /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones
     /// aside), null with no checks or when GitHub would not say.
@@ -1094,6 +1105,29 @@ public sealed partial class GhCli : IGitHub
         }
         return await PullRequestAsync(repoPath, branch, cancellationToken)
             ?? throw new FlightException($"gh opened {branch}'s PR but could not read it back: {output.Trim()}");
+    }
+
+    public async Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(
+            ["pr", "create", "--draft", "--head", branch, "--base", baseBranch, "--title", title, "--body", body], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not open {branch}'s draft PR: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return (await PullRequestAsync(repoPath, branch, cancellationToken))?.Number
+            ?? throw new FlightException($"gh opened {branch}'s draft PR but could not read it back: {output.Trim()}");
+    }
+
+    public async Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "close", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--comment", comment], repoPath, cancellationToken);
+        var said = (error.Trim().Length > 0 ? error : output).Trim();
+        // Closed already, or merged (a batch that landed fast-forwards the base to its PR's head), is the state wanted.
+        if (exit != 0 && !said.Contains("already closed", StringComparison.OrdinalIgnoreCase) && !said.Contains("already merged", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"gh could not close #{number}: {said}");
+        }
     }
 
     public async Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken)
