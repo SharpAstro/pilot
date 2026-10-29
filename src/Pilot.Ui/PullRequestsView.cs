@@ -883,11 +883,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private Layout.Node GroupRow(PullRequestGroup group)
     {
         var folded = IsFolded(group.Repo);
-        // The name takes what the fold mark and the count leave, and ends in an ellipsis where it is longer: a repo name has no break to wrap at.
+        // The link is the name and its ↗ only, as every link away from the window is; the rest of the header folds the group. With the
+        // name taking the whole width the link covered the header and a click almost anywhere opened GitHub (the owner, 2026-10-29).
         var name = Layout.Builder.HStack(
-                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WStar().HStar(),
+                // Content-capped like the stack: a plain star adds nothing to a stack's natural width, and the name was arranged 0 wide.
+                Layout.Builder.Text(group.Repo, TitleSize, P.Link).WStarUpToContent().HStar(),
                 Layout.Builder.Text(Followable.Away, TitleSize, P.Link).WAuto().HStar())
-            .WStar()
+            .WithGap(4f)
+            // As wide as the name and its ↗, never wider; on a narrow page it gives way and the name ends in an ellipsis.
+            .WStarUpToContent()
             .BgHover(P.RowHoverBg)
             .Follows(new HitResult.ButtonHit($"prs:repo:{group.Repo}"), _ => OnOpen?.Invoke($"https://github.com/{group.Repo}"))
             .WithTooltip($"Open {group.Repo} on GitHub");
@@ -896,6 +900,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
                 Layout.Builder.Spacer().WFixed(RepoIndent),
                 Layout.Builder.Icon(folded ? Layout.IconKind.CaretRight : Layout.IconKind.CaretDown, 12f, BodyText).WFixed(16f).HStar(),
                 name.HStar(),
+                Layout.Builder.Spacer().WStar(1000f),
                 Layout.Builder.Text($"{count} {(count == 1 ? "PR" : "PRs")}", TextSize, BodyText).WAuto().HStar())
             .WithGap(8f)
             .Pad(8f, 0f)
