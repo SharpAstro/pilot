@@ -378,7 +378,7 @@ public sealed class ChatAboutCardTests
         await WaitForAsync(() => chrome.Chat.Entries.Count > 0);
 
         chrome.Page.ShouldBe(PilotPage.Chat);
-        chrome.Chat.Node.ShouldBe(Se1Node);
+        chrome.Chat.Node!.Where.ShouldBe(Se1Node.Where);
         chrome.Chat.Entries.Single().Text.ShouldBe("SE1's watchtower");
         Described(chrome.Chat).ShouldContain("watchtower · SE1");
         await Typed(chrome, "status?");
@@ -451,7 +451,7 @@ public sealed class ChatAboutCardTests
         var fleet = new FakeFleet();
         fleet.Wire(chrome, Said("here"), Said("there"));
         chrome.Chat.SwitchTo(Se1Node);
-        chrome.Chat.Tree();
+        chrome.Chat.Render(new RectF32(0, 0, 1280, 900));
 
         await Typed(chrome, "anyone there?");
         await WaitForAsync(() => chrome.Chat.Notices.Count > 0);
