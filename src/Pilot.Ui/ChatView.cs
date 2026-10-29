@@ -67,6 +67,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
+    // What the person sent that the feed may not show yet: dimmed and marked sending until the node answers, then kept until the feed carries it.
+    private ImmutableList<Own> _own = [];
+    private sealed record Own(Guid Id, string Text, bool Sending);
     private int _sending;
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -122,6 +125,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Volatile.Write(ref _node, node);
         Volatile.Write(ref _held, Held.Empty);
         Volatile.Write(ref _notices, []);
+        Volatile.Write(ref _own, []);
         Volatile.Write(ref _about, null);
         _confirmRestart = false;
         if (open)
@@ -341,6 +345,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             return;
         }
         Interlocked.Increment(ref _sending);
+        var own = new Own(Guid.NewGuid(), message, true);
+        ImmutableInterlocked.Update(ref _own, o => o.Add(own));
         _scroll.ScrollToEnd();
         Changed?.Invoke();
         string? refused;
@@ -356,6 +362,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             Interlocked.Decrement(ref _sending);
         }
+        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Replace(own, own with { Sending = false }) : o.Remove(own));
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · {Clip(message)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -461,6 +468,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
+        // What the person sent that the feed does not carry yet; once it does (an entry or a queued line with the same words) only the feed's copy shows.
+        var shown = held.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.Text).Concat(held.Queued).ToList();
+        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => !m.Sending && shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))));
+        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))))
+        {
+            rows.Add(Sent(mine.Text, mine.Sending).WStar());
+        }
         foreach (var notice in Notices)
         {
             rows.Add(Notice(notice));
@@ -520,6 +534,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     // A message that did not go.
+    private static Layout.Node Sent(string text, bool sending) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).WFixed(96f),
+                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim))]).WStar())
+            .WithGap(10f);
+
     private static Layout.Node Notice(string text) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text("pilot", 12f, Failed).WFixed(96f),

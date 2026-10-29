@@ -298,7 +298,6 @@ if (feed is not null && client is not null && clients is not null)
             view.SayStatus = FleetClients.WatchOnly(line.Node);
             return;
         }
-        view.SayStatus = $"saying to {line.Name}…";
         loop.RequestRedraw();
         var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         view.SayStatus = result;

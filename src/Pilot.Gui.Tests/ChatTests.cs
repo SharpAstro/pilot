@@ -810,4 +810,68 @@ public sealed class ChatTests
             card.Height.ShouldBeGreaterThanOrEqualTo(40f);
         }
     }
+
+    private static RGBAColor32? ColorOf(ChatView<RgbaImage> chat, string contains) =>
+        Arranged(chat).Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>()
+            .Where(t => t.Value.Contains(contains, StringComparison.Ordinal))
+            .Select(t => (RGBAColor32?)t.Color)
+            .FirstOrDefault();
+
+    [Fact]
+    public async Task ASentMessageShowsAtOnceDimmedAndSendingAndTheMarkClearsWhenTheNodeTookIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var held = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var chat = NewChat(renderer, Page(queued: ["an earlier one"]), _ => held.Task);
+        await Read(chat, 6);
+
+        var send = chat.SendAsync("launch it now");
+
+        Described(chat).ShouldContain("launch it now");
+        Described(chat).ShouldContain("sending…");
+        ColorOf(chat, "launch it now").ShouldBe(ColorOf(chat, "an earlier one"), "dimmed as a queued line is");
+
+        held.SetResult(null);
+        await send;
+
+        Described(chat).ShouldContain("launch it now");
+        Described(chat).ShouldNotContain("sending…");
+        chat.Notices.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusedMessageLosesItsEntryAndIsSaidAsTheRefusalNotice()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var held = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var chat = NewChat(renderer, send: _ => held.Task);
+        await Read(chat, 6);
+
+        var send = chat.SendAsync("launch it now");
+        Described(chat).ShouldContain("sending…");
+
+        held.SetResult("refused: no watchtower");
+        await send;
+
+        Described(chat).ShouldNotContain("sending…");
+        Described(chat).ShouldContain("refused: no watchtower");
+        Described(chat).Split("launch it now").Length.ShouldBe(2, "the words show once, in the notice");
+    }
+
+    [Fact]
+    public async Task ADeliveredMessageIsNotShownTwiceOnceTheFeedCarriesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = Conversation();
+        var chat = NewChat(renderer, send: _ => Task.FromResult<string?>(null));
+        await Read(chat, 6);
+        await chat.SendAsync("and the next one?");
+
+        // The feed already has a message with these words (index 5): only its copy shows.
+        Described(chat).Split("and the next one?").Length.ShouldBe(2);
+        feed.Length.ShouldBe(6);
+
+        await chat.SendAsync("something new");
+        Described(chat).ShouldContain("something new");
+    }
 }
