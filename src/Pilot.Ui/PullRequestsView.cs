@@ -175,6 +175,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
 
     // The PRs a Review is running for: pressed again meanwhile does nothing.
     private readonly HashSet<string> _reviewing = new(StringComparer.Ordinal);
+    // The PRs whose review the node took since the list was last read, by URL: the row says "reviewing" at once rather than at the
+    // next read, up to a minute on, which left a press of Review looking like nothing happened (the owner, 2026-10-29).
+    private readonly HashSet<string> _started = new(StringComparer.Ordinal);
 
     // The cards the last frame offered a Merge or a Go around from.
     private IReadOnlyList<CardRow> _cards = [];
@@ -385,9 +388,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         Changed?.Invoke();
     }
 
-    /// <summary>The actions <paramref name="pr"/> offers now: what <see cref="PullRequestActions.Offered"/> says, less Review where the host has none.</summary>
+    /// <summary>The actions <paramref name="pr"/> offers now: what <see cref="PullRequestActions.Offered"/> says, less Review where the host has none or a review was just started.</summary>
     internal IReadOnlyList<PullRequestAction> ActionsOf(PullRequestRow pr) =>
-        [.. PullRequestActions.Offered(pr, _cards).Where(a => a.Kind != PullRequestActionKind.Review || OnReview is not null)];
+        [.. PullRequestActions.Offered(pr, _cards).Where(a => a.Kind != PullRequestActionKind.Review || (OnReview is not null && !_started.Contains(pr.Url)))];
 
     /// <summary>Presses <paramref name="action"/> of <paramref name="pr"/>. The row is not changed by it: the node's next answer is what shows.</summary>
     public void Press(PullRequestRow pr, PullRequestAction action)
@@ -418,9 +421,12 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             return;
         }
         ReviewRefused = null;
+        // Said on the button at once: a press with nothing to show for it reads as a press that missed.
+        Changed?.Invoke();
         try
         {
             await review(pr, CancellationToken.None);
+            _started.Add(pr.Url);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
         {
@@ -839,6 +845,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         } : null;
         var bg = tint?.Bg ?? P.Button;
         var hover = tint?.Hover ?? P.ButtonHover;
+        if (action.Kind == PullRequestActionKind.Review && _reviewing.Contains(pr.Url))
+        {
+            // Pressed, the node not yet answered: said, and not pressed again.
+            return Layout.Builder.Text("Starting…", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center)
+                .Bg(bg)
+                .WithTooltip($"Asking the node to review {pr.Repo}#{pr.Number}")
+                .WFixed(width)
+                .HStar();
+        }
         return Layout.Builder.Text(action.Label, ChipSize, P.Bright, TextAlign.Center, TextAlign.Center)
             .Bg(bg)
             .BgHover(hover)
@@ -977,6 +992,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     // Pilot's review of the PR's last commit, a link to its comment where it has one.
     private Layout.Node ReviewCell(PullRequestRow pr)
     {
+        // A review the node took is said at once; the read that shows it (or its verdict) takes over from there.
+        if (pr.Review is not null)
+        {
+            _started.Remove(pr.Url);
+        }
+        else if (_started.Contains(pr.Url))
+        {
+            return Layout.Builder.Text("reviewing", SecondarySize, BodyText).WithTooltip("The node has started its review; the next read of the PRs shows it");
+        }
         var (word, color) = pr.Review switch
         {
             PullRequestReview.Passed => ("passed", P.Flying),
