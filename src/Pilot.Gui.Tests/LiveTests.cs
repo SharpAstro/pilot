@@ -594,6 +594,7 @@ public sealed class FlightsPageTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var flights = new FlightsScreen(FlightLine.Build([Flight("TIA1611", FlightState.Flying), Flight("TIA1640", FlightState.Held, ["TIA1611"])], [], Live.At), "test", Live.At);
+        chrome.Flights.Mode = FlightsViewMode.List;
 
         chrome.Show(PilotPage.Flights);
         chrome.Render(new SessionsScreen([], "test", Live.At), flights, new RectF32(0, 0, 1280, 800));

@@ -90,6 +90,45 @@ if (options.SayTo is { } sayTo)
     return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
 }
 
+string? capturedNodeCode = null;
+
+// A capture of several nodes: this node's flights marked with its name, then each --peer's, as the window's page merges them.
+async Task<FlightsScreen> WithPeersAsync(FlightsScreen here, SessionsScreen shown)
+{
+    var hereName = options.HereName ?? (capturedNodeCode is { Length: > 0 } code ? code : "DE1");
+    var lines = here.Lines.Select(l => l with { Node = new NodeMark(hereName.ToLowerInvariant(), hereName, hereName, Here: true) }).ToList();
+    foreach (var spec in options.Peers)
+    {
+        FlightLine[] peerLines;
+        string name;
+        if (spec.IndexOf('=') is > 0 and var eq && File.Exists(spec[(eq + 1)..]))
+        {
+            name = spec[..eq];
+            var snap = SessionsCapture.LoadSnapshot(Path.GetFullPath(spec[(eq + 1)..]));
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, snap.At, snap.Legs)];
+        }
+        else
+        {
+            var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(spec, CancellationToken.None);
+            if (unknown is not null || resolved is null || !NodeClient.IsEndpoint(resolved, out var peerEndpoint))
+            {
+                throw new InvalidDataException($"--peer {spec}: {unknown ?? "not a node on the LAN"}");
+            }
+            using var client = Pilot.Commands.NodeTargets.Connect(peerEndpoint, null);
+            name = (await client.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : peerEndpoint;
+            await using var events = await client.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
+            if (await events.ReadAsync(CancellationToken.None) is not SnapshotEvent snap)
+            {
+                throw new InvalidDataException($"--peer {spec}: no snapshot");
+            }
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, here.AsOf, snap.Legs)];
+        }
+        var mark = new NodeMark(name.ToLowerInvariant(), name, name, Here: false);
+        lines.AddRange(peerLines.Select(l => l with { Node = mark }));
+    }
+    return here with { Lines = FlightLine.Order(lines), Source = $"{shown.Source} · {options.Peers.Length + 1} nodes" };
+}
+
 SessionsScreen screen;
 SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
@@ -123,6 +162,7 @@ else if (options.Capture is not null)
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         var code = (await oneShot.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        capturedNodeCode = code;
         screen = new SessionsScreen([.. SessionLine.Build(rows, now).Select(l => l with { NodeCode = code })], $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
@@ -163,9 +203,13 @@ if (options.Capture is { } capturePath)
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
+    if (options.Peers.Length > 0 && capturedFlights is not null)
+    {
+        capturedFlights = await WithPeersAsync(capturedFlights, screen);
+    }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, fold: options.Fold);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;

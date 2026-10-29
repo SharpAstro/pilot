@@ -816,6 +816,9 @@ internal sealed class PilotChrome<TSurface>
         }
         file.Attach(Night);
         Night.Changed += _ => redraw();
+        // The map's layers, kept in the same file and asking for a frame when one is toggled.
+        file.Attach(Flights.MapLayers);
+        Flights.MapLayers.Changed += redraw;
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>

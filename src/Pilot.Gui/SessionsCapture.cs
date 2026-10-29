@@ -44,6 +44,26 @@ internal static class SessionsCapture
     public static SessionsScreen ScreenFor(SnapshotEvent snapshot, string source) =>
         new(SessionLine.Build(snapshot.Sessions, snapshot.At), source, snapshot.At);
 
+    /// <summary>
+    /// The map's layers a capture sets, from a comma list: <c>landed</c>, <c>arcs</c>, <c>no-held</c>, <c>no-pr</c>, <c>node=&lt;key&gt;</c>,
+    /// <c>closed</c> (the layer menu rolled up). The settings a window keeps are not read by a capture, so each starts at its default.
+    /// </summary>
+    private static void ApplyLayers(FlightMapLayerState state, string layers)
+    {
+        foreach (var layer in layers.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (layer)
+            {
+                case "landed": state.ShowLanded = true; break;
+                case "arcs": state.ArcsOnly = true; break;
+                case "no-held": state.ShowHeld = false; break;
+                case "no-pr": state.ShowPrStates = false; break;
+                case "closed": state.Palette.Collapsed = true; break;
+                case var node when node.StartsWith("node=", StringComparison.Ordinal): state.OnlyNode = node[5..]; break;
+            }
+        }
+    }
+
     /// <summary>Paints <paramref name="screen"/> once on the CPU and returns the view, its regions current.</summary>
     /// <param name="canSay">Whether to draw the say bar, as the window does on a live node.</param>
     /// <param name="flights">The Flights page's screen, drawn when <paramref name="page"/> is Flights.</param>
@@ -51,7 +71,7 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? fold = null)
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null)
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -78,6 +98,11 @@ internal static class SessionsCapture
             chrome.Flights.Mode = mode;
         }
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
+        chrome.Night.On = night;
+        if (layers is not null)
+        {
+            ApplyLayers(chrome.Flights.MapLayers, layers);
+        }
         foreach (var name in (fold ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             // An org has no slash, a repo is owner/name.
@@ -143,10 +168,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? fold = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, fold: fold);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
