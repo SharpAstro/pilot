@@ -259,6 +259,17 @@ public sealed class IdeaTidyTests : IDisposable
     }
 
     [Fact]
+    public void AnImageTheTidyDroppedThatStoodFirstIsPutBackAtTheTop()
+    {
+        const string Two = "![two](https://x/y.png)";
+
+        IdeaImagePrompt.Restore($"{Shot}\n\nmore words", "- more words").ShouldBe($"{Shot}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n{Two}\n\nmore words", "- more words").ShouldBe($"{Shot}\n\n{Two}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n{Two}\n\nmore words", $"{Shot}\n\n- more words").ShouldBe($"{Shot}\n\n{Two}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n\nmore words", "").ShouldBe(Shot);
+    }
+
+    [Fact]
     public void AProposalThatKeptItsImagesIsLeftAsItIs()
     {
         var proposed = $"- on the planet\n\n{Shot}\n\n- and moons";

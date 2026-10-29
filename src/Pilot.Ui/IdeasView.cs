@@ -114,6 +114,8 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public AttachmentGallery Gallery { get; set; } = new();
 
     private int _uploading;
+    // Markers of uploaded images, put into their box by the render thread: the pool never changes an editor in place.
+    private System.Collections.Immutable.ImmutableQueue<(TextEditorState Editor, string Marker)> _markers = [];
     private string? _pasteSaid;
     private TextEditorState? _pasteSaidIn;
 
@@ -659,7 +661,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         if (result.Id is { Length: > 0 } id)
         {
-            editor.InsertText(IdeaImages.Marker("screenshot", id, ext.ToLowerInvariant()));
+            System.Collections.Immutable.ImmutableInterlocked.Enqueue(ref _markers, (editor, IdeaImages.Marker("screenshot", id, ext.ToLowerInvariant())));
             Changed?.Invoke();
         }
         else
@@ -696,6 +698,16 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal Layout.Node Tree(IdeasScreen screen)
     {
         _screen = screen;
+        var marked = false;
+        while (System.Collections.Immutable.ImmutableInterlocked.TryDequeue(ref _markers, out var marker))
+        {
+            marker.Editor.InsertText(marker.Marker);
+            marked = true;
+        }
+        if (marked)
+        {
+            Changed?.Invoke();
+        }
         NoteInput.OnCommit = _ => NoteAsync();
         NoteInput.Placeholder = "Note an idea: the first line is its title";
         EditInput.OnCommit = text => CommitEditAsync(text);

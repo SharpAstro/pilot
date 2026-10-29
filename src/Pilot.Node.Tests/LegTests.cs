@@ -386,7 +386,7 @@ internal sealed class FakeGitHub : IGitHub
     public Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
     {
         ImageReads.Add((id, ext));
-        return Task.FromResult(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
+        return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
     public List<(int Number, string Head, string Method)> Merged { get; } = [];

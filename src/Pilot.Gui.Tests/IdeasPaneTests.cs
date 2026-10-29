@@ -764,6 +764,9 @@ public sealed class IdeasPaneTests
 
         Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
         await Task.WhenAll(tasks);
+        // The upload ends on the pool; the marker goes into the box when the render thread draws the next frame.
+        chrome.Ideas.NoteInput.Text.ShouldBe("see  now");
+        Draw(chrome, Sample());
 
         uploaded.ShouldBe([(3, "png")]);
         chrome.Ideas.NoteInput.Text.ShouldBe("see ![screenshot](pilot-attachment:abc123.png) now");
@@ -783,6 +786,7 @@ public sealed class IdeasPaneTests
 
         Paste(chrome, chrome.Ideas.EditInput).ShouldBeTrue();
         await Task.WhenAll(tasks);
+        Draw(chrome, screen);
 
         chrome.Ideas.EditInput.Text.ShouldStartWith("Ideas pane![screenshot](pilot-attachment:abc123.png)\n");
         chrome.Ideas.NoteInput.Text.ShouldBe("");
@@ -835,6 +839,7 @@ public sealed class IdeasPaneTests
         await Task.WhenAll(tasks);
 
         Spoken(renderer, chrome, screen).ShouldNotContain("uploading image");
+        Draw(chrome, screen);
         chrome.Ideas.NoteInput.Text.ShouldContain("abc123");
     }
 
@@ -859,6 +864,7 @@ public sealed class IdeasPaneTests
 
             chrome.Ideas.DropFile(png).ShouldBeTrue();
             await Task.WhenAll(tasks);
+            Draw(chrome, screen);
             uploaded.ShouldBe([(4, "png")]);
             chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
 
@@ -866,6 +872,7 @@ public sealed class IdeasPaneTests
             Draw(chrome, screen);
             chrome.Ideas.DropFile(png).ShouldBeTrue();
             await Task.WhenAll(tasks);
+            Draw(chrome, screen);
             chrome.Ideas.EditInput.Text.ShouldEndWith("![screenshot](pilot-attachment:abc123.png)");
             chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
         }

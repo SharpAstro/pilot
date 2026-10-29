@@ -39,8 +39,8 @@ public static class IdeaImagePrompt
 
     /// <summary>
     /// <paramref name="proposed"/> with every image of <paramref name="current"/> it lacks put back, after the paragraph the image followed
-    /// (its last line of text found in the proposal), or at the end when that is not found or nothing came before it. A proposal that
-    /// kept its images is returned as it is.
+    /// (its last line of text found in the proposal), at the top (after the images already there) when nothing came before it, or at
+    /// the end when that text is not found. A proposal that kept its images is returned as it is.
     /// </summary>
     public static string Restore(string current, string proposed)
     {
@@ -87,9 +87,13 @@ public static class IdeaImagePrompt
     private static string Insert(string body, string image, string? anchor)
     {
         var lines = body.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+        if (anchor is null)
+        {
+            return Lead(lines, image);
+        }
         // A tidy turns prose into bullets, so the anchor is found by its words, not its list marker.
-        var words = anchor?.TrimStart('-', '*', '•', ' ');
-        var at = words is null ? -1 : lines.FindIndex(l => StripImages(l).Contains(words, StringComparison.Ordinal));
+        var words = anchor.TrimStart('-', '*', '•', ' ');
+        var at = lines.FindIndex(l => StripImages(l).Contains(words, StringComparison.Ordinal));
         if (at < 0)
         {
             return body.TrimEnd().Length == 0 ? image : body.TrimEnd() + "\n\n" + image;
@@ -115,6 +119,28 @@ public static class IdeaImagePrompt
         }
         lines.Insert(at + 1, "");
         lines.Insert(at + 2, image);
+        return string.Join('\n', lines);
+    }
+
+    // An image with no text before it stood at the top, as a pasted screenshot does: it goes back there, after the images already
+    // at the top, so leading images keep their order.
+    private static string Lead(List<string> lines, string image)
+    {
+        var after = -1;
+        for (var i = 0; i < lines.Count && (lines[i].Trim().Length == 0 || OnlyImages(lines[i])); i++)
+        {
+            if (lines[i].Trim().Length > 0)
+            {
+                after = i;
+            }
+        }
+        if (after < 0)
+        {
+            var rest = string.Join('\n', lines).Trim();
+            return rest.Length == 0 ? image : image + "\n\n" + rest;
+        }
+        lines.Insert(after + 1, "");
+        lines.Insert(after + 2, image);
         return string.Join('\n', lines);
     }
 }
