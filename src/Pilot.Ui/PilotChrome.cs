@@ -199,10 +199,21 @@ internal sealed class PilotChrome<TSurface>
             var node = Cards.NodeOf(card);
             Navigate(() =>
             {
-                Chat.SwitchTo(node);
+                Chat.SwitchTo(null);
                 Switch(PilotPage.Chat, _show);
             });
             Chat.Attach(card, node);
+        };
+        // A reached node's own watchtower, from its row on the Fleet page; this node's row opens the fleet chat.
+        Fleet.OnChat = line =>
+        {
+            NodeMark? node = line.Here ? null : Nodes.Choices.FirstOrDefault(n => n.Key == line.Where)
+                ?? new NodeMark(line.Where, line.Where, line.Machine.Split(" · ")[0].Split(' ')[0], Here: false);
+            Navigate(() =>
+            {
+                Chat.SwitchTo(node);
+                Switch(PilotPage.Chat, _show);
+            });
         };
         Flights.OnChatAboutCard = card => Cards.OnChatAbout?.Invoke(card);
         // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.

@@ -329,6 +329,65 @@ public sealed class PullRequestActionsTests
     }
 
     [Fact]
+    public async Task AReviewPressSaysStartingAtOnceThenReviewingUntilTheNextReadShowsIt()
+    {
+        // The owner (2026-10-29): "clicking the review button had no visual feedback. all buttons should always have a feedback".
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var answer = new TaskCompletionSource();
+        page.OnReview = (_, _) => answer.Task;
+        var screen = Screen();
+        var pr = screen.Row!.PullRequests[4];
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+        Arrange(renderer, page, screen);
+
+        var press = page.ReviewAsync(pr);
+        // Pressed: the button says so and is no button to press again.
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("Starting…");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldBeNull();
+
+        answer.SetResult();
+        await press;
+        // Taken: the row says it is being reviewed at once, and offers no second Review.
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldNotContain("Starting…");
+        Words(arranged).ShouldContain("reviewing");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldBeNull();
+
+        // The next read that shows the review takes over from there.
+        var read = Screen(screen.Row with { PullRequests = [.. screen.Row.PullRequests.Select(p => p.Url == pr.Url ? p with { Review = PullRequestReview.Passed } : p)] });
+        Words(Arrange(renderer, page, read)).ShouldContain("passed");
+    }
+
+    [Fact]
+    public async Task AReviewTheNodeTookButNothingShowsLapsesSoTheRowIsNotStuckOnReviewing()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        page.OnReview = (_, _) => Task.CompletedTask;
+        var changed = 0;
+        page.Changed = () => changed++;
+        var screen = Screen();
+        var pr = screen.Row!.PullRequests[4];
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+
+        await page.ReviewAsync(pr);
+        // The press said "Starting…" and then the taking: two redraws asked.
+        changed.ShouldBe(2);
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("reviewing");
+
+        // No read ever shows the review (it never ran): after its time the row is as before and the Review button is back.
+        page.StartedFor = TimeSpan.Zero;
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldNotContain("reviewing");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task AReviewTheNodeRefusesIsSaidInItsWordsAndNoPressChangesTheRowsState()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);

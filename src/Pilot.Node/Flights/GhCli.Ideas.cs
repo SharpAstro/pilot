@@ -41,7 +41,20 @@ public sealed partial class GhCli
     private static Milestone ParseMilestone(JsonElement m) => new(
         m.TryGetProperty("number", out var number) && number.TryGetInt32(out var n) ? n : 0,
         TextOf(m, "title") ?? "",
-        TextOf(m, "due_on") is { } due && DateTimeOffset.TryParse(due, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null);
+        TextOf(m, "due_on") is { } due && DateTimeOffset.TryParse(due, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null,
+        TextOf(m, "description") ?? "",
+        m.TryGetProperty("open_issues", out var openIssues) && openIssues.TryGetInt32(out var open) ? open : 0);
+
+    public async Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["api", "-X", "POST", "repos/{owner}/{repo}/milestones", "-f", $"title={title}", "-f", $"description={description}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not make the milestone {title}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return ParseMilestone(doc.RootElement);
+    }
 
     public async Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken)
     {

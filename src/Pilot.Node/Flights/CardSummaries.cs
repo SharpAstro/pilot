@@ -35,7 +35,7 @@ public static partial class CardSummaries
         var what = Name(subject);
         return kind switch
         {
-            LegCommander.ReviewChanges => $"The review of {what} asked for changes. Redo leg sends a fresh worker to make them; Ready anyway lands it as it is.",
+            LegCommander.ReviewChanges => $"The review of {what} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Ready anyway lands it as it is.",
             LegCommander.PrReady => $"{what} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
             LegCommander.MergeFailed => $"The merge of {what} did not go through. Redo leg sends a fresh worker to fix it; Merge tries once more.",
             "leg-failed" => $"The worker of {what} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.",

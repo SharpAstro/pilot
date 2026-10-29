@@ -232,10 +232,10 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
-    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null)
+    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0)
     {
         var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn);
+        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues);
         list.Add(milestone);
         return milestone;
     }
@@ -260,6 +260,15 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
         Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
+
+    public Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
+    {
+        MilestonesMade.Add((RepoKey(repoPath), title));
+        var made = AddMilestone(repoPath, title);
+        var list = MilestonesOf[RepoKey(repoPath)];
+        list[list.IndexOf(made)] = made = made with { Description = description };
+        return Task.FromResult(made);
+    }
 
     public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
     {

@@ -104,6 +104,8 @@ public static class PilotCommand
         requestId ??= NewRequestId();
         var byAgent = IsAgent(bySession, agent);
         sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
+        // This machine's node socket as given (--node-socket), where a command sent to another node names its sender.
+        string? hereSocket = null;
         var socket = new Option<string?>("--node-socket")
         {
             Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
@@ -137,7 +139,8 @@ public static class PilotCommand
                     await error.WriteLineAsync($"pilot: {unknown}");
                     return 2;
                 }
-                using var client = NodeTargets.Connect(target, parseResult.GetValue(socket), here: here);
+                hereSocket = parseResult.GetValue(socket);
+                using var client = NodeTargets.Connect(target, hereSocket, here: here);
                 try
                 {
                     return await run(parseResult, client, ct);
@@ -164,7 +167,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
+            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
@@ -316,11 +319,13 @@ public static class PilotCommand
         var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");
         var ideaRepo = new Option<string?>("--repo") { Description = $"The repo, by its folder's name or the path of its checkout; a new idea without it goes where Claude chooses among the node's repos, an idea's id without it is in {IdeaIds.DefaultRepo}" };
         var ideaContext = new Option<string?>("--context") { Description = "A new idea: the page or flight you were on, which helps Claude choose its repo" };
-        var ideaMilestone = new Option<string?>("--milestone") { Description = "plan: the open milestone to move the idea to; else the next open one" };
+        var ideaMilestone = new Option<string?>("--milestone") { Description = "plan: the open milestone to move the idea to; without one (or --new-milestone) the node proposes a milestone and plans nothing" };
+        var ideaNewMilestone = new Option<string?>("--new-milestone") { Description = "plan: plan into a new milestone of this title, made on GitHub" };
+        var ideaMilestoneDescription = new Option<string?>("--milestone-description") { Description = "plan: with --new-milestone, the new milestone's one-line description" };
         var ideaSave = new Option<bool>("--save") { Description = "tidy: save the proposal the last tidy showed (through the same up-to-date check as an edit)" };
         var ideaDiscard = new Option<bool>("--discard") { Description = "tidy: forget the proposal the last tidy showed; nothing is written" };
-        var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan: moves it to a milestone and creates its flight), drop one (I<n> drop <why>) or fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded)")
-            { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaSave, ideaDiscard } },
+        var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan --milestone <name> or --new-milestone <title>: moves it to that milestone and creates its flight; without either it prints the milestone the node proposes and plans nothing), drop one (I<n> drop <why>) or fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded)")
+            { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard } },
             async (p, client, ct) =>
             {
                 var call = ReadIdea(p.GetValue(ideaWords) ?? []);
@@ -366,7 +371,14 @@ public static class PilotCommand
                     case "fold":
                         return await Send(client, Verbs.FoldIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
                     case "plan":
-                        return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), p.GetValue(ideaMilestone) is { Length: > 0 } milestone ? [milestone] : [], who, ct);
+                        if (p.GetValue(ideaNewMilestone) is { Length: > 0 } newMilestone)
+                        {
+                            return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number),
+                                p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? [Verbs.NewMilestoneArg, newMilestone, description] : [Verbs.NewMilestoneArg, newMilestone], who, ct);
+                        }
+                        return p.GetValue(ideaMilestone) is { Length: > 0 } milestone
+                            ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone], who, ct)
+                            : await Send(client, Verbs.ProposeMilestone, IdeaIds.Target(named, call.Number), [], who, ct);
                     default:
                         return await Send(client, Verbs.DropIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
                 }
@@ -785,7 +797,7 @@ public static class PilotCommand
 
                 // Never to itself: a relayed say to the session running this would come back as a message to act on.
                 var self = bySession ? sessionId : null;
-                var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                var sender = await SenderAsync(client, hereSocket, who, bySession, byAgent, cwd, sessionId, ct);
                 var failed = 0;
                 foreach (var row in picked)
                 {
@@ -879,7 +891,7 @@ public static class PilotCommand
                 string? made = null;
                 if (kept is null || p.GetValue(summaryFresh))
                 {
-                    var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                    var sender = await SenderAsync(client, hereSocket, who, bySession, byAgent, cwd, sessionId, ct);
                     var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Summarise, Target = target, Args = args, Who = sender, Agent = byAgent }, ct);
                     if (envelope is not { Success: true, Response: { Ok: true } result })
                     {
@@ -1251,7 +1263,7 @@ public static class PilotCommand
             }
             if (at == 0 && words.Length == 1)
             {
-                throw new UsageException($"{words[at]} is an idea's id: say what to do with it, pilot idea {words[at]} edit <text>, pilot idea {words[at]} plan [--milestone <name>] or pilot idea {words[at]} drop \"<why>\"");
+                throw new UsageException($"{words[at]} is an idea's id: say what to do with it, pilot idea {words[at]} edit <text>, pilot idea {words[at]} plan --milestone <name> (or --new-milestone <title>) or pilot idea {words[at]} drop \"<why>\"");
             }
         }
         return new IdeaCall(null, 0, null, string.Join(' ', words));
@@ -1265,6 +1277,30 @@ public static class PilotCommand
             return fallback;
         }
         return client.IsRemote || !(named.AsSpan().IndexOfAny('/', '\\') >= 0 || Directory.Exists(Path.GetFullPath(named, cwd))) ? named : Path.GetFullPath(named, cwd);
+    }
+
+    /// <summary>The proposal for an idea's milestone, its reason and the open milestones, or why there is no proposal.</summary>
+    internal static async Task WriteMilestonesAsync(TextWriter output, string id, MilestoneProposal proposal)
+    {
+        var why = proposal.Reason is { Length: > 0 } reason ? $": {reason}" : "";
+        if (proposal.Title is { Length: > 0 } title)
+        {
+            await output.WriteLineAsync($"{id}: proposed milestone {title}{why}");
+        }
+        else if (proposal.NewTitle is { Length: > 0 } newTitle)
+        {
+            await output.WriteLineAsync($"{id}: proposed new milestone {newTitle}{(proposal.NewDescription is { Length: > 0 } line ? $" ({line})" : "")}{why}");
+        }
+        else
+        {
+            await output.WriteLineAsync($"{id}: {proposal.Note ?? "no proposal"}");
+        }
+        await output.WriteLineAsync(proposal.Open.Length == 0 ? "no open milestone but Ideas" : "open milestones:");
+        foreach (var m in proposal.Open)
+        {
+            var due = m.DueOn is { } at ? $", due {at.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" : "";
+            await output.WriteLineAsync($"  {m.Title} ({m.OpenIssues} open{due}){(m.Description.Length > 0 ? $": {m.Description}" : "")}");
+        }
     }
 
     /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
@@ -1361,11 +1397,38 @@ public static class PilotCommand
         return PrHere(snapshot, cwd) is { Who: not "cli" } pr ? pr.Who : null;
     }
 
-    /// <summary>Who a command is from: the Claude session running this host by its name on the node, where there is one, else <paramref name="who"/>.</summary>
-    private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken) =>
-        bySession && (sessionId is { Length: > 0 } || agent)
-            ? Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who, agent ? await MachineAsync(client, cancellationToken) : null)
-            : who;
+    /// <summary>
+    /// Who a command is from: the Claude session running this host by its name on the node, where there is one, else
+    /// <paramref name="who"/>. Sent to another node (<c>--node</c>), the session is looked up on this machine's node
+    /// (<paramref name="hereSocket"/>), which runs it: the target's snapshot does not have it, and a watchtower's tell went
+    /// as <c>cli</c>, unmarked, as if the person had written it.
+    /// </summary>
+    private static async Task<string> SenderAsync(NodeClient client, string? hereSocket, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken)
+    {
+        if (!bySession || (sessionId is not { Length: > 0 } && !agent))
+        {
+            return who;
+        }
+        if (client.IsRemote && sessionId is { Length: > 0 } && await NamedHereAsync(hereSocket, sessionId, cancellationToken) is { } here)
+        {
+            return here;
+        }
+        return Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who, agent ? await MachineAsync(client, cancellationToken) : null);
+    }
+
+    /// <summary>The name this machine's node gives the Claude session <paramref name="sessionId"/>, or null when it has none or no node answers here.</summary>
+    private static async Task<string?> NamedHereAsync(string? hereSocket, string sessionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var here = new NodeClient(NodeSocket.Resolve(hereSocket));
+            return SessionNamed(await SnapshotAsync(here, cancellationToken), sessionId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The node's machine prefix, or null when it cannot be had: the name of a planner the node has not listed yet is built from it.</summary>
     private static async Task<string?> MachineAsync(NodeClient client, CancellationToken cancellationToken)
@@ -1400,9 +1463,9 @@ public static class PilotCommand
         }
     }
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string? hereSocket, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
     {
-        who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
+        who = await SenderAsync(client, hereSocket, who, bySession, agent, cwd, sessionId, cancellationToken);
         var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId }, deadline, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
         {
@@ -1431,9 +1494,18 @@ public static class PilotCommand
                     ? $"asked: card {ideaId} offers the repos it fits (File in <repo>); nothing is filed until you choose"
                     : ideaId);
             }
+            if (verb == Verbs.ProposeMilestone && result.Milestones is { } proposed)
+            {
+                await WriteMilestonesAsync(output, result.Made ?? target, proposed);
+                await output.WriteLineAsync($"nothing is planned: pilot idea {result.Made ?? target} plan --milestone <name> (or --new-milestone <title> [--milestone-description <line>]) plans it");
+            }
             if (verb == Verbs.TidyIdea && result.Tidy is { } tidy)
             {
                 var id = result.Made ?? target;
+                if (tidy.Milestone is { } tidyMilestone)
+                {
+                    await WriteMilestonesAsync(output, id, tidyMilestone);
+                }
                 IdeaTidyCache.Write(target, tidy);
                 if (IdeaDiff.Unified(IdeaTidyCache.Joined(tidy.CurrentTitle, tidy.CurrentBody), IdeaTidyCache.Joined(tidy.Title, tidy.Body), $"{id} (GitHub)", $"{id} (tidied)") is { Length: > 0 } diff)
                 {

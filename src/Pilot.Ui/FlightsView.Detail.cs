@@ -547,8 +547,9 @@ internal sealed partial class FlightsView<TSurface>
         // Only the flight's last leg, as the node (LegCommander) decides it: an earlier capped leg with a later one planned is not the person's yet.
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
-            yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
-                + $"Redo leg {capped.Name} on the review's card once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
+            // The page cannot tell why it was sent back (findings, checks, a conflict), so it names no button: the card has the right one.
+            yield return Prose($"{capped.Name} has been sent back {capped.Row.ReviewGoArounds} times, so the next round is yours: "
+                + "send it back once more from its card, or Ready anyway if what was found should not hold it up.", 12f, Held);
         }
     }
 

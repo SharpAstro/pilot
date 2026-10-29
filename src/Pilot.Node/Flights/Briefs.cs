@@ -96,6 +96,7 @@ public static class Briefs
         text.Append(PilotMdSection(pilotMd));
         text.AppendLine();
         text.AppendLine(CiRule);
+        text.AppendLine(MachineLoadRule(run));
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (CiShape.Of(flight.Worktree) is { } ci)
         {
@@ -227,6 +228,19 @@ public static class Briefs
     internal const string CiRule =
         "Checks, and your own builds and test runs, build as the repo's CI does: for a SharpAstro dotnet repo that is `-c Release`, not the Debug a bare\n" +
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
+
+    /// <summary>
+    /// The line the planner and the worker are told, in autopilot as much as out of it: the machine is the person's, so nothing
+    /// loads it on purpose without their okay on a card. TIA1910 ran a 24-process CPU burner to imitate a busy CI runner while
+    /// it measured a flaky test (DE1 2026-10-29), and the person found it in Task Manager.
+    /// </summary>
+    internal static string MachineLoadRule(string run) =>
+        "Never load the machine on purpose without the person's explicit okay, in autopilot too: no CPU or GPU burner, no stress or\n" +
+        "soak loop, no pool of processes spinning to imitate a busy machine, nothing that holds many cores or the GPU for the load's\n" +
+        $"own sake. Ask first with `{run} ring flight/<code>[/<leg>] \"<what load, for how long, and why>\"`, and go on with the rest; only the\n" +
+        "person's answer on that card is the okay, never a guess that they would agree. The answer does not reach you by itself: if none\n" +
+        "has reached your session when the rest of the leg is done, finish without the load and say in your report that it was not run\n" +
+        "and why. A build or a test run that is merely heavy is not load in this sense.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
@@ -423,6 +437,8 @@ public static class Briefs
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
         text.AppendLine(CiRule);
+        // A leg whose way to a number is loading the machine plans the ask, never the load (TIA1910).
+        text.AppendLine(MachineLoadRule(run));
         // PIL319: a check naming a solution that sits in src/ could never pass from the plane's root.
         text.AppendLine(CheckWhereRule);
         if (CiShape.Of(flight.Worktree) is { } ci)
@@ -731,6 +747,11 @@ public static class Briefs
         text.AppendLine("all of that and the controller (the person). Getting each flight's reviewed work in is your job, not theirs: a");
         text.AppendLine("conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
         text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
+        // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
+        // round cap stay the person's until the node gives them to the watchtower (PIL433).
+        text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's. A design question a review raises,");
+        text.AppendLine("and a flight's leg past its round cap, are the person's: say so on the card and leave it to them.");
         text.AppendLine();
         if (model is { Length: > 0 })
         {
@@ -751,13 +772,21 @@ public static class Briefs
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
         // DE1's watchtower told the controller it could not read SE1's cards (2026-10-29): nothing here said --node reaches them.
-        text.AppendLine("## The other nodes");
-        text.AppendLine("You can read every node on the LAN, not only this one, so never say you cannot see another node's flights or cards:");
+        // The Chat is the fleet's (PIL468): each node's own watchtower chat stays, as its own page.
+        text.AppendLine("## The other nodes: the Chat is the fleet chat, held here");
+        text.AppendLine("You hold the fleet chat: the controller asks you about every node on the LAN, not only this one, so");
+        text.AppendLine("never say you cannot see another node's flights or cards.");
         text.AppendLine($"- `{pilot} nodes` lists them by name; add `--node <name>` to any reading command for another: `{pilot} status --node SE1`,");
         text.AppendLine($"  `{pilot} cards --node SE1`, `{pilot} repos --node SE1`.");
-        text.AppendLine($"- To get something done on another node's flight or card, tell its watchtower, which owns that node's planes: `{pilot} tell --node <name>");
-        text.AppendLine($"  \"<what and why>\"`. `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant");
-        text.AppendLine("  (pilot connect) and the card's choice is plainly the right one. Never edit or push another node's plane from here.");
+        text.AppendLine($"- To get something done on another node, pass it to that node's watchtower, which owns its planes: `{pilot} tell --node <name>");
+        text.AppendLine("  \"<what and why, and ask it to tell back what came of it>\"`. Say at once in the chat that you passed it on, and end your turn:");
+        text.AppendLine("  never wait on the answer, the controller keeps talking meanwhile. When that node's watchtower tells back, post the outcome in the chat.");
+        text.AppendLine("- A message that begins `[From the watchtower of node <name>]` is that node's watchtower, not the controller. A request from it:");
+        text.AppendLine($"  do it, then answer it with `{pilot} tell --node <name>`. A report back to a tell you sent is not a request: post it in the chat");
+        text.AppendLine("  and do not answer it, no thanks or acknowledgement tells, or the two watchtowers answer each other without end.");
+        text.AppendLine($"- `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant (pilot connect) and the card's");
+        text.AppendLine("  choice is plainly the right one.");
+        text.AppendLine("- Name the node where it matters in a reply (\"PIL411 on SE1 is at review\"). Never edit or push another node's plane from here; ask its watchtower.");
         text.AppendLine();
         text.AppendLine("## The chat: you are the controller's assistant in the window too");
         text.AppendLine("The GUI's chat is one conversation with you, in place of a command bar: what the controller types there reaches you as");
@@ -795,7 +824,7 @@ public static class Briefs
         text.AppendLine("  talks of them by id, and you act on the id:");
         text.AppendLine($"  - \"note an idea: …\" is `{pilot} idea \"<their words, as they said them>\"`: Claude chooses the repo as the CLI does (`--repo <name>` when they named one),");
         text.AppendLine("    and you never reword, expand or restructure what they said. Say the id it got, with its link.");
-        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan [--milestone <name>]`: the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
+        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan --milestone <name>` (or `--new-milestone <title> [--milestone-description <line>]`; with neither it only prints a proposal and plans nothing): the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
         text.AppendLine($"    (the repo's flight prefix and the same number); then `{pilot} flight plan <code>`. NEVER plan an idea on your own: only when the controller said to");
         text.AppendLine("    in so many words. When they only seem to want it, ask with an ask block whose choice names it in full: `Plan I381: <its title>`.");
         text.AppendLine($"  - \"fold I384 into PIL294\" is `{pilot} idea I384 fold PIL294`: the idea's text goes into PIL294's issue as a comment, then the idea is dropped as folded.");
@@ -812,7 +841,7 @@ public static class Briefs
         text.AppendLine($"  leg's check names through `{pilot} run`, commit the merge, `git push` (a plain push needs no one's leave; a force needs the rule below),");
         text.AppendLine($"  then `{pilot} flight review <code>`. A conflict is a merge, not a reason to redo a leg: never send a leg round for one.");
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
-        text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
+        text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
@@ -828,6 +857,8 @@ public static class Briefs
         text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
+        text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
+        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
