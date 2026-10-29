@@ -331,6 +331,13 @@ public interface IGitHub
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Whether <paramref name="branch"/> of the repo at <paramref name="repoPath"/> is open to a plain push: no branch protection
+    /// (<c>branches/{branch}</c>'s <c>protected</c>) and no ruleset rule applying to it (<c>rules/branches/{branch}</c> empty).
+    /// False when either is set or GitHub would not say: an unreadable answer counts as protected.
+    /// </summary>
+    Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -872,6 +879,32 @@ public sealed partial class GhCli : IGitHub
 
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    // Not kept: it is asked only when a merge batch would form, and a rule added since must stop the next batch's push.
+    public async Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/branches/{branch}", "--jq", ".protected"], repoPath, cancellationToken);
+        if (exit != 0 || !output.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var (rulesExit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return rulesExit == 0 && ParseNoRules(rules);
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: true only for an empty JSON array; any rule, or no JSON, is a rule.</summary>
+    internal static bool ParseNoRules(string rulesJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            return rules.RootElement is { ValueKind: JsonValueKind.Array } array && array.GetArrayLength() == 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     /// <summary><c>gh api repos/{owner}/{repo}</c>'s <c>default_branch</c>; null when it is no JSON or has none.</summary>
     internal static string? ParseDefaultBranch(string repoJson)

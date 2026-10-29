@@ -13,7 +13,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    // A PR head the node has tried to rebase: tried once, not every look.
+    // A PR head the node has tried to bring up to date (the base merged in): tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
     // A PR head whose failed checks were sent back as changes: once, not every look.
@@ -177,6 +177,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 state.PutFlight(now with { MergeQueue = said });
             }
+            if (queue is { State: "CLOSED" })
+            {
+                legs?.EndLeftQueue(flight.Code, $"#{number} was closed unmerged");
+            }
             if (queue is not { State: "OPEN" })
             {
                 continue;
@@ -186,6 +190,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 state.CloseCardsAbout(subject, "queued again", QueueDropped);
                 continue;
+            }
+            // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
+            if (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))
+            {
+                legs?.EndLeftQueue(flight.Code, $"GitHub took #{number} out of the merge queue unmerged: {(queue.RemovedReason is { Length: > 0 } removed ? removed : "no reason given")}");
             }
             // Its PR-ready card offers the merge already; a removal it has been carded for is not carded again.
             if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
@@ -488,8 +497,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>
     /// A merge armed on the flight whose PR GitHub no longer shows as waiting for it (<paramref name="merge"/> is anything but
     /// armed, checks running, or merged; a failed check is <see cref="MergeWhenGreenAsync"/>'s own path, and a node that polls also
-    /// merges a ready one itself): the arm is cleared, GitHub's auto-merge turned off where a rebase is due, and the card says
-    /// what GitHub says. Conflicts and behind are shown by the card loop, which rebases. True when the merge is no longer armed.
+    /// merges a ready one itself): the arm is cleared, GitHub's auto-merge turned off where an update is due, and the card says
+    /// what GitHub says. Conflicts and behind are shown by the card loop, which merges the base in. True when the merge is no longer armed.
     /// </summary>
     private async Task<bool> LeftArmedAsync(FlightRow flight, PullRequest pr, MergeState merge, bool native, CancellationToken cancellationToken)
     {
@@ -515,7 +524,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             catch (FlightException ex)
             {
-                // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's rebase refuses meanwhile.
+                // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's update refuses meanwhile.
                 await Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
                 if (legs is not null)
                 {
@@ -649,7 +658,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     await HandConflictOverAsync(flight.Code, why, cancellationToken);
                 }
-                // The rebase closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
+                // The update closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";

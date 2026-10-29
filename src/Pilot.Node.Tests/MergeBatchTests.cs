@@ -10,14 +10,18 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// Merge batches (pilot #395, merge-batch): with the setting on, a repo's ready queue entries are merged into one batch branch, pushed
-/// plainly, its CI awaited once, and landed together on green; a red batch, or a conflicting entry, falls back to one at a time.
+/// plainly, its CI awaited once, and landed together on green; a red batch, or a conflicting entry, falls back to one at a time. A batch
+/// forms only where the node may push the base itself: no merge queue, no branch protection or rule, every entry merged by merge.
 /// </summary>
 public sealed class MergeBatchTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private const string PrHead = "cafe0000aaaabbbbccccdddd";
-    private const string BatchHead = "ba7c0000aaaabbbbccccdddd";
+    private const string BatchHead = "ba7c0000aaaabbbbccccdddd0000111122223333";
+
+    // The first batch branch of the test node's batcher (machine de1, start s1).
+    private const string Batch1 = "pilot/batch/tianwen-de1-s1-1";
 
     // git as the batch sees it: every call recorded, a merge that conflicts and a push of the base that is refused as the test says.
     private sealed class BatchGit : IGit
@@ -29,6 +33,11 @@ public sealed class MergeBatchTests
 
         /// <summary>Whether the base takes a direct push of the batch head.</summary>
         public bool BaseTakesPush { get; set; } = true;
+
+        /// <summary>What <c>git rev-parse HEAD</c> answers in the batch, and whether it fails.</summary>
+        public string Head { get; set; } = BatchHead;
+
+        public bool HeadFails { get; set; }
 
         private int _merges;
 
@@ -45,14 +54,21 @@ public sealed class MergeBatchTests
             }
             if (args is ["push", "--quiet", "origin", var refspec] && refspec.EndsWith(":refs/heads/main", StringComparison.Ordinal) && !BaseTakesPush)
             {
-                return Task.FromResult(new GitRun(1, "", "remote: error: GH006: Protected branch update failed"));
+                return Task.FromResult(new GitRun(1, "", "! [rejected] main (fetch first)"));
             }
-            return Task.FromResult(new GitRun(0, args is ["rev-parse", "HEAD"] ? BatchHead : "", ""));
+            if (args is ["rev-parse", "HEAD"])
+            {
+                return Task.FromResult(HeadFails ? new GitRun(128, "", "fatal: not a git repository") : new GitRun(0, Head, ""));
+            }
+            return Task.FromResult(new GitRun(0, "", ""));
         }
     }
 
-    // A flight as the node keeps it: its base is the remote's branch (origin/main), as Planes.RemoteBaseAsync sets it.
-    private static FlightRow Flight(NodeHarness node, string code, int pr)
+    private static MergeBatcher Batcher(IGit git, IGitHub github, string machine = "de1") =>
+        new(git, github, machine) { Start = "s1", PollEvery = TimeSpan.FromMilliseconds(5), CiBudget = TimeSpan.FromMilliseconds(500) };
+
+    // A flight as the node keeps it: its base is the remote's branch (origin/main), as Planes.RemoteBaseAsync sets it, and its PR its own.
+    private static FlightRow Flight(NodeHarness node, string code, int pr, Func<FlightRow, FlightRow>? shape = null)
     {
         var row = new FlightRow
         {
@@ -60,14 +76,17 @@ public sealed class MergeBatchTests
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = pr, PullRequestUrl = $"https://github.com/x/tianwen/pull/{pr}",
             Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead },
         };
+        row = shape?.Invoke(row) ?? row;
         node.State.PutFlight(row);
         node.State.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
         node.GitHub.Pr = new PullRequest(pr, "OPEN", PrHead, row.PullRequestUrl!);
+        node.GitHub.PrOf[row.Branch] = node.GitHub.Pr;
         return row;
     }
 
-    private static Task<CommandResult> Merge(NodeHarness node, string code) =>
-        node.Client.SendAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead], Who = "tests" }, Ct).ContinueWith(t => t.Result.Response.ShouldNotBeNull(), Ct);
+    // A batch lands as merge commits, so its entries merge by merge unless a test says otherwise.
+    private static Task<CommandResult> Merge(NodeHarness node, string code, string method = "merge") =>
+        node.Client.SendAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead, method], Who = "tests" }, Ct).ContinueWith(t => t.Result.Response.ShouldNotBeNull(), Ct);
 
     private static MergeRow Entry(NodeHarness node, string code) => node.State.Merges().Single(m => m.Flight == code);
 
@@ -82,19 +101,19 @@ public sealed class MergeBatchTests
 
     // A node whose first merge (TIA9, alone) is held at GitHub, so the flights asked of next stand waiting in the queue together;
     // the returned release lets TIA9 go, and the entries behind it are taken. Each of them is asked by merge (the client's Merge by default).
+    // The base has no merge queue (a merge merges) and no protection, so a batch may form unless the test says otherwise.
     private static async Task<(NodeHarness Node, BatchGit Git, TaskCompletionSource Release, Task<CommandResult> Held, string[] Waiting)> QueueAsync(bool batch, string[] codes, string ci,
-        Func<NodeHarness, string, Task<CommandResult>>? merge = null)
+        Func<NodeHarness, string, Task<CommandResult>>? merge = null, Func<FlightRow, FlightRow>? shape = null, string method = "merge")
     {
         var node = await NodeHarness.StartAsync(Ct);
         var git = new BatchGit();
         var legs = node.App.Services.GetRequiredService<LegCommander>();
-        legs.Batcher = new MergeBatcher(git, node.GitHub) { PollEvery = TimeSpan.FromMilliseconds(5), CiBudget = TimeSpan.FromMilliseconds(500) };
+        legs.Batcher = Batcher(git, node.GitHub);
         if (batch)
         {
             node.App.Services.GetRequiredService<RoleModels>().Apply(new NodeSettings { MergeBatch = true });
         }
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        node.GitHub.Queues = true;
         node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", ci, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -108,16 +127,16 @@ public sealed class MergeBatchTests
             }
         };
         Flight(node, "TIA9", 9);
-        var held = Merge(node, "TIA9");
+        var held = Merge(node, "TIA9", method);
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
         var number = 10;
         foreach (var code in codes)
         {
-            Flight(node, code, number++);
+            Flight(node, code, number++, shape);
         }
         foreach (var code in codes)
         {
-            _ = (merge ?? Merge)(node, code);
+            _ = (merge ?? ((on, c) => Merge(on, c, method)))(node, code);
             await Until(() => node.State.Merges().Any(m => m.Flight == code), $"{code} joined the queue");
         }
         return (node, git, release, held, codes);
@@ -137,6 +156,7 @@ public sealed class MergeBatchTests
 
         node.GitHub.Merged.Count.ShouldBe(3);
         git.Calls.ShouldBeEmpty();
+        node.GitHub.ProtectionAsked.ShouldBeEmpty();
         waiting.All(code => Entry(node, code).State is MergeEntryState.Merging or MergeEntryState.Merged).ShouldBeTrue();
     }
 
@@ -152,17 +172,91 @@ public sealed class MergeBatchTests
 
         // Only TIA9 (alone) went through GitHub's merge: the batch's two PRs landed with the base's push.
         node.GitHub.Merged.ShouldHaveSingleItem().Number.ShouldBe(9);
+        // The base was asked whether it takes the node's push before anything was built.
+        node.GitHub.ProtectionAsked.ShouldBe(["main"]);
         // The flights' base is origin/main: the batch starts from it, its draft PR goes into main and the base pushed is main.
-        git.Calls.ShouldContain(c => c.StartsWith("worktree add -B pilot/batch/tianwen-1 ", StringComparison.Ordinal) && c.EndsWith(" origin/main", StringComparison.Ordinal));
+        git.Calls.ShouldContain(c => c.StartsWith($"worktree add -B {Batch1} ", StringComparison.Ordinal) && c.EndsWith(" origin/main", StringComparison.Ordinal));
         git.Calls.ShouldNotContain(c => c.Contains("origin/origin/", StringComparison.Ordinal) || c.Contains("refs/heads/origin/", StringComparison.Ordinal));
         git.Calls.Count(c => c.StartsWith("merge --no-edit ", StringComparison.Ordinal)).ShouldBe(2);
-        git.Calls.ShouldContain("push --quiet origin pilot/batch/tianwen-1");
+        git.Calls.ShouldContain($"push --quiet origin {Batch1}");
         git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
         git.Calls.ShouldNotContain(c => c.StartsWith("push", StringComparison.Ordinal) && c.Contains("--force", StringComparison.Ordinal) || c.StartsWith("rebase", StringComparison.Ordinal));
-        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        // Its own branch is deleted once, at the end, after it was pushed: never a delete ahead of the push.
+        git.Calls.Count(c => c.Contains("--delete", StringComparison.Ordinal)).ShouldBe(1);
+        git.Calls.IndexOf($"push --quiet origin --delete {Batch1}").ShouldBeGreaterThan(git.Calls.IndexOf($"push --quiet origin {Batch1}"));
         // A pushed branch starts no CI here (the workflow runs on a pull_request to main): a draft PR does, and is closed again.
-        node.GitHub.Drafts.ShouldHaveSingleItem().ShouldBe((901, "pilot/batch/tianwen-1", "main", "pilot merge batch: #10, #11"));
+        node.GitHub.Drafts.ShouldHaveSingleItem().ShouldBe((901, Batch1, "main", "pilot merge batch: #10, #11"));
         node.GitHub.ClosedPrs.ShouldBe([901]);
+    }
+
+    [Theory]
+    [InlineData("queue")]
+    [InlineData("protected")]
+    [InlineData("rebase")]
+    [InlineData("squash")]
+    public async Task NoBatchFormsWhereTheNodeMayNotPushTheBaseAndEachEntryMergesOnItsOwn(string why)
+    {
+        // A merge queue base lands through GitHub's queue (its own batching is the ruleset's group size); a protected base is never
+        // pushed to by the node; and a batch lands as merge commits, which a rebase or squash merge is not.
+        var method = why is "rebase" or "squash" ? why : "merge";
+        var (node, git, release, held, waiting) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success", method: method);
+        await using var disposing = node;
+        if (why == "queue")
+        {
+            node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: false);
+            node.GitHub.Queues = true;
+        }
+        if (why == "protected")
+        {
+            node.GitHub.ProtectedBranches.Add("main");
+        }
+
+        release.TrySetResult();
+        await held;
+        await Until(() => node.GitHub.Merged.Count == 3 && waiting.All(code => Entry(node, code).State is MergeEntryState.Merging or MergeEntryState.Merged), "every PR merged one at a time");
+
+        git.Calls.ShouldBeEmpty();
+        node.GitHub.Drafts.ShouldBeEmpty();
+        node.GitHub.Merged.ShouldAllBe(m => m.Method == method);
+        // GitHub is asked about the base only once a batch could form: never for a method a batch does not land by.
+        node.GitHub.ProtectionAsked.ShouldBe(why == "protected" ? ["main"] : []);
+    }
+
+    [Theory]
+    [InlineData("changes")]
+    [InlineData("base")]
+    public async Task AnEntryWithChangesRequestedOrIntoAnotherBaseIsLeftOutOfTheBatch(string odd)
+    {
+        // TIA2 (#11) has changes requested on GitHub, or goes into release rather than main: a single merge would refuse the one,
+        // and the other is not the leader's base. TIA1 and TIA3 batch; TIA2 goes on by itself.
+        var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2", "TIA3"], "success",
+            shape: odd == "base" ? f => f.Code == "TIA2" ? f with { Base = "origin/release" } : f : null);
+        await using var disposing = node;
+        if (odd == "changes")
+        {
+            node.GitHub.MergeOf[11] = new MergeState(MergeKinds.ChangesRequested);
+        }
+
+        release.TrySetResult();
+        await held;
+        await Until(() => Entry(node, "TIA2").State is MergeEntryState.Dropped or MergeEntryState.Merging
+            && Entry(node, "TIA1").State == MergeEntryState.Merging && Entry(node, "TIA3").State == MergeEntryState.Merging, "TIA1 and TIA3 landed with the batch, TIA2 on its own");
+
+        node.GitHub.Drafts.ShouldHaveSingleItem().Title.ShouldBe("pilot merge batch: #10, #12");
+        git.Calls.Count(c => c.StartsWith("merge --no-edit ", StringComparison.Ordinal)).ShouldBe(2);
+        git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
+        git.Calls.ShouldNotContain(c => c.Contains("refs/heads/release", StringComparison.Ordinal));
+        if (odd == "changes")
+        {
+            Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Dropped);
+            Entry(node, "TIA2").Why.ShouldNotBeNull().ShouldContain("changes requested");
+            node.GitHub.Merged.ShouldNotContain(m => m.Number == 11);
+        }
+        else
+        {
+            Entry(node, "TIA2").State.ShouldBe(MergeEntryState.Merging);
+            node.GitHub.Merged.ShouldContain(m => m.Number == 11);
+        }
     }
 
     [Fact]
@@ -185,7 +279,7 @@ public sealed class MergeBatchTests
         clock.Elapsed.ShouldBeLessThan(batcher.CiBudget);
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
         node.GitHub.ClosedPrs.ShouldBe([901]);
-        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        git.Calls.ShouldContain($"push --quiet origin --delete {Batch1}");
         node.State.Merges().Where(m => m.Flight is "TIA1" or "TIA2").ShouldAllBe(m => m.State == MergeEntryState.Merging || m.State == MergeEntryState.Merged);
     }
 
@@ -202,6 +296,70 @@ public sealed class MergeBatchTests
         result.Why.ShouldNotBeNull().ShouldContain("never started");
         github.ClosedPrs.ShouldBe([901]);
     }
+
+    [Theory]
+    [InlineData(true, "")]
+    [InlineData(false, "")]
+    [InlineData(false, "ba7c0000")]
+    [InlineData(false, "not a sha at all, but forty characters!!")]
+    public async Task ABatchHeadThatIsNoWholeCommitIdIsRedAndPushesNothing(bool fails, string answer)
+    {
+        // An empty head would make the base's push "<nothing>:refs/heads/main", a delete of main: nothing is pushed at all.
+        var git = new BatchGit { Head = answer, HeadFails = fails };
+        var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
+
+        var result = await Batcher(git, github).RunAsync("tianwen", "repo", "main", [new BatchEntry("TIA1", 10, "aaaa"), new BatchEntry("TIA2", 11, "bbbb")], Ct);
+
+        (result.Green, result.Landed).ShouldBe((false, false));
+        result.Why.ShouldNotBeNull().ShouldContain("batch head");
+        git.Calls.ShouldNotContain(c => c.StartsWith("push", StringComparison.Ordinal));
+        github.Drafts.ShouldBeEmpty();
+        // What it made locally is gone again.
+        git.Calls.ShouldContain($"branch -D {Batch1}");
+    }
+
+    [Fact]
+    public async Task TwoNodesAndTwoStartsOfOneNodeNeverMakeOrDeleteEachOthersBatchBranch()
+    {
+        var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
+        github.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "pull_request", DateTimeOffset.UtcNow)];
+        BatchEntry[] entries = [new("TIA1", 10, "aaaa"), new("TIA2", 11, "bbbb")];
+        // DE1 and SE1 of one fleet, and DE1 again after a restart: a new start, so a new part of the name.
+        var gits = new[] { new BatchGit(), new BatchGit(), new BatchGit() };
+        var batchers = new[]
+        {
+            new MergeBatcher(gits[0], github, "DE1") { PollEvery = TimeSpan.FromMilliseconds(5) },
+            new MergeBatcher(gits[1], github, "se1") { PollEvery = TimeSpan.FromMilliseconds(5) },
+            new MergeBatcher(gits[2], github, "de1") { PollEvery = TimeSpan.FromMilliseconds(5) },
+        };
+
+        var branches = new List<string>();
+        foreach (var batcher in batchers)
+        {
+            branches.Add((await batcher.RunAsync("tianwen", "repo", "main", entries, Ct)).Branch);
+        }
+
+        branches.Distinct().Count().ShouldBe(3);
+        branches[0].ShouldStartWith("pilot/batch/tianwen-de1-");
+        branches[1].ShouldStartWith("pilot/batch/tianwen-se1-");
+        branches[2].ShouldStartWith("pilot/batch/tianwen-de1-");
+        for (var i = 0; i < gits.Length; i++)
+        {
+            // Every git call of a batcher that names a batch branch names its own, and it deletes only that one, once it pushed it.
+            gits[i].Calls.Where(c => c.Contains("pilot/batch/", StringComparison.Ordinal)).ShouldAllBe(c => c.Contains(branches[i], StringComparison.Ordinal));
+            gits[i].Calls.Where(c => c.Contains("--delete", StringComparison.Ordinal)).ShouldBe([$"push --quiet origin --delete {branches[i]}"]);
+        }
+    }
+
+    [Theory]
+    [InlineData("[]", true)]
+    [InlineData("[]\n", true)]
+    [InlineData("[{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"REBASE\"}}]", false)]
+    [InlineData("[{\"type\":\"deletion\"}]", false)]
+    [InlineData("{\"message\":\"Not Found\"}", false)]
+    [InlineData("", false)]
+    public void GhCliCountsABaseWithAnyRuleOrNoAnswerAsProtected(string rules, bool open) =>
+        GhCli.ParseNoRules(rules).ShouldBe(open);
 
     [Fact]
     public async Task AMergeAskedWhileABatchWaitsOnItsCiWaitsForTheBatchToEnd()
@@ -226,8 +384,9 @@ public sealed class MergeBatchTests
     }
 
     [Fact]
-    public async Task ABaseThatTakesNoDirectPushMergesEachPrOfAGreenBatchOnItsOwn()
+    public async Task AGreenBatchWhoseBasePushIsRefusedMergesEachPrOnItsOwn()
     {
+        // The base moved while the batch's CI ran: the push of the batch head is no fast-forward, and nothing landed.
         var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
         await using var disposing = node;
         git.BaseTakesPush = false;
@@ -250,8 +409,8 @@ public sealed class MergeBatchTests
         await Until(() => node.GitHub.Merged.Count == 3, "every PR merged one at a time");
 
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
-        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
-        git.Calls.ShouldContain("branch -D pilot/batch/tianwen-1");
+        git.Calls.ShouldContain($"push --quiet origin --delete {Batch1}");
+        git.Calls.ShouldContain($"branch -D {Batch1}");
     }
 
     [Fact]
@@ -261,10 +420,9 @@ public sealed class MergeBatchTests
         await using var disposing = node;
         var git = new BatchGit { ConflictingMerge = 2 };
         var legs = node.App.Services.GetRequiredService<LegCommander>();
-        legs.Batcher = new MergeBatcher(git, node.GitHub) { PollEvery = TimeSpan.FromMilliseconds(5), CiBudget = TimeSpan.FromMilliseconds(500) };
+        legs.Batcher = Batcher(git, node.GitHub);
         node.App.Services.GetRequiredService<RoleModels>().Apply(new NodeSettings { MergeBatch = true });
         node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        node.GitHub.Queues = true;
         node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "completed", "success", "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -294,6 +452,7 @@ public sealed class MergeBatchTests
         // The batch holds TIA1 and TIA3; TIA2's merge conflicted and was aborted, and it was merged as a single entry.
         git.Calls.ShouldContain("merge --abort");
         git.Calls.ShouldContain($"push --quiet origin {BatchHead}:refs/heads/main");
+        node.GitHub.Merged.Select(m => m.Number).ShouldBe([9, 11], ignoreOrder: true);
     }
 
     [Fact]
@@ -326,7 +485,7 @@ public sealed class MergeBatchTests
             }
             Git(repo, "checkout", "-q", "main");
             var github = new FakeGitHub { Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1) };
-            var batcher = new MergeBatcher(new GitCli(), github) { PollEvery = TimeSpan.FromMilliseconds(5) };
+            var batcher = new MergeBatcher(new GitCli(), github, "de1") { Start = "s1", PollEvery = TimeSpan.FromMilliseconds(5) };
 
             var result = await batcher.RunAsync("tianwen", repo, "main", [new BatchEntry("TIA1", 10, heads[0]), new BatchEntry("TIA2", 11, heads[1])], Ct);
 
@@ -338,7 +497,7 @@ public sealed class MergeBatchTests
             {
                 Git(remote, "merge-base", "--is-ancestor", head, main);
             }
-            github.Drafts.ShouldHaveSingleItem().ShouldBe((901, "pilot/batch/tianwen-1", "main", "pilot merge batch: #10, #11"));
+            github.Drafts.ShouldHaveSingleItem().ShouldBe((901, Batch1, "main", "pilot merge batch: #10, #11"));
             github.ClosedPrs.ShouldBe([901]);
             // The batch is gone again: no remote or local branch of it, no worktree, and no branch named for the remote.
             Git(remote, "branch", "--list", "pilot/batch/*").ShouldBeEmpty();
@@ -363,7 +522,7 @@ public sealed class MergeBatchTests
         using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         Task<CommandResult>? leader = null;
         var (node, git, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2", "TIA3"], "success", (on, code) => code != "TIA1" ? Merge(on, code)
-            : (leader = on.App.Services.GetRequiredService<LegCommander>().RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead], Who = "tests" }, giveUp.Token)));
+            : (leader = on.App.Services.GetRequiredService<LegCommander>().RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [PrHead, "merge"], Who = "tests" }, giveUp.Token)));
         await using var disposing = node;
         node.GitHub.Runs[BatchHead] = [new WorkflowRun(1, "CI", "in_progress", null, "https://github.com/x/tianwen/actions/runs/1", "push", DateTimeOffset.UtcNow)];
         node.App.Services.GetRequiredService<LegCommander>().Batcher.CiBudget = TimeSpan.FromHours(1);
@@ -380,7 +539,7 @@ public sealed class MergeBatchTests
         Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Dropped);
         Entry(node, "TIA1").Why.ShouldNotBeNull().ShouldContain("given up");
         git.Calls.ShouldNotContain(c => c.EndsWith(":refs/heads/main", StringComparison.Ordinal));
-        git.Calls.ShouldContain("push --quiet origin --delete pilot/batch/tianwen-1");
+        git.Calls.ShouldContain($"push --quiet origin --delete {Batch1}");
         node.GitHub.ClosedPrs.ShouldBe([901]);
     }
 
@@ -404,10 +563,10 @@ public sealed class MergeBatchTests
         };
         // TIA9's merge holds tianwen's turn (as a batch holds it through its CI).
         Flight(node, "TIA9", 9);
-        var held = Merge(node, "TIA9");
+        var held = Merge(node, "TIA9", "rebase");
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
         // TIA2 waits in the queue for a review that has now passed at its head; TIA1's merge was armed while its checks ran, and they
-        // are green now. TIA1 is made last, so the PR GitHub shows is its own.
+        // are green now.
         Flight(node, "TIA2", 11);
         node.State.PutMerge(new MergeRow
         {
@@ -453,7 +612,7 @@ public sealed class MergeBatchTests
     {
         var row = new MergeRow
         {
-            Flight = "TIA1", Repo = "tianwen", Pr = 10, Head = PrHead, Method = "rebase", State = MergeEntryState.Batched, Why = "in a batch of 2 PRs: its CI runs once for them",
+            Flight = "TIA1", Repo = "tianwen", Pr = 10, Head = PrHead, Method = "merge", State = MergeEntryState.Batched, Why = "in a batch of 2 PRs: its CI runs once for them",
             Place = 1, AddedAt = DateTimeOffset.UtcNow,
         };
 

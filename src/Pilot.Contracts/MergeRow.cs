@@ -74,7 +74,7 @@ public enum MergeEntryState
     [JsonStringEnumMemberName("checks")]
     Checks,
 
-    /// <summary>Part of a batch branch (<c>pilot/batch/repo-n</c>) whose CI runs once for it and its fellows; the why names the batch.</summary>
+    /// <summary>Part of a batch branch (<c>pilot/batch/repo-machine-start-n</c>) whose CI runs once for it and its fellows; the why names the batch.</summary>
     [JsonStringEnumMemberName("batched")]
     Batched,
 

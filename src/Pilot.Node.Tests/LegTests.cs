@@ -367,6 +367,9 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }
 
+    /// <summary>One branch's PR, by branch, over <see cref="Pr"/>: flights whose PRs are told apart.</summary>
+    public Dictionary<string, PullRequest> PrOf { get; } = new(StringComparer.Ordinal);
+
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -375,7 +378,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
     }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
@@ -419,6 +422,21 @@ internal sealed class FakeGitHub : IGitHub
     public List<int> AutoMergeDisarmed { get; } = [];
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
+
+    /// <summary>Base branches GitHub protects (branch protection or a ruleset rule), by name; any other is open to a plain push.</summary>
+    public HashSet<string> ProtectedBranches { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Every branch whose protection was asked, in order.</summary>
+    public List<string> ProtectionAsked { get; } = [];
+
+    public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        lock (ProtectionAsked)
+        {
+            ProtectionAsked.Add(branch);
+        }
+        return Task.FromResult(!ProtectedBranches.Contains(branch));
+    }
 
     /// <summary>
     /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;
@@ -476,8 +494,15 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What MergeStateAsync answers for any PR; null to derive it from <see cref="Summary"/>/<see cref="Checks"/> and <see cref="Queue"/> as GitHub would say it, none with no checks.</summary>
     public MergeState? Merge { get; set; }
 
+    /// <summary>What MergeStateAsync answers for one PR, by number, over <see cref="Merge"/>.</summary>
+    public Dictionary<int, MergeState?> MergeOf { get; } = [];
+
     public Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
+        if (MergeOf.TryGetValue(number, out var own))
+        {
+            return Task.FromResult(own);
+        }
         if (Merge is not null)
         {
             return Task.FromResult<MergeState?>(Merge);

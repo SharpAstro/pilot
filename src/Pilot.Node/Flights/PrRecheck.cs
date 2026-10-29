@@ -294,7 +294,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
     /// <summary>
     /// A recheck on a PR with a flight of this node's, GitHub read afresh and one thing done, in this order: a conflict or a PR
-    /// behind its base is rebased as the queue-conflict path does, red checks on a passed review send it back as changes, a head
+    /// behind its base has the base merged in as the queue-conflict path does, red checks on a passed review send it back as changes, a head
     /// the review never read is reviewed, and a passed, green, clean one goes to the merge by the usual rule. The explicit ask
     /// bypasses <see cref="PrChecks"/>' once-a-head sets, which it leaves as they are.
     /// </summary>
@@ -398,8 +398,8 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
     /// <summary>
     /// A recheck on a PR this node reviewed with <c>review-pr</c>, GitHub read afresh, in this order: a PR no longer open loses
     /// the label; one in the merge queue is left there; a head other than the review's is reviewed afresh; a conflict (or a PR
-    /// behind its base) on the controller's own branch (author the gh login, in the base repo) is rebased and reviewed afresh, and
-    /// on anyone's else, or one whose rebase conflicts, is a For-you card (a flight's own branch is the flight path's);
+    /// behind its base) on the controller's own branch (author the gh login, in the base repo) has the base merged in and is reviewed
+    /// afresh, and on anyone's else, or one whose merge of the base conflicts, is a For-you card (a flight's own branch is the flight path's);
     /// a passed, green one goes to the merge queue by <see cref="PrReviews.QueueWhenGreenAsync"/>'s rule.
     /// </summary>
     private async Task<Outcome> ForReviewedAsync(Entry entry, PrReviewRow review, PullRequest pr, CancellationToken cancellationToken)

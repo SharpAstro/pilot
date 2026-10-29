@@ -141,11 +141,51 @@ public sealed class MergesTests
         node.GitHub.Queues = true;
         (await Merge(node, "TIA1", by: "node")).Error.ShouldBeNull();
 
-        // One entry per flight: the same row, at its place, now merging.
+        // One entry per flight: the same row, at its place, now merging, and still the person's merge though the node asked it again.
         var merging = Entry(node, "TIA1");
         merging.State.ShouldBe(MergeEntryState.Merging);
         merging.AddedAt.ShouldBe(waiting.AddedAt);
+        merging.By.ShouldBe(MergeBy.Hand);
         node.GitHub.Merged.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("closed")]
+    public async Task AMergingEntryEndsWithItsWhyWhenGitHubsQueueLetsItsPrGoUnmergedAndTheReposLaterEntriesMoveUp(string how)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Flight(node, "TIA1");
+        Flight(node, "TIA2", review: ReviewState.Reviewing);
+        var at = DateTimeOffset.UtcNow;
+        // TIA1 was handed to GitHub's merge queue and its command has ended; TIA2 stands behind it, waiting for its review.
+        node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Merging, Why = LegCommander.QueuedLine("TIA1"), AddedAt = at });
+        node.State.PutMerge(new MergeRow { Flight = "TIA2", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Checks, AwaitsReview = true, AddedAt = at.AddSeconds(1) });
+        node.State.Renumber("tianwen");
+        Entry(node, "TIA2").Place.ShouldBe(2);
+        node.GitHub.Queue = how == "closed"
+            ? new MergeQueueState("CLOSED", PrHead, Queued: false)
+            : new MergeQueueState("OPEN", PrHead, Queued: false, RemovedAt: at.AddMinutes(1), RemovedReason: "a required check failed");
+
+        await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
+
+        var left = Entry(node, "TIA1");
+        (left.State, left.Place).ShouldBe((MergeEntryState.Dropped, null));
+        left.Why.ShouldNotBeNull().ShouldContain(how == "closed" ? "closed unmerged" : "out of the merge queue unmerged: a required check failed");
+        (Entry(node, "TIA2").State, Entry(node, "TIA2").Place).ShouldBe((MergeEntryState.Checks, 1));
+    }
+
+    [Fact]
+    public async Task AMergingEntryStillInGitHubsQueueStays()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Flight(node, "TIA1");
+        node.State.PutMerge(new MergeRow { Flight = "TIA1", Repo = "tianwen", Pr = 63, Head = PrHead, Method = "rebase", State = MergeEntryState.Merging, AddedAt = DateTimeOffset.UtcNow });
+        node.GitHub.Queue = new MergeQueueState("OPEN", PrHead, Queued: true, Position: 2);
+
+        await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
+
+        Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Merging);
     }
 
     [Fact]
