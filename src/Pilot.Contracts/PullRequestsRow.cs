@@ -222,9 +222,10 @@ public sealed record PullRequestsRow
     public bool IsMine(PullRequestRow pr) => Viewer is { Length: > 0 } viewer ? string.Equals(pr.Author, viewer, StringComparison.OrdinalIgnoreCase) : pr.Flight is null;
 
     /// <summary>
-    /// The PRs grouped by repo (or only those that need the person, with <paramref name="needsMeOnly"/>), the repo with the PR that
-    /// most needs the person first (ties: the most recently updated, then by name), each repo's PRs by the same rule, so the order
-    /// is the same in every client. A repo with no PR to show is not listed.
+    /// The PRs grouped by repo (or only those that need the person, with <paramref name="needsMeOnly"/>), the repos by name so a
+    /// group never moves when a PR's state changes or a refresh comes in (the owner, 2026-10-29), each repo's PRs the one that most
+    /// needs the person first (ties: the most recently updated, then by number), so the order is the same in every client. A repo
+    /// with no PR to show is not listed.
     /// </summary>
     public PullRequestGroup[] Groups(bool needsMeOnly = false) =>
     [
@@ -232,16 +233,14 @@ public sealed record PullRequestsRow
             .Where(p => !needsMeOnly || p.NeedsMe)
             .GroupBy(p => p.Repo, StringComparer.OrdinalIgnoreCase)
             .Select(g => new PullRequestGroup(g.First().Repo, [.. g.OrderBy(p => PullRequestStates.Rank(p.Kind)).ThenByDescending(p => p.UpdatedAt).ThenBy(p => p.Number)]))
-            .OrderBy(g => g.PullRequests.Min(p => PullRequestStates.Rank(p.Kind)))
-            .ThenByDescending(g => g.PullRequests.Max(p => p.UpdatedAt))
-            .ThenBy(g => g.Repo, StringComparer.OrdinalIgnoreCase),
+            .OrderBy(g => g.Repo, StringComparer.OrdinalIgnoreCase),
     ];
 
     private static string OwnerOf(string repo) => repo.IndexOf('/') is >= 0 and var slash ? repo[..slash] : repo;
 
     /// <summary>
-    /// <see cref="Groups"/> grouped once more by org (the repo's owner, however GitHub cases it), the org with the PR that most
-    /// needs the person first (ties: the most recently updated, then by name), its repos in <see cref="Groups"/>' order. The counts
+    /// <see cref="Groups"/> grouped once more by org (the repo's owner, however GitHub cases it), the orgs by name, so an org
+    /// never moves when a PR's state changes, its repos in <see cref="Groups"/>' order. The counts
     /// are of all the org's PRs, as <see cref="Summary"/>'s are of all of them, whatever <paramref name="needsMeOnly"/> shows
     /// below. An org of <see cref="Orgs"/> with no PR (any, or with <paramref name="needsMeOnly"/> none that needs the person) is
     /// listed after those with PRs, by name, unless <paramref name="needsMeOnly"/> asks only for what needs the person: then only
@@ -266,10 +265,7 @@ public sealed record PullRequestsRow
             errors.TryGetValue(key, out var error) ? error : null,
             shown.TryGetValue(key, out var repos) ? repos : []);
 
-        var withPrs = shown.Keys
-            .OrderBy(k => shown[k].Min(g => g.PullRequests.Min(p => PullRequestStates.Rank(p.Kind))))
-            .ThenByDescending(k => shown[k].Max(g => g.PullRequests.Max(p => p.UpdatedAt)))
-            .ThenBy(k => names[k], StringComparer.OrdinalIgnoreCase);
+        var withPrs = shown.Keys.OrderBy(k => names[k], StringComparer.OrdinalIgnoreCase);
         var without = names.Keys
             .Where(k => !shown.ContainsKey(k) && (!needsMeOnly || errors.ContainsKey(k)))
             .OrderBy(k => names[k], StringComparer.OrdinalIgnoreCase);

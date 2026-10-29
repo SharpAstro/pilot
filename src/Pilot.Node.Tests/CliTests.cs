@@ -759,8 +759,8 @@ public sealed class CliTests : IAsyncLifetime
         plain.ShouldContain("updated 400d ago");
         // The org that could not be read says so under its own line, with its PRs of the last read.
         plain.ShouldContain("sebgod  1 open · 1 conflicts\n  ! gh offline\n  sebgod/mercury  1\n");
-        // The org (then repo) with the PR that most needs the person first: SharpAstro has the ready one.
-        new[] { "SharpAstro  2 open", "SharpAstro/pilot  1", "SharpAstro/tianwen  1", "sebgod  1 open", "sebgod/mercury  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
+        // The orgs, then their repos, by name, so a group never moves when a PR's state changes.
+        new[] { "sebgod  1 open", "sebgod/mercury  1", "SharpAstro  2 open", "SharpAstro/pilot  1", "SharpAstro/tianwen  1" }.Select(l => plain.IndexOf(l, StringComparison.Ordinal)).ShouldBeInOrder();
 
         var needsMe = PullRequestsMarkdown.Plain(row, needsMe: true, now).ReplaceLineEndings("\n");
         needsMe.ShouldNotContain("tianwen");
