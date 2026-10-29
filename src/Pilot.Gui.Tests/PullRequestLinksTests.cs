@@ -532,7 +532,10 @@ public sealed class PullRequestLinksTests
         chrome.Show(PilotPage.PullRequests);
         Draw(chrome, flights, null, screen);
         var pr = screen.Row!.PullRequests.Single(p => p.Number == 252);
-        chrome.PullRequests.Select(chrome.PullRequests.Rows.ToList().FindIndex(r => r.Url == pr.Url));
+        // Revealed, so the list scrolls to it: SharpAstro's repos come after sebgod's filler ones by name.
+        chrome.PullRequests.Reveal(pr.Repo, pr.Number);
+        Draw(chrome, flights, null, screen);
+        Draw(chrome, flights, null, screen);
 
         Click(chrome.PullRequests, $"pr:{pr.Url}:flight");
         chrome.Page.ShouldBe(PilotPage.Flights);
