@@ -109,52 +109,123 @@ public sealed class LfsTests : IDisposable
         MakeRepoWithLfs();
         Git(Main, "lfs", "pull");
         var git = new GitCli();
-
-        // An LFS server that records every request it gets (lock verification, batch), so a skipped check shows as silence.
-        var port = FreePort();
-        var prefix = $"http://127.0.0.1:{port}/";
-        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
-        using var listener = new System.Net.HttpListener();
-        listener.Prefixes.Add(prefix);
-        listener.Start();
-        using var stop = new CancellationTokenSource();
-        var serving = Task.Run(async () =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                System.Net.HttpListenerContext context;
-                try
-                {
-                    context = await listener.GetContextAsync();
-                }
-                catch (Exception ex) when (ex is System.Net.HttpListenerException or ObjectDisposedException or InvalidOperationException)
-                {
-                    return;
-                }
-                seen.Enqueue($"{context.Request.HttpMethod} {context.Request.Url!.AbsolutePath}");
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-            }
-        }, TestContext.Current.CancellationToken);
-        Git(Main, "config", "lfs.url", prefix + "lfs");
+        await using var server = new LfsServer();
+        Git(Main, "config", "lfs.url", server.Url);
 
         File.WriteAllText(Path.Combine(Main, "note.txt"), "plain\n");
         Git(Main, "add", ".");
         Git(Main, "commit", "-m", "plain");
         var plain = await git.RunAsync(["push", "origin", "HEAD:refs/heads/plain"], Main, CancellationToken.None);
         plain.Ok.ShouldBeTrue(plain.Error);
-        seen.ShouldBeEmpty("a push that changes no LFS file never asks the LFS server anything");
+        server.Seen.ShouldBeEmpty("a push that changes no LFS file never asks the LFS server anything");
 
         File.WriteAllText(Path.Combine(Main, "big.bin"), "changed large content\n");
         Git(Main, "add", ".");
         Git(Main, "commit", "-m", "lfs change");
         var lfs = await git.RunAsync(["push", "origin", "HEAD:refs/heads/lfs"], Main, CancellationToken.None);
-        seen.ShouldNotBeEmpty("a push that changes an LFS file keeps the upload check, which asks the server");
+        server.Seen.ShouldNotBeEmpty("a push that changes an LFS file keeps the upload check, which asks the server");
         lfs.Ok.ShouldBeFalse("the server answers 500, so the upload fails the push");
+    }
 
-        await stop.CancelAsync();
-        listener.Close();
-        await serving;
+    [Fact]
+    public async Task APushOfAMergeWhoseResolutionChangesAnLfsFileKeepsThePrePushUpload()
+    {
+        Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
+        MakeRepoWithLfs();
+        Git(Main, "lfs", "pull");
+
+        // Both sides change big.bin and reach the remote (with its real LFS store); only the merge is left to push.
+        Git(Main, "checkout", "-b", "side");
+        File.WriteAllText(Path.Combine(Main, "big.bin"), "side content\n");
+        Git(Main, "commit", "-am", "side");
+        Git(Main, "push", "origin", "side");
+        Git(Main, "checkout", "main");
+        File.WriteAllText(Path.Combine(Main, "big.bin"), "main content\n");
+        Git(Main, "commit", "-am", "main");
+        Git(Main, "push", "origin", "main");
+        Run(Main, "merge", "side").Code.ShouldNotBe(0, "both sides changed big.bin, so the merge stops on a conflict");
+        File.WriteAllText(Path.Combine(Main, "big.bin"), "resolved content\n");
+        Git(Main, "add", "big.bin");
+        Git(Main, "commit", "--no-edit");
+
+        await using var server = new LfsServer();
+        Git(Main, "config", "lfs.url", server.Url);
+        var push = await new GitCli().RunAsync(["push", "origin", "HEAD:refs/heads/merged"], Main, CancellationToken.None);
+
+        server.Seen.ShouldNotBeEmpty("the merge's resolution is a new LFS object, so the upload check runs and asks the server");
+        push.Ok.ShouldBeFalse("the server answers 500, so the upload fails the push");
+    }
+
+    [Fact]
+    public async Task ASyncOfTheMainCheckoutFillsItsLfsFilesWithTheirContent()
+    {
+        Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
+        MakeRepoWithLfs();
+        Git(Main, "lfs", "pull");
+
+        // origin/main is one commit ahead, a change to big.bin whose object only the remote's LFS store holds.
+        File.WriteAllText(Path.Combine(Main, "big.bin"), "newer large content\n");
+        Git(Main, "commit", "-am", "newer");
+        Git(Main, "push", "origin", "HEAD:main");
+        Git(Main, "reset", "--hard", "HEAD~1");
+        Directory.Delete(Path.Combine(Main, ".git", "lfs", "objects"), recursive: true);
+        Git(Main, "status", "--porcelain").ShouldBeEmpty();
+
+        var git = new GitCli();
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var watch = new RepoWatch(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), new Planes(git), new FakeGitHub(), TimeProvider.System);
+        var sync = new RepoSync(git, new Planes(git), watch);
+
+        var outcome = await sync.SyncOneAsync("main", Main, TestContext.Current.CancellationToken);
+
+        outcome.Status.ShouldBe(RepoSyncStatus.Updated, outcome.Detail);
+        File.ReadAllText(Path.Combine(Main, "big.bin")).ShouldBe("newer large content\n");
+    }
+
+    /// <summary>An LFS server that records every request it gets (lock verification, batch) and fails each, so a skipped check shows as silence.</summary>
+    private sealed class LfsServer : IAsyncDisposable
+    {
+        private readonly System.Net.HttpListener _listener = new();
+        private readonly CancellationTokenSource _stop = new();
+        private readonly Task _serving;
+
+        public System.Collections.Concurrent.ConcurrentQueue<string> Seen { get; } = new();
+
+        public string Url { get; }
+
+        public LfsServer()
+        {
+            var prefix = $"http://127.0.0.1:{FreePort()}/";
+            Url = prefix + "lfs";
+            _listener.Prefixes.Add(prefix);
+            _listener.Start();
+            _serving = Task.Run(async () =>
+            {
+                while (!_stop.IsCancellationRequested)
+                {
+                    System.Net.HttpListenerContext context;
+                    try
+                    {
+                        context = await _listener.GetContextAsync();
+                    }
+                    catch (Exception ex) when (ex is System.Net.HttpListenerException or ObjectDisposedException or InvalidOperationException)
+                    {
+                        return;
+                    }
+                    Seen.Enqueue($"{context.Request.HttpMethod} {context.Request.Url!.AbsolutePath}");
+                    context.Response.StatusCode = 500;
+                    context.Response.Close();
+                }
+            }, TestContext.Current.CancellationToken);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            _listener.Close();
+            await _serving;
+            _stop.Dispose();
+        }
     }
 
     private static int FreePort()
@@ -185,24 +256,47 @@ public sealed class LfsTests : IDisposable
         };
 
         var leg = new LegRow { Flight = "PIL1", Name = "one", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
-        string[] Briefed() => [Briefs.Plan(flight, [], "pilot"), Briefs.For(flight, leg, [leg])];
-
-        foreach (var brief in Briefed())
+        var state = new Briefs.PlaneState("", "");
+        // A PR's review and its fix each work in a worktree of their own (the same folder here, so one .gitattributes says).
+        var review = new PrReviewRow
         {
-            brief.ShouldNotContain("git lfs pull");
+            Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "4f2c9a01d6e8",
+            ClonePath = "/r", Worktree = plane, FixWorktree = plane, Reviewer = "du1-review-widget-7", State = PrReviewState.Reviewing,
+            StartedAt = DateTimeOffset.UnixEpoch,
+        };
+        (string Name, string Text)[] PlaneBriefs() =>
+        [
+            ("Plan", Briefs.Plan(flight, [], "pilot")),
+            ("For", Briefs.For(flight, leg, [leg])),
+            ("Validate", Briefs.Validate(flight, leg, [leg], "pilot")),
+            ("Review", Briefs.Review(flight, [leg], state, "pilot")),
+        ];
+        (string Name, string Text)[] WorktreeBriefs() =>
+        [
+            ("ReviewPr", Briefs.ReviewPr(review, state, null, "pilot")),
+            ("FixPr", Briefs.FixPr(review, "feature", null)),
+        ];
+
+        foreach (var (name, text) in PlaneBriefs().Concat(WorktreeBriefs()))
+        {
+            text.ShouldNotContain("git lfs pull", customMessage: name);
         }
         Briefs.LfsRule(plane).ShouldBe("");
 
         File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.txt text\n");
-        foreach (var brief in Briefed())
+        foreach (var (name, text) in PlaneBriefs().Concat(WorktreeBriefs()))
         {
-            brief.ShouldNotContain("git lfs pull");
+            text.ShouldNotContain("git lfs pull", customMessage: name);
         }
 
         File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
-        foreach (var brief in Briefed())
+        foreach (var (name, text) in PlaneBriefs())
         {
-            brief.ShouldContain("run `git lfs pull` once in the plane");
+            text.ShouldContain("run `git lfs pull` once in the plane", customMessage: name);
+        }
+        foreach (var (name, text) in WorktreeBriefs())
+        {
+            text.ShouldContain("run `git lfs pull` once in the worktree", customMessage: name);
         }
         Briefs.LfsRule(plane).ShouldContain("never per file or per build");
     }

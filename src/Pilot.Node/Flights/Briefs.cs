@@ -206,11 +206,13 @@ public static class Briefs
     /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node
     /// never smudges them, and one <c>git lfs pull</c> fills the shared store. Nothing for a repo without LFS.
     /// </summary>
-    internal static string LfsRule(string? plane)
+    /// <param name="folder">The plane or worktree the brief sends its agent to.</param>
+    /// <param name="noun">What the brief calls that folder: "plane", or "worktree" for a PR's.</param>
+    internal static string LfsRule(string? folder, string noun = "plane")
     {
         try
         {
-            var attributes = plane is null ? null : Path.Combine(plane, ".gitattributes");
+            var attributes = folder is null ? null : Path.Combine(folder, ".gitattributes");
             if (attributes is null || !File.Exists(attributes) || !File.ReadAllText(attributes).Contains("filter=lfs", StringComparison.Ordinal))
             {
                 return "";
@@ -220,7 +222,7 @@ public static class Briefs
         {
             return "";
         }
-        return "\nThis repo uses git LFS: the plane's LFS files are pointers. When the step needs their content, run `git lfs pull` once in the plane " +
+        return $"\nThis repo uses git LFS: the {noun}'s LFS files are pointers. When the step needs their content, run `git lfs pull` once in the {noun} " +
             "(it fills the shared store, so other planes reuse it), never per file or per build.\n";
     }
 
@@ -295,6 +297,7 @@ public static class Briefs
         text.AppendLine("push and delete nothing, and keep scratch output outside the plane. Do it yourself, in this session, with no subagents.");
         text.AppendLine("Your ceiling is a few minutes and about thirty tool calls; past it, answer with what you have.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(LfsRule(flight.Worktree));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
@@ -489,6 +492,7 @@ public static class Briefs
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
@@ -586,6 +590,7 @@ public static class Briefs
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
         text.Append(NamingRule(machine, $"review-{review.Number}"));
+        text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
         text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
         text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
@@ -659,6 +664,7 @@ public static class Briefs
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
         text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
         text.AppendLine("finding was a behaviour.");
+        text.Append(LfsRule(review.FixWorktree, "worktree"));
         text.AppendLine();
         text.AppendLine("## Build and test");
         var configuration = build?.Configuration ?? (review.Repo.StartsWith("SharpAstro/", StringComparison.OrdinalIgnoreCase) ? "Release" : null);

@@ -17,6 +17,13 @@ public sealed record GitRun(int ExitCode, string Output, string Error)
 public interface IGit
 {
     Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="RunAsync"/> with LFS content smudged, for the one checkout a person builds and runs from (the owner's main
+    /// checkout, updated by <see cref="RepoSync"/>): a pointer there would break their next build with nothing to warn.
+    /// </summary>
+    Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunAsync(args, cwd, cancellationToken);
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
@@ -60,6 +67,9 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         return await RunCoreAsync(args, cwd, skipPushCheck, cancellationToken);
     }
 
+    public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunCoreAsync(args, cwd, false, cancellationToken, smudge: true);
+
     /// <summary>
     /// True when the commits a plain <c>git push [remote [refspec]]</c> would send change no path git says is
     /// <c>filter=lfs</c>, so git-lfs's pre-push upload check has nothing to find. Anything not understood (several
@@ -80,7 +90,10 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         }
         try
         {
-            var log = await RunCoreAsync(["log", "-z", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
+            // --cc lists what a merge commit changed against all its parents (plain --name-only prints nothing for a
+            // merge), so an LFS path a conflict resolution added still keeps the check. --relative drops paths outside
+            // cwd; every caller pushes from the plane's root, where that is none.
+            var log = await RunCoreAsync(["log", "-z", "--cc", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
             if (!log.Ok)
             {
                 return false;
@@ -115,7 +128,7 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         }
     }
 
-    private async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken)
+    private async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken, bool smudge = false)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -134,8 +147,12 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
-        // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need.
-        start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+        // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need. The update of
+        // the owner's main checkout (RunSmudgingAsync) is the exception, and leaves whatever the environment says.
+        if (!smudge)
+        {
+            start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+        }
         // git-lfs's pre-push hook honours GIT_LFS_SKIP_PUSH (unlike --no-verify, it leaves a repo's own hooks running).
         if (skipPushCheck)
         {
