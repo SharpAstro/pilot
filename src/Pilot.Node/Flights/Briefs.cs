@@ -714,6 +714,15 @@ public static class Briefs
         text.AppendLine("workers for stalls and says the cards to you. Idle for long, you are compacted (/compact) before your prompt");
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
+        // DE1's watchtower told the controller it could not read SE1's cards (2026-10-29): nothing here said --node reaches them.
+        text.AppendLine("## The other nodes");
+        text.AppendLine("You can read every node on the LAN, not only this one, so never say you cannot see another node's flights or cards:");
+        text.AppendLine($"- `{pilot} nodes` lists them by name; add `--node <name>` to any reading command for another: `{pilot} status --node SE1`,");
+        text.AppendLine($"  `{pilot} cards --node SE1`, `{pilot} repos --node SE1`.");
+        text.AppendLine($"- To get something done on another node's flight or card, tell its watchtower, which owns that node's planes: `{pilot} tell --node <name>");
+        text.AppendLine($"  \"<what and why>\"`. `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant");
+        text.AppendLine("  (pilot connect) and the card's choice is plainly the right one. Never edit or push another node's plane from here.");
+        text.AppendLine();
         text.AppendLine("## The chat: you are the controller's assistant in the window too");
         text.AppendLine("The GUI's chat is one conversation with you, in place of a command bar: what the controller types there reaches you as");
         text.AppendLine("a plain message, and your reply is what they read. You are their assistant there as well as the fleet's lookout.");

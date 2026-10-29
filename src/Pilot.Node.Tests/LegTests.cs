@@ -1511,6 +1511,26 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task ACleanPlaneWithASubmoduleIsRemoved()
+    {
+        // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
+        var flight = await FlightWithTwoLegs();
+        // Beside the repo, under the test's folder, so it goes with it.
+        var sub = Path.Combine(Path.GetDirectoryName(Repo)!, "sub");
+        Directory.CreateDirectory(sub);
+        Git(sub, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(sub, "lib.txt"), "the lib");
+        Git(sub, "add", ".");
+        Git(sub, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The lib");
+        Git(flight.Worktree, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib/sub");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "The submodule");
+
+        (await new Planes(new GitCli()).RemoveAsync(Repo, flight.Worktree, Ct)).ShouldBeNull();
+
+        Directory.Exists(flight.Worktree).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
     {
         // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
