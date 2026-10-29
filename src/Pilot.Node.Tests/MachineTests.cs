@@ -299,6 +299,86 @@ public sealed class MachineTests
         MachineSampler.Differs(held, Row(20, at: Now.AddSeconds(60))).ShouldBeTrue();
     }
 
+    // ---- Network ----
+
+    private static MachineSampler.NetReading Net(int seconds, long received, long sent, int interfaces = 2) =>
+        new(Now.AddSeconds(seconds), received, sent, interfaces);
+
+    [Fact]
+    public void MachineNetRateIsTheCountersGrowthOverTheWindow()
+    {
+        // 6 000 000 bytes in and 1 200 000 out over a minute: 100 000 and 20 000 a second.
+        var rate = MachineSampler.NetRate([Net(0, 1_000_000, 500_000), Net(30, 4_000_000, 1_100_000), Net(60, 7_000_000, 1_700_000)]).ShouldNotBeNull();
+        rate.In.ShouldBe(100_000d);
+        rate.Out.ShouldBe(20_000d);
+    }
+
+    [Fact]
+    public void MachineNetRateIsNoneRatherThanNegativeWhenACounterResetsOrAnInterfaceGoes()
+    {
+        MachineSampler.NetRate([]).ShouldBeNull();
+        MachineSampler.NetRate([Net(0, 10, 10)]).ShouldBeNull();
+        MachineSampler.NetRate([Net(5, 10, 10), Net(5, 20, 20)]).ShouldBeNull();
+        // A counter that went back (a reset, an adapter restarted).
+        MachineSampler.NetRate([Net(0, 9_000_000, 100), Net(30, 1_000, 200)]).ShouldBeNull();
+        MachineSampler.NetRate([Net(0, 100, 9_000_000), Net(30, 200, 1_000)]).ShouldBeNull();
+        // An interface that went away, or came up, changes the sum without being traffic.
+        MachineSampler.NetRate([Net(0, 9_000_000, 9_000_000, 2), Net(30, 4_000_000, 4_000_000, 1)]).ShouldBeNull();
+        MachineSampler.NetRate([Net(0, 1_000, 1_000, 1), Net(30, 9_000_000, 9_000_000, 2)]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void MachineNetWindowKeepsAMinuteAndStartsOverAfterABreak()
+    {
+        var window = new List<MachineSampler.NetReading>();
+        for (var s = 0; s <= 120; s += 5)
+        {
+            MachineSampler.KeepNetWindow(window, Net(s, s * 1000L, s * 100L));
+        }
+        // The oldest reading kept is the last at or before a minute ago, so the span is a minute and no longer than a step more.
+        (window[^1].At - window[0].At).ShouldBe(TimeSpan.FromSeconds(60));
+        MachineSampler.NetRate(window)!.Value.In.ShouldBe(1000d);
+
+        // A reset leaves only the reading after it; the next one makes a rate again.
+        MachineSampler.KeepNetWindow(window, Net(125, 10, 10));
+        window.Count.ShouldBe(1);
+        MachineSampler.NetRate(window).ShouldBeNull();
+        MachineSampler.KeepNetWindow(window, Net(130, 5_010, 10));
+        MachineSampler.NetRate(window)!.Value.In.ShouldBe(1000d);
+    }
+
+    [Fact]
+    public void MachineNetLineAppearsAfterMemWithMbpsAndIsLeftOutWithoutFigures()
+    {
+        var row = Row(34, 21L << 30) with { NetInBytesPerSecond = 287_500, NetOutBytesPerSecond = 50_000, NetLinkBitsPerSecond = 1_000_000_000 };
+
+        row.Line().ShouldBe("cpu 34% · mem 21/32 GB · net 2.3/0.4 Mbps (in/out)");
+        var net = row.Gauges().Last();
+        net.Label.ShouldBe("net");
+        // The larger rate, 2.3 Mbit/s, of a gigabit link.
+        net.Fraction.ShouldBe(0.0023, 1e-9);
+        (row with { NetLinkBitsPerSecond = null }).Gauges().Last().Fraction.ShouldBe(0);
+        // Nothing sent (an older node, or too few readings): no net part.
+        Row(34, 21L << 30).Line().ShouldBe("cpu 34% · mem 21/32 GB");
+        (row with { NetOutBytesPerSecond = null }).Line().ShouldBe("cpu 34% · mem 21/32 GB");
+    }
+
+    [Fact]
+    public void MachineNetJitterIsNotAChangeButARealMoveIs()
+    {
+        var held = Row(20, at: Now) with { NetInBytesPerSecond = 1_000_000, NetOutBytesPerSecond = 100_000 };
+        MachineRow Next(double? @in, double? @out) => Row(20, at: Now.AddSeconds(5)) with { NetInBytesPerSecond = @in, NetOutBytesPerSecond = @out };
+
+        // 5 percent on the big one, 10 000 bytes (under 0.1 Mbps) on the small one.
+        MachineSampler.Differs(held, Next(1_050_000, 110_000)).ShouldBeFalse();
+        MachineSampler.Differs(held, Next(1_200_000, 100_000)).ShouldBeTrue();
+        MachineSampler.Differs(held, Next(1_000_000, 200_000)).ShouldBeTrue();
+        MachineSampler.Differs(held, Next(null, null)).ShouldBeTrue();
+        // Idle readings of a few bytes are no change.
+        var idle = Row(20, at: Now) with { NetInBytesPerSecond = 10, NetOutBytesPerSecond = 0 };
+        MachineSampler.Differs(idle, Next(900, 500)).ShouldBeFalse();
+    }
+
     // ---- On the node ----
 
     [Fact]

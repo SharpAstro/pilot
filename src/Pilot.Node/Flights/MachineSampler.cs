@@ -93,6 +93,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         ReadProcesses(_processes);
         Note(_processes);
         _gpu.Read();
+        NoteNet();
         _baselined = true;
     }
 
@@ -117,6 +118,8 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
             top[i] = top[i] with { CommandLine = commandLine, WorkingDirectory = workingDirectory };
         }
         var gpu = _gpu.Read();
+        var linkBits = NoteNet();
+        var net = NetRate(_net);
         var owners = Owners();
         if (owners.Count > 0 && top.Length > 0)
         {
@@ -150,8 +153,23 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
             MemoryUsed = memory.Total - memory.Available,
             MemoryTotal = memory.Total,
             Gpu = gpu,
+            NetInBytesPerSecond = net?.In,
+            NetOutBytesPerSecond = net?.Out,
+            NetLinkBitsPerSecond = net is null ? null : linkBits,
             Processes = top,
         };
+    }
+
+    /// <summary>Reads the interfaces' counters into the minute's window; returns the fastest link's speed, null where none says.</summary>
+    private long? NoteNet()
+    {
+        if (ReadNet() is not { } read)
+        {
+            _net.Clear();
+            return null;
+        }
+        KeepNetWindow(_net, new NetReading(time.GetUtcNow(), read.Received, read.Sent, read.Interfaces));
+        return read.LinkBits;
     }
 
     /// <summary>Keeps this sample's CPU times as the next one's baseline; the two tables swap, so a tick allocates none.</summary>
@@ -429,6 +447,93 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     private static long? Mebibytes(string field) =>
         long.TryParse(field, NumberStyles.None, CultureInfo.InvariantCulture, out var mebibytes) ? mebibytes << 20 : null;
 
+    // ---- Network ----
+
+    /// <summary>How far back the network rate looks.</summary>
+    public static readonly TimeSpan NetWindow = TimeSpan.FromSeconds(60);
+
+    /// <summary>The summed byte counters of the up, non-loopback interfaces at <paramref name="At"/>, and how many interfaces they sum (a set that changed makes the counters' difference meaningless).</summary>
+    internal readonly record struct NetReading(DateTimeOffset At, long Received, long Sent, int Interfaces);
+
+    private readonly List<NetReading> _net = [];
+
+    /// <summary>The summed counters and the fastest link's speed in bits per second (null where none says); null where no interface can be read.</summary>
+    private (long Received, long Sent, int Interfaces, long? LinkBits)? ReadNet()
+    {
+        try
+        {
+            long received = 0, sent = 0, link = 0;
+            var count = 0;
+            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up
+                    || nic.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                {
+                    continue;
+                }
+                try
+                {
+                    var stats = nic.GetIPStatistics();
+                    received += stats.BytesReceived;
+                    sent += stats.BytesSent;
+                    count++;
+                    link = Math.Max(link, nic.Speed);
+                }
+                catch (Exception ex) when (ex is System.Net.NetworkInformation.NetworkInformationException or PlatformNotSupportedException or NotSupportedException)
+                {
+                    // An interface that will not say its counters is left out.
+                }
+            }
+            return count == 0 ? null : (received, sent, count, link > 0 ? link : null);
+        }
+        catch (Exception ex) when (ex is System.Net.NetworkInformation.NetworkInformationException or PlatformNotSupportedException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The bytes per second received and sent over <paramref name="window"/>, oldest reading first: the counters' growth over
+    /// the time between the first and the last. Null (no rate, never a negative one) with fewer than two readings, no time
+    /// between them, a counter that fell (a reset) or a set of interfaces that changed (one went away or came up).
+    /// </summary>
+    internal static (double In, double Out)? NetRate(IReadOnlyList<NetReading> window)
+    {
+        if (window.Count < 2)
+        {
+            return null;
+        }
+        for (var i = 1; i < window.Count; i++)
+        {
+            if (window[i].Interfaces != window[i - 1].Interfaces || window[i].Received < window[i - 1].Received || window[i].Sent < window[i - 1].Sent)
+            {
+                return null;
+            }
+        }
+        var (first, last) = (window[0], window[^1]);
+        var seconds = (last.At - first.At).TotalSeconds;
+        return seconds <= 0 ? null : ((last.Received - first.Received) / seconds, (last.Sent - first.Sent) / seconds);
+    }
+
+    /// <summary>
+    /// Adds <paramref name="next"/> and drops the readings the window no longer needs: the oldest kept is the last one at or
+    /// before <see cref="NetWindow"/> ago, so the rate spans a minute once there is one. A reading that breaks the run
+    /// (<see cref="NetRate"/> says no rate) starts the window over, so the rate comes back once two good readings are held.
+    /// </summary>
+    internal static void KeepNetWindow(List<NetReading> window, NetReading next)
+    {
+        window.Add(next);
+        if (NetRate(window) is null && window.Count > 1)
+        {
+            window.RemoveRange(0, window.Count - 1);
+            return;
+        }
+        while (window.Count > 2 && window[1].At <= next.At - NetWindow)
+        {
+            window.RemoveAt(0);
+        }
+    }
+
     // ---- What changed ----
 
     /// <summary>
@@ -443,7 +548,9 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
             || held.MemoryTotal != next.MemoryTotal
             || Math.Abs(held.CpuPercent - next.CpuPercent) >= PercentStep
             || Math.Abs(held.MemoryUsed - next.MemoryUsed) >= next.MemoryTotal / 100
-            || (held.Gpu is null) != (next.Gpu is null))
+            || (held.Gpu is null) != (next.Gpu is null)
+            || NetMoved(held.NetInBytesPerSecond, next.NetInBytesPerSecond)
+            || NetMoved(held.NetOutBytesPerSecond, next.NetOutBytesPerSecond))
         {
             return true;
         }
@@ -469,6 +576,13 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         }
         return false;
 
+        // Under a tenth, or under 0.1 Mbps (12 500 bytes a second): the minute's rate wobbles by that much on its own.
+        static bool NetMoved(double? a, double? b) => (a, b) switch
+        {
+            ({ } x, { } y) => Math.Abs(x - y) >= Math.Max(12_500d, Math.Max(x, y) / 10),
+            (null, null) => false,
+            _ => true,
+        };
         static bool Counts(MachineProcess p) => p.CpuPercent >= 1 || p.Owner is not null;
         // 64 MiB, or a tenth: a working set breathes by less.
         static bool MemoryMoved(long? a, long? b) => (a, b) switch

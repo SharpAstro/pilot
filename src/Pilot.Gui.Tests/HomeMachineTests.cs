@@ -52,6 +52,7 @@ public sealed class HomeMachineTests : IAsyncDisposable
     {
         SampledAt = Live.At, CpuPercent = 34, Cores = 16, MemoryUsed = 21L << 30, MemoryTotal = 32L << 30,
         Gpu = new MachineGpu { Percent = 81, MemoryUsed = (long)(6.1 * (1L << 30)), MemoryTotal = 12L << 30 },
+        NetInBytesPerSecond = 287_500, NetOutBytesPerSecond = 50_000, NetLinkBitsPerSecond = 1_000_000_000,
         Processes =
         [
             Process(4012, "claude", 11.4, 1_500_000_000, "se1-tia1-gpu"),
@@ -99,7 +100,7 @@ public sealed class HomeMachineTests : IAsyncDisposable
 
         pages.Machines!.Select(m => m.Node!.Name).ShouldBe(["SE1", "LE1"]);
         var dump = Home(pages).ToDump().Split('\n');
-        dump.ShouldContain("machine SE1: cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+        dump.ShouldContain("machine SE1: cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB · net 2.3/0.4 Mbps (in/out)");
         dump.ShouldContain("machine LE1: cpu 12% · mem 6/16 GB");
         // The processes under their node's line, the owner as the chip text: a session's name, a job's id and state, the watchtower's session.
         dump.ShouldContain("  claude · pid 4012 · 11.4% · 1.4 GB · se1-tia1-gpu");
@@ -162,6 +163,8 @@ public sealed class HomeMachineTests : IAsyncDisposable
         described.ShouldContain("MEM");
         described.ShouldContain("81% (6.1/12 GB)");
         described.ShouldContain("21/32 GB");
+        described.ShouldContain("NET");
+        described.ShouldContain("2.3/0.4 Mbps (in/out)");
 
         // SE1's block draws the GPU; LE1's, a node without one, does not.
         var le1 = Home(pages) with { Machines = [pages.Machines![1]] };
@@ -185,7 +188,7 @@ public sealed class HomeMachineTests : IAsyncDisposable
         // One node's block, so each label is there once.
         var full = Arrange(Home(pages) with { Machines = [pages.Machines![0]] });
         // Label and figure of one gauge, and of the next one, on one middle.
-        var middles = new[] { "CPU", "GPU", "MEM", "34%", "81% (6.1/12 GB)", "21/32 GB" }
+        var middles = new[] { "CPU", "GPU", "MEM", "NET", "34%", "81% (6.1/12 GB)", "21/32 GB", "2.3/0.4 Mbps (in/out)" }
             .Select(t => Text(full, t)).Select(b => b.Y + b.Height / 2f).ToList();
         middles.ShouldAllBe(m => Math.Abs(m - middles[0]) < 0.6f);
         Text(full, "CPU").Height.ShouldBe(Text(full, "GPU").Height);
