@@ -67,6 +67,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
+    // What the person sent that the feed may not show yet: dimmed and marked sending until the node answers, then kept until the feed carries it.
+    private ImmutableList<Own> _own = [];
+    private sealed record Own(Guid Id, string Text, bool Sending);
     private int _sending;
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -122,6 +125,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Volatile.Write(ref _node, node);
         Volatile.Write(ref _held, Held.Empty);
         Volatile.Write(ref _notices, []);
+        Volatile.Write(ref _own, []);
         Volatile.Write(ref _about, null);
         _confirmRestart = false;
         if (open)
@@ -129,6 +133,44 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Open();
         }
         Changed?.Invoke();
+    }
+
+    /// <summary>The name of the node whose watchtower the page talks to: the chosen node's, else this window's own (its mark, else its machine).</summary>
+    internal string WatchtowerOwner => Node?.Name ?? Nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>The page's name: the fleet chat, held by this node's watchtower, else the chosen node's watchtower.</summary>
+    internal string Title => Node is { } on ? $"watchtower · {on.Name}" : "fleet chat";
+
+    /// <summary>Whether another node's chat can be read from here; null asks <see cref="LoadOn"/>. A node that cannot says so on its pill.</summary>
+    public Func<NodeMark, bool>? CanRead { get; set; }
+
+    private bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
+
+    // The top bar's node pills on this page: one choice of watchtower, the current one lit; none while there is one node.
+    private List<Layout.Node> NodePills()
+    {
+        var pills = new List<Layout.Node>();
+        if (Nodes is not { Choices.Count: > 1 } nodes)
+        {
+            return pills;
+        }
+        var night = Night?.Palette;
+        var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        var current = Node?.Where;
+        foreach (var choice in nodes.Choices)
+        {
+            var chosen = choice.Here ? current is null : choice.Where == current;
+            var down = nodes.Down.TryGetValue(choice.Key, out var since);
+            var label = NodeFilter.Label(choice, since, down);
+            if (!Readable(choice))
+            {
+                label += " · chat not readable";
+            }
+            var picked = choice;
+            pills.Add(CardsView<TSurface>.HeaderPill(label, $"chat:node:{choice.Key}", () => SwitchTo(picked), chosen ? lit : plain, down || !Readable(choice) ? night?.Dim ?? Palette.Current.Dim : night?.Bright));
+        }
+        return pills;
     }
 
     // What the page reads and sends through now: this node's, or the chosen node's.
@@ -337,9 +379,6 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return SendAsync(message);
     }
 
-    // This window's node by name, for the fleet chat's header; "this node" until the node selection knows it.
-    private string HolderName => Nodes?.Choices.FirstOrDefault(n => n.Here)?.Name ?? "this node";
-
     /// <summary>What is told this node's watchtower about a card of another node: the card, its node and its title, and then the words.</summary>
     internal static string AboutOtherNodesCard(CardRow card, NodeMark node, string words) =>
         $"About card {card.Id} of node {node.Name} ({card.Title.ReplaceLineEndings(" ")}): {words}";
@@ -354,6 +393,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             return;
         }
         Interlocked.Increment(ref _sending);
+        var own = new Own(Guid.NewGuid(), message, true);
+        ImmutableInterlocked.Update(ref _own, o => o.Add(own));
         _scroll.ScrollToEnd();
         Changed?.Invoke();
         string? refused;
@@ -369,6 +410,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             Interlocked.Decrement(ref _sending);
         }
+        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Replace(own, own with { Sending = false }) : o.Remove(own));
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · {Clip(message)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -465,15 +507,22 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "fleet chat")
+        var top = TopBar.Build(new PageHeader(Title)
         {
             Buttons = buttons,
-            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {HolderName}'s watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
+        }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
+        // What the person sent that the feed does not carry yet; once it does (an entry or a queued line with the same words) only the feed's copy shows.
+        var shown = held.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.Text).Concat(held.Queued).ToList();
+        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => !m.Sending && shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))));
+        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))))
+        {
+            rows.Add(Sent(mine.Text, mine.Sending).WStar());
+        }
         foreach (var notice in Notices)
         {
             rows.Add(Notice(notice));
@@ -533,6 +582,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     // A message that did not go.
+    private static Layout.Node Sent(string text, bool sending) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).WFixed(96f),
+                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim))]).WStar())
+            .WithGap(10f);
+
     private static Layout.Node Notice(string text) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text("pilot", 12f, Failed).WFixed(96f),
