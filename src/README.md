@@ -376,8 +376,9 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   head and green checks.** A head moved by a clean base merge alone, with the plane at the head the review read and nothing taken from the
   remote, keeps its passed review (`BringUpToDateKeepingAsync`: the review's `ReviewedHead` and its status go to the new head, and the PR-ready card
   is raised for it); any other change is reviewed afresh. A conflict or a failed check takes the entry out with its why and sends it on as
-  before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn, so an
-  entry left by a node that went away holds nothing.
+  before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn (`updating`, `merging`, `batched`: a batch holds it while its CI runs), so an
+  entry left by a node that went away holds nothing. An entry armed in `checks` (its command ended) leaves the turn on purpose: the next
+  entry is updated and merged, and the armed one is brought up to date again, by the same plain merge, when its checks go green.
 - **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
   takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries with a passed review at their head and green
   checks. With two or more ready, `MergeBatcher` builds `pilot/batch/<repo>-<n>` from `origin/<base>` in a throwaway worktree, merges
