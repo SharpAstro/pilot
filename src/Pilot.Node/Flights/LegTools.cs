@@ -457,6 +457,58 @@ public interface IGitHub
     /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>The repo's open milestones.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>The repo's <see cref="IdeaIds.Milestone"/> milestone, made when it has none.</summary>
+    /// <exception cref="FlightException">gh could not read or make it.</exception>
+    Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The issues of the milestone called <paramref name="milestone"/>, open and closed, newest first; none when the repo has no such
+    /// milestone (reading never makes one).
+    /// </summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken);
+
+    /// <summary>Opens an issue in the milestone called <paramref name="milestone"/>; returns it as GitHub has it.</summary>
+    /// <exception cref="FlightException">gh could not create it.</exception>
+    Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken);
+
+    /// <summary>Issue <paramref name="number"/> as GitHub has it now; null when the repo has no such issue.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Moves issue <paramref name="number"/> to the milestone called <paramref name="milestone"/>, when its <c>updated_at</c> is still
+    /// <paramref name="ifUpdatedAt"/>; false (nothing written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Transfers issue <paramref name="number"/> to <paramref name="toRepo"/> (<c>owner/name</c>), when its <c>updated_at</c> is still
+    /// <paramref name="ifUpdatedAt"/>; returns the issue as it is there (a new number, and no milestone: a transfer drops it), or null (nothing
+    /// written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<MilestoneIssue?> TransferIssueAsync(string repoPath, int number, string toRepo, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Closes issue <paramref name="number"/> as not planned, with <paramref name="comment"/>, when its <c>updated_at</c> is still
+    /// <paramref name="ifUpdatedAt"/>; false (nothing written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> CloseIssueNotPlannedAsync(string repoPath, int number, string comment, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves issue <paramref name="number"/>'s title and body, when its <c>updated_at</c> is still <paramref name="ifUpdatedAt"/>; false
+    /// (nothing written) when GitHub has moved it on since. The guard reads the issue immediately before the write.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
@@ -510,7 +562,7 @@ public static class PilotMarks
 public sealed record PostedReview(long Id, string State, string Url);
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
-public sealed class GhCli : IGitHub
+public sealed partial class GhCli : IGitHub
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 

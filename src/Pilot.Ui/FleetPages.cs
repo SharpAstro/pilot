@@ -253,7 +253,7 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null, PullRequestsScreen? PullRequests = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null, PullRequestsScreen? PullRequests = null, IdeasScreen? Ideas = null)
 {
     /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
     private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
@@ -311,7 +311,9 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
                 .ToDictionary(x => x.Key, x => x.Row)),
             machines,
             // Every shown node reads the same GitHub: a PR two of them read is one row, and the page is as old as the oldest read.
-            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now));
+            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now),
+            // Ideas are GitHub's, the same whichever node reads them: this window's node's.
+            here.Ideas(now, reposWanted));
     }
 }
 

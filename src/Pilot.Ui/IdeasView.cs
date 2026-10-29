@@ -1,0 +1,777 @@
+using System.Globalization;
+using DIR.Lib;
+using Pilot.Contracts;
+
+namespace Pilot.Ui;
+
+/// <summary>What the Ideas page shows: the node's ideas, the questions it asked about them, and the repos an idea can move to.</summary>
+/// <param name="Ideas">Every idea of every repo the node reads.</param>
+/// <param name="Asks">The open cards about ideas (<see cref="CardKinds.IdeaRepo"/>, <see cref="CardKinds.IdeaConflict"/>), shown inline with their choices.</param>
+/// <param name="Repos">The repos the node tracks, by folder name: where Move to repo offers to send an idea.</param>
+internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<CardRow> Asks, IReadOnlyList<string> Repos, string Source, DateTimeOffset AsOf)
+{
+    public static IdeasScreen Empty { get; } = new([], [], [], "no node", DateTimeOffset.MinValue);
+
+    /// <summary>The flights, so a planned idea's id leads to its flight.</summary>
+    public IReadOnlyList<FlightRow> Flights { get; init; } = [];
+
+    /// <summary>The ideas moved to another repo: an old id keeps resolving.</summary>
+    public IReadOnlyList<IdeaMoveRow> Moves { get; init; } = [];
+
+    /// <summary>The ideas and flights <paramref name="text"/> names by id (<c>I381</c>, <c>tianwen I1829</c>), as links.</summary>
+    public IReadOnlyList<IdeaLink> LinksIn(string text) => IdeaLinks.In(text, Ideas, Flights, Moves);
+
+    /// <summary>How many ideas wait for someone to plan them: the rail's count.</summary>
+    public int Noted => Ideas.Count(i => i.State == IdeaState.Noted);
+
+    /// <summary>The cards the page answers itself: an idea's repo choice and a conflicting edit.</summary>
+    public static bool IsAsk(CardRow card) => card.State == CardState.Open && card.Kind is CardKinds.IdeaRepo or CardKinds.IdeaConflict;
+}
+
+/// <summary>What the node said to an idea verb, as the page needs it.</summary>
+internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null);
+
+/// <summary>
+/// The Ideas page: a box to note an idea in one line (Claude picks the repo, so there is no picker), the ideas newest first with
+/// their bodies as Markdown, and per idea Plan, Drop, Edit, Tidy, Move to repo and Open on GitHub. Planned and dropped ideas are
+/// folded below. A question the node asked (a repo choice, an edit that contradicts GitHub) shows inline with its choices.
+/// Every button is a verb on the node, sent through <see cref="Send"/>. Generic over the surface, as the other pages are.
+/// </summary>
+internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+{
+    public const string ListId = "ideas";
+
+    private const float Gutter = 16f;
+    private const float RowGap = 10f;
+
+    /// <summary>What an open action of a row is.</summary>
+    internal enum Mode
+    {
+        Plan,
+        Drop,
+        Edit,
+        Tidy,
+        Move,
+    }
+
+    private sealed record Open(string Key, Mode Mode);
+
+    // A tidy proposal, kept with the idea it is for.
+    private sealed record Proposal(string Key, IdeaTidyProposal Tidy);
+
+    private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+    private IdeasScreen _screen = IdeasScreen.Empty;
+    private Open? _open;
+    private Proposal? _proposal;
+    private string? _editFrom;
+    private string _said = "";
+    private bool _saidRefusal;
+    private int _working;
+    
+    /// <summary>Whether the planned and dropped ideas, folded below by default, are listed.</summary>
+    public bool ShowFolded { get; set; }
+
+    /// <summary>Opens a flight's page: a planned idea's row leads to the flight it became. Null leaves the flight's code as plain text.</summary>
+    public Action<string>? OnFlight { get; set; }
+    private readonly Dictionary<(string Key, string Body, bool Night), Layout.Node> _markdown = [];
+
+    /// <summary>
+    /// Sends a verb to the node: the verb, its target, its words. Null leaves the page read-only, as a snapshot file's is. Throws
+    /// <see cref="InvalidOperationException"/> with the reason when the node cannot be reached.
+    /// </summary>
+    public Func<string, string, string[], CancellationToken, Task<IdeaReply>>? Send { get; set; }
+
+    /// <summary>Answers an idea card's choice (its number, from 1): the node's answer verb.</summary>
+    public Action<CardRow, int>? OnAnswer { get; set; }
+
+    /// <summary>Opens a URL: Open on GitHub and Edit on GitHub.</summary>
+    public Action<string>? OnOpen { get; set; }
+
+    /// <summary>Runs the task a click starts where the host tracks it; null runs it unobserved.</summary>
+    public Action<Func<Task>, string>? Track { get; set; }
+
+    /// <summary>Called when what it shows changed, from whichever thread: the host redraws.</summary>
+    public Action? Changed { get; set; }
+
+    /// <summary>The page or flight the person was on, sent with a noted idea so Claude can tell which repo it belongs in.</summary>
+    public string? Context { get; set; }
+
+    /// <summary>The repo whose ideas are written as <c>I381</c>; those of any other repo as <c>tianwen I1829</c>.</summary>
+    public string ShownRepo { get; set; } = IdeaIds.DefaultRepo;
+
+    /// <summary>The header's Night switch, the window's one night state; null is the day palette.</summary>
+    public NightSwitch? Night { get; set; }
+
+    public AutopilotSwitch? Autopilot { get; set; }
+
+    public AboutCard? About { get; set; }
+
+    public NodeFilter? Nodes { get; set; }
+
+    /// <summary>The box that notes an idea: Enter starts a line, Ctrl+Enter sends it, and it grows then scrolls.</summary>
+    public TextEditorState NoteInput { get; } = new() { MinLines = 1, MaxLines = 8 };
+
+    /// <summary>The box of an Edit: the idea in full, its first line the title; Ctrl+Enter saves it.</summary>
+    public TextEditorState EditInput { get; } = new() { MinLines = 3, MaxLines = 14 };
+
+    /// <summary>The one-line box of the open action: the why of a Drop, the milestone of a Plan.</summary>
+    public TextInputState RowInput { get; } = new();
+
+    /// <summary>What the last action said, or its refusal.</summary>
+    public string Said => _said;
+
+    /// <summary>The idea's key and the action open on it, or null.</summary>
+    internal (string Key, Mode Mode)? OpenAction => _open is { } o ? (o.Key, o.Mode) : null;
+
+    /// <summary>Whether an action is with the node now.</summary>
+    public bool Working => Volatile.Read(ref _working) > 0;
+
+    /// <summary>The idea as the page names it: <c>I381</c> in the shown repo, <c>tianwen I1829</c> outside it.</summary>
+    public string Name(IdeaRow idea) => string.Equals(idea.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? idea.Id : idea.Qualified;
+
+    private static string KeyOf(IdeaRow idea) => idea.Qualified;
+
+    private Palette P => Night?.Palette ?? Palette.Standard;
+
+    private bool IsNight => ReferenceEquals(P, Palette.Night);
+
+    private Palette? NightOrNull => IsNight ? P : null;
+
+    // Links and ids: the palette's blue, and in night the body red, since its Landed is too dark to read on a button.
+    private RGBAColor32 Link => IsNight ? P.Body : P.Landed;
+
+    private (RGBAColor32 Bg, RGBAColor32 Hover) Tint => (P.Button, P.ButtonHover);
+
+    private (RGBAColor32 Bg, RGBAColor32 Hover) Lit => IsNight ? (P.RowFocusBg, P.ButtonHover) : (new RGBAColor32(0x2f, 0x5a, 0x8c, 0xff), new RGBAColor32(0x3a, 0x6c, 0xa6, 0xff));
+
+    private TextInputColors? InputColors => Palette.Input;
+
+    private Layout.MarkdownStyle Style => IsNight
+        ? new Layout.MarkdownStyle { Text = P.Body, Strong = P.Bright, Emphasis = P.Body, Link = Link, Muted = P.Dim, Code = P.Body, CodeBackground = P.PanelBg }
+        : TranscriptEntryView.Prose with { OnLink = null };
+
+    /// <summary>Notes what is in the box as an idea, as Enter does. The box is emptied at once; Claude picks the repo.</summary>
+    public async Task NoteAsync()
+    {
+        var text = NoteInput.Text.Trim();
+        if (text.Length == 0 || Send is null)
+        {
+            return;
+        }
+        NoteInput.Clear();
+        string[] args = Context is { Length: > 0 } context ? [text, context] : [text];
+        var reply = await RunAsync(Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
+        if (reply is null)
+        {
+            return;
+        }
+        if (!reply.Ok)
+        {
+            Say($"not noted: {reply.Error}", refusal: true);
+        }
+        else if (reply.Way == IdeaEditWays.Asked)
+        {
+            Say("Claude could not tell which repo it belongs in: choose one below", refusal: false);
+        }
+        else
+        {
+            Say($"noted {Filed(reply.Made)}", refusal: false);
+        }
+    }
+
+    // "<repo> I<n>" as the node says a filed idea, in the page's way of naming one.
+    private string Filed(string? made)
+    {
+        if (made is null)
+        {
+            return "an idea";
+        }
+        var parts = made.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2 && !string.Equals(parts[0], ShownRepo, StringComparison.OrdinalIgnoreCase) ? made : parts[^1];
+    }
+
+    private async Task<IdeaReply?> RunAsync(string verb, string target, string[] args)
+    {
+        if (Send is not { } send)
+        {
+            return null;
+        }
+        Interlocked.Increment(ref _working);
+        Changed?.Invoke();
+        try
+        {
+            return await send(verb, target, args, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            return new IdeaReply(false, ex.Message);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _working);
+            Changed?.Invoke();
+        }
+    }
+
+    private void Say(string text, bool refusal)
+    {
+        _said = text;
+        _saidRefusal = refusal;
+        Changed?.Invoke();
+    }
+
+    private void Run(Func<Task> task, string what)
+    {
+        if (Track is { } track)
+        {
+            track(task, what);
+        }
+        else
+        {
+            _ = task();
+        }
+    }
+
+    // The target of an idea's verb.
+    private static string TargetOf(IdeaRow idea) => IdeaIds.Target(idea.Repo, idea.Number);
+
+    /// <summary>Opens <paramref name="mode"/> on the idea, closing any other: its box is filled for an Edit, empty otherwise.</summary>
+    internal void OpenOn(IdeaRow idea, Mode mode)
+    {
+        var key = KeyOf(idea);
+        if (_open is { } open && open.Key == key && open.Mode == mode)
+        {
+            Close();
+            return;
+        }
+        _open = new Open(key, mode);
+        _editFrom = null;
+        RowInput.Text = "";
+        RowInput.CursorPos = 0;
+        if (mode == Mode.Edit)
+        {
+            SeedEdit(idea.Title, idea.Body);
+        }
+        RowInput.Placeholder = mode switch
+        {
+            Mode.Plan => "milestone (Enter plans it in the next open one)",
+            Mode.Drop => "why drop it?",
+            _ => "",
+        };
+        if (mode is Mode.Plan or Mode.Drop)
+        {
+            Ui.Focus.Focus(RowInput);
+        }
+        else if (mode == Mode.Edit)
+        {
+            Ui.Focus.Focus(EditInput);
+        }
+        if (mode == Mode.Tidy)
+        {
+            _proposal = null;
+            Run(() => TidyAsync(idea), $"tidy {idea.Id}");
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts away the open action and its box.</summary>
+    public void Close()
+    {
+        _open = null;
+        _proposal = null;
+        Ui.Focus.BlurIfFocused(RowInput);
+        Ui.Focus.BlurIfFocused(EditInput);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Plans the idea: moved out of Ideas to <paramref name="milestone"/>, or the next open one when it is empty.</summary>
+    public async Task PlanAsync(IdeaRow idea, string milestone)
+    {
+        Close();
+        var reply = await RunAsync(Verbs.PlanIdea, TargetOf(idea), milestone.Trim().Length > 0 ? [milestone.Trim()] : []);
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"planned {Name(idea)}{(reply.Made is { Length: > 0 } flight ? $" as flight {flight}" : "")}" : $"{Name(idea)} not planned: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    /// <summary>Drops the idea, <paramref name="why"/> its comment; a Drop with no why is not sent.</summary>
+    public async Task DropAsync(IdeaRow idea, string why)
+    {
+        if (why.Trim().Length == 0)
+        {
+            Say("say why it is dropped", refusal: true);
+            return;
+        }
+        Close();
+        var reply = await RunAsync(Verbs.DropIdea, TargetOf(idea), [why.Trim()]);
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"dropped {Name(idea)}" : $"{Name(idea)} not dropped: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    /// <summary>Saves the idea's title as typed, with the body it has, from the version this page read (its <c>updated_at</c>).</summary>
+    public async Task EditAsync(IdeaRow idea, string title, string? body = null, DateTimeOffset? from = null)
+    {
+        if (title.Trim().Length == 0)
+        {
+            Say("an idea needs a title", refusal: true);
+            return;
+        }
+        var text = body is null ? title.Trim() : (body.Length > 0 ? title.Trim() + "\n" + body : title.Trim());
+        await SaveAsync(Verbs.EditIdea, idea, from ?? idea.UpdatedAt, text, "edited", "not edited");
+    }
+
+    private async Task SaveAsync(string verb, IdeaRow idea, DateTimeOffset from, string text, string ok, string failed)
+    {
+        Close();
+        var reply = await RunAsync(verb, TargetOf(idea), [from.ToString("O", CultureInfo.InvariantCulture), text]);
+        if (reply is null)
+        {
+            return;
+        }
+        if (!reply.Ok)
+        {
+            Say($"{Name(idea)} {failed}: {reply.Error}", refusal: true);
+        }
+        else if (reply.Way == IdeaEditWays.Asked)
+        {
+            Say($"{Name(idea)} changed on GitHub too and the two disagree: choose below", refusal: false);
+        }
+        else
+        {
+            Say($"{ok} {Name(idea)}{(reply.Way == IdeaEditWays.Merged ? ", merged with what changed on GitHub" : "")}", refusal: false);
+        }
+    }
+
+    private async Task TidyAsync(IdeaRow idea)
+    {
+        var reply = await RunAsync(Verbs.TidyIdea, TargetOf(idea), []);
+        if (reply is null)
+        {
+            return;
+        }
+        if (reply is { Ok: true, Tidy: { } tidy })
+        {
+            if (_open is { Mode: Mode.Tidy } open && open.Key == KeyOf(idea))
+            {
+                _proposal = new Proposal(open.Key, tidy);
+                Changed?.Invoke();
+            }
+        }
+        else
+        {
+            Close();
+            Say(reply.Ok ? $"nothing to tidy in {Name(idea)}" : $"{Name(idea)} not tidied: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    /// <summary>Saves the tidy proposal on screen, from the version Claude read.</summary>
+    public Task SaveTidyAsync(IdeaRow idea)
+    {
+        if (_proposal is not { } proposal || proposal.Key != KeyOf(idea))
+        {
+            return Task.CompletedTask;
+        }
+        var tidy = proposal.Tidy;
+        var text = tidy.Body.Length > 0 ? tidy.Title + "\n" + tidy.Body : tidy.Title;
+        return SaveAsync(Verbs.SaveTidyIdea, idea, tidy.UpdatedAt, text, "tidied", "not tidied");
+    }
+
+    /// <summary>Takes the tidy proposal into the edit box, to be changed by hand before it is saved.</summary>
+    internal void EditProposal(IdeaRow idea)
+    {
+        if (_proposal is not { } proposal || proposal.Key != KeyOf(idea))
+        {
+            return;
+        }
+        var tidy = proposal.Tidy;
+        _open = new Open(proposal.Key, Mode.Edit);
+        _editFrom = tidy.UpdatedAt.ToString("O", CultureInfo.InvariantCulture);
+        _proposal = null;
+        SeedEdit(tidy.Title, tidy.Body);
+        Ui.Focus.Focus(EditInput);
+        Changed?.Invoke();
+    }
+
+    // The edit box holds the whole idea: the title, then the body after a line break.
+    private void SeedEdit(string title, string body)
+    {
+        EditInput.Clear();
+        EditInput.InsertText(body.Length > 0 ? title + "\n" + body : title);
+    }
+
+    /// <summary>Moves the idea to <paramref name="repo"/>: its number there is new, its old id keeps finding it.</summary>
+    public async Task MoveAsync(IdeaRow idea, string repo)
+    {
+        Close();
+        var reply = await RunAsync(Verbs.MoveIdea, TargetOf(idea), [repo]);
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"moved {Name(idea)} to {Filed(reply.Made ?? repo)}" : $"{Name(idea)} not moved: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    public void Render(IdeasScreen screen, RectF32 bounds)
+    {
+        Palette.Use(Night);
+        BeginFrame();
+        RenderLayout(Tree(screen), bounds);
+    }
+
+    /// <summary>The page as a tree: what <see cref="Render"/> paints, and what a test arranges.</summary>
+    internal Layout.Node Tree(IdeasScreen screen)
+    {
+        _screen = screen;
+        NoteInput.OnCommit = _ => NoteAsync();
+        NoteInput.Placeholder = "Note an idea: the first line is its title";
+        EditInput.OnCommit = text => CommitEditAsync(text);
+        EditInput.OnCancel = Close;
+        RowInput.OnCommit = text => CommitRowAsync(text);
+        RowInput.OnCancel = Close;
+        // A page switched away from while an action was open leaves nothing behind it, and a gone idea closes its action.
+        if (_open is { } open && !screen.Ideas.Any(i => KeyOf(i) == open.Key))
+        {
+            _open = null;
+            _proposal = null;
+        }
+
+        var ideas = IdeaIds.Order(screen.Ideas).ToList();
+        var noted = ideas.Where(i => i.State == IdeaState.Noted).ToList();
+        var folded = ideas.Where(i => i.State != IdeaState.Noted).ToList();
+        var planned = folded.Count(i => i.State == IdeaState.Planned);
+        var dropped = folded.Count - planned;
+        var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
+        var top = TopBar.Build(new PageHeader("ideas")
+        {
+            Counts = counts,
+            Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+
+        var rows = new List<Layout.Node>();
+        if (Send is not null)
+        {
+            rows.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
+            rows.Add(Layout.Builder.Text(Working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo", 11f, Working ? P.Held : P.Dim).RowH(16f));
+        }
+        if (_said.Length > 0)
+        {
+            rows.Add(WrappedProse.Of(_said, 13f, _saidRefusal ? P.Failed : P.Body).Pad(0f, 2f));
+        }
+        foreach (var ask in screen.Asks.Where(IdeasScreen.IsAsk))
+        {
+            rows.Add(Ask(ask));
+        }
+        if (noted.Count == 0)
+        {
+            rows.Add(WrappedProse.Of(ideas.Count == 0
+                ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
+                : "Nothing is waiting: every idea is planned or dropped.", 13f, P.Dim).Pad(0f, 8f));
+        }
+        rows.AddRange(noted.Select(Row));
+        if (folded.Count > 0)
+        {
+            rows.Add(CardsView<TSurface>.Pill($"{(ShowFolded ? "▾" : "▸")} Planned and dropped ({folded.Count})", "ideas:folded", () =>
+            {
+                ShowFolded = !ShowFolded;
+                Changed?.Invoke();
+            }, Tint, P.Body));
+            if (ShowFolded)
+            {
+                rows.AddRange(folded.Select(Folded));
+            }
+        }
+
+        var list = Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(_scroll).Stretch();
+        var body = Layout.Builder.VStack(list.HStar()).Pad(Gutter, 8f).Stretch();
+        var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
+        return About?.Over(whole, NightOrNull) ?? whole;
+    }
+
+    private async Task CommitRowAsync(string text)
+    {
+        if (_open is not { } open || _screen.Ideas.FirstOrDefault(i => KeyOf(i) == open.Key) is not { } idea)
+        {
+            return;
+        }
+        switch (open.Mode)
+        {
+            case Mode.Plan:
+                await PlanAsync(idea, text);
+                break;
+            case Mode.Drop:
+                await DropAsync(idea, text);
+                break;
+        }
+    }
+
+    private async Task CommitEditAsync(string text)
+    {
+        if (_open is not { Mode: Mode.Edit } open || _screen.Ideas.FirstOrDefault(i => KeyOf(i) == open.Key) is not { } idea)
+        {
+            return;
+        }
+        var lines = text.ReplaceLineEndings("\n").Split('\n', 2);
+        var body = lines.Length > 1 ? lines[1].Trim('\n') : "";
+        await EditAsync(idea, lines[0], body, _editFrom is { } from ? DateTimeOffset.Parse(from, CultureInfo.InvariantCulture) : null);
+    }
+
+    // A question the node asked, with its choices as buttons: the first is the node's default, lit.
+    private Layout.Node Ask(CardRow card)
+    {
+        var parts = new List<Layout.Node>
+        {
+            Layout.Builder.Text(card.Kind == CardKinds.IdeaRepo ? "Where does it belong?" : "Two versions of an idea", 11f, P.Dim).WStar(),
+            WrappedProse.Of(card.Title, 14f, P.Bright),
+        };
+        if (!string.IsNullOrWhiteSpace(card.Detail))
+        {
+            // Both versions, as the node wrote them, one paragraph each line, whole.
+            parts.Add(Layout.Builder.VStack([.. card.Detail.ReplaceLineEndings("\n").Split('\n').Select(l => l.Length == 0 ? Layout.Builder.Spacer().RowH(6f) : WrappedProse.Of(l, 12f, P.Body))]).WithGap(2f).WStar());
+        }
+        parts.Add(Layout.Builder.WrapH([.. card.Choices.Select((choice, i) =>
+                CardsView<TSurface>.Pill(choice.Label, $"ideas:ask:{card.Id}:{i + 1}", () => OnAnswer?.Invoke(card, i + 1), i == 0 ? Lit : Tint, P.Bright))])
+            .WithGap(8f).WithLineGap(4f).WStar());
+        return Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(P.Held).WFixed(3f).HStar(),
+                Layout.Builder.VStack([.. parts]).WithGap(6f).WStar())
+            .WithGap(8f).Pad(8f, 6f).Bg(P.PanelBg).WStar().HAuto();
+    }
+
+    private Layout.Node Header(IdeaRow idea) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(Name(idea), 13f, Link).WAuto(),
+                WrappedProse.Of(idea.Title, 15f, P.Bright))
+            .WithGap(10f).WStar().HAuto();
+
+    private string Meta(IdeaRow idea)
+    {
+        var parts = new[] { idea.Age.Length > 0 ? $"{idea.Age} ago" : null, idea.Origin.Length > 0 ? $"by {idea.Origin}" : null };
+        return string.Join(" · ", parts.OfType<string>());
+    }
+
+    // The idea's body as Markdown, parsed once for what it says and the colours it is drawn in: the tree is rebuilt every frame.
+    private Layout.Node BodyOf(IdeaRow idea)
+    {
+        var key = (KeyOf(idea), idea.Body, IsNight);
+        if (!_markdown.TryGetValue(key, out var document))
+        {
+            _markdown[key] = document = Layout.Builder.Markdown(Soften(idea.Body), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+        }
+        return document;
+    }
+
+    // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
+    // separators with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
+    private const int LongWord = 24;
+
+    internal static string Soften(string markdown)
+    {
+        var fenced = false;
+        return string.Join("\n", markdown.ReplaceLineEndings("\n").Split('\n').Select(line =>
+        {
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
+            {
+                fenced = !fenced;
+                return line;
+            }
+            return fenced ? line : string.Join(' ', line.Split(' ').Select(Break));
+        }));
+
+        static string Break(string word)
+        {
+            if (word.Length < LongWord || word.Contains('`') || word.Contains("](", StringComparison.Ordinal) || word.StartsWith('<')
+                || word.All(c => c is '-' or '=' or '_' or '*'))
+            {
+                return word;
+            }
+            var text = new System.Text.StringBuilder();
+            for (var i = 0; i < word.Length; i++)
+            {
+                text.Append(word[i]);
+                if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-' && i + 1 < word.Length)
+                {
+                    text.Append(' ');
+                }
+            }
+            return text.ToString();
+        }
+    }
+
+    private Layout.Node Row(IdeaRow idea)
+    {
+        var key = KeyOf(idea);
+        var parts = new List<Layout.Node> { Header(idea) };
+        if (Meta(idea) is { Length: > 0 } meta)
+        {
+            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).RowH(16f));
+        }
+        if (idea.Body.Trim().Length > 0)
+        {
+            parts.Add(BodyOf(idea).WStar());
+        }
+        var buttons = new List<Layout.Node>
+        {
+            ActionPill("Plan", idea, Mode.Plan),
+            ActionPill("Drop", idea, Mode.Drop),
+            ActionPill("Edit", idea, Mode.Edit),
+            ActionPill("Tidy", idea, Mode.Tidy),
+            ActionPill("Move to repo…", idea, Mode.Move),
+            OpenPill(idea),
+        };
+        parts.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
+        if (_open is { } open && open.Key == key)
+        {
+            parts.AddRange(OpenRows(idea, open.Mode));
+        }
+        return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(10f, 8f).Bg(P.RowAltBg).WStar().HAuto();
+    }
+
+    private Layout.Node ActionPill(string label, IdeaRow idea, Mode mode) =>
+        CardsView<TSurface>.Pill(label, $"ideas:{mode.ToString().ToLowerInvariant()}:{KeyOf(idea)}", () => OpenOn(idea, mode),
+            _open is { } o && o.Key == KeyOf(idea) && o.Mode == mode ? Lit : Tint, P.Bright);
+
+    private Layout.Node OpenPill(IdeaRow idea) =>
+        CardsView<TSurface>.Pill("Open on GitHub ↗", $"ideas:open:{KeyOf(idea)}", () => { if (idea.Url.Length > 0) { OnOpen?.Invoke(idea.Url); } }, Tint, Link);
+
+    private IEnumerable<Layout.Node> OpenRows(IdeaRow idea, Mode mode)
+    {
+        switch (mode)
+        {
+            case Mode.Plan:
+            case Mode.Drop:
+            case Mode.Edit:
+                if (mode == Mode.Edit)
+                {
+                    yield return Layout.Builder.TextEditor(EditInput, 14f, colors: InputColors, focusOnOpen: true).WStar();
+                }
+                else
+                {
+                    yield return Layout.Builder.HStack(
+                            Layout.Builder.Text(mode == Mode.Plan ? "plan in" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
+                        .WithGap(10f).RowH(30f);
+                }
+                var buttons = new List<Layout.Node>();
+                if (mode == Mode.Plan)
+                {
+                    buttons.Add(CardsView<TSurface>.Pill("Plan in the next open milestone", $"ideas:plan-next:{KeyOf(idea)}", () => Run(() => PlanAsync(idea, ""), $"plan {idea.Id}"), Lit, P.Bright));
+                }
+                if (mode == Mode.Edit)
+                {
+                    buttons.Add(CardsView<TSurface>.Pill("Edit on GitHub ↗", $"ideas:edit-github:{KeyOf(idea)}", () => { if (idea.Url.Length > 0) { OnOpen?.Invoke(idea.Url); } }, Tint, Link));
+                }
+                buttons.Add(CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body));
+                yield return Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar();
+                yield return Layout.Builder.Text(mode == Mode.Edit ? "First line is the title · Ctrl+Enter saves · Esc cancels" : "Enter sends · Esc cancels", 11f, P.Faint).RowH(16f);
+                break;
+            case Mode.Tidy:
+                foreach (var node in TidyRows(idea))
+                {
+                    yield return node;
+                }
+                break;
+            case Mode.Move:
+                var repos = _screen.Repos.Where(r => !string.Equals(r, idea.Repo, StringComparison.OrdinalIgnoreCase)).ToList();
+                yield return repos.Count == 0
+                    ? Layout.Builder.Text("The node tracks no other repo.", 12f, P.Dim).RowH(18f)
+                    : Layout.Builder.WrapH([.. repos.Select(r => CardsView<TSurface>.Pill(r, $"ideas:move:{KeyOf(idea)}:{r}", () => Run(() => MoveAsync(idea, r), $"move {idea.Id}"), Tint, P.Bright))])
+                        .WithGap(8f).WithLineGap(4f).WStar();
+                yield return CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body);
+                break;
+        }
+    }
+
+    // Claude's proposal as a diff against what is there: removed lines red, added lines green, kept lines dim.
+    private IEnumerable<Layout.Node> TidyRows(IdeaRow idea)
+    {
+        if (_proposal is not { } proposal || proposal.Key != KeyOf(idea))
+        {
+            yield return Layout.Builder.Text("● Claude is tidying it…", 12f, P.Held).RowH(18f);
+            yield break;
+        }
+        var tidy = proposal.Tidy;
+        foreach (var (kind, line) in Diff(Join(tidy.CurrentTitle, tidy.CurrentBody), Join(tidy.Title, tidy.Body)))
+        {
+            var (mark, color) = kind switch { '+' => ("+ ", P.Flying), '-' => ("- ", P.Failed), _ => ("  ", P.Dim) };
+            yield return Layout.Builder.HStack(
+                    Layout.Builder.Text(mark, 13f, color).WFixed(16f),
+                    line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
+                .WStar().HAuto();
+        }
+        yield return Layout.Builder.WrapH(
+                CardsView<TSurface>.Pill("Save", $"ideas:tidy-save:{KeyOf(idea)}", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit, P.Bright),
+                CardsView<TSurface>.Pill("Discard", $"ideas:tidy-discard:{KeyOf(idea)}", Close, Tint, P.Body),
+                CardsView<TSurface>.Pill("Edit", $"ideas:tidy-edit:{KeyOf(idea)}", () => EditProposal(idea), Tint, P.Bright))
+            .WithGap(8f).WithLineGap(4f).WStar();
+    }
+
+    private static string Join(string title, string body) => body.Length > 0 ? title + "\n" + body : title;
+
+    /// <summary>A line diff of <paramref name="before"/> against <paramref name="after"/> (longest common subsequence): kept lines ' ', removed '-', added '+'.</summary>
+    internal static List<(char Kind, string Line)> Diff(string before, string after)
+    {
+        var a = before.ReplaceLineEndings("\n").Split('\n');
+        var b = after.ReplaceLineEndings("\n").Split('\n');
+        var common = new int[a.Length + 1, b.Length + 1];
+        for (var i = a.Length - 1; i >= 0; i--)
+        {
+            for (var j = b.Length - 1; j >= 0; j--)
+            {
+                common[i, j] = a[i] == b[j] ? common[i + 1, j + 1] + 1 : Math.Max(common[i + 1, j], common[i, j + 1]);
+            }
+        }
+        var lines = new List<(char, string)>();
+        int x = 0, y = 0;
+        while (x < a.Length && y < b.Length)
+        {
+            if (a[x] == b[y])
+            {
+                lines.Add((' ', a[x]));
+                x++;
+                y++;
+            }
+            else if (common[x + 1, y] >= common[x, y + 1])
+            {
+                lines.Add(('-', a[x++]));
+            }
+            else
+            {
+                lines.Add(('+', b[y++]));
+            }
+        }
+        while (x < a.Length)
+        {
+            lines.Add(('-', a[x++]));
+        }
+        while (y < b.Length)
+        {
+            lines.Add(('+', b[y++]));
+        }
+        return lines;
+    }
+
+    // A planned or dropped idea: one line, still found by its id, its page one click away.
+    private Layout.Node Folded(IdeaRow idea) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(Name(idea), 12f, Link).WAuto(),
+                Layout.Builder.Text(idea.State == IdeaState.Planned ? "planned" : "dropped", 11f, P.Dim).WAuto(),
+                idea.State == IdeaState.Planned && IdeaIds.FlightOf(_screen.Flights, _screen.Moves, idea.Repo, idea.Number) is { } flight
+                    ? Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
+                        .Follows(new HitResult.ButtonHit($"ideas:flight:{KeyOf(idea)}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto()
+                    : Layout.Builder.Text("", 1f, P.Dim).WAuto(),
+                WrappedProse.Of(idea.Title, 13f, P.Body, 2),
+                CardsView<TSurface>.Pill("Open on GitHub ↗", $"ideas:open:{KeyOf(idea)}", () => { if (idea.Url.Length > 0) { OnOpen?.Invoke(idea.Url); } }, Tint, Link))
+            .WithGap(10f).Pad(10f, 4f).Bg(P.GhostBg).WStar().HAuto();
+
+    public override bool HandleInput(InputEvent evt)
+    {
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _open is not null)
+        {
+            Close();
+            return true;
+        }
+        return false;
+    }
+}

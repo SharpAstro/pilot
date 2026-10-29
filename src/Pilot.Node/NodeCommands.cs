@@ -354,6 +354,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<RepoCommander>().RunAsync(command, cancellationToken);
         }
+        if (IdeaCommander.Handles(command.Verb))
+        {
+            return await Get<IdeaCommander>().RunAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.AddArtifact && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
         {
             return AddSessionArtifact(command);

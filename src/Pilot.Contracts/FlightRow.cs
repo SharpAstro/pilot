@@ -31,6 +31,9 @@ public sealed record FlightRow
     [JsonIgnore]
     public WorkItem Item => new(Tracker, Issue);
 
+    /// <summary>The id of the idea (<c>I381</c>) it was planned from, when it was (<c>plan-idea</c>); null for any other flight.</summary>
+    public string? FromIdea { get; init; }
+
     /// <summary>What it is for, in a line: the issue's title, or what the controller called it.</summary>
     public string? Title { get; init; }
 
