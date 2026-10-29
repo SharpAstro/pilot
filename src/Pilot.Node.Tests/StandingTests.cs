@@ -219,6 +219,8 @@ public sealed class StandingTests
         // With the autopilot off, the lookout's merge is refused again.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+        // And so is its fixer: only the autopilot lets the lookout start one.
+        (await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("SharpAstro/pilot", 467), lookout, true))).ShouldNotBeNull().ShouldContain("not the watchtower's");
     }
 
     [Fact]
