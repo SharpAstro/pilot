@@ -2191,6 +2191,57 @@ public sealed partial class LegCommander(
     }
 
     /// <summary>
+    /// A PR review's approve of a flight's PR, taken as the flight's own verdict (PIL483): at the head the flight's PR has now, the
+    /// flight's review passes, even one that asked for changes, its PR is marked ready and its PR-ready card raised. A head the
+    /// PR has moved past, a landed flight or a flight with no review is left as it is. Null when taken; else why not.
+    /// </summary>
+    public async Task<string?> TakePrVerdictAsync(string code, string head, string verdict, string report, CancellationToken cancellationToken)
+    {
+        if (verdict != "approve")
+        {
+            return $"only an approve passes {code}'s review";
+        }
+        var call = await EnterAsync(code, "being given a PR review's verdict", cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Review: { } review } flight)
+            {
+                return $"{code} is landed or has no review";
+            }
+            if (review.State == ReviewState.Passed)
+            {
+                return null;
+            }
+            var current = await OffLockAsync(flight, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken));
+            if (current is not { State: "OPEN" } || !string.Equals(current.Head, head, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{code}'s PR is not open at {head[..Math.Min(8, head.Length)]}";
+            }
+            flight = FlightOf(Verbs.FlightTarget(code));
+            if (flight.PullRequest is { } number)
+            {
+                await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: false, cancellationToken));
+            }
+            var kept = $"{report} (approved by a PR review at {head[..Math.Min(8, head.Length)]})";
+            Record(code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Passed, Report = kept, FinishedAt = time.GetUtcNow(), ReviewedHead = head } : null });
+            await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
+            flight = FlightOf(Verbs.FlightTarget(code));
+            state.CloseCardsAbout(Verbs.FlightTarget(code), "passed by a PR review", ReviewChanges, LegWatch.ReviewStalled);
+            await RaisePrReadyAsync(flight, kept, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+            return null;
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
+    }
+
+    /// <summary>
     /// A reviewed PR whose checks failed: taken as a review asking for changes, so its PR goes back to draft, its merge card
     /// closes, and the ring offers the go-around a done leg otherwise refuses. PIL53's review passed while the Linux runner
     /// failed two of its tests, and no verb could send it round (2026-10-23). Null when done; else why not.

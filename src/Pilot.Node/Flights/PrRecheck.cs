@@ -245,7 +245,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
         // A PR pilot never touched: reviewed as 'pilot review pr' does.
         var subject = Verbs.PrTarget(entry.Repo, entry.Number);
-        var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+        var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
         if (!started.Ok)
         {
             Fail(entry, started.Error ?? "the review did not start", pr.Url);
@@ -254,6 +254,20 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         await github.SetPilotLabelAsync(entry.Path, entry.Number, PilotMarks.Reviewing, cancellationToken);
         Handled(entry, "review started", pr.Url);
         return Done(entry);
+    }
+
+    /// <summary>
+    /// Starts the review of a PR the recheck found: a flight's PR has one review, the flight's, so it is started the way
+    /// <c>flight review</c> starts it (PIL483); any other PR is reviewed by <c>review-pr</c>.
+    /// </summary>
+    private Task<CommandResult> StartReviewOfAsync(Entry entry, PullRequest pr, string subject, CancellationToken cancellationToken)
+    {
+        var parts = entry.Repo.Split('/');
+        if (legs is not null && reviews.FlightOwner(new PrRef(parts[0], parts[1], entry.Number), pr.HeadRef, pr.Fork) is { } owner)
+        {
+            return legs.RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(owner.Code), Who = "node" }, cancellationToken);
+        }
+        return reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
     }
 
     private static string Short8(string sha) => sha[..Math.Min(8, sha.Length)];
@@ -423,7 +437,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
-            var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+            var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
             if (!started.Ok)
             {
                 Fail(entry, started.Error ?? "the review did not start", pr.Url);
@@ -446,7 +460,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 switch (await reviews.RebaseOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
                 {
                     case null:
-                        var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+                        var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
                         if (!started.Ok)
                         {
                             Fail(entry, $"rebased onto {pr.Base}, but the review did not start: {started.Error}", pr.Url);
