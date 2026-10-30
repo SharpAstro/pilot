@@ -1470,7 +1470,10 @@ public static class PilotCommand
         if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
         {
             // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.
-            await output.WriteLineAsync($"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
+            // A finish's own words say what runs and what its worker does (end its turn); the generic tail would send it to look.
+            await output.WriteLineAsync(verb == Verbs.FinishLeg
+                ? $"queued: {verb} {target}: {waiting}"
+                : $"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
             return ExitQueued;
         }
         if (envelope.Success && envelope.Response is { Ok: true } result)
