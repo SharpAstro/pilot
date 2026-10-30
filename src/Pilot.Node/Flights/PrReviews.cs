@@ -39,6 +39,12 @@ public sealed class PrReviews(
     /// <summary>The card said when a review's worktree could not be removed after its card closed.</summary>
     public const string LeftKind = "pr-review-left";
 
+    /// <summary>The Handled line a review started afresh after a node restart leaves.</summary>
+    public const string RestartedKind = "pr-review-restarted";
+
+    /// <summary>The For-you card said when a review lost in a node restart could not be started afresh.</summary>
+    public const string LostKind = "pr-review-lost";
+
     /// <summary>The verdicts a PR reviewer gives, as GitHub's review events will take them: approve, request changes, comment.</summary>
     public static readonly string[] Verdicts = ["approve", "changes", "comment"];
 
@@ -84,6 +90,8 @@ public sealed class PrReviews(
     {
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        // What a review-pr or fix-pr made, for the one line it leaves in node.log; null for the other verbs.
+        string? made = null;
         try
         {
             var pr = PrRef.Parse(command.Target) is { } parsed && command.Target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal)
@@ -92,7 +100,7 @@ public sealed class PrReviews(
             switch (command.Verb)
             {
                 case Verbs.ReviewPr:
-                    await StartAsync(pr, cancellationToken);
+                    made = await StartAsync(pr, cancellationToken);
                     break;
                 case Verbs.PrVerdict:
                     if (await VerdictAsync(pr, command, cancellationToken))
@@ -105,7 +113,7 @@ public sealed class PrReviews(
                     await FixAfterPostAsync(pr, cancellationToken);
                     break;
                 case Verbs.FixPr:
-                    await FixAsync(pr, command, cancellationToken);
+                    made = await FixAsync(pr, command, cancellationToken);
                     break;
                 case Verbs.Merge:
                     await MergeAsync(pr, command, cancellationToken);
@@ -122,8 +130,27 @@ public sealed class PrReviews(
             // written) is a refusal that says so, not an exception out of the route: that answered 500 with an empty body.
             error = $"{command.Verb} failed: {ex.GetType().Name}: {ex.Message}";
         }
+        catch (OperationCanceledException)
+        {
+            // Cut off (the caller went away, the node stops): the line still says so, in the finally, and the cancellation goes on.
+            error = $"{command.Verb} was cancelled";
+            throw;
+        }
         finally
         {
+            // One line per review-pr and fix-pr, written whatever came of it, so a start that left no trace is not a mystery
+            // (SE1's review of tianwen#1930, 2026-10-30, left nothing in node.log to say it had been asked for).
+            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr)
+            {
+                try
+                {
+                    await Error.WriteLineAsync($"{command.Verb} {command.Target}, asked by {command.Who}: {made ?? $"refused: {error ?? "without a reason"}"}");
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    // A log that cannot be written is not a reason to fail the command.
+                }
+            }
             _one.Release();
         }
         return state.Complete(command, error);
@@ -133,7 +160,8 @@ public sealed class PrReviews(
     public PrReviewRow? Of(PrRef pr) =>
         state.PrReviews().FirstOrDefault(r => string.Equals(r.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && r.Number == pr.Number);
 
-    private async Task StartAsync(PrRef pr, CancellationToken cancellationToken)
+    /// <summary>Starts a fresh review of <paramref name="pr"/>; says what it started, as <c>started &lt;reviewer&gt; at &lt;head8&gt;</c>.</summary>
+    private async Task<string> StartAsync(PrRef pr, CancellationToken cancellationToken)
     {
         var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
@@ -202,6 +230,12 @@ public sealed class PrReviews(
         {
             job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer)), cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            // Cut off before its row was written: nothing says a review is on, so no worktree stays and no status was set.
+            await planes.RemoveAsync(clone, worktree, CancellationToken.None, force: true);
+            throw;
+        }
         catch (FlightException ex)
         {
             // A reviewer that did not start leaves no worktree behind for nobody to read.
@@ -214,6 +248,7 @@ public sealed class PrReviews(
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
+        return $"started {reviewer} at {Short(read.Head)}";
     }
 
     /// <summary>
@@ -694,6 +729,77 @@ public sealed class PrReviews(
 
     private static string Plural(int count, string what) => count == 1 ? $"1 {what}" : $"{count} {what}s";
 
+    private bool _recovered;
+
+    /// <summary>
+    /// The first sweep after the node starts looks once at every PR review still Reviewing whose reviewer session is absent or
+    /// over (a restart ends the sessions it did not outlive, and the row it left says reviewing with no reviewer): each is
+    /// started afresh at once, as review-pr does, and a Handled line says so. One that cannot be started takes back what it set
+    /// on GitHub (its pending status, its reviewing label) and says on a For-you card that it was lost, with Review again as
+    /// its choice. Left to <see cref="LegWatch"/>'s ladder alone it waited out the grace, whose counts a restart also forgets
+    /// (SE1's review of tianwen#1930, 2026-10-30, had neither reviewer nor recovery five minutes on).
+    /// </summary>
+    private async Task RecoverLostReviewsAsync(CancellationToken cancellationToken)
+    {
+        if (_recovered)
+        {
+            return;
+        }
+        _recovered = true;
+        var sessions = state.Sessions();
+        foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewing, ReviewerJob: not null }))
+        {
+            var seen = sessions.FirstOrDefault(s => s.Id == review.ReviewerJob);
+            if (seen is { Gone: false, State: not (SessionState.Ended or SessionState.Failed) })
+            {
+                continue;
+            }
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            var pr = PrRef.Parse(subject) ?? throw new InvalidOperationException($"{subject} is no PR target");
+            var lost = seen is null ? $"its session {review.ReviewerJob} is gone" : $"its session {review.ReviewerJob} {(seen.Gone ? "has no process" : seen.State.ToString().ToLowerInvariant())}";
+            try
+            {
+                var made = await StartAsync(pr, cancellationToken);
+                state.RaiseCard(CardBin.Handled, RestartedKind, subject, $"{pr}'s review started afresh after a node restart", $"{lost}; {made}", link: review.Url);
+                await Error.WriteLineAsync($"pr reviews: {pr} was reviewing with no reviewer after a restart ({lost}): {made}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var why = ex is FlightException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+                await Error.WriteLineAsync($"pr reviews: {pr} was reviewing with no reviewer after a restart ({lost}), and could not be started afresh: {why}");
+                await TakeBackAsync(review, pr, lost, why, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>Ends a review lost in a restart that would not start again: its marks on GitHub taken back, and a For-you card that says why.</summary>
+    private async Task TakeBackAsync(PrReviewRow review, PrRef pr, string lost, string why, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (Of(pr) is { State: not PrReviewState.Closed } open)
+        {
+            await EndAsync(open, "the review was lost in a restart", cancellationToken);
+        }
+        // The status is a mark that cannot be deleted, only replaced: an error says the review is not running, where pending said it was.
+        await SetStatusAsync(review, "error", "the review was lost in a node restart", review.Url, cancellationToken);
+        if (!FlightOwns(review))
+        {
+            try
+            {
+                await github.RemoveLabelAsync(review.ClonePath, review.Number, PilotMarks.Reviewing, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}",
+                    ex.Message, link: review.Url);
+            }
+        }
+        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart",
+            $"{lost}, and starting it again failed: {why}",
+            [new CardChoice { Label = "Review again", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
+            summary: $"The review of {pr} was running when the node restarted and could not be started again. Review again starts it afresh.");
+    }
+
     /// <summary>
     /// Every review whose verdict card has closed (dismissed, or answered) ends: its reviewer stopped if it still runs, its
     /// worktree removed. What the sweep does every <see cref="Interval"/>, and the node at once after a card is closed.
@@ -703,6 +809,7 @@ public sealed class PrReviews(
         await _one.WaitAsync(cancellationToken);
         try
         {
+            await RecoverLostReviewsAsync(cancellationToken);
             foreach (var fixing in state.PrReviews().Where(r => r.Fixer is not null))
             {
                 await TendFixerAsync(fixing, cancellationToken);
@@ -1049,12 +1156,17 @@ public sealed class PrReviews(
         return null;
     }
 
-    /// <summary>The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own.</summary>
-    private async Task FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>
+    /// The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own. A PR this node holds no
+    /// review of (the Pull requests page's Review word is the pilot/review status, which another node may have set, or the review
+    /// was lost) gets pilot's review first; its findings are fixed when it asks for changes, by the way a posted verdict goes.
+    /// </summary>
+    private async Task<string> FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
     {
         if (Of(pr) is not { } review)
         {
-            throw new FlightException($"{pr} has no review; review-pr starts one");
+            var started = await StartAsync(pr, cancellationToken);
+            return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
         if (review.Verdict != "changes")
         {
@@ -1066,7 +1178,7 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
-        await StartFixerAsync(pr, review, cancellationToken);
+        return await StartFixerAsync(pr, review, cancellationToken);
     }
 
     /// <summary>
@@ -1074,7 +1186,7 @@ public sealed class PrReviews(
     /// a session briefed with the review. Refused for a repo the node does not track, a PR a flight owns, one that is not
     /// open, and one that has a fixer already.
     /// </summary>
-    private async Task StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
     {
         if (review.Fixer is { } on)
         {
@@ -1128,6 +1240,7 @@ public sealed class PrReviews(
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
+        return $"started {fixer} at {Short(read.Head)}";
     }
 
     /// <summary>
