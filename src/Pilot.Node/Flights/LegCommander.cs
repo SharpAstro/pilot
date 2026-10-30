@@ -1292,7 +1292,7 @@ public sealed partial class LegCommander(
             {
                 throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is marked done anyway");
             }
-            if (string.Equals(command.Who, $"{options.Machine.ToLowerInvariant()}-watchtower", StringComparison.Ordinal) || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+            if (IsWatchtower(command.Who) && command.PersonsWord is null || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
             {
                 throw new FlightException($"marking {flight.Code}/{leg.Name} done anyway is the controller's, not {command.Who}'s");
             }
@@ -1497,7 +1497,7 @@ public sealed partial class LegCommander(
         // TIA1241 went round six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
         // The node's own go-arounds count the same: sent round on every conflict with a main that kept moving, PIL338 went round
         // seven times, its review passing and its PR conflicting again before it could merge (SE1, 2026-10-27).
-        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && (IsWatchtower(command.Who) || command.Who == LegWatch.Who))
+        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && (IsWatchtower(command.Who) && command.PersonsWord is null || command.Who == LegWatch.Who))
         {
             throw new FlightException(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
@@ -1846,8 +1846,11 @@ public sealed partial class LegCommander(
             var tip = (await git.RunAsync(["cat-file", "-e", $"{pr.Head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok ? pr.Head : "HEAD";
             if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, tip], flight.Worktree, cancellationToken)).Ok)
             {
-                // A PR GitHub has queued is left as it is (the caller says it is queued): a push would drop it from the queue.
-                if ((await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken))?.Kind == MergeKinds.Queued)
+                // A base with a merge queue is left to it: the queue builds the PR on top of the latest base (and of the entries
+                // ahead of it) itself, so the base merged in first only pushes a new head, whose PR checks run again before the
+                // queue is joined, at every landing on the base. Each landing restarted every waiting flight's wait that way
+                // (pilot #507 and #509, 2026-10-30). A PR GitHub has queued is left as it is too: a push would drop it from the queue.
+                if (await github.MergeQueueAsync(flight.RepoPath, pr.Number, cancellationToken) is not null)
                 {
                     return pr;
                 }
@@ -2436,7 +2439,7 @@ public sealed partial class LegCommander(
             throw new FlightException($"only {review.Reviewer} gives {flight.Code}'s verdict; the controller may only pass one that asked for changes");
         }
         // The watchtower's "ready anyway" is as much a way round the person as its go-around: past the cap the card is theirs.
-        if (!fromReviewer && IsWatchtower(command.Who) && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is { ReviewGoArounds: >= MaxReviewGoArounds } capped)
+        if (!fromReviewer && IsWatchtower(command.Who) && command.PersonsWord is null && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is { ReviewGoArounds: >= MaxReviewGoArounds } capped)
         {
             throw new FlightException(
                 $"{flight.Code}/{capped.Name} has gone around {capped.ReviewGoArounds} times on its review's findings: passing it over them is the person's call. Leave the card open for them");

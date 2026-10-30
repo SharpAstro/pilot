@@ -58,6 +58,14 @@ public sealed record CommandRequest
     /// </summary>
     [JsonIgnore]
     public bool Autopilot { get; init; }
+
+    /// <summary>
+    /// Set by the node when it took the watchtower's answer or dismissal of a card as the person's word in its chat: the words
+    /// of their message it matched. The checks keyed on the watchtower's name let such a command through. Never read from the
+    /// wire: a client cannot claim it.
+    /// </summary>
+    [JsonIgnore]
+    public string? PersonsWord { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>
