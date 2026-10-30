@@ -155,6 +155,98 @@ public sealed class ListTableTests : IDisposable
 
     private PilotChrome<RgbaImage> Chrome() => new(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
 
+    private static void ClickTitle(SessionsView<RgbaImage> view, SessionsScreen screen, string title)
+    {
+        view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"sessions:table:{title}").OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+    }
+
+    // The sort carets drawn in the header, of one kind, from the page as the engine arranges it.
+    private int Carets(SessionsView<RgbaImage> view, SessionsScreen screen, Layout.IconKind kind)
+    {
+        var context = new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f);
+        var arranged = Layout.Engine.Arrange(view.Tree(screen), new Rect<float>(0f, 0f, PageWidth, PageHeight), context);
+        return arranged.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon icon } && icon.Kind == kind && a.Bounds.Y < 100f);
+    }
+
+    [Fact]
+    public void AClickOnATitleMarksTheHeaderASecondClickFlipsItAndTheActionColumnDoesNotSort()
+    {
+        var screen = SessionsScreenOf();
+        var view = Sessions();
+
+        view.Table.Sort.ShouldBeNull();
+        Carets(view, screen, Layout.IconKind.CaretUp).ShouldBe(0);
+
+        ClickTitle(view, screen, "Session");
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Session", false));
+        Carets(view, screen, Layout.IconKind.CaretUp).ShouldBe(1);
+
+        ClickTitle(view, screen, "Session");
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Session", true));
+        Carets(view, screen, Layout.IconKind.CaretDown).ShouldBe(1);
+
+        // The action column has no title: its press is swallowed, and sorts nothing.
+        view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        var blank = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "sessions:table:" });
+        blank.OnClick?.Invoke(InputModifier.None);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Session", true));
+    }
+
+    [Fact]
+    public void ASortComesBackFromTheSettingsFileAndAnUnknownColumnMeansNoSort()
+    {
+        var path = TempFile();
+        try
+        {
+            var screen = SessionsScreenOf();
+            var chrome = Chrome();
+            using (var file = GuiSettingsFile.Open(path))
+            {
+                chrome.KeepColumnWidths(file, () => { });
+                ClickTitle(chrome.Sessions, screen, "Spend");
+                file.Flush();
+            }
+
+            var written = File.ReadAllText(path);
+            written.ShouldContain("\"sorts\"");
+            written.ShouldContain("\"column\": \"Spend\"");
+            written.ShouldContain("\"descending\": true");
+
+            var again = Chrome();
+            using (var reopened = GuiSettingsFile.Open(path))
+            {
+                again.KeepColumnWidths(reopened, () => { });
+                again.Sessions.Table.Sort.ShouldBe(new ListTable.SortState("Spend", true));
+                again.Jobs.Table.Sort.ShouldBeNull();
+            }
+
+            File.WriteAllText(path, "{\"sorts\":{\"sessions\":{\"column\":\"\",\"descending\":true}}}");
+            var blank = Chrome();
+            using var blanked = GuiSettingsFile.Open(path);
+            blank.KeepColumnWidths(blanked, () => { });
+            blank.Sessions.Table.Sort.ShouldBeNull();
+
+            File.WriteAllText(path, "{\"sorts\":{\"sessions\":{\"column\":\"Nonesuch\",\"descending\":false}}}");
+            var unknown = Chrome();
+            using var opened = GuiSettingsFile.Open(path);
+            unknown.KeepColumnWidths(opened, () => { });
+            unknown.Sessions.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+            var plain = Chrome();
+            plain.Sessions.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+            unknown.Sessions.Shown.Count.ShouldBeGreaterThan(0);
+            unknown.Sessions.Shown.Select(l => l.Key).ShouldBe([.. plain.Sessions.Shown.Select(l => l.Key)], "no column of that title: the page's own order");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+        }
+    }
+
     [Fact]
     public void FleetWithNoDragLaysOutAsItAlwaysDidTheButtonsColumnIncluded()
     {

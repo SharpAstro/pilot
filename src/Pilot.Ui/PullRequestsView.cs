@@ -704,7 +704,13 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         [
             .. (row with { PullRequests = [.. kept] }).OrgGroups()
                 .Where(o => o.Repos.Length > 0 || o.Error is not null || !narrowed)
-                .Select(o => o with { Counts = counts.GetValueOrDefault(o.Org, o.Counts) }),
+                .Select(o => o with
+                {
+                    Counts = counts.GetValueOrDefault(o.Org, o.Counts),
+                    // A clicked title's order, within each repo's group: the groups keep theirs, and the rows (and the selection, which
+                    // follows its PR by URL) follow what is drawn.
+                    Repos = [.. o.Repos.Select(g => g with { PullRequests = [.. Table.Order(g.PullRequests, _ => "", SortKeys)] })],
+                }),
         ];
     }
 
@@ -884,8 +890,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         var columns = new List<(ListColumn, Func<PullRequestRow, Layout.Node>)>
         {
-            (ListColumn.Fixed("State", StateWidth), StateCell),
-            (ListColumn.Star("Pull request", titleMin), TitleCell),
+            (Sorted(ListColumn.Fixed("State", StateWidth)), StateCell),
+            (Sorted(ListColumn.Star("Pull request", titleMin)), TitleCell),
         };
         // In the order they are read: the flight, the author, the review, the age.
         foreach (var header in new[] { "Flight", "Author", "Review", "Updated" })
@@ -893,7 +899,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             if (kept.Contains(header))
             {
                 var (_, columnWidth, cell) = optional.First(o => o.Header == header);
-                columns.Add((ListColumn.Fixed(header, columnWidth), cell));
+                columns.Add((Sorted(ListColumn.Fixed(header, columnWidth), descendingFirst: header == "Updated"), cell));
             }
         }
         // The row's actions go here, untitled: the buttons its state offers, in slots that hold their width when it offers fewer.
@@ -903,6 +909,26 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the state by how much it asks of the person, the number as a number, the age as a time.
+    private static readonly IReadOnlyDictionary<string, Func<PullRequestRow, object?>> SortKeys = new Dictionary<string, Func<PullRequestRow, object?>>(StringComparer.Ordinal)
+    {
+        ["State"] = pr => (PullRequestStates.Rank(pr.Kind), pr.Label),
+        ["Pull request"] = pr => pr.Number,
+        ["Flight"] = pr => pr.Flight ?? "",
+        ["Author"] = pr => pr.Author ?? "",
+        ["Review"] = pr => pr.Review switch { PullRequestReview.Passed => 3, PullRequestReview.Changes => 2, PullRequestReview.Reviewing => 1, _ => 0 },
+        ["Updated"] = pr => pr.UpdatedAt ?? pr.CreatedAt,
+    };
 
     // The row's buttons in three slots (the card's Merge or Go around, Review, Open) of fixed widths, each as tall as a chip and in
     // the row's middle; a slot the state does not offer stays empty, so the buttons left do not shift and the columns line up.

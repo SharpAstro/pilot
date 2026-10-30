@@ -231,4 +231,66 @@ public sealed class FlightsViewsTests
 
         FlightLine.Build([Flight("A")], [], Live.At, [leg]).Single().Legs.ShouldBe(@"1 leg · 0 done · render waiting for C:\x\done.txt");
     }
+
+    private static void ClickTitle(FlightsView<RgbaImage> view, FlightsScreen screen, string title, int width = 1400)
+    {
+        var bounds = new RectF32(0, 0, width, 800);
+        view.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, bounds);
+    }
+
+    private static FlightsScreen SortScreen() => new(FlightLine.Build(
+        [Flight("C", minutes: 1), Flight("A", minutes: 2), Flight("B", FlightState.Held, 3, "A")],
+        [],
+        Live.At,
+        [
+            new LegRow { Flight = "C", Name = "x", Order = 0, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "C", Name = "y", Order = 1, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "A", Name = "x", Order = 0, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "A", Name = "y", Order = 1, State = LegState.Planned, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "B", Name = "x", Order = 0, State = LegState.Planned, Goal = "g", DoneWhen = "d" },
+        ]), "test", Live.At);
+
+    [Fact]
+    public void AClickOnATitleSortsTheFlightListByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        var screen = SortScreen();
+
+        ClickTitle(view, screen, "Flight");
+        view.Shown.Select(l => l.Code).ShouldBe(["A", "B", "C"]);
+        ClickTitle(view, screen, "Flight");
+        view.Shown.Select(l => l.Code).ShouldBe(["C", "B", "A"]);
+
+        // Legs by how many are done, most first at the first click.
+        ClickTitle(view, screen, "Legs");
+        view.Shown.Select(l => l.Code).ShouldBe(["C", "A", "B"]);
+        ClickTitle(view, screen, "Legs");
+        view.Shown.Select(l => l.Code).ShouldBe(["B", "A", "C"]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Legs", Descending: false));
+    }
+
+    [Fact]
+    public void TheSelectedFlightStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        var screen = SortScreen();
+        view.Render(screen, new RectF32(0, 0, 1400, 800));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.First(r => r.Result is HitResult.ListItemHit { Index: 0 }).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, new RectF32(0, 0, 1400, 800));
+        var code = view.Shown[view.Selected].Code;
+        code.ShouldBe("C");
+
+        ClickTitle(view, screen, "Flight");
+
+        view.Shown[view.Selected].Code.ShouldBe(code);
+        view.Selected.ShouldBe(2, "A, B, C puts C last, and the selection went with it");
+    }
 }
