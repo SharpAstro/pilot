@@ -313,7 +313,67 @@ public static class PilotCommand
         var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
             (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
                 p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
-        var issueCommand = new Command("issue", "Issues: create") { Subcommands = { issueCreate } };
+        var issueRef = Arg("issue", "The issue: #12 or 12 in the repo, or tianwen#12 in another");
+        var issueMilestone = Words("milestone", $"The open milestone to put the issue in, or {Verbs.NoMilestone} to take it out of every milestone");
+        var issueSetMilestone = Action(new Command("milestone", $"Put an issue in an open milestone, or in none ({Verbs.NoMilestone}): GitHub sets it, guarded on the issue as the node last read it; a milestone that is not open is refused, naming the open ones") { Arguments = { issueRef, issueMilestone }, Options = { issueRepo } },
+            async (p, client, ct) =>
+            {
+                var parsed = IssueIds.Parse(p.GetValue(issueRef) ?? "")
+                    ?? throw new UsageException($"{p.GetValue(issueRef)} is no issue: write #12, 12 or tianwen#12");
+                var repoGiven = parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd);
+                var repoName = Path.GetFileName(repoGiven.TrimEnd('/', '\\'));
+                // The node compares the updated_at the row showed with GitHub's, so a move from a stale row is refused rather than made.
+                var seen = (await SnapshotAsync(client, ct)).Issues.FirstOrDefault(i => i.Number == parsed.Number && string.Equals(i.Repo, repoName, StringComparison.OrdinalIgnoreCase));
+                var milestoneName = Join(p, issueMilestone);
+                return await Send(client, Verbs.SetMilestone, IssueIds.Target(repoGiven, parsed.Number),
+                    seen is null ? [milestoneName] : [milestoneName, seen.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)], who, ct);
+            });
+        // An issue as a person writes it, with the repo of the call when it names none: the repo as the node is given it, and the number.
+        (string Repo, int Number) ParseIssue(NodeClient client, ParseResult p, string? text)
+        {
+            var parsed = IssueIds.Parse(text ?? "") ?? throw new UsageException($"{text} is no issue: write #12, 12 or tianwen#12");
+            return (parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd), parsed.Number);
+        }
+        var issueReady = Action(new Command("ready", "Ask Claude whether an issue (an idea too) is ready to fly as a flight: one leg-sized goal, tests that can be named, no open questions. The answer, with its reasons and the time, is kept on the issue's row; nothing is written to GitHub") { Arguments = { issueRef }, Options = { issueRepo } },
+            (p, client, ct) =>
+            {
+                var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueRef));
+                return Send(client, Verbs.CheckReady, IssueIds.Target(repoGiven, number), [], who, ct);
+            });
+        var issueSuggestRefs = Words("issue", "The issue to suggest a milestone for: #12 or 12 in the repo, or tianwen#12 in another; none with --section", required: false);
+        var issueSection = new Option<string?>("--section") { Description = $"Suggest for every open issue of a section instead: {Verbs.SectionUnsorted} (the {IdeaIds.Milestone} milestone) or {Verbs.NoMilestone} (no milestone)" };
+        var issueSuggest = Action(new Command("suggest", "Ask Claude for a milestone for an issue, or for each issue of a section: an open milestone, or a new one (title and goal) with the issues that would go in it. Nothing is moved or made until pilot issue accept") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueSection } },
+            (p, client, ct) =>
+            {
+                if (p.GetValue(issueSection) is { Length: > 0 } section)
+                {
+                    section = section.Trim().ToLowerInvariant();
+                    return section is Verbs.SectionUnsorted or Verbs.NoMilestone
+                        ? Send(client, Verbs.SuggestMilestones, IssueIds.SectionTarget(RepoPath(client, p.GetValue(issueRepo), cwd), section), [], who, ct)
+                        : throw new UsageException($"--section is {Verbs.SectionUnsorted} or {Verbs.NoMilestone}, not {section}");
+                }
+                var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueSuggestRefs)?.FirstOrDefault());
+                return Send(client, Verbs.SuggestMilestones, IssueIds.Target(repoGiven, number), [], who, ct);
+            });
+        var issueAcceptAll = new Option<bool>("--all") { Description = "Accept every suggestion kept for the repo" };
+        var issueAccept = Action(new Command("accept", "Apply the suggestions the node kept from pilot issue suggest: one issue, several, or --all. A suggested new milestone is made first, once; each issue is then moved as pilot issue milestone moves it") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueAcceptAll } },
+            (p, client, ct) =>
+            {
+                var refs = p.GetValue(issueSuggestRefs) ?? [];
+                if (p.GetValue(issueAcceptAll))
+                {
+                    return Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)), [Verbs.AllArg], who, ct);
+                }
+                if (refs.Length == 0)
+                {
+                    throw new UsageException("name the issue to accept the suggestion of, or --all");
+                }
+                var parsed = refs.Select(r => ParseIssue(client, p, r)).ToArray();
+                return parsed.Length == 1
+                    ? Send(client, Verbs.AcceptMilestones, IssueIds.Target(parsed[0].Repo, parsed[0].Number), [], who, ct)
+                    : Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(parsed[0].Repo), [.. parsed.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))], who, ct);
+            });
+        var issueCommand = new Command("issue", "Issues: create, milestone, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issueReady, issueSuggest, issueAccept } };
 
         // idea, ideas: issues in a repo's Ideas milestone, id I<issue number>
         var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");
@@ -1318,6 +1378,45 @@ public static class PilotCommand
         }
     }
 
+    /// <summary>What a readiness check found: ready or not, its reasons and when; or why nothing was checked.</summary>
+    internal static async Task WriteReadinessAsync(TextWriter output, string id, ReadinessResult result)
+    {
+        if (result.Readiness is not { } readiness)
+        {
+            await output.WriteLineAsync($"{id}: {result.Note ?? "not checked"}");
+            return;
+        }
+        await output.WriteLineAsync($"{id}: {(readiness.Ready ? "ready" : "not ready")} (checked {readiness.CheckedAt.ToString("u", CultureInfo.InvariantCulture)})");
+        foreach (var reason in readiness.Reasons)
+        {
+            await output.WriteLineAsync($"  - {reason}");
+        }
+    }
+
+    /// <summary>A milestone suggested for each issue, and the new milestones with the issues that would go in them; nothing is moved.</summary>
+    internal static async Task WriteSuggestionsAsync(TextWriter output, MilestoneSuggestions suggestions)
+    {
+        if (suggestions.Items.Length == 0)
+        {
+            await output.WriteLineAsync($"{suggestions.Repo}: {suggestions.Note ?? "no suggestion"}");
+            return;
+        }
+        foreach (var item in suggestions.Items)
+        {
+            var where = item.Milestone is { } open ? open : item.NewMilestone is { } fresh ? $"new milestone {fresh}" : item.Note ?? "no suggestion";
+            await output.WriteLineAsync($"#{item.Number}  {item.Title}: {where}{(item.Reason.Length > 0 && (item.Milestone ?? item.NewMilestone) is not null ? $" ({item.Reason})" : "")}");
+        }
+        foreach (var made in suggestions.New)
+        {
+            await output.WriteLineAsync($"new milestone {made.Title}{(made.Description.Length > 0 ? $" ({made.Description})" : "")}: {string.Join(' ', made.Issues.Select(n => "#" + n.ToString(CultureInfo.InvariantCulture)))}");
+        }
+        if (suggestions.Note is { Length: > 0 } note)
+        {
+            await output.WriteLineAsync(note);
+        }
+        await output.WriteLineAsync("nothing is moved: pilot issue accept <issue> (or --all) applies the suggestions");
+    }
+
     /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
     internal static string Ideas(IEnumerable<IdeaRow> ideas, bool all, string? repo)
     {
@@ -1516,6 +1615,18 @@ public static class PilotCommand
             {
                 await WriteMilestonesAsync(output, result.Made ?? target, proposed);
                 await output.WriteLineAsync($"nothing is planned: pilot idea {result.Made ?? target} plan --milestone <name> (or --new-milestone <title> [--milestone-description <line>]) plans it");
+            }
+            if (verb == Verbs.CheckReady && result.Readiness is { } checkedReady)
+            {
+                await WriteReadinessAsync(output, result.Made ?? target, checkedReady);
+            }
+            if (verb == Verbs.SuggestMilestones && result.Suggestions is { } suggested)
+            {
+                await WriteSuggestionsAsync(output, suggested);
+            }
+            if (verb == Verbs.AcceptMilestones && result.Made is { Length: > 0 } accepted)
+            {
+                await output.WriteLineAsync($"moved: {accepted}");
             }
             if (verb == Verbs.TidyIdea && result.Tidy is { } tidy)
             {

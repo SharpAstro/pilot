@@ -98,6 +98,14 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MilestoneProposal? Milestones { get; init; }
 
+    /// <summary>A <c>check-ready</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ReadinessResult? Readiness { get; init; }
+
+    /// <summary>A <c>suggest-milestones</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneSuggestions? Suggestions { get; init; }
+
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
@@ -469,6 +477,53 @@ public static class Verbs
 
     /// <summary>What an idea target starts with: <c>idea/&lt;repo&gt;/I381</c> (see <see cref="IdeaIds.Target"/>).</summary>
     public const string IdeaTargetPrefix = "idea/";
+
+    /// <summary>
+    /// <c>set-milestone issue/&lt;repo&gt;/#&lt;n&gt; &lt;milestone&gt; [&lt;updated_at&gt;]</c>: the open issue moved into the open milestone of that name, or out of
+    /// every milestone with <see cref="NoMilestone"/>. The optional <c>updated_at</c> (ISO 8601) is the issue's as the caller saw it: when GitHub has
+    /// moved it on since, nothing is written. The write is guarded on the <c>updated_at</c> read just before it, as <see cref="PlanIdea"/>'s is.
+    /// A milestone that is not open is refused, naming the open ones. The result's <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; #&lt;n&gt;</c>.
+    /// </summary>
+    public const string SetMilestone = "set-milestone";
+
+    /// <summary>The milestone of <see cref="SetMilestone"/> that takes the issue out of every milestone.</summary>
+    public const string NoMilestone = "none";
+
+    /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
+    public const string IssueTargetPrefix = "issue/";
+
+    /// <summary>
+    /// <c>check-ready issue/&lt;repo&gt;/#&lt;n&gt;</c> (an idea target, <c>idea/&lt;repo&gt;/I&lt;n&gt;</c>, works too): Claude judges whether the issue is ready to
+    /// become a flight (one leg-sized goal, tests that can be named, no open questions), and the answer is kept on the issue's row
+    /// (<see cref="IssueRow.Readiness"/>) with the reasons and the time. Writes nothing to GitHub. Claude failing leaves the row as it was and says why in the
+    /// note of <see cref="CommandResult.Readiness"/>.
+    /// </summary>
+    public const string CheckReady = "check-ready";
+
+    /// <summary>
+    /// <c>suggest-milestones issue/&lt;repo&gt;/#&lt;n&gt;</c> or <c>section/&lt;repo&gt;/unsorted|none</c>: Claude proposes a milestone for the one open issue or
+    /// for each open issue of the section (<see cref="SectionUnsorted"/>: the Ideas milestone; <see cref="NoMilestone"/>: no milestone), an open one each or a
+    /// new one (title and one-line goal) grouping the issues that would go in it. The answer is in <see cref="CommandResult.Suggestions"/> and is kept for
+    /// <see cref="AcceptMilestones"/>. Nothing is moved and no milestone is made. Claude failing gives no suggestion and a note.
+    /// </summary>
+    public const string SuggestMilestones = "suggest-milestones";
+
+    /// <summary>
+    /// <c>accept-milestones issue/&lt;repo&gt;/#&lt;n&gt;</c> accepts the suggestion kept for that issue; <c>accept-milestones repo/&lt;repo&gt; all</c> (or the numbers
+    /// <c>12 14</c>) accepts the suggestions kept for the repo. A new milestone is made on GitHub first, once however many issues go in it; each issue is then moved
+    /// as <see cref="SetMilestone"/> moves it, guarded on the <c>updated_at</c> the suggestion was made from. One that cannot be moved is reported and stays suggested.
+    /// The result's <see cref="CommandResult.Made"/> is the issues moved, <c>&lt;repo&gt; #&lt;n&gt; #&lt;n&gt;</c>.
+    /// </summary>
+    public const string AcceptMilestones = "accept-milestones";
+
+    /// <summary>What a section target starts with: <c>section/&lt;repo&gt;/unsorted</c> (see <see cref="IssueIds.SectionTarget"/>).</summary>
+    public const string SectionTargetPrefix = "section/";
+
+    /// <summary>The section of the open issues that sit in the Ideas milestone, not yet sorted into a milestone of work.</summary>
+    public const string SectionUnsorted = "unsorted";
+
+    /// <summary>The arg of <see cref="AcceptMilestones"/> that accepts every suggestion kept for the repo.</summary>
+    public const string AllArg = "all";
 
     /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
