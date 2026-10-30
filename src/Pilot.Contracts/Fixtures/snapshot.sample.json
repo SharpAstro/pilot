@@ -186,6 +186,8 @@
   "usage": null,
   "machine": null,
   "pullRequests": null,
+  "repos": null,
+  "node": null,
   "jobs": [
     {
       "id": "j14",
