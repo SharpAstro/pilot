@@ -2037,16 +2037,16 @@ public sealed partial class LegCommander(
     /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
     /// <summary>
     /// A PR in review is never a draft (PIL483): once a reviewer is recorded, a draft PR of the flight is marked ready, the draft a
-    /// changes verdict or a send-back left. GitHub refusing it is a card, never a lost review start.
+    /// changes verdict or a send-back left. Run without the lock (it follows the start), so it asks GitHub directly. GitHub refusing it is a card, never a lost review start.
     /// </summary>
     private async Task MarkReadyForReviewAsync(FlightRow flight)
     {
         try
         {
-            var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, CancellationToken.None));
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, CancellationToken.None);
             if (pr is { State: "OPEN", Draft: true })
             {
-                await OffLockAsync(null, () => github.SetDraftAsync(flight.RepoPath, pr.Number, draft: false, CancellationToken.None));
+                await github.SetDraftAsync(flight.RepoPath, pr.Number, draft: false, CancellationToken.None);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
