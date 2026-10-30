@@ -1435,12 +1435,15 @@ not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "me
 A third route is the person's word in its chat (#473), which on Remote Control reaches the session past the node. The
 watchtower's `answer` or `dismiss` of an open card whose `--why` quotes the person's latest message (equal, or one holding
 the other on word boundaries, at least six characters) runs **as the person**, while its turn runs, and leaves a Handled
-card of kind `persons-word` with their words. The node reads the latest line that fed the turn from its transcript, meta
+card of kind `persons-word` with their words. From the CLI that is `pilot answer <card> <choice> --why "<their words>"`, or
+`pilot dismiss <card> <reason> --why "<their words>"`, where the reason stays the dismissal's own; `--why` is the
+command's `Why`, as on the person's own commands. The node reads the latest line that fed the turn from its transcript, meta
 lines included: it is the person's only when Claude Code records it as typed or resumed text (`origin.kind` human) or as
-a cross-session message from `controller`, and its text is not the node's voice (`[node] `), another node's watchtower
-(`[From the watchtower of node `), or a say the node routed to it from anyone but the person. A message from any other
-session, the node's own envelope, a task finishing, a scheduled wake, a hand-back or a compaction leaves the watchtower
-fenced. The match binds the press to the person's message, not to the card or the choice: any message of theirs in the
+a cross-session message from `controller`, it is not the session's first prompt (the brief the node started it with, which
+Claude Code records as typed), and its text is not the node's voice (`[node] `), another node's watchtower
+(`[From the watchtower of node `), or a say the node routed to it from anyone but the person (a say names the watchtower by
+row id or by name). A message from any other session, the node's own envelope, a task finishing, a scheduled wake, a
+hand-back or a compaction leaves the watchtower fenced. The match binds the press to the person's message, not to the card or the choice: any message of theirs in the
 turn lifts every fence for whichever card's choice the watchtower answers (`update`, `answer-grant` and `post-review`
 included), so the brief tells it to press only the choice the person asked for and to say which.
 

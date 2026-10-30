@@ -108,7 +108,14 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     /// command, <c>agent</c> for a subagent's hand-back); <paramref name="From"/> the sender a peer message names, and
     /// <paramref name="Text"/> its words without the envelope, the reminders or the relay's footer.
     /// </summary>
-    public sealed record TurnPrompt(string Origin, string? From, string Text);
+    public sealed record TurnPrompt(string Origin, string? From, string Text)
+    {
+        /// <summary>
+        /// Whether it is the first line that fed the session: the prompt it was started with (a worker's or the watchtower's
+        /// brief), which Claude Code records as typed text though the node wrote it.
+        /// </summary>
+        public bool First { get; init; }
+    }
 
     /// <summary>What <see cref="Window"/> reads of a transcript.</summary>
     public sealed record TranscriptWindow(TranscriptEntry[] Entries, int Total, PendingAsk? Pending, string[] Queued);
@@ -120,6 +127,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private readonly List<byte> _partial = [];
         private string? _askedIn;
         private bool _nodeSpoke;
+        private bool _fedBefore;
 
         public List<TranscriptEntry> Entries { get; } = [];
 
@@ -148,6 +156,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     _askedIn = null;
                     _nodeSpoke = false;
                     LastPrompt = null;
+                    _fedBefore = false;
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
                 var buffer = new byte[64 * 1024];
@@ -187,7 +196,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 Ask(doc.RootElement);
                 if (Fed(doc.RootElement) is { } fed)
                 {
-                    LastPrompt = fed;
+                    LastPrompt = _fedBefore ? fed : fed with { First = true };
+                    _fedBefore = true;
                 }
                 var at = doc.RootElement.TryGetProperty("timestamp", out var t) && t.TryGetDateTimeOffset(out var when) ? when : (DateTimeOffset?)null;
                 foreach (var read in Read(doc.RootElement))

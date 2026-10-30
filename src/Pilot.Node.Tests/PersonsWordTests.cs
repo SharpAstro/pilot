@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Pilot.Node.Tests.Sessions;
@@ -26,12 +28,28 @@ public sealed class PersonsWordTests
     private static string Replied(string text) =>
         $$$"""{"type":"assistant","timestamp":"2026-10-30T09:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"{{{text}}}"}]}}""";
 
+    // The watchtower's brief as Claude Code records the prompt the node started it with: typed, a human origin, no [node] in front.
+    private static string Brief(NodeHarness node) => new JsonObject
+    {
+        ["type"] = "user",
+        ["timestamp"] = "2026-10-30T08:59:00Z",
+        ["message"] = new JsonObject { ["role"] = "user", ["content"] = Briefs.Watchtower(Lookout(node), [], [], [], "pilot") },
+        ["origin"] = new JsonObject { ["kind"] = "human" },
+        ["promptSource"] = "typed",
+        ["turnOrigin"] = "human",
+    }.ToJsonString();
+
+    // The watchtower's transcript: its brief first, as every one begins, then the lines given.
     private static void Transcript(NodeHarness node, params string[] lines)
     {
         var folder = Path.Combine(node.Folder, "claude", "projects", "proj-a");
         Directory.CreateDirectory(folder);
-        File.WriteAllLines(Path.Combine(folder, AgentRows.SessionA + ".jsonl"), lines);
+        File.WriteAllLines(Path.Combine(folder, AgentRows.SessionA + ".jsonl"), [Brief(node), .. lines]);
     }
+
+    // The CLI as a person runs it (no agent, no session), or as the watchtower's session does when given its session id.
+    private static Task<int> Cli(NodeHarness node, TextWriter output, string? sessionId, params string[] args) =>
+        PilotCommand.RunAsync(["--node-socket", node.SocketPath, .. args], node.Folder, output, output, Ct, agent: sessionId is not null, sessionId: sessionId ?? "");
 
     private static async Task Tower(NodeHarness node, string status)
     {
@@ -400,5 +418,69 @@ public sealed class PersonsWordTests
         (await Answer(node, ask, "Allow", Quote)).Error.ShouldBeNull();
 
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+    }
+
+    // The node starts the watchtower with its brief and says nothing after it: a fresh one works through the cards it lists
+    // with the brief as the line that fed its turn, so the brief must never pass for the person's message.
+    [Fact]
+    public async Task TheWatchtowersBriefIsNotThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node);
+
+        await Refused(node, "answer or dismiss any card");
+    }
+
+    // A say finds its session by name as well as by row id: a session's say to the watchtower by name, resumed as a plain line,
+    // is not the person's either.
+    [Fact]
+    public async Task ASayByNameFromASessionIsNotThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await Tower(node, "idle");
+        await Send(node, new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(Lookout(node)), Args = ["please allow it now"], Who = "du1-tia1-parser", Agent = true });
+        Transcript(node, Typed(Words), Replied("on it"), Typed("please allow it now"));
+
+        await Refused(node, "please allow it now");
+    }
+
+    [Fact]
+    public async Task TheCliCarriesWhyOnAnAnswerAndADismissal_TheChoiceAndTheReasonUntouched()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var (ask, ring) = AskToDismissARing(node);
+        var passed = node.State.RaiseCard(CardBin.ForYou, "note", Verbs.NodeTarget, "An old note", "nothing to do");
+        var output = new StringWriter();
+
+        (await Cli(node, output, null, "answer", ask.Id, "Allow", "--why", Quote)).ShouldBe(0, output.ToString());
+        (await Cli(node, output, null, "dismiss", passed.Id, "it", "has", "passed", "--why", Quote)).ShouldBe(0, output.ToString());
+
+        node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");
+        node.State.Cards().Single(c => c.Id == ring.Id).Outcome.ShouldBe("dismissed: not a stall");
+        node.State.Cards().Single(c => c.Id == passed.Id).Outcome.ShouldBe("dismissed: it has passed");
+        var box = AutopilotTests.BlackBox(node);
+        box.Single(l => l.Verb == Verbs.Answer && l.Target == Verbs.CardTarget(ask.Id)).Why.ShouldBe(Quote);
+        box.Single(l => l.Verb == Verbs.Dismiss && l.Target == Verbs.CardTarget(passed.Id)).Why.ShouldBe(Quote);
+    }
+
+    // End to end as the watchtower runs it: pilot answer from its session, which the CLI names by its session id, with the
+    // person's words from its chat as --why.
+    [Fact]
+    public async Task TheWatchtowersCliAnswerAtThePersonsWordPressesAnAsksAllow()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed(Words), Replied("on it"));
+        await Tower(node, "busy");
+        var (ask, ring) = AskToDismissARing(node);
+        var output = new StringWriter();
+
+        (await Cli(node, output, AgentRows.SessionA, "answer", ask.Id, "Allow", "--why", Quote)).ShouldBe(0, output.ToString());
+
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+        node.State.Cards().Single(c => c.Id == ask.Id).Outcome.ShouldNotBeNull().ShouldStartWith(Autopilot.AllowLabel + ";");
+        AutopilotTests.BlackBox(node).Single(l => l.Verb == Verbs.Answer).ShouldSatisfyAllConditions(l => l.Who.ShouldBe(Lookout(node)), l => l.Why.ShouldBe(Quote));
+        var handled = node.State.Cards().Single(c => c.Kind == CardKinds.PersonsWord);
+        handled.Title.ShouldBe($"{Lookout(node)} answered {ask.Id} (Allow) at the person's word in the chat");
+        handled.Detail.ShouldBe(Quote);
     }
 }

@@ -175,7 +175,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return state.Complete(command, refused);
         }
         // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
-        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row && command.Target == Verbs.SessionTarget(row.Id))
+        // A say finds its session as the messenger does, by row id or by name, so a say to the watchtower by name is noted too.
+        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row
+            && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal)
+            && SessionMessenger.Find(state.Sessions(), command.Target[Verbs.SessionTargetPrefix.Length..])?.Id == row.Id)
         {
             watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who, string.Join(' ', command.Args));
         }

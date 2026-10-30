@@ -20,6 +20,14 @@ public class WatchtowerBriefTests
     }
 
     [Fact]
+    public void TheBriefSaysHowToDismissACardAtTheirWord()
+    {
+        var brief = Brief();
+        brief.ShouldContain("`pilot dismiss <card> <reason> --why \"<their words, quoted>\"`");
+        brief.ShouldContain("refuses its dismissal from you unless they ask for it in the chat");
+    }
+
+    [Fact]
     public void TheBriefTellsItToSayWhichCardAndChoiceItPressed()
     {
         Brief().ShouldContain("say in a line which card and which choice you pressed");

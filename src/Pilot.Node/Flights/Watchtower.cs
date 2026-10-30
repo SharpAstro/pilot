@@ -415,10 +415,17 @@ public sealed class Watchtower(
     /// Whether a line that fed the watchtower's turn is the person's: typed or resumed text (Remote Control, the GUI, a
     /// <c>tell</c>) or a cross-session message from the controller (the node relaying the person's words), and not the node's
     /// voice, another node's watchtower, or a say the node routed for someone else. A message from any other session, the
-    /// node's own envelope, a task finishing, a scheduled wake, a hand-back, a compaction or a slash command is not.
+    /// node's own envelope, a task finishing, a scheduled wake, a hand-back, a compaction or a slash command is not; nor is
+    /// the session's first prompt, which is always its brief: Claude Code records it as typed with no <c>[node] </c> in
+    /// front, and a fresh watchtower works through the open cards it lists with no line of the node's after it (the review of
+    /// PIL473).
     /// </summary>
     private bool IsPersons(Sessions.TranscriptBook.TurnPrompt prompt)
     {
+        if (prompt.First)
+        {
+            return false;
+        }
         var persons = prompt.Origin switch
         {
             "human" => true,
