@@ -117,6 +117,15 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
 public sealed record CheckRun(int ExitCode, string Tail)
 {
     public bool Passed => ExitCode == 0;
+
+    /// <summary>Stopped by its running-time budget, not by its own exit.</summary>
+    public bool StoppedByBudget { get; init; }
+
+    /// <summary>The share (0 to 1) of the check's running time the machine's CPU was above 90%.</summary>
+    public double Saturation { get; init; }
+
+    /// <summary>Stopped by its budget while the machine was saturated for most of the run: worth one more try.</summary>
+    public bool StoppedSaturated => StoppedByBudget && Saturation > JobRunner.SaturatedShare;
 }
 
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>

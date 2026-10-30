@@ -91,6 +91,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The CPU time a running job's process tree has used in all, or null when it cannot be read.</summary>
     public Func<string, TimeSpan?>? JobCpu { get; init; }
 
+    /// <summary>The machine's CPU use now in percent, or null when it is not sampled: a check's saturation is counted from it. A test puts its own.</summary>
+    public Func<double?>? MachineCpu { get; init; }
+
+    /// <summary>The share of the looks at a check that found the machine's CPU above <see cref="SaturatedAbove"/> percent, over which the machine counts as saturated.</summary>
+    public const double SaturatedShare = 0.5;
+
+    /// <summary>The machine CPU percent above which a look counts as saturated.</summary>
+    public const double SaturatedAbove = 90;
+
     /// <summary>The OS's process table, as the node reads a job's tree and kills it: a test puts a fake one.</summary>
     public IProcessTable ProcessTable { get; init; } = OsProcessTable.Instance;
 
@@ -125,6 +134,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CheckRun>> _checkWaiters = new(StringComparer.Ordinal);
     // The running checks' kill-on-close job objects (Windows): a node that crashes ends them, as a check never outlives its node.
     private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
+    // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
+    private readonly ConcurrentDictionary<string, double> _saturation = new(StringComparer.Ordinal);
     private const string TimeoutPrefix = "stopped after its timeout";
     private CancellationToken _stopping;
     // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
@@ -409,11 +420,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return;
         }
         var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
+        _saturation.TryRemove(ended.Id, out var share);
         waiter.TrySetResult(ended.State switch
         {
             JobState.Succeeded => new CheckRun(0, tail),
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
-                new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped"),
+                new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped") { StoppedByBudget = true, Saturation = share },
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
         });
@@ -834,6 +846,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         int? exitCode = null;
         // What the job's process tree held at each look at it: the run's median is its value in the estimate, its peak only shown.
         var memory = new List<long>();
+        // The looks at the machine's CPU while this job ran, and how many found it above 90%.
+        int looks = 0, hot = 0;
 
         void Follow(bool final)
         {
@@ -876,6 +890,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         if (HeldBy(reading.Tree) is > 0 and var held)
                         {
                             memory.Add(held);
+                        }
+                        if (job.Kind == JobKind.Check && (MachineCpu is { } cpuNow ? cpuNow() : state.Machine()?.CpuPercent) is { } cpu)
+                        {
+                            looks++;
+                            hot += cpu > SaturatedAbove ? 1 : 0;
                         }
                     }
                     // Sampled before the exit file is looked at: a process that was gone by now has left its exit file, if it was going to.
@@ -970,6 +989,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
         }
         state.PutJob(ended);
+        if (looks > 0)
+        {
+            _saturation[job.Id] = (double)hot / looks;
+        }
         Finish(ended, last);
         // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
         Pump();

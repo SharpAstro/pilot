@@ -698,7 +698,7 @@ public sealed class JobTests : IDisposable
     }
 
     // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle()
+    private (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null)
     {
         var clock = new Clock();
         var cpu = new Dictionary<string, TimeSpan>();
@@ -708,6 +708,7 @@ public sealed class JobTests : IDisposable
             IdleWindow = TimeSpan.FromMinutes(15),
             IdleCpu = TimeSpan.FromSeconds(5),
             JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
+            MachineCpu = machineCpu,
         };
         return (jobs, clock, cpu, async id =>
         {
@@ -791,6 +792,33 @@ public sealed class JobTests : IDisposable
 
         var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
         (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes of running and was stopped"));
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(97, true)]
+    [InlineData(30, false)]
+    public async Task ACheckStoppedByItsBudgetSaysWhetherTheMachinesCpuWasAbove90PercentForMostOfItsRun(int machine, bool saturated)
+    {
+        var (jobs, clock, _, _) = Idle(() => machine);
+        var check = jobs.RunCheckAsync("TIA1", "parser", Sleep(60), _root, TimeSpan.FromMinutes(30), Ct);
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
+        clock.Advance(TimeSpan.FromMinutes(31));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        (run.StoppedByBudget, run.StoppedSaturated).ShouldBe((true, saturated));
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ACheckThatFailsByItsOwnExitIsNotStoppedByItsBudgetWhateverTheMachineDid()
+    {
+        var (jobs, _, _, _) = Idle(() => 99);
+        var check = jobs.RunCheckAsync("TIA1", "parser", "exit 3", _root, TimeSpan.FromMinutes(30), Ct);
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        (run.ExitCode, run.StoppedByBudget, run.StoppedSaturated).ShouldBe((3, false, false));
         await jobs.StopAsync(CancellationToken.None);
     }
 
