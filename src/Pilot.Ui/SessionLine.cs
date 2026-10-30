@@ -70,7 +70,10 @@ internal sealed partial record SessionLine
     /// <summary>Its Remote Control link, only while it waits on you and can be answered there: what the Answer in the browser links lead to.</summary>
     public string? AnswerUrl => IsWaiting ? RemoteControlUrl : null;
 
-    /// <summary>Its spend in weighted tokens, against its budget when it has one: <c>2.31M / 4M · 58%</c>, or <c>1.83M</c>.</summary>
+    /// <summary>Since its <see cref="SessionRow.StartedAt"/>, <c>9 h</c>; <c>unknown</c> when the start is not known.</summary>
+    public required string Age { get; init; }
+
+    /// <summary>Its spend in weighted tokens, against its budget when it has one, and over what time: <c>2.31M / 4M · 58% over 9 h</c>, or <c>1.83M over 3 m</c>.</summary>
     public required string Spend { get; init; }
 
     /// <summary>The share of its budget it has spent, 0 and up (past 1 when over); null without a budget.</summary>
@@ -118,6 +121,9 @@ internal sealed partial record SessionLine
     {
         var contextFraction = row.ContextWindow > 0 ? (float)row.ContextTokens / row.ContextWindow : 0f;
         float? spendFraction = row.Budget is > 0 ? (float)row.SpendWeighted / row.Budget.Value : null;
+        // A StartedAt of UnixEpoch is "not known", not 56 years.
+        var age = row.StartedAt > DateTimeOffset.UnixEpoch ? Span(now - row.StartedAt) : null;
+        var over = age is null ? "" : $" over {age}";
         return new SessionLine
         {
             Row = row,
@@ -134,11 +140,26 @@ internal sealed partial record SessionLine
             Asking = row.State == SessionState.Waiting ? row.Asking : null,
             RemoteControlUrl = row.RemoteControlUrl,
             Gone = row.State == SessionState.Waiting && row.Gone,
+            Age = age ?? "unknown",
             Spend = row.Budget is { } budget
-                ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}"
-                : Tokens(row.SpendWeighted),
+                ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}{over}"
+                : $"{Tokens(row.SpendWeighted)}{over}",
             SpendFraction = spendFraction,
         };
+    }
+
+    /// <summary>Its age as a span of time in the largest two units that matter, no "ago": 5s, 3m, 9 h, 1 h 42 m, 2 d 5 h.</summary>
+    internal static string Span(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+        {
+            span = TimeSpan.Zero;
+        }
+
+        return span.TotalSeconds < 60 ? $"{(int)span.TotalSeconds} s"
+            : span.TotalMinutes < 60 ? $"{(int)span.TotalMinutes} m"
+            : span.TotalHours < 24 ? (span.Minutes == 0 ? $"{(int)span.TotalHours} h" : $"{(int)span.TotalHours} h {span.Minutes} m")
+            : span.Hours == 0 ? $"{(int)span.TotalDays} d" : $"{(int)span.TotalDays} d {span.Hours} h";
     }
 
     internal static int StateOrder(SessionState state) => state switch
