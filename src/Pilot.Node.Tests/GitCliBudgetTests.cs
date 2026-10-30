@@ -14,11 +14,24 @@ public sealed class GitCliBudgetTests : IDisposable
     // An alias that says something and then waits: a git that does not exit.
     private static readonly string[] SlowGit = ["-c", "alias.slow=!echo said-before-waiting; echo err-before-waiting >&2; sleep 60", "slow"];
 
+    private static async Task<OperationCanceledException> Caught(Task<GitRun> run)
+    {
+        try
+        {
+            await run;
+        }
+        catch (OperationCanceledException ex)
+        {
+            return ex;
+        }
+        throw new InvalidOperationException("git was not cancelled");
+    }
+
     [Fact]
     public async Task AGitPastItsBudgetIsKilledAndTheMessageNamesItsArgsFolderAndOutput()
     {
-        var ex = await Should.ThrowAsync<OperationCanceledException>(
-            () => new GitCli(TimeSpan.FromSeconds(3)).RunAsync(SlowGit, _dir, TestContext.Current.CancellationToken));
+        var ex = await Caught(
+            new GitCli(TimeSpan.FromSeconds(3)).RunAsync(SlowGit, _dir, TestContext.Current.CancellationToken));
 
         ex.ShouldNotBeOfType<TaskCanceledException>();
         ex.Message.ShouldContain("slow");
@@ -34,8 +47,8 @@ public sealed class GitCliBudgetTests : IDisposable
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         cts.CancelAfter(TimeSpan.FromSeconds(3));
 
-        var ex = await Should.ThrowAsync<OperationCanceledException>(
-            () => new GitCli().RunAsync(SlowGit, _dir, cts.Token));
+        var ex = await Caught(
+            new GitCli().RunAsync(SlowGit, _dir, cts.Token));
 
         ex.Message.ShouldContain("cancelled");
         ex.Message.ShouldContain("said-before-waiting");

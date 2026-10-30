@@ -20,6 +20,13 @@ public sealed class ConnectTests : OverlapTestsBase
     {
         // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it.
         Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
+        // But a fetch of it stays on this machine: the node's first look at the remote would otherwise fetch the real repo from GitHub
+        // and check out its files and LFS content (a worktree add that ran past the 2 minute budget on a busy runner).
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", "-b", "main", origin);
+        Git(Repo, "config", $"url.{origin}.insteadOf", $"https://github.com/{GitHub}.git");
+        Git(Repo, "push", "-q", "-u", "origin", "main");
+        Git(Repo, "remote", "set-head", "origin", "main");
         _flights.Fleet = _fleet;
     }
 
