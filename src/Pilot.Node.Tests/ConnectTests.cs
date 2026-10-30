@@ -18,15 +18,14 @@ public sealed class ConnectTests : OverlapTestsBase
 
     public ConnectTests()
     {
-        // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it.
+        // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it; the fetch and the plane's base come from a
+        // bare copy of its own. Without it a plane fetched all of tianwen and its LFS files from GitHub, minutes a test.
+        var bare = Path.Combine(_root, "origin.git");
+        Git(_root, "clone", "-q", "--bare", Repo, bare);
         Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
-        // The node's fetch of that remote must not reach the real GitHub (it hangs for minutes where there is no route or login): git
-        // rewrites the URL for its own calls to a local bare copy, while RepoCatalog reads the configured one, so the flight's repo is
-        // still told apart by it.
-        var copy = Path.Combine(_root, "github", "SharpAstro", "tianwen.git");
-        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
-        Git(Repo, "clone", "-q", "--bare", Repo, copy);
-        Git(Repo, "config", "url." + Path.Combine(_root, "github").Replace('\\', '/') + "/.insteadOf", "https://github.com/");
+        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
+        Git(Repo, "fetch", "-q", "origin");
+        Git(Repo, "remote", "set-head", "origin", "main");
         _flights.Fleet = _fleet;
     }
 
@@ -147,6 +146,34 @@ public sealed class ConnectTests : OverlapTestsBase
         var held = F("TIA2");
         held.State.ShouldBe(FlightState.Held);
         held.PeerConnections.ShouldHaveSingleItem().Code.ShouldBe("PIL300");
+    }
+
+    [Fact]
+    public async Task AFlightThatMovedToAnotherNodeIsWaitedForThereAndOneThatMovedHereAsAFlightOfThisNode()
+    {
+        await TwoFlights();
+        _flights.Machine = "SE1";
+        var moved = Theirs("PIL294", 294, FlightState.Landed) with { MovedTo = new FlightMovedTo { To = "SE2", At = DateTimeOffset.UtcNow } };
+        var de1 = Peer("DE1", Theirs("PIL294", 294));
+        var se2 = Peer("SE2");
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+
+        // Landed on DE1 only as far as DE1 goes: it flies on SE2, so the wait follows it there and the flight stays held.
+        de1.Flights = [moved];
+        se2.Flights = [Theirs("PIL294", 294)];
+        (await _flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        var wait = held.PeerConnections.ShouldHaveSingleItem();
+        (wait.Code, wait.Node, wait.Note).ShouldBe(("PIL294", "SE2", null));
+
+        // Moved on to this very node: a wait of its own node's, held until it lands here.
+        se2.Flights = [moved with { MovedTo = new FlightMovedTo { To = "SE1", At = DateTimeOffset.UtcNow } }];
+        _state.PutFlight(Theirs("PIL294", 294) with { RepoPath = Repo });
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+        held = F("TIA2");
+        (held.State, held.PeerConnections.Length).ShouldBe((FlightState.Held, 0));
+        held.Connections.ShouldBe(["PIL294"]);
     }
 
     [Fact]

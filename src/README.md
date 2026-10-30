@@ -42,7 +42,21 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   build of the same configuration), detached so it outlives the window; a socket named with `--node-socket` or
   `PILOT_NODE_SOCKET` is only connected to.
 - **Rail:** the left rail, as tianwen's, its chords counting down it: Home (Ctrl+1), Chat (Ctrl+2), Sessions (Ctrl+3),
-  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7) and Settings (Ctrl+8).
+  Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7), Settings (Ctrl+8) and 💡 Ideas (Ctrl+9), whose entry carries the count of noted ideas. The Ideas page
+  notes an idea from a one-line box (Claude picks its repo, and asks inline with "File in <repo>" buttons when two fit), and shows
+  the repos' ideas and open issues by milestone in three views, picked on the same view switch the Flights page has: **List** (the
+  default), **Tree grid** and **Canvas**. All three are one board the node's read builds: *Unsorted (Ideas)* first (the noted
+  ideas, newest first, bodies as Markdown), then *No milestone*, then every open milestone with its open and closed counts, due
+  date and progress. The List pins Unsorted above a handle that resizes the split; the Tree grid has sortable Title, Kind,
+  Readiness, Flight and Age columns with the sections as foldable rows (a sort orders the rows inside each section, never the
+  sections) and the picked row's detail with its buttons below; the Canvas has a column for each section, wrapping into lines on a
+  narrow window, with a card for each item. Every item has Chat about this, Suggest milestone, Ready? and Open on GitHub, an idea
+  also Plan, Drop, Edit, Tidy and Move to repo…; a ready issue offers Plan flight, and a flown one shows its flight's code as a
+  link. **Ready?** asks the node whether the item can fly as a flight and shows its answer (✓ ready or ✗ not ready, with the
+  reasons); **Suggest milestone**, and Suggest milestones on a section, ask the node for an existing milestone or a new one
+  (title and a one-line goal) for each item, and nothing moves until it is accepted, per item or with Accept all. An item dragged
+  by its ≡ handle onto a milestone (or onto No milestone) in any view is moved by the node (`set-milestone`); the row stays where
+  it is until the node's next read of the repo says it moved. Planned and dropped ideas are folded below.
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
@@ -292,9 +306,9 @@ restarted node and a client resuming the stream both replay it.
 
 A flight's push never drops commits. Before it, the node fetches the branch: what the remote holds that the plane lacks is
 merged in (a fast-forward when it can be), and when that merge conflicts it is undone, a Ring `push-diverged` card names the
-remote head and the plane's head and says to merge by hand, and nothing is pushed. The push itself is fast-forward only. The one
-exception is a rebase the node made (a repaired base): it goes up with `--force-with-lease=refs/heads/<branch>:<sha>`, pinned
-to the remote head read before the rebase, never a bare `--force-with-lease`.
+remote head and the plane's head and says to merge by hand, and nothing is pushed. The push itself is plain (`git push -u origin <branch>`) and fast-forward only: **the node never rebases a pushed
+branch and never pushes with `--force` or `--force-with-lease`.** A branch someone else has pushed is only ever added to. SE1's
+PIL294 work was lost to a force push on 2026-10-27, and a lease only compares with a ref a fetch has refreshed.
 
 `flight pr` pushes the plane (every time, so a go-around's commits reach the PR) and starts a fresh reviewer,
 `<machine>-<flight>-review`, in the plane: briefed with every leg's goal and Done-when, the commits and the files, told
@@ -328,47 +342,100 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   flying (the take-back, or PrChecks seeing the merge), a Ring `merged-under-leg` card says the merge went without the
   leg and its work goes to a new PR. The flight stays flying and is not landed: its PR and review are let go, its merge
   cards close, and the merged head is kept (`MergedHead`). When its legs are done, `open-pr` (the node's next step)
-  rebases the plane `--onto` the base from that head (the merged commits drop out, squashed or not), pushes, opens the new
+  merges the base as it now stands into the plane (`git merge --no-edit`, so the new PR holds only the plane's work past it, squashed or not), pushes plain, opens the new
   PR (`PullRequest` replaced) and reviews it as any PR. Landing after a merge refuses, with a ring, while a leg is not
   done, the plane has changes not committed, or it holds commits past the merged head; the plane is never removed then.
-- `pilot review changes <changes>` rings with **Redo leg** (redo the leg, a go-around: the last leg, told the changes; a done leg may go around
-  for a review) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
+- `pilot review changes <changes>` rings with **Fix the review's findings** (a go-around of the last leg on its work as it stands, told the
+  changes, nothing thrown away; a done leg may go around for a review; from the second round the button names the round and the model) and **Ready anyway**. The go-around's finish pushes and starts a fresh review by itself.
 - GitHub is told the verdict (`gh pr ready`) before the node keeps it: **changes** mark the PR a draft (`--undo`), so it
   cannot be merged on GitHub with the fixes pending, and a pass (the reviewer's, or "ready anyway") marks it ready
   before the merge card is raised. A gh that fails refuses the verdict, which the reviewer says again. A PR opened for
   a review round starts ready, as the review runs on it; the merge card's merge still refuses a moved head.
 - A passed PR whose checks then fail is taken as changes, once a head: the PR goes back to draft, the merge card
-  closes, and the review's ring offers **Redo leg**, told to read the failed checks and make them pass on every runner.
-- A passed PR that conflicts with its base and does not update cleanly is taken as changes too: the ring's **Redo leg**
-  sends the last leg's worker to merge the base in (a squash or merge repo) or rebase onto it (a rebase-queue repo), keeping both sides' work.
-- **How a flight's branch is brought up to date** (`RebaseOntoBaseAsync`, before every push and before the merge queue) is read once per
-  repo from GitHub and kept (`IGitHub.UpdateWayAsync`, like `AutoMergeAllowedAsync`): the default branch's ruleset `merge_queue`
-  rule's `merge_method` (`gh api repos/{o}/{r}/rules/branches/{branch}`), or with no queue the repo's allowed merge methods. Where the
-  queue squashes or merges, the base is merged in (`git merge --no-edit`, undone with `git merge --abort` on a conflict) and pushed
-  plain, never forced; where it rebases (tianwen), the plane is rebased and pushed with `--force-with-lease`. A conflict sends the last
-  leg round once, with a brief that says *merge the base in* or *rebase onto it* to match.
-- **Every push of a flight's branch goes through `PushAsync`**, which calls `BringUpToDateLeasedAsync` first (it fetches and takes in
-  what the remote holds that the plane lacks, `TakeRemoteAsync`, then merges or rebases per the repo's way, a conflict undone and refused saying how to resolve it), then refuses a head whose base is not an ancestor, then
-  pushes (plain after a merge, with a lease after a rebase). So PR open, a go-around's finish and the node's own update never push a
+  closes, and the ring, "fails its checks", offers **Fix the failing checks**, told to read the failed checks and make them pass on every runner.
+- A PR that conflicts with its base goes to the **watchtower**, not to a fresh worker. The node's update is
+  `git fetch` + `git merge --no-edit origin/<base>` in the plane, aborted with `git merge --abort` when it conflicts. A Ring `pr-conflicts`
+  card (once a head) names the conflict and the plane and carries the brief the watchtower follows (`LegCommander.UpdateInstruction`, the
+  watchtower's "Getting reviewed work in"): merge the base in there, resolve every file so both sides' work stays, rerun the leg's check
+  and push plain, then `pilot flight review <code>`. The card's **Resolve the conflict** choice (a go-around of the last leg on its work as
+  it stands) is the watchtower's only when it finds the conflict is real work (two designs, a goal to drop); no leg goes round for a conflict
+  by itself, and the review stays as it was.
+- **How a flight's branch is brought up to date** (`BringUpToDateAsync`, before every push and before the merge queue) is always a merge,
+  in every repo, whatever its merge queue or the node's merge method: `git fetch`, `git merge --no-edit origin/<base>`, a plain push. There is
+  no rebase way and no `UpdateWay`; a repaired base (a base that is no branch on the remote) is the remote's default merged in, not rebased onto.
+  GitHub rebase-merging a PR that holds a merge commit is its own business, and the merge queue's method decides only how the PR lands.
+- **Every push of a flight's branch goes through `PushAsync`**, which calls `FetchAndMergeBaseAsync` first (it fetches and takes in
+  what the remote holds that the plane lacks, `TakeRemoteAsync`, then merges the base in, a conflict aborted and refused saying how to resolve it), then refuses a head whose base is not an ancestor, or whose pushed history (`origin/<branch>`) is not an ancestor, then
+  pushes plain. So PR open, a go-around's finish and the node's own update never push a
   branch behind its base. A go-around's last leg is brought up to date before its check runs: a conflict leaves the leg flying for its
-  worker, whose brief says to bring the branch up to date the repo's way and rerun the check before it says done.
+  worker, whose brief says to merge the base in, rerun the check and push plain before it says done.
 - **A merge never goes to the queue behind its base.** `MergeableAsync` (the Merge verb, the autopilot's merge, arming and re-running
   checks) fetches and tests `git merge-base --is-ancestor <base> <PR head>` itself, not only GitHub's BEHIND (which needs a "require up
-  to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `RebaseOntoBaseAsync` (pushed,
+  to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `BringUpToDateAsync` (pushed,
   reviewed afresh), `MergeAsync` is never called, and the command says it is *behind its base* and the merge is offered again once the
-  review passes; a conflict goes round as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
+  review passes; a conflict goes to the watchtower as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+- **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
+  kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
+  a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
+  flight, or gives the one it has the new head and keeps its place; it is no merge on the spot. The node takes a repo's entries in
+  order (`MergeAsync`, `WaitTurnAsync`), one at a time per repo (another repo's queue is its own): `waiting` behind others,
+  `updating` (fetch, the base merged in, a plain push: never a rebase, never a force push), `checks` (waiting for green checks, or for a
+  passed review at its head: `AwaitsReview`, which `LookAtMergesAsync` takes at each look), `merging` (`gh pr merge`, or joining
+  GitHub's own queue where the base has one), `merged` (the flight lands) or `dropped` with its why. **A merge needs a passed review at its
+  head and green checks.** A head moved by a clean base merge alone, with the plane at the head the review read and nothing taken from the
+  remote, keeps its passed review (`BringUpToDateKeepingAsync`: the review's `ReviewedHead` and its status go to the new head, and the PR-ready card
+  is raised for it); any other change is reviewed afresh. A conflict or a failed check takes the entry out with its why and sends it on as
+  before (the watchtower for a conflict); taking a merge back (#342) removes the entry. Only a flight with a merge command under way holds a repo's turn (`updating`, `merging`, `batched`: a batch holds it while its CI runs), so an
+  entry left by a node that went away holds nothing. An entry armed in `checks` (its command ended) leaves the turn on purpose: the next
+  entry is updated and merged, and the armed one is brought up to date again, by the same plain merge, when its checks go green.
+  **No entry stands open with nothing driving it.** A merge command that ends in an exception (given up, the node stopping) drops its
+  entry with why on its way out (`EndUnfinished`), and a batch that ends that way puts its members back to waiting first. At node start
+  and at each look `EndLeftMerges` drops every `waiting`, `updating` or `batched` entry whose flight has no merge command under way, and
+  every `checks` entry not waiting for a review whose merge is no longer armed (an arm cleared for a conflict or a stale base drops its
+  entry too); `merging` rows are left to the landing, as GitHub's own queue may hold them, and end with their why when GitHub lets
+  the PR go unmerged: `PrChecks` sees it taken out of the queue (a failed check, a conflict) or the PR closed, and `EndLeftQueue`
+  drops the entry, so the repo's later entries move up. So `pilot merges` lists nothing in flight
+  that nobody works on, and no place is counted for it. **The node's look never waits for a repo's turn:** the armed merge at green
+  (`MergeWhenGreenAsync`), the autopilot's merge and `LookAtMergesAsync` skip a flight whose repo has a merge command under way
+  (`TurnHeld`) and ask at a later look, so a batch holding the turn through its CI stalls no other PR's look.
+- **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
+  takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries into the same base branch with a passed
+  review at their head and every gate a single merge applies (`ReadyForBatchAsync`: the PR open at the entry's head with nothing in
+  the plane past it, not conflicting or behind, checks green, and GitHub not saying changes requested, blocked or queued).
+  **A batch lands by the node's own push of the base, so it forms only where the repo would take that** (#395): every entry merges
+  by `merge`, the base has no merge queue (`MergeQueueAsync` is null) and no branch protection or ruleset rule
+  (`BranchUnprotectedAsync`: `branches/<base>`'s `protected` false and `rules/branches/<base>` empty; an unreadable answer counts as
+  protected). A plain-git push to a protected base is never attempted, and on a queue repo (tianwen, pilot) batching is GitHub's own,
+  the ruleset's group size: the setting forms no batch there and each entry goes to the queue as with it off.
+  **A batch forms only from merge commands that overlap:** one holds the repo's turn while at least two more wait behind it,
+  as Merges pressed while another merge of the repo is under way do. The node's own asks (armed at green, autopilot) come one at a
+  time and are skipped while the turn is held, so they never batch. With two or more ready, `MergeBatcher` builds
+  `pilot/batch/<repo>-<machine>-<start>-<n>` from `origin/<base>` (the flight's `Base` is `origin/main`; the batcher is given the
+  branch, `main`, as a PR is) in a throwaway worktree; the machine code and a part random to the node's start keep two nodes of a
+  fleet, and one node across a restart, off each other's batch branch, and a batch deletes only the branch it made. It merges
+  each PR head in with `git merge --no-edit` and pushes the branch plainly. A pushed branch starts no CI in these repos (`dotnet.yml`
+  runs on a push to `main`, a `pull_request` to `main` and a merge group), so the batcher opens a **draft PR** from the batch branch
+  to the base (`OpenDraftAsync`, titled `pilot merge batch: #a, #b`) and waits once for its CI: green is that PR's checks passed and
+  every run of the batch head completed; a failed check or run is red. No check and no run within `StartBudget` (5 min) is a batch
+  whose CI never started: it falls back at once instead of holding the repo's turn for the whole `CiBudget` (45 min), and the repo
+  is not batched again for an hour. The entries show state `batched`, the why naming the batch. On green the base is
+  pushed to the batch head (a plain push, only ever to a full commit id read back from the batch: a failed or short `rev-parse` is a
+  red batch, never a refspec that would delete the base), GitHub shows each PR merged by the batch's merge commits, which is the
+  entries' own method, and each entry's command takes it as its merge. A push refused all the same (the base moved while the CI ran,
+  so it is no fast-forward) lands nothing, and each PR is merged as a single entry. A PR that conflicts in the batch is aborted and left out (merged
+  on its own); a red batch, or one with fewer than two clean entries, is dropped. In every case the draft PR is closed and the batch
+  branch deleted again (worktree, local, remote), and the entries go on one at a time, none lost (`MergeBatchTests`; a flight a
+  batch was tried for is never batched twice).
 - `PushAsync`'s "base is not an ancestor" guard is tested with a `post-merge` hook in the test repo that resets the merge away
   (`APushStillBehindItsBaseAfterTheUpdateIsRefused`): the update claims success, the push is still refused.
-- **The remote's commits are taken in, never refused or dropped.** `BringUpToDateLeasedAsync` merges what `origin/<branch>` holds that the
-  plane lacks (a commit pushed from elsewhere, or history the worker rewrote) before the update, so a plain push is a fast-forward after a
-  merge and the lease names the tracking ref after that. A merge that conflicts is undone and a `push-diverged` card names both heads. A
+- **The remote's commits are taken in, never refused or dropped.** `TakeRemoteAsync` merges what `origin/<branch>` holds that the
+  plane lacks (a commit pushed from elsewhere, or history a worker rewrote) before the update, so a plain push is a fast-forward after a
+  merge. A merge that conflicts is aborted and a `push-diverged` card names both heads. A
   go-around's finish brings the branch up to date before its check, and the push after `Done` reuses that result instead of updating again.
-- **With no queue the update way follows the node's merge method** (`RoleModels.MergeMethod`): rebase where the node rebase-merges and the
-  repo allows it, merge where it squashes or merges (GitHub rebase-merging a PR with a merge commit loses a conflict resolution). A queue's
-  own method still wins. A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
+- A PR GitHub has queued is never updated by a Merge (a push would drop it from the queue).
 - A flight whose legs are all done and whose PR merged on GitHub lands on the next look even with no merge card open
   (dismissed after a rebase by hand moved its head), as one merged through its card does.
 - Only the reviewer gives the verdict; the controller may pass one that asked for changes ("ready anyway"); the
@@ -471,16 +538,16 @@ grant for does (a peer that does not answer holds nothing). A PR a peer holds is
 - A recheck reads the PR afresh from GitHub, does one thing, replaces `pilot: recheck` with the one `pilot:` label for where
   the PR then stands, and leaves a Handled line saying what it did. A PR already merged or closed, or in the merge queue,
   is handled the same for all three kinds below.
-- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base is rebased as the queue-conflict path
-  does, and its review restarts (a rebase that conflicts goes back to the last leg as changes); red checks on a passed
+- **A flight's PR** (the node's own flight on it): a conflict or a PR behind its base has the base merged in as the queue-conflict path
+  does, and its review restarts (a merge that conflicts goes to the watchtower); red checks on a passed
   review go back as changes; a head the review never read is reviewed afresh; a passed, green, clean one goes to the merge
   queue by the usual merge rule. The explicit ask bypasses the once-a-head sets of the timed `PrChecks` look.
 - **A PR pilot reviewed with `pilot review pr`** (no flight): a head other than the review's starts a fresh review
   (*head ab12cd34 was not the one reviewed (0f9e8d7c), review restarted*, label `pilot: reviewing`); a conflict or a PR
   behind its base on the controller's own branch (author is the gh login, branch in the base repo, not a fork, no fixer
-  on it) is rebased onto its base in a throwaway worktree of the clone pilot holds, pushed with `--force-with-lease`, and
-  reviewed afresh (*rebased onto main, review restarted*, label `pilot: reviewing`); anyone else's, or one whose rebase
-  conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
+  on it) gets its base merged in (`git merge --no-edit`) in a throwaway worktree of the clone pilot holds, is pushed plainly (a
+  fast-forward of the head read: never a rebase, never a force push, as with a flight's branch), and reviewed afresh (*main merged
+  in, review restarted*, label `pilot: reviewing`); anyone else's, or one whose base merge conflicts or cannot be pushed, raises a For-you `pr-recheck-conflicts` card saying why, and the label becomes
   `pilot: conflicts`; an approved or commented review at
   its head whose checks are green goes to the merge queue through the same rule as #279 (`QueueWhenGreenAsync`, which
   keeps a no-auto-merge repo and a base without a merge queue as a card for you), label `pilot: queued`; anything else
@@ -597,6 +664,7 @@ pilot flight overlap <code> <other> [--pick fold|connect] [--file <path>…] <wh
 pilot flight separate <code> <other>           # plan it in parallel: a fresh planner is started, told the answer
 pilot flight connect-overlap <code> <other>    # the answer to connect: held until <other> (any node) lands, a fresh planner is started, told the answer
 pilot flight connect <code> <other>            # holds until <other>, a flight of this node or of a reachable one, has landed
+pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this node or a peer): the waits it made go, the flight flies when nothing else holds it, a Handled card says who; an overlap's connect is refused with why, and goes with --anyway (the person's)
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
@@ -818,8 +886,9 @@ selected. When the node answers again its cards come back from what it reports, 
 
 The flights of such a node are its last-known rows, and **Home** and **Flights** say so from the same state (`FleetPages.Merge`
 sets `FlightLine.Stale` from the feed's reachability, once per node per merge): the Home chip reads `ORB2 · stale (DE1
-unreachable)` on a grey chip, the list row, canvas card and grid card carry `stale (DE1 unreachable)` in their state line,
-and the flight's page has a wrapped line saying why its buttons are dead. A stale flight is not counted in Home's **Flying**
+unreachable)` on a grey chip, the list row and grid card carry `stale (DE1 unreachable)` in their state line, the map greys
+the node's routes and its continent's name with `(unreachable)` after it and a plane's hover opens with the stale mark, and
+the flight's page has a wrapped line saying why its buttons are dead. A stale flight is not counted in Home's **Flying**
 or **Waiting**. Its action buttons, the page's **Merge**, its transcript buttons and the menu's node commands are dead
 (drawn, not live; the menu entries disabled with the reason on hover); opening the page, a PR, a folder or copying a code
 stay. The marks go when the node answers again.
@@ -1164,6 +1233,11 @@ Two per-repo settings (#254) are lists, keyed by the repo's folder name and in f
   For-you confirm card as it does with autopilot off, and the asking session is told the answer. A passed flight's
   PR-ready card there rings the controller as for any repo. The person's own merge (the card's **Allow**, the **Merge**
   button, `pilot flight merge` by hand) is not held.
+- `merge-batch` (`on` or `off`, off by default) merges a repo's ready merge queue entries as one batch: a branch of the base
+  plus each PR, its CI run once on a draft PR from it, the PRs landed together on green by the node's plain push of the base.
+  Only where the node may push the base: every entry merged by `merge`, and a base with no merge queue and no branch protection
+  or rules (a queue repo batches by its own ruleset's group size). A red or conflicting batch, or one whose CI never starts,
+  falls back to one at a time.
 
 `shortcut-token` is in force at once, and the setup checklist has an optional **Shortcut token** line saying whether one
 is present (the variable or the setting).
@@ -1343,7 +1417,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card) but at the person's word in its chat (below), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `connect-overlap`, `create-issue`, `create-flight` or `sync-repos` |
 | **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
@@ -1358,6 +1432,21 @@ The watchtower is told apart by what began its turn: the node notes who sent the
 chat, a `tell`, or the node's own card and nudge, which are not theirs), and while that was the person's and the session has
 not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "merge TIA1" said in the chat gets the Allow card
 (autopilot off) or runs at once with a Handled card (on). Any other turn it is the lookout.
+
+A third route is the person's word in its chat (#473), which on Remote Control reaches the session past the node. The
+watchtower's `answer` or `dismiss` of an open card whose `--why` quotes the person's latest message (equal, or one holding
+the other on word boundaries, at least six characters) runs **as the person**, while its turn runs, and leaves a Handled
+card of kind `persons-word` with their words. From the CLI that is `pilot answer <card> <choice> --why "<their words>"`, or
+`pilot dismiss <card> <reason> --why "<their words>"`, where the reason stays the dismissal's own; `--why` is the
+command's `Why`, as on the person's own commands. The node reads the latest line that fed the turn from its transcript, meta
+lines included: it is the person's only when Claude Code records it as typed or resumed text (`origin.kind` human) or as
+a cross-session message from `controller`, it is not the session's first prompt (the brief the node started it with, which
+Claude Code records as typed), and its text is not the node's voice (`[node] `), another node's watchtower
+(`[From the watchtower of node `), or a say the node routed to it from anyone but the person (a say names the watchtower by
+row id or by name). A message from any other session, the node's own envelope, a task finishing, a scheduled wake, a
+hand-back or a compaction leaves the watchtower fenced. The match binds the press to the person's message, not to the card or the choice: any message of theirs in the
+turn lifts every fence for whichever card's choice the watchtower answers (`update`, `answer-grant` and `post-review`
+included), so the brief tells it to press only the choice the person asked for and to say which.
 
 ### An assistant's your-only request: the autopilot rule
 
@@ -1466,7 +1555,7 @@ is fail-open (input it cannot read passes, exit 0 always) and never calls the no
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
 
-## The wire (`NodeWire.Version` 2)
+## The wire (`NodeWire.Version` 3)
 
 | Route | What it does |
 | --- | --- |

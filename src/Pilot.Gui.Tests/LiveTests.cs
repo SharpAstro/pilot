@@ -256,7 +256,7 @@ public sealed class GuiSayTests
             new() { Verb = Verbs.Say, Target = "session/x", Who = GuiSay.Who, Seq = 1, Ok = ok, Way = way, Error = error, SessionId = sid };
 
         GuiSay.Describe(Result(true, SayWays.Resumed, sid: "201dda08-9080"), null).ShouldBe("resumed it with your text (now 201dda08)");
-        GuiSay.Describe(Result(true, SayWays.Relayed), null).ShouldBe("delivered as a message; its answer shows in its own turn");
+        GuiSay.Describe(Result(true, SayWays.Relayed), null).ShouldBe("delivered at once as a message; its answer shows in its own turn");
         GuiSay.Describe(Result(false, error: "twin is ambiguous"), "twin is ambiguous").ShouldBe("refused: twin is ambiguous");
         GuiSay.Describe(null, "").ShouldBe("refused: the node gave no reason");
     }
@@ -520,16 +520,16 @@ public sealed class RailTests
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Pull requests", "Background tasks", "Fleet", "Settings"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.PullRequests, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Pull requests", "Background tasks", "Fleet", "Settings", "Ideas"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.PullRequests, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings, PilotPage.Ideas]);
         chrome.Page.ShouldBe(PilotPage.Home);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
         // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
-        cells.Count.ShouldBe(9);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(9);
+        cells.Count.ShouldBe(10);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(10);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }
@@ -594,6 +594,7 @@ public sealed class FlightsPageTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var flights = new FlightsScreen(FlightLine.Build([Flight("TIA1611", FlightState.Flying), Flight("TIA1640", FlightState.Held, ["TIA1611"])], [], Live.At), "test", Live.At);
+        chrome.Flights.Mode = FlightsViewMode.List;
 
         chrome.Show(PilotPage.Flights);
         chrome.Render(new SessionsScreen([], "test", Live.At), flights, new RectF32(0, 0, 1280, 800));

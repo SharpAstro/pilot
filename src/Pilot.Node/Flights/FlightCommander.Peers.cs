@@ -137,7 +137,7 @@ public sealed partial class FlightCommander
         var ended = 0;
         foreach (var seen in waiting)
         {
-            var next = new List<PeerConnection>();
+            var next = new List<(PeerConnection Was, PeerConnection Answer)>();
             foreach (var wait in seen.PeerConnections)
             {
                 var (answer, over) = await AnswerAsync(seen, wait, reads.Select(r => r.Read).ToList(), cancellationToken);
@@ -147,7 +147,7 @@ public sealed partial class FlightCommander
                 }
                 if (answer is not null)
                 {
-                    next.Add(answer);
+                    next.Add((wait, answer));
                 }
             }
             await _one.WaitAsync(cancellationToken);
@@ -156,10 +156,13 @@ public sealed partial class FlightCommander
                 // Recorded over the flight as it is now, never a copy read before the peers were asked.
                 if (state.Flights().FirstOrDefault(f => f.Code == seen.Code) is { State: not FlightState.Landed } now)
                 {
-                    var kept = now.PeerConnections.Where(c => !seen.PeerConnections.Any(s => s.Code == c.Code && s.Node == c.Node)).Concat(next).ToArray();
+                    var kept = now.PeerConnections.Where(c => !seen.PeerConnections.Any(s => s.Code == c.Code && s.Node == c.Node))
+                        // A wait disconnected while the peers were asked is not put back by the answer about it.
+                        .Concat(next.Where(n => now.PeerConnections.Any(c => c.Code == n.Was.Code && c.Node == n.Was.Node)).Select(n => n.Answer))
+                        .ToArray();
                     if (!kept.SequenceEqual(now.PeerConnections))
                     {
-                        state.PutFlight(Settle(now with { PeerConnections = kept }));
+                        state.PutFlight(Settle(WaitsHere(now with { PeerConnections = kept })));
                     }
                 }
             }
@@ -208,6 +211,11 @@ public sealed partial class FlightCommander
         }
         if (row.State == FlightState.Landed)
         {
+            // Moved to another node: landed there, not landed at all, so the wait follows it (to this node too, made a wait of its own then).
+            if (row.MovedTo is { } movedTo)
+            {
+                return (wait with { Node = movedTo.To, Note = null }, false);
+            }
             // Folded into another flight: its work is that one's now, so the wait is for that one.
             return row.FoldedInto is { } into
                 ? (wait with { Code = into, Note = null }, false)

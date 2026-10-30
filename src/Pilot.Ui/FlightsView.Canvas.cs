@@ -3,8 +3,7 @@ using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
-// The Flights page as cards on a canvas: FlightCanvas places them, the engine arranges them in their rects, and the
-// arrows are painted over the canvas leaf by hand, so they scroll with the cards.
+// The Flights page's views: the map (FlightsView.Map.cs), the grid of cards, and the view switch.
 internal sealed partial class FlightsView<TSurface>
 {
     private const string CanvasKey = "flights-canvas";
@@ -12,12 +11,16 @@ internal sealed partial class FlightsView<TSurface>
     private const float DashLength = 6f;
     private const float GapLength = 4f;
 
-    private FlightCanvas _canvas = FlightCanvas.Build([]);
+    private FlightMap _map = FlightMap.Build([]);
+
+    /// <summary>The map's layers and the palette that turns them on and off; the host keeps them in the GUI settings file.</summary>
+    public FlightMapLayerState MapLayers { get; } = new();
 
     private RGBAColor32 GhostBg => P.GhostBg;
 
-    // The picked flight's chain on the canvas, its arrows lit and its cards marked: what it waits on and what waits on it.
-    private IReadOnlySet<string> _chain = new HashSet<string>();
+    // The picked flight's chain on the map, its connections lit and its routes marked: what it waits on and what waits on it, each
+    // by its node and code.
+    private IReadOnlySet<(string Node, string Code)> _chain = new HashSet<(string Node, string Code)>();
 
     /// <summary>Whether this host can paint the canvas: pilot-tui cannot draw lines, so it sets this false and keeps the list.</summary>
     public bool CanvasAvailable { get; set; } = true;
@@ -31,36 +34,20 @@ internal sealed partial class FlightsView<TSurface>
     /// <summary>Whether the page is showing the cards in a wrapping grid, without arrows.</summary>
     public bool GridShown => CanvasAvailable && Mode == FlightsViewMode.Grid;
 
-    /// <summary>The geometry the last tree was built from.</summary>
-    internal FlightCanvas Canvas => _canvas;
+    /// <summary>The map the last tree was built from.</summary>
+    internal FlightMap Map => _map;
 
     // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas stays a word
-    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
-    private Layout.Node ViewSwitch()
-    {
-        ReadOnlySpan<Layout.ButtonGroupOption<FlightsViewMode>> options =
-        [
-            new(FlightsViewMode.Canvas, "Canvas") { Hit = new HitResult.ButtonHit("flights:view:canvas") },
-            new(FlightsViewMode.Grid, Icon: Layout.IconKind.Grid) { Hit = new HitResult.ButtonHit("flights:view:grid"), Tooltip = "Grid" },
-            new(FlightsViewMode.List, Icon: Layout.IconKind.List) { Hit = new HitResult.ButtonHit("flights:view:list"), Tooltip = "List" },
-        ];
-        var style = new Layout.ButtonGroupStyle(RowFocusBg, Button, Bright, Dim, ButtonHover)
-        {
-            Gap = 2f,
-            InsetFraction = 0.75f,
-            SegmentWidth = ViewSwitchSegment,
-        };
-        var group = Layout.Builder.ButtonGroup(options, Mode, mode => Mode = mode, style, 12f);
-        // Its height given, as the header's buttons have theirs: the group's segments are height-star (an inset band between
-        // star spacers), and under a row sized by its content they got none, so the switch drew its words at the top and
-        // its icons and fills not at all (SE1, 2026-10-25).
-        return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
-            .WFixed(ViewSwitchWidth)
-            .HFixed(AboutCard.HeaderButton);
-    }
+    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor;
+    // the switch is the one the Ideas pane shares (ViewSwitch).
+    private static readonly ViewChoice<FlightsViewMode>[] ViewChoices =
+    [
+        new(FlightsViewMode.Canvas, "flights:view:canvas", "Canvas", AsWord: true),
+        new(FlightsViewMode.Grid, "flights:view:grid", "Grid", Icon: Layout.IconKind.Grid),
+        new(FlightsViewMode.List, "flights:view:list", "List", Icon: Layout.IconKind.List),
+    ];
 
-    private const float ViewSwitchSegment = 60f;
-    private const float ViewSwitchWidth = 3 * ViewSwitchSegment + 2 * 2f;
+    private Layout.Node ViewSwitch() => Pilot.Ui.ViewSwitch.Build(ViewChoices, Mode, mode => Mode = mode, P);
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)
@@ -76,50 +63,8 @@ internal sealed partial class FlightsView<TSurface>
             .Stretch();
     }
 
-    // Whether the canvas does not fit the page it is drawn in (its columns, their gaps and the page's gutters).
-    private bool CanvasTooWide(FlightsScreen screen)
-    {
-        return PageWidth is { } room && !FlightCanvas.Build(screen.Lines).FitsIn(room, Gutter);
-    }
-
     // A card's width: its own, or the page's less its gutters where the page is narrower.
-    private float CardWidthOnPage()
-    {
-        return PageWidth is { } room ? FlightCanvas.CardWidthIn(room, Gutter) : FlightCanvas.CardWidth;
-    }
-
-    private Layout.Node CanvasBody(FlightsScreen screen)
-    {
-        _canvas = FlightCanvas.Build(screen.Lines);
-        _chain = Selected >= 0 && Selected < screen.Lines.Count ? _canvas.Chain(screen.Lines[Selected].Code) : new HashSet<string>();
-        var columns = _canvas.Cards.GroupBy(c => c.Column).OrderBy(g => g.Key)
-            .Select(g => Layout.Builder.VStack([.. g.OrderBy(c => c.Row).Select(c => c.Line is { } l ? Card(l, c.Index, FlightCanvas.CardHeight, grid: false) : Ghost(c))])
-                .WithGap(FlightCanvas.GapY)
-                .WFixed(FlightCanvas.CardWidth)
-                .HAuto())
-            .ToArray();
-        var cards = Layout.Builder.HStack(columns)
-            .WithGap(FlightCanvas.GapX)
-            .Pad(FlightCanvas.Margin)
-            .WFixed(_canvas.Width)
-            .HFixed(_canvas.Height);
-        var surface = Layout.Builder.Overlay(cards, Layout.Builder.Fill(key: CanvasKey).WFixed(_canvas.Width).HFixed(_canvas.Height))
-            .WFixed(_canvas.Width)
-            .HFixed(_canvas.Height);
-        return Layout.Builder.VStack(surface)
-            .WithScroll(_scroll)
-            .Pad(Gutter, 8f)
-            .Stretch();
-    }
-
-    private Layout.Node Ghost(CanvasCard card) =>
-        Layout.Builder.VStack(
-                Layout.Builder.Text(card.Code, 15f, Dim).RowH(22f),
-                Layout.Builder.Text("not on this page", 12f, Faint).RowH(18f))
-            .Pad(12f, 10f)
-            .Bg(GhostBg)
-            .WFixed(FlightCanvas.CardWidth)
-            .HFixed(FlightCanvas.CardHeight);
+    private float CardWidthOnPage() => _viewWidth > 0f ? FlightCanvas.CardWidthIn(_viewWidth, Gutter) : FlightCanvas.CardWidth;
 
     // One flight's card. The grid's is taller by a line of its own for what a held flight waits for.
     private Layout.Node Card(FlightLine line, int index, float height, bool grid)
@@ -154,7 +99,7 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(10f, 8f)
             .Stretch();
         return Layout.Builder.HStack(Layout.Builder.Spacer().Bg(StripeColor(line)).WFixed(ListTable.StripeWidth).HStar(), body)
-            .Bg(index == Selected ? (line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg) : line.MoveMark is not null ? P.FailedBg : !grid && _chain.Contains(line.Code) ? P.LinkedBg : PanelBg)
+            .Bg(index == Selected ? (line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg) : line.MoveMark is not null ? P.FailedBg : PanelBg)
             .BgHover(RowHoverBg)
             .BgFocus(line.MoveMark is not null ? P.FailedFocusBg : RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => ListCursor.MoveTo(index))
@@ -169,41 +114,6 @@ internal sealed partial class FlightsView<TSurface>
             .WFixed(grid ? CardWidthOnPage() : FlightCanvas.CardWidth)
             .HFixed(height);
     }
-
-    // The arrows, over the canvas leaf: the leaf is as big as the canvas in design units, so its rect says the scale.
-    private void DrawCanvas(Layout.Content.Fill fill, RectF32 rect)
-    {
-        if (fill.Key != CanvasKey || _canvas.Height <= 0f || _canvas.Width <= 0f)
-        {
-            return;
-        }
-        var s = rect.Width / _canvas.Width;
-        var thin = Math.Max(1, (int)MathF.Round(2f * s));
-        var head = ArrowHead * s;
-        // The picked flight's chain last, so its arrows lie over the rest where they cross.
-        var order = Enumerable.Range(0, _canvas.Edges.Count).OrderBy(i => InChain(_canvas.Edges[i]));
-        foreach (var edgeIndex in order)
-        {
-            var edge = _canvas.Edges[edgeIndex];
-            var x0 = rect.X + edge.X0 * s;
-            var y0 = rect.Y + edge.Y0 * s;
-            var x1 = rect.X + edge.X1 * s;
-            var y1 = rect.Y + edge.Y1 * s;
-            var held = _canvas.Cards[edge.ToCard].Line?.Row.State == FlightState.Held;
-            var lit = InChain(edge);
-            var color = held ? Held : lit ? Bright : Dim;
-            var thick = lit ? Math.Max(2, (int)MathF.Round(3f * s)) : thin;
-            DrawDashedRun(x0, y0, x1, y1, color, thick, ArrowDashes.Phase(edgeIndex), DashLength * s, GapLength * s);
-            // Two strokes back from the tip, a spread either side of the line.
-            var angle = MathF.Atan2(y1 - y0, x1 - x0);
-            foreach (var spread in new[] { 0.45f, -0.45f })
-            {
-                Renderer.DrawLine(x1, y1, x1 - head * MathF.Cos(angle - spread), y1 - head * MathF.Sin(angle - spread), color, thick);
-            }
-        }
-    }
-
-    private bool InChain(CanvasEdge edge) => _chain.Contains(edge.From) && _chain.Contains(edge.To);
 
     // DrawLineDashed always starts a dash at the line's start, so the phase is made by hand: the pattern is entered `phase`
     // (0..1 of a period) in, so the run opens with the rest of a dash or of a gap, and the dashed line starts after that.

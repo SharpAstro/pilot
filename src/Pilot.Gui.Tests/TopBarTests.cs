@@ -85,7 +85,11 @@ public sealed class TopBarTests
 
             // The brand and the page's name share a baseline, and the brand stands in the same place on every page.
             var pilot = Text(arranged, "pilot v2");
-            var name = Text(arranged, page);
+            // The Chat page is the fleet chat, and shows its nodes as one choice rather than the window's filter.
+            var chatPage = page == "chat";
+            // The Settings page names whose node it is, and offers no node pills: its settings are this machine's only.
+            var settingsPage = page == "settings";
+            var name = Text(arranged, chatPage ? chrome.Chat.Title : settingsPage ? $"{chrome.Settings.Owner}'s settings (this machine)" : page);
             (name.Y + name.Height).ShouldBe(pilot.Y + pilot.Height, page);
             brand ??= pilot;
             (pilot.X, pilot.Y, pilot.Width, pilot.Height).ShouldBe((brand.Value.X, brand.Value.Y, brand.Value.Width, brand.Value.Height), page);
@@ -94,7 +98,11 @@ public sealed class TopBarTests
             var question = Button(arranged, "about:toggle");
             help ??= question;
             (question.X, question.Y, question.Width, question.Height).ShouldBe((help.Value.X, help.Value.Y, help.Value.Width, help.Value.Height), page);
-            foreach (var action in new[] { "nodes:all", "nodes:a", "nodes:b", AutopilotSwitch.Action, "about:restart" })
+            foreach (var action in chatPage
+                ? new[] { "chat:node:a", "chat:node:b", AutopilotSwitch.Action, "about:restart" }
+                : settingsPage
+                    ? new[] { AutopilotSwitch.Action, "about:restart" }
+                    : new[] { "nodes:all", "nodes:a", "nodes:b", AutopilotSwitch.Action, "about:restart" })
             {
                 var bounds = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Select(a => a.Bounds).ToList();
                 bounds.Count.ShouldBe(1, $"{page}: {action}");
@@ -109,8 +117,13 @@ public sealed class TopBarTests
             (question.X + question.Width).ShouldBeLessThanOrEqualTo(Width, page);
 
             // The node pills stand left of the page's own things, after its name.
-            Button(arranged, "nodes:all").X.ShouldBeGreaterThan(name.X + name.Width, page);
-            Button(arranged, "nodes:b").X.ShouldBeLessThan(autopilot.X, page);
+            if (settingsPage)
+            {
+                arranged.Any(a => a.Node.Hit is HitResult.ButtonHit b && b.Action.StartsWith("nodes:", StringComparison.Ordinal)).ShouldBeFalse(page);
+                continue;
+            }
+            Button(arranged, chatPage ? "chat:node:a" : "nodes:all").X.ShouldBeGreaterThan(name.X + name.Width, page);
+            Button(arranged, chatPage ? "chat:node:b" : "nodes:b").X.ShouldBeLessThan(autopilot.X, page);
         }
     }
 
@@ -158,7 +171,8 @@ public sealed class TopBarTests
             var help = Button(arranged, "about:toggle");
             var bottom = help.Y + help.Height;
             var bar = arranged.Where(a => a.Node is Layout.Node.Leaf && a.Bounds.Y + a.Bounds.Height <= bottom + 1f && a.Bounds.Height > 0f).ToList();
-            bar.Count.ShouldBeGreaterThanOrEqualTo(8, page);
+            // Settings offers no node pills, so its bar holds fewer boxes.
+            bar.Count.ShouldBeGreaterThanOrEqualTo(page == "settings" ? 5 : 8, page);
             foreach (var item in bar)
             {
                 item.Bounds.X.ShouldBeGreaterThanOrEqualTo(0f, page);

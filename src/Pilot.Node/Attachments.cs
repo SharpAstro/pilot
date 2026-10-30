@@ -72,6 +72,59 @@ public sealed class Attachments(string dataFolder)
         return artifact with { Attachment = id, AttachmentExt = ext };
     }
 
+    /// <summary>The owner of the images pasted into ideas: no flight or session, so no archive removes them.</summary>
+    public const string IdeaOwner = "ideas";
+
+    /// <summary>The folder holding the idea images, which Claude is given to read.</summary>
+    public string IdeaFolder => Path.GetDirectoryName(PathOf(IdeaOwner, "x", "png"))!;
+
+    /// <summary><paramref name="ext"/> (no dot, lower case) when it names an image the node keeps, else null.</summary>
+    public static string? IdeaImageExtension(string? ext) =>
+        ext?.TrimStart('.').ToLowerInvariant() is { } e && ImageExtensions.Contains(e) ? e : null;
+
+    private static bool IsId(string id) => id.Length is > 0 and <= 64 && id.All(char.IsAsciiLetterOrDigit);
+
+    /// <summary>Keeps <paramref name="bytes"/> as an idea's image under a new id, and answers the id.</summary>
+    public string AddIdeaImage(byte[] bytes, string ext)
+    {
+        var id = Guid.NewGuid().ToString("N")[..12];
+        SaveIdeaImage(id, ext, bytes);
+        return id;
+    }
+
+    /// <summary>Keeps <paramref name="bytes"/> as the idea image <paramref name="id"/>.</summary>
+    public void SaveIdeaImage(string id, string ext, byte[] bytes)
+    {
+        var target = PathOf(IdeaOwner, id, ext);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllBytes(target, bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new FlightException($"could not keep the image: {ex.Message}");
+        }
+    }
+
+    /// <summary>The file and extension of idea image <paramref name="id"/>, when the node holds it.</summary>
+    public (string Path, string Ext)? FindIdeaImage(string id)
+    {
+        if (!IsId(id))
+        {
+            return null;
+        }
+        foreach (var ext in ImageExtensions)
+        {
+            var path = PathOf(IdeaOwner, id, ext);
+            if (File.Exists(path))
+            {
+                return (path, ext);
+            }
+        }
+        return null;
+    }
+
     /// <summary>Removes every copy kept for <paramref name="owner"/> (a flight's code or a session's id), and nothing else's.</summary>
     public void Remove(string owner)
     {

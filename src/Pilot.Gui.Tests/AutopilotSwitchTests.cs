@@ -46,6 +46,7 @@ public sealed class AutopilotSwitchTests
         yield return ("Pull requests", chrome.PullRequests.Tree(new PullRequestsScreen(null, "test", now)));
         yield return ("Settings", chrome.Settings.Tree(now));
         yield return ("Chat", chrome.Chat.Tree());
+        yield return ("Ideas", chrome.Ideas.Tree(IdeasScreen.Empty));
     }
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
@@ -70,7 +71,7 @@ public sealed class AutopilotSwitchTests
         {
             chrome.Autopilot.On = on;
             var pages = Pages(chrome).ToList();
-            pages.Count.ShouldBe(9);
+            pages.Count.ShouldBe(10);
             foreach (var (page, tree) in pages)
             {
                 var arranged = Arrange(tree);

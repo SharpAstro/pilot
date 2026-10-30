@@ -108,8 +108,24 @@ public static class CardKinds
     /// </summary>
     public const string AssistantAsk = "assistant-ask";
 
+    /// <summary>
+    /// An edit of an idea that contradicts what GitHub has got since (<see cref="Verbs.EditIdea"/>): a For-you card naming the idea
+    /// (<c>I381: title</c>) with both versions in its detail, offering <c>Keep mine</c>, <c>Keep GitHub's</c> and <c>Keep the merge</c>
+    /// (the default, first). Its subject is the idea's target; nothing is written until it is answered.
+    /// </summary>
+    public const string IdeaConflict = "idea-conflict";
+
+    /// <summary>
+    /// A new idea that fits more than one repo equally (<see cref="Verbs.NoteIdea"/> with <see cref="Verbs.AnyRepo"/>): a For-you card
+    /// with one choice per likely repo, <c>File in tianwen</c>, each filing it there. Nothing is created until one is chosen.
+    /// </summary>
+    public const string IdeaRepo = "idea-repo";
+
     /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
     public const string AutopilotRan = "autopilot-ran";
+
+    /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
+    public const string PersonsWord = "persons-word";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>
@@ -135,7 +151,7 @@ public static class ChoiceStatus
     public const string Pending = "pending";
     public const string Failing = "failing";
 
-    /// <summary>The PR conflicts with its base: GitHub cannot merge it until it is rebased, which the node does by itself.</summary>
+    /// <summary>The PR conflicts with its base: GitHub cannot merge it until the conflict is resolved, by a merge of the base in (the watchtower's, or a go-around's).</summary>
     public const string Conflicting = "conflicting";
 
     /// <summary>A merge answered while its checks run, or one that joined a merge queue: it goes through by itself once they pass or the queue takes it.</summary>
@@ -144,7 +160,7 @@ public static class ChoiceStatus
     /// <summary>The PR is in its base's merge queue (<see cref="CardChoice.Note"/> says its position): the queue merges it, nothing to press.</summary>
     public const string Queued = "queued";
 
-    /// <summary>The PR is behind its base and GitHub will not merge it as it is: the node brings it up to date (merging the base in, or rebasing, as the repo's merge method wants), so the card offers that, not Merge.</summary>
+    /// <summary>The PR is behind its base and GitHub will not merge it as it is: the node brings it up to date (the base merged in and pushed plainly, never a rebase), so the card offers that, not Merge.</summary>
     public const string Behind = "behind";
 
     /// <summary>GitHub blocks the merge (a required check failed, a review is required, the PR is a draft): <see cref="CardChoice.Note"/> says which. Not a button.</summary>

@@ -145,22 +145,42 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // setting is the person's to change.
         // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
         var watchtower = Get<Watchtower>();
-        var standing = Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
+        // The person's own word in the watchtower's chat, on a card it answers or dismisses, is theirs to have done: the node
+        // sorts it as the person's and carries that on the command (PersonsWord, never from the wire), so the choice the answer
+        // runs passes the checks keyed on the watchtower's name too. Without that word the watchtower is fenced as ever.
+        var wordRecord = default((CardRow Card, string Chosen, string Words)?);
+        if (command.PersonsWord is null && command.Who == watchtower.Name && command.Verb is Verbs.Answer or Verbs.Dismiss
+            && command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal)
+            && state.Cards().FirstOrDefault(c => c.Id == command.Target[Verbs.CardTargetPrefix.Length..]) is { State: CardState.Open } named
+            && watchtower.PersonsWord(command) is { } words)
+        {
+            command = command with { PersonsWord = words };
+            wordRecord = (named, ChosenOf(command, named), words);
+        }
+        var standing = command.PersonsWord is not null ? Standing.Person : Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
         // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
         // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
         // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
         if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb) && Get<RoleModels>().Autopilot)
         {
             standing = new Standing(StandingKind.Assistant);
+            // Its fixer is marked as the autopilot's, so the node's own guards on fixers hold for it (PrReviews.FixAsync).
+            if (command.Verb == Verbs.FixPr)
+            {
+                command = command with { Autopilot = true };
+            }
         }
         if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);
         }
         // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
-        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row && command.Target == Verbs.SessionTarget(row.Id))
+        // A say finds its session as the messenger does, by row id or by name, so a say to the watchtower by name is noted too.
+        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row
+            && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal)
+            && SessionMessenger.Find(state.Sessions(), command.Target[Verbs.SessionTargetPrefix.Length..])?.Id == row.Id)
         {
-            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who);
+            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who, string.Join(' ', command.Args));
         }
         // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
         // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.
@@ -175,6 +195,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             command = command with { Autopilot = true };
         }
         var result = await RouteAsync(command, cancellationToken);
+        if (wordRecord is var (answered, chosen, said) && result.Ok)
+        {
+            state.RaiseCard(CardBin.Handled, CardKinds.PersonsWord, Verbs.CardTarget(answered.Id),
+                $"{command.Who} answered {answered.Id} ({chosen}) at the person's word in the chat", said);
+        }
         if (onAutopilot && result.Ok)
         {
             // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
@@ -188,6 +213,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
         }
         return result;
+    }
+
+    // The label of the choice an answer names (by number or label), or "dismissed" for a dismissal; what it was, as the person's word is recorded.
+    private static string ChosenOf(CommandRequest command, CardRow card)
+    {
+        var which = string.Join(' ', command.Args ?? []).Trim();
+        return command.Verb == Verbs.Dismiss ? "dismissed"
+            : (int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
+                ? card.Choices[number - 1]
+                : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase)))?.Label ?? which;
     }
 
     private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later)
@@ -354,6 +389,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<RepoCommander>().RunAsync(command, cancellationToken);
         }
+        if (IdeaCommander.Handles(command.Verb))
+        {
+            return await Get<IdeaCommander>().RunAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.AddArtifact && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
         {
             return AddSessionArtifact(command);
@@ -403,7 +442,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             // An assistant's ask dismissed is denied: the session that asked is told, as with Deny.
             if (card.Kind == CardKinds.AssistantAsk)
             {
-                await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+                await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             }
             return state.Complete(command, null);
         }
@@ -424,7 +463,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))
         {
             state.CloseCard(card.Id, choice.Label, command.Who);
-            await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+            await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             return state.Complete(command, null);
         }
 
@@ -482,10 +521,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // An assistant's ask allowed and done: the session that asked is told.
         if (card.Kind == CardKinds.AssistantAsk)
         {
-            await Get<Autopilot>().TellAsync(card, allowed: true, command.Who, cancellationToken);
+            await Get<Autopilot>().TellAsync(card, allowed: true, AnsweredBy(command), cancellationToken);
         }
         return state.Complete(command, null);
     }
+
+    // Who an asking session is told answered its ask: the person when the watchtower acted at their word in its chat.
+    private static string AnsweredBy(CommandRequest command) =>
+        command.PersonsWord is not null ? "the person (by their word in the watchtower's chat)" : command.Who;
 
     /// <summary><c>add-artifact session/&lt;id&gt; &lt;path or URL&gt; [title…]</c>: something to look at on a session in no flight.</summary>
     private CommandResult AddSessionArtifact(CommandRequest command)

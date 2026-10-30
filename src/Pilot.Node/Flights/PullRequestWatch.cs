@@ -64,13 +64,14 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     }
 
     /// <summary>
-    /// The GitHub <c>owner/name</c> of every repo pilot works in, sorted, each once: the clones with a GitHub origin, the repo of
-    /// every flight (its legs fly in it) and every repo a PR review was run on, a clone here or not. Nothing org-wide.
+    /// The GitHub <c>owner/name</c> of every repo pilot works in, sorted, each once: the repo of every flight, landed ones too
+    /// (its legs flew in it), and every repo a PR review was run on. Nothing org-wide, and not every clone under the repo roots:
+    /// a root that holds other people's clones (WebAssembly's wabt and wasi-libc, a work org's repos) listed all their PRs,
+    /// which pilot never touched (the owner, 2026-10-29: "why do we have web assembly in here?").
     /// </summary>
-    public static string[] TrackedRepos(RepoInfo[] catalog, FlightRow[] flights, PrReviewRow[] reviews) =>
+    public static string[] TrackedRepos(FlightRow[] flights, PrReviewRow[] reviews) =>
     [
-        .. catalog.Select(r => r.GitHub)
-            .Concat(flights.Select(f => f.RepoPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(p => RepoCatalog.GitHubOf(Path.Combine(p, ".git"))))
+        .. flights.Select(f => f.RepoPath).Distinct(StringComparer.OrdinalIgnoreCase).Select(p => RepoCatalog.GitHubOf(Path.Combine(p, ".git")))
             .Concat(reviews.Select(r => r.Repo))
             .OfType<string>()
             .Where(r => OwnerOf(r) is not null)
@@ -84,7 +85,10 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         {
             var flights = state.Flights();
             var catalog = repos.Repos();
-            var tracked = TrackedRepos(catalog, flights, state.PrReviews());
+            // The repos flown and reviewed in, and the ones the catalog tracks besides (an idea, a PILOT.md): one rule with the repo read.
+            var tracked = TrackedRepos(flights, state.PrReviews())
+                .Concat(repos.Tracked().Select(r => r.GitHub).OfType<string>().Where(r => OwnerOf(r) is not null))
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var orgs = tracked.Select(r => OwnerOf(r)!).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var held = state.PullRequests();
             // A node with no GitHub repo has nothing to say, and says nothing until it has.

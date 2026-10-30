@@ -373,7 +373,33 @@ public sealed class Watchtower(
     /// Notes who sent the latest message to the watchtower's session: the person (from the GUI chat, a TUI or a human's
     /// <c>pilot tell</c>) or the node (a card it says, a nudge). The watchtower's turn began with that message.
     /// </summary>
-    public void NoteMessage(bool fromPerson) => _lastFromPerson = fromPerson;
+    public void NoteMessage(bool fromPerson, string? text = null)
+    {
+        _lastFromPerson = fromPerson;
+        if (Fold(text) is not { Length: > 0 } folded)
+        {
+            return;
+        }
+        lock (_routed)
+        {
+            // A say the node routes reaches the session past the node too (resumed, it is a plain line), so what a non-person
+            // said is kept to tell it from the person's; the person saying the same words again makes them theirs.
+            _routed.Remove(folded);
+            if (!fromPerson)
+            {
+                _routed.Add(folded);
+                if (_routed.Count > MaxRouted)
+                {
+                    _routed.RemoveAt(0);
+                }
+            }
+        }
+    }
+
+    /// <summary>How many of the latest non-person messages routed to the watchtower are kept.</summary>
+    private const int MaxRouted = 64;
+
+    private readonly List<string> _routed = [];
 
     /// <summary>
     /// Whether the watchtower is acting on a message the person sent it: its latest message was theirs, and its session has not
@@ -381,6 +407,97 @@ public sealed class Watchtower(
     /// is the lookout, who is never to do what is theirs.
     /// </summary>
     public bool ActingForPerson => _lastFromPerson && Current() is { State: SessionState.Working or SessionState.Waiting };
+
+    /// <summary>
+    /// The watchtower's transcripts, which are all the node has of what the person says to it on Remote Control: that goes to
+    /// the session past the node. Null (a test's watchtower) reads none, so no word of the person's is ever found.
+    /// </summary>
+    public Sessions.TranscriptBook? Transcripts { get; set; }
+
+    /// <summary>The shortest <c>--why</c> that can be matched to the person's message: a letter or two is in any message.</summary>
+    private const int MinWordsLength = 6;
+
+    /// <summary>
+    /// The person's word for what the watchtower asks of a card: the words of the latest line that fed its current session's
+    /// turn (<see cref="Sessions.TranscriptBook.LastPrompt"/>, meta lines included), when that line is the person's, its turn
+    /// is still running, and <paramref name="command"/>'s <c>--why</c> quotes it or is quoted by it (whitespace and case
+    /// folded). Null when there is none, and the watchtower stays fenced.
+    /// </summary>
+    public string? PersonsWord(CommandRequest command)
+    {
+        if (Transcripts is null || Fold(command.Why) is not { Length: > 0 } why
+            || Current() is not { State: SessionState.Working or SessionState.Waiting, SessionId: { Length: > 0 } sessionId }
+            || Transcripts.LastPrompt(sessionId) is not { } prompt || !IsPersons(prompt))
+        {
+            return null;
+        }
+        var said = Fold(prompt.Text);
+        return said.Length > 0 && Quotes(said, why) ? command.Why!.Trim() : null;
+    }
+
+    /// <summary>
+    /// Whether a line that fed the watchtower's turn is the person's: typed or resumed text (Remote Control, the GUI, a
+    /// <c>tell</c>) or a cross-session message from the controller (the node relaying the person's words), and not the node's
+    /// voice, another node's watchtower, or a say the node routed for someone else. A message from any other session, the
+    /// node's own envelope, a task finishing, a scheduled wake, a hand-back, a compaction or a slash command is not; nor is
+    /// the session's first prompt, which is always its brief: Claude Code records it as typed with no <c>[node] </c> in
+    /// front, and a fresh watchtower works through the open cards it lists with no line of the node's after it (the review of
+    /// PIL473).
+    /// </summary>
+    private bool IsPersons(Sessions.TranscriptBook.TurnPrompt prompt)
+    {
+        if (prompt.First)
+        {
+            return false;
+        }
+        var persons = prompt.Origin switch
+        {
+            "human" => true,
+            "peer" => string.Equals(prompt.From, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        };
+        var text = prompt.Text.TrimStart();
+        if (!persons || text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal) || text.StartsWith(Sessions.SessionMessenger.FromWatchtowerPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var said = Fold(text);
+        lock (_routed)
+        {
+            return !_routed.Any(r => said == r || r.Length >= MinWordsLength && said.Contains(r, StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="why"/> is the person's message or quotes it: equal at any length (a one-word reply such as
+    /// Allow), otherwise one holds the other on word boundaries and the shorter side is at least <see cref="MinWordsLength"/>
+    /// long, so an ok or a yes never lets an unrelated reason through.
+    /// </summary>
+    private static bool Quotes(string said, string why)
+    {
+        if (said == why)
+        {
+            return true;
+        }
+        var (shorter, longer) = said.Length <= why.Length ? (said, why) : (why, said);
+        if (shorter.Length < MinWordsLength)
+        {
+            return false;
+        }
+        for (var i = longer.IndexOf(shorter, StringComparison.Ordinal); i >= 0; i = longer.IndexOf(shorter, i + 1, StringComparison.Ordinal))
+        {
+            var before = i == 0 || !char.IsLetterOrDigit(longer[i - 1]);
+            var after = i + shorter.Length == longer.Length || !char.IsLetterOrDigit(longer[i + shorter.Length]);
+            if (before && after)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string Fold(string? text) =>
+        string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
 
     private static bool Live(SessionRow row) => row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
@@ -432,6 +549,7 @@ public sealed class Watchtower(
                 {
                     _job = row.Id;
                     TellAllOpen();
+                    await StopOthersAsync(row.Id, null, cancellationToken);
                 }
             }
 
@@ -515,6 +633,12 @@ public sealed class Watchtower(
                 {
                     await StartAsync("its brief changed since the node started it", cancellationToken, row);
                 }
+                return;
+            }
+            if (row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
+            {
+                // Never mid-turn, and never by changing the model of the session: a fresh one on the setting.
+                await StartAsync($"it ran on {row.Model}, the setting says {setting}", cancellationToken, row);
                 return;
             }
             await TellNewCardsAsync(row, cancellationToken);
@@ -665,6 +789,7 @@ public sealed class Watchtower(
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
+        await StopOthersAsync(_job, replacing?.Id, cancellationToken);
         return true;
     }
 
@@ -731,6 +856,37 @@ public sealed class Watchtower(
         _failures = 0;
         _parked = false;
         _parkedOpen = [];
+    }
+
+    /// <summary>
+    /// One watchtower per node: stops every live background watchtower row but <paramref name="keep"/> (and the one just
+    /// stopped, <paramref name="replaced"/>), and says which in one Handled line. An interactive session is someone's terminal, never stopped.
+    /// </summary>
+    private async Task StopOthersAsync(string? keep, string? replaced, CancellationToken cancellationToken)
+    {
+        var others = state.Sessions()
+            .Where(r => r.Role == SessionRole.Watchtower && r.Kind == SessionKind.Background && Live(r) && r.Id != keep && r.Id != replaced
+                // One the person renamed (NoteRename) is theirs now, no longer the watchtower.
+                && r.EndedBecause?.StartsWith("renamed to ", StringComparison.Ordinal) != true)
+            .OrderBy(r => r.StartedAt)
+            .ToList();
+        if (others.Count == 0)
+        {
+            return;
+        }
+        foreach (var other in others)
+        {
+            try
+            {
+                await launcher.StopAsync(other.Id, cancellationToken);
+            }
+            catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Gone already: nothing to stop.
+            }
+        }
+        state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
+            $"Stopped {(others.Count == 1 ? "another watchtower" : $"{others.Count} other watchtowers")} (one per node): {string.Join(", ", others.Select(r => $"{r.Name} ({r.Id})"))}");
     }
 
     /// <summary>Stops a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
