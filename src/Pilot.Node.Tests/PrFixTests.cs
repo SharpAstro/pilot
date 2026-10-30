@@ -256,7 +256,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
 
         Fixers.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixOfferKind || c.Kind == PrReviews.DesignKind);
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("a flight owns");
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("flight review WID1");
     }
 
     [Fact]
