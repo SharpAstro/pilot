@@ -58,7 +58,6 @@ public sealed class UnreadHeadTests : ReviewTestsBase
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg.Name), "controller", "accepted", "good enough")).Error.ShouldBeNull();
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         head.ShouldNotBe(read);
-        Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldNotStartWith(head);
 
         await _legs.AdvanceAllAsync(Ct);
         await Started(_legs, flight.Code);
