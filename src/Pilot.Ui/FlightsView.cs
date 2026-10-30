@@ -107,7 +107,7 @@ internal sealed record FlightLine
         }
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
-            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Recheck is { Outcome: null } ? FlightWaiting.LegState(flying) : flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
             : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
@@ -614,13 +614,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
-    /// <summary>
-    /// The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the
-    /// tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width, as pilot-tui does. The
-    /// canvas is wider than a narrow page and cannot scroll across, so a page narrower than it shows the grid, and a card is never
-    /// wider than the page.
-    /// </summary>
-    internal float? PageWidth { get; set; }
+    /// <summary>The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width.</summary>
+    internal float? PageWidth { get => _viewWidth > 0f ? _viewWidth : null; set => _viewWidth = value ?? 0f; }
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
@@ -634,6 +629,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             DrawSelection(fill);
         });
         _arranged = arranged;
+        NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
         if (RevealLeg(arranged))
         {
@@ -1027,7 +1023,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown && !CanvasTooWide(screen))
+        if (CanvasShown && MapFits(screen))
         {
             return CanvasBody(screen);
         }

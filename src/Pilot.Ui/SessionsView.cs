@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using DIR.Lib;
 using Pilot.Commands;
 
@@ -458,7 +459,33 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
         SayInput.Text = "";
         SayInput.CursorPos = 0;
-        await say(line, text.Trim());
+        // Shown at once as sending, keyed to the row it went to; the host's words replace it when the send completes.
+        var pending = new PendingSay(line.Row.Id, text.Trim());
+        ImmutableInterlocked.Update(ref _pending, p => p.Add(pending));
+        try
+        {
+            await say(line, pending.Text);
+        }
+        finally
+        {
+            ImmutableInterlocked.Update(ref _pending, p => p.Remove(pending));
+        }
+    }
+
+    private sealed record PendingSay(string RowId, string Text);
+
+    private ImmutableList<PendingSay> _pending = [];
+
+    /// <summary>The says to the selected row the node has not answered yet, in the order sent.</summary>
+    public IReadOnlyList<string> Sending => Selected >= 0 && Selected < _lines.Count
+        ? [.. _pending.Where(p => p.RowId == _lines[Selected].Row.Id).Select(p => p.Text)]
+        : [];
+
+    // The status line while a say is out: each one marked, dimmed like the line; the host's words once none is.
+    private string? SayLine()
+    {
+        var sending = Sending;
+        return sending.Count == 0 ? SayStatus : string.Join(" · ", sending.Select(t => $"sending… {(t.Length > 60 ? t[..59] + "…" : t)}"));
     }
 
     public override bool HandleInput(InputEvent evt)
@@ -604,7 +631,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                             .WStar())
                     .WithGap(12f)
                     .RowH(28f),
-                Layout.Builder.Text(SayStatus ?? "Ctrl+S to type here · Enter sends", 11f, Dim).RowH(16f))
+                Layout.Builder.Text(SayLine() ?? "Ctrl+S to type here · Enter sends", 11f, Dim).RowH(16f))
             .Pad(Gutter, 4f)
             .Bg(HeaderBg)
             .RowH(SayBarHeight);

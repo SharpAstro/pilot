@@ -83,6 +83,13 @@ public sealed class NodeState
             _seq = delta.Seq;
             Hold(delta.Seq, Serialize(delta));
         }
+        // A check a finish was rerunning died with the node that ran it (a bare process of that node, not a job): no leg comes
+        // back from a restart still rechecking. Turned here, in memory, into an outcome saying so, which the leg watch tells the
+        // worker (it was left waiting on the answer), so what the journal holds is never read as running.
+        foreach (var key in _legs.Where(l => l.Value.Recheck is { Outcome: null }).Select(l => l.Key).ToList())
+        {
+            _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Outcome = LegRecheck.RestartedOutcome(_legs[key].Recheck!.Check) } };
+        }
 
         journal.SnapshotOutcome += OnSnapshotOutcome;
         if (history.Stream is null)
@@ -517,7 +524,8 @@ public sealed class NodeState
 
     // Record equality compares the connections, peer connections, overlaps, folded-in and package-wait arrays by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
-        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
+        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [], OtherSubTasks = null } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [], OtherSubTasks = null }
+        && (a.OtherSubTasks ?? []).SequenceEqual(b.OtherSubTasks ?? []) && (a.OtherSubTasks is null) == (b.OtherSubTasks is null)
         && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.PeerConnections.SequenceEqual(b.PeerConnections) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
         && a.PackageWaits.SequenceEqual(b.PackageWaits);
 
@@ -653,7 +661,7 @@ public sealed class NodeState
     {
         var next = IdeaIds.Order(all).ToArray();
         // Age moves with the clock alone: a read that changes nothing else is no delta.
-        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
+        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [] } != pair.Second with { Age = "", Images = [] }))
         {
             Publish(new IdeasChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Ideas = next });
         }
@@ -801,15 +809,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null)
     {
         var result = new CommandResult
         {
@@ -823,6 +831,7 @@ public sealed class NodeState
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,
             Tidy = error is null ? tidy : null,
+            Milestones = error is null ? milestones : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,

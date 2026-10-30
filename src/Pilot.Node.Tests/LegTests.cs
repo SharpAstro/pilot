@@ -205,6 +205,7 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException(new FlightException(why));
         }
         ClosedIssues.Add((number, comment));
+        Closed(number);
         return Task.CompletedTask;
     }
 
@@ -232,10 +233,10 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
-    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null)
+    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0)
     {
         var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn);
+        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues);
         list.Add(milestone);
         return milestone;
     }
@@ -260,6 +261,15 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
         Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
+
+    public Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
+    {
+        MilestonesMade.Add((RepoKey(repoPath), title));
+        var made = AddMilestone(repoPath, title);
+        var list = MilestonesOf[RepoKey(repoPath)];
+        list[list.IndexOf(made)] = made = made with { Description = description };
+        return Task.FromResult(made);
+    }
 
     public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
     {
@@ -360,6 +370,24 @@ internal sealed class FakeGitHub : IGitHub
         Edits.Add((number, title, body));
         ChangeElsewhere(repoPath, number, i => i with { Title = title, Body = body });
         return Task.FromResult(true);
+    }
+
+    /// <summary>Every idea image committed by UploadIdeaImageAsync, as (repo folder path, id, ext, bytes), in order.</summary>
+    public List<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
+
+    /// <summary>Every idea image read back by IdeaImageAsync, as (id, ext), in order.</summary>
+    public List<(string Id, string Ext)> ImageReads { get; } = [];
+
+    public Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
+    {
+        ImageUploads.Add((RepoKey(repoPath), id, ext, bytes));
+        return Task.FromResult($"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/blob/{IdeaImages.Branch}/ideas/{id}.{ext}?raw=true");
+    }
+
+    public Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
+    {
+        ImageReads.Add((id, ext));
+        return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
@@ -680,6 +708,55 @@ internal sealed class FakeGitHub : IGitHub
         IssueComments.Add((number, body));
         return Task.CompletedTask;
     }
+
+    /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
+    public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];
+
+    /// <summary>Every sub-issue made, as (parent, title, body), in order.</summary>
+    public List<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
+
+    /// <summary>When set, the sub-issue calls fail with it, as a GitHub that refused them.</summary>
+    public string? SubIssueFails { get; set; }
+
+    public Task<SubTask> CreateSubIssueAsync(string repoPath, int parent, string title, string? body, CancellationToken cancellationToken)
+    {
+        if (SubIssueFails is { } why)
+        {
+            return Task.FromException<SubTask>(new FlightException(why));
+        }
+        SubIssuesCreated.Add((parent, title, body));
+        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
+        Issues[number] = title;
+        var url = $"https://github.com/owner/repo/issues/{number}";
+        (SubIssues.TryGetValue(parent, out var list) ? list : SubIssues[parent] = []).Add(new SubTaskItem(number.ToString(), title, false, url));
+        return Task.FromResult(new SubTask { Id = number.ToString(), Url = url });
+    }
+
+    private void Closed(int number)
+    {
+        foreach (var list in SubIssues.Values)
+        {
+            var at = list.FindIndex(i => i.Id == number.ToString());
+            if (at >= 0)
+            {
+                list[at] = list[at] with { Done = true };
+            }
+        }
+    }
+
+    public Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (SubIssueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        ClosedNotPlanned.Add((number, comment));
+        Closed(number);
+        return Task.CompletedTask;
+    }
+
+    public Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken) =>
+        Task.FromResult(SubIssues.TryGetValue(parent, out var list) ? list.ToArray() : []);
 
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
@@ -1313,12 +1390,180 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // The check holds no lock: the worker's retry is answered at once, refused, and runs no second check (DE1, 2026-10-28:
         // a ten-minute check held every flight's commands, and each retry queued another).
         var retry = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in").WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
-        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check already");
+        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check since ");
         _checks.Runs.Count.ShouldBe(1);
+
+        // The rerun is on the leg while it runs, so pilot status and the windows show it; the refusal says since when, where, and
+        // that the worker ends its turn (pilot #487). The refused retry leaves the recording as the running finish made it.
+        var recheck = L("parser").Recheck.ShouldNotBeNull();
+        (recheck.Check, recheck.Outcome).ShouldBe(("dotnet test", null));
+        var since = $"{recheck.Since.ToLocalTime():HH:mm}";
+        FlightWaiting.LegState(L("parser")).ShouldBe($"rechecking since {since}");
+        retry.Error.ShouldContain($"since {since} already");
+        retry.Error.ShouldContain("pilot status shows it");
+        retry.Error.ShouldContain("end your turn: the node tells you the outcome");
 
         gate.SetResult();
         (await finishing).Ok.ShouldBeTrue();
         L("parser").State.ShouldBe(LegState.Done);
+        L("parser").Recheck.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ALegsRecheckIsClearedWhenItsCheckFailsTheLegChangesOrTheCheckThrows()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        async Task<Task<CommandResult>> FinishWhileRunning(TaskCompletionSource gate)
+        {
+            var runs = _checks.Runs.Count;
+            _checks.OnRun = () => gate.Task;
+            var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+            for (var i = 0; i < 100 && _checks.Runs.Count == runs; i++)
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+            L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldBeNull();
+            return finishing;
+        }
+
+        // The check fails: the leg stays flying and no longer rechecks.
+        var failing = new TaskCompletionSource();
+        _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
+        var failed = await FinishWhileRunning(failing);
+        failing.SetResult();
+        (await failed).Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
+
+        // The leg changes meanwhile (sent round): the finish records nothing, and the recheck does not outlive it.
+        var changing = new TaskCompletionSource();
+        var changed = await FinishWhileRunning(changing);
+        _state.PutLeg(L("parser") with { GoArounds = 1 });
+        changing.SetResult();
+        (await changed).Error.ShouldNotBeNull().ShouldContain("changed while its check ran");
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
+
+        // The check throws: the same, and the flight is free for the next finish.
+        _checks.OnRun = () => Task.FromException(new InvalidOperationException("no shell"));
+        await Should.ThrowAsync<InvalidOperationException>(Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in"));
+        L("parser").Recheck.ShouldBeNull();
+
+        _checks.OnRun = null;
+        _checks.Next = new CheckRun(0, "Passed: 42");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+    }
+
+    // The finish of a leg whose check fails after it ran, with the deadline the reply route would have answered queued at.
+    private async Task<CommandResult> FailingFinishAsync(TimeSpan runs, TimeSpan deadline, bool retried = false)
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        _legs.ReplyDeadline = () => deadline;
+        _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
+        if (!retried)
+        {
+            _checks.OnRun = () => Task.Delay(runs, Ct);
+            return await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        }
+        var gate = new TaskCompletionSource();
+        _checks.OnRun = () => gate.Task;
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && _checks.Runs.Count == 0; i++)
+        {
+            await Task.Delay(20, Ct);
+        }
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldNotBeNull().ShouldContain("rerunning parser's check since ");
+        gate.SetResult();
+        return await finishing;
+    }
+
+    [Fact]
+    public async Task AFailedCheckThatOutlastedTheReplyDeadlineLeavesItsOutcomeOnTheLegForTheWatchToTell()
+    {
+        var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50));
+
+        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        var recheck = L("parser").Recheck.ShouldNotBeNull();
+        recheck.Outcome.ShouldNotBeNull().ShouldContain("failed (1)");
+        recheck.Outcome.ShouldContain("Failed: 2, Passed: 40");
+        recheck.Outcome.ShouldContain("`leg finish done` again");
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task AFailedCheckDuringWhichARetryWasRefusedLeavesItsOutcomeOnTheLegEvenWithinTheDeadline()
+    {
+        var result = await FailingFinishAsync(TimeSpan.Zero, TimeSpan.FromMinutes(5), retried: true);
+
+        result.Error.ShouldNotBeNull().ShouldContain("failed (1)");
+        L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("Failed: 2, Passed: 40");
+    }
+
+    [Fact]
+    public async Task AShortFailedCheckAnsweredInTimeLeavesNoOutcomeSoTheWorkerIsNotToldTwice()
+    {
+        var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5));
+
+        result.Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
+    }
+
+    [Fact]
+    public async Task ALateCheckWhoseLegChangedOrThatThrewLeavesAnOutcomeAndALateCheckThatPassesLeavesTheLegDoneWithNone()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        _legs.ReplyDeadline = () => TimeSpan.FromMilliseconds(30);
+
+        // The leg changes while the check runs past the deadline.
+        _checks.OnRun = async () =>
+        {
+            await Task.Delay(150, Ct);
+            _state.PutLeg(L("parser") with { GoArounds = 1 });
+        };
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldNotBeNull().ShouldContain("changed while its check ran");
+        L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("leg changed");
+
+        // The check throws past the deadline.
+        _state.PutLeg(L("parser") with { Recheck = null });
+        _checks.OnRun = async () =>
+        {
+            await Task.Delay(150, Ct);
+            throw new InvalidOperationException("no shell");
+        };
+        await Should.ThrowAsync<InvalidOperationException>(Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in"));
+        L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull().ShouldContain("no shell");
+
+        // It passes past the deadline: the leg is done, and the answer is the worker's (it said queued, the leg is done), no outcome.
+        _state.PutLeg(L("parser") with { Recheck = null });
+        _checks.OnRun = () => Task.Delay(150, Ct);
+        _checks.Next = new CheckRun(0, "Passed: 42");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Done, null));
+    }
+
+    [Fact]
+    public void ARecheckStillRunningInTheJournalBecomesAnOutcomeSayingSoWhenTheNodeComesBack()
+    {
+        var journal = new InMemoryJournal();
+        var first = new NodeState(journal, TimeProvider.System);
+        first.PutLeg(new LegRow
+        {
+            Flight = "TIA1", Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying,
+            Recheck = new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UtcNow },
+        });
+
+        // Not running, and not dropped: its worker was left waiting on the answer, so the leg watch tells it the check died with the node.
+        var recheck = new NodeState(journal, TimeProvider.System).Legs("TIA1").Single().Recheck.ShouldNotBeNull();
+        recheck.Outcome.ShouldNotBeNull().ShouldContain("node restarted");
+        recheck.Outcome.ShouldContain("`dotnet test`");
     }
 
     [Fact]

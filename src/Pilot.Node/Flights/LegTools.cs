@@ -458,9 +458,27 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Opens an issue in the repo and links it as a sub-issue of issue <paramref name="parent"/> (the sub-issues REST API, with the
+    /// new issue's database id); returns its number and URL. An issue that could not be linked is closed again, not left behind.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<SubTask> CreateSubIssueAsync(string repoPath, int parent, string title, string? body, CancellationToken cancellationToken);
+
+    /// <summary>Closes issue <paramref name="number"/> as not planned with <paramref name="comment"/>: a sub-issue whose leg was removed.</summary>
+    /// <exception cref="FlightException">gh could not close it.</exception>
+    Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
+    /// <summary>The sub-issues of issue <paramref name="parent"/>, open and closed; empty when gh cannot say.</summary>
+    Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken);
+
     /// <summary>The repo's open milestones.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>Makes a milestone called <paramref name="title"/> in the repo.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken);
 
     /// <summary>The repo's <see cref="IdeaIds.Milestone"/> milestone, made when it has none.</summary>
     /// <exception cref="FlightException">gh could not read or make it.</exception>
@@ -509,6 +527,17 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Commits an idea's image to <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch (made on first use,
+    /// as an orphan commit); returns the URL an issue body shows it by. GitHub has no API for its own issue attachments.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken);
+
+    /// <summary>The bytes of <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch; null when it is not there.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
@@ -1578,7 +1607,9 @@ public sealed partial class GhCli : IGitHub
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        using var process = Process.Start(start) ?? throw new FlightException("gh did not start");
+        var (process, counted) = NodeTraffic.Shared.Start("gh", start);
+        using var _ = process;
+        using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(timeout ?? Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);

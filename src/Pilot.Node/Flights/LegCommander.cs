@@ -25,8 +25,17 @@ public sealed partial class LegCommander(
     /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 
+    /// <summary>
+    /// How long the command route waits for a command before it answers queued (<c>NodeCommands.ReplyDeadline</c>, which NodeApp passes here as
+    /// it is now): a finish whose check rerun outlasts it was answered queued, so its worker is told the outcome by the leg watch.
+    /// </summary>
+    public Func<TimeSpan> ReplyDeadline { get; set; } = () => TimeSpan.FromSeconds(90);
+
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
+
+    /// <summary>The node's log (logs/node.log): a line for each move asked for, naming who asked and how it ended.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
 
     /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
@@ -89,6 +98,7 @@ public sealed partial class LegCommander(
         string? way = null;
         var merged = false;
         FlightRow? moving = null;
+        SubTask? removedSubTask = null;
         try
         {
             if (peerRefusal is not null)
@@ -116,7 +126,7 @@ public sealed partial class LegCommander(
                     await PlanAsync(command, cancellationToken);
                     break;
                 case Verbs.RemoveLeg:
-                    Remove(command);
+                    removedSubTask = Remove(command);
                     break;
                 case Verbs.StartLeg:
                     await StartAsync(command, cancellationToken);
@@ -179,6 +189,12 @@ public sealed partial class LegCommander(
         made ??= started;
         error ??= notStarted;
 
+        // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.
+        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted"))
+        {
+            await SyncSubTasksAsync(CodeOf(command.Target), removedSubTask, command.Verb == Verbs.FinishLeg ? LegOf(command.Target).Leg.Name : null, cancellationToken);
+        }
+
         // A flight moved by hand goes through its own calls, the lock let go: git and the other node take as long as they take.
         if (error is null && moving is not null)
         {
@@ -190,6 +206,8 @@ public sealed partial class LegCommander(
             {
                 error = ex.Message;
             }
+            // Two asks for one move (a click and a command) are told apart only here: who asked, and what each was answered.
+            Error.WriteLine($"move-flight {moving.Code}, asked by {command.Who}: {made ?? $"refused: {error}"}");
         }
 
         // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
@@ -669,13 +687,16 @@ public sealed partial class LegCommander(
             Budget = budget,
             Model = model,
             Effort = effort,
+            // Planned again, the leg keeps the sub-task it has: it is the same leg in the work item.
+            SubTask = known?.SubTask,
         });
     }
 
     /// <summary>The card a removed leg leaves, a line saying it went and why.</summary>
     public const string LegRemovedKind = "leg-removed";
 
-    private void Remove(CommandRequest command)
+    // Returns the removed leg's sub-task, for the work item to close it.
+    private SubTask? Remove(CommandRequest command)
     {
         var (flight, leg) = LegOf(command.Target);
         if (flight.State == FlightState.Landed)
@@ -704,6 +725,7 @@ public sealed partial class LegCommander(
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} was removed", PlannedKind);
         state.RaiseCard(CardBin.Handled, LegRemovedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}/{leg.Name} removed by {command.Who}", why.Length > 0 ? why : null);
+        return leg.SubTask;
     }
 
     /// <summary>The ring a planner or a leg refused for a flight a peer node flies raises, naming the peer.</summary>
@@ -1160,26 +1182,58 @@ public sealed partial class LegCommander(
                     // lock: a check is a build and a test suite, and held under it every other flight's command queued behind it for its ten
                     // minutes, timed out, and its worker went idle and rang (DE1, 2026-10-28). The flight is this finish's meanwhile, so a
                     // worker's retry after a timeout is refused rather than running the same check again.
-                    var seen = leg;
+                    // Recorded on the leg while it runs, so pilot status, the GUI and the TUI show it (the check is a bare process, not a
+                    // job), and cleared whichever way it ends. Unchanged() does not compare it, so setting and clearing it is no change.
+                    // A retry is refused at Calling, before it touches the recheck the running finish recorded; its words say since when,
+                    // where it shows, and that the worker ends its turn, as the node tells it the outcome (pilot #487).
+                    // A rerun that ends without the leg done, and whose answer may not have reached its worker (it outlasted the reply
+                    // deadline, so the CLI was answered queued, or a retry was refused meanwhile), keeps its outcome on the leg for the leg
+                    // watch to tell the worker, which was told to end its turn. One answered in time is told by that answer, so leaves none.
+                    var since = time.GetUtcNow();
                     CheckRun run;
-                    using (Calling(flight.Code, $"rerunning {leg.Name}'s check"))
+                    LegRow seen;
+                    bool late;
+                    using (var call = Calling(flight.Code, $"rerunning {leg.Name}'s check since {since.ToLocalTime():HH:mm}",
+                        "pilot status shows it; end your turn: the node tells you the outcome"))
                     {
-                        run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                        leg = leg with { Recheck = new LegRecheck { Check = check, Since = since } };
+                        state.PutLeg(leg);
+                        seen = leg;
+                        try
+                        {
+                            run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                        }
+                        catch (Exception ex)
+                        {
+                            EndRecheck(flight.Code, seen.Name, call.Refused || time.GetUtcNow() - since > ReplyDeadline()
+                                ? LegRecheck.ThrewOutcome(check, ex.Message) : null);
+                            throw;
+                        }
+                        late = call.Refused || time.GetUtcNow() - since > ReplyDeadline();
                     }
-                    leg = Unchanged(flight.Code, seen) is { } still
-                        ? still
-                        : throw new FlightException($"{flight.Code}/{seen.Name} changed while its check ran: nothing was recorded, look again and finish again");
+                    if (Unchanged(flight.Code, seen) is not { } still)
+                    {
+                        EndRecheck(flight.Code, seen.Name, late ? LegRecheck.ChangedOutcome(check) : null);
+                        throw new FlightException($"{flight.Code}/{seen.Name} changed while its check ran: nothing was recorded, look again and finish again");
+                    }
+                    leg = still;
                     flight = FlightOf(Verbs.FlightTarget(flight.Code));
                     if (!run.Passed)
                     {
                         // A restore that fails on a package a sibling is publishing is the leg's to wait out, not to fail.
-                        if (await TryHoldAsync(flight, leg, run.Tail, cancellationToken))
+                        if (await TryHoldAsync(flight, leg with { Recheck = null }, run.Tail, cancellationToken))
                         {
                             break;
                         }
-                        state.PutLeg(leg with { Report = $"check `{check}` failed ({run.ExitCode}):\n{run.Tail}" });
+                        state.PutLeg(leg with
+                        {
+                            Report = $"check `{check}` failed ({run.ExitCode}):\n{run.Tail}",
+                            Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
+                        });
                         throw new FlightException($"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
+                    leg = leg with { Recheck = null };
+                    state.PutLeg(leg);
                 }
                 // GitHub's auto-merge is turned off before the leg is done, so a refusal leaves it flying for its worker to finish
                 // again, not done with nothing pushed.
@@ -1242,6 +1296,18 @@ public sealed partial class LegCommander(
             {
                 await StopQuietly(job, cancellationToken);
             }
+        }
+    }
+
+    /// <summary>
+    /// Ends the running recheck of a leg, as the leg is now: its check ended, one way or another. With an <paramref name="outcome"/> the
+    /// recheck stays on the leg for the leg watch to say to the worker; without, it is taken off (or the leg is gone and there is nothing to end).
+    /// </summary>
+    private void EndRecheck(string code, string name, string? outcome)
+    {
+        if (state.Legs(code).FirstOrDefault(l => l.Name == name) is { Recheck: not null } now)
+        {
+            state.PutLeg(now with { Recheck = outcome is null ? null : now.Recheck with { Outcome = outcome } });
         }
     }
 

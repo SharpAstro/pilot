@@ -94,6 +94,7 @@ public static class Briefs
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
         text.Append(PilotMdSection(pilotMd));
+        text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine(CiRule);
         text.AppendLine(MachineLoadRule(run));
@@ -201,6 +202,30 @@ public static class Briefs
         "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
         "  it holds a slot of the queue and blocks every job behind it.";
 
+    /// <summary>
+    /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node
+    /// never smudges them, and one <c>git lfs pull</c> fills the shared store. Nothing for a repo without LFS.
+    /// </summary>
+    /// <param name="folder">The plane or worktree the brief sends its agent to.</param>
+    /// <param name="noun">What the brief calls that folder: "plane", or "worktree" for a PR's.</param>
+    internal static string LfsRule(string? folder, string noun = "plane")
+    {
+        try
+        {
+            var attributes = folder is null ? null : Path.Combine(folder, ".gitattributes");
+            if (attributes is null || !File.Exists(attributes) || !File.ReadAllText(attributes).Contains("filter=lfs", StringComparison.Ordinal))
+            {
+                return "";
+            }
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+        return $"\nThis repo uses git LFS: the {noun}'s LFS files are pointers. When the step needs their content, run `git lfs pull` once in the {noun} " +
+            "(it fills the shared store, so other planes reuse it), never per file or per build.\n";
+    }
+
     /// <summary>The repo's PILOT.md quoted whole under one heading; nothing when it has none.</summary>
     internal static string PilotMdSection(string? pilotMd) =>
         string.IsNullOrWhiteSpace(pilotMd) ? "" : $"\n## This repo's rules for pilot (PILOT.md)\n{pilotMd}\n\n";
@@ -272,6 +297,7 @@ public static class Briefs
         text.AppendLine("push and delete nothing, and keep scratch output outside the plane. Do it yourself, in this session, with no subagents.");
         text.AppendLine("Your ceiling is a few minutes and about thirty tool calls; past it, answer with what you have.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(LfsRule(flight.Worktree));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
@@ -344,6 +370,7 @@ public static class Briefs
         text.AppendLine("A step the plane cannot do by the repo's PILOT.md rules is not planned, or is planned with the way round it named in the leg.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(PilotMdSection(pilotMd));
+        text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine("How legs fly: one at a time, in order, each by a fresh worker that sees only its own leg, the legs before it and");
         text.AppendLine("what the branch holds. So each leg must stand on its own: a goal a worker can do in one sitting, a Done-when");
@@ -465,6 +492,7 @@ public static class Briefs
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
+        text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
@@ -562,6 +590,7 @@ public static class Briefs
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
         text.Append(NamingRule(machine, $"review-{review.Number}"));
+        text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
         text.AppendLine("Do the review yourself, in this session: no subagents, or one at most for a single narrow question. Fanning");
         text.AppendLine("out reviewers costs many times the tokens and is not what this review is for.");
@@ -635,6 +664,7 @@ public static class Briefs
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
         text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
         text.AppendLine("finding was a behaviour.");
+        text.Append(LfsRule(review.FixWorktree, "worktree"));
         text.AppendLine();
         text.AppendLine("## Build and test");
         var configuration = build?.Configuration ?? (review.Repo.StartsWith("SharpAstro/", StringComparison.OrdinalIgnoreCase) ? "Release" : null);
@@ -772,13 +802,21 @@ public static class Briefs
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
         text.AppendLine();
         // DE1's watchtower told the controller it could not read SE1's cards (2026-10-29): nothing here said --node reaches them.
-        text.AppendLine("## The other nodes");
-        text.AppendLine("You can read every node on the LAN, not only this one, so never say you cannot see another node's flights or cards:");
+        // The Chat is the fleet's (PIL468): each node's own watchtower chat stays, as its own page.
+        text.AppendLine("## The other nodes: the Chat is the fleet chat, held here");
+        text.AppendLine("You hold the fleet chat: the controller asks you about every node on the LAN, not only this one, so");
+        text.AppendLine("never say you cannot see another node's flights or cards.");
         text.AppendLine($"- `{pilot} nodes` lists them by name; add `--node <name>` to any reading command for another: `{pilot} status --node SE1`,");
         text.AppendLine($"  `{pilot} cards --node SE1`, `{pilot} repos --node SE1`.");
-        text.AppendLine($"- To get something done on another node's flight or card, tell its watchtower, which owns that node's planes: `{pilot} tell --node <name>");
-        text.AppendLine($"  \"<what and why>\"`. `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant");
-        text.AppendLine("  (pilot connect) and the card's choice is plainly the right one. Never edit or push another node's plane from here.");
+        text.AppendLine($"- To get something done on another node, pass it to that node's watchtower, which owns its planes: `{pilot} tell --node <name>");
+        text.AppendLine("  \"<what and why, and ask it to tell back what came of it>\"`. Say at once in the chat that you passed it on, and end your turn:");
+        text.AppendLine("  never wait on the answer, the controller keeps talking meanwhile. When that node's watchtower tells back, post the outcome in the chat.");
+        text.AppendLine("- A message that begins `[From the watchtower of node <name>]` is that node's watchtower, not the controller. A request from it:");
+        text.AppendLine($"  do it, then answer it with `{pilot} tell --node <name>`. A report back to a tell you sent is not a request: post it in the chat");
+        text.AppendLine("  and do not answer it, no thanks or acknowledgement tells, or the two watchtowers answer each other without end.");
+        text.AppendLine($"- `{pilot} answer` and `{pilot} dismiss` with `--node <name>` work as well, when this node has that node's grant (pilot connect) and the card's");
+        text.AppendLine("  choice is plainly the right one.");
+        text.AppendLine("- Name the node where it matters in a reply (\"PIL411 on SE1 is at review\"). Never edit or push another node's plane from here; ask its watchtower.");
         text.AppendLine();
         text.AppendLine("## The chat: you are the controller's assistant in the window too");
         text.AppendLine("The GUI's chat is one conversation with you, in place of a command bar: what the controller types there reaches you as");
@@ -816,7 +854,7 @@ public static class Briefs
         text.AppendLine("  talks of them by id, and you act on the id:");
         text.AppendLine($"  - \"note an idea: …\" is `{pilot} idea \"<their words, as they said them>\"`: Claude chooses the repo as the CLI does (`--repo <name>` when they named one),");
         text.AppendLine("    and you never reword, expand or restructure what they said. Say the id it got, with its link.");
-        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan [--milestone <name>]`: the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
+        text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan --milestone <name>` (or `--new-milestone <title> [--milestone-description <line>]`; with neither it only prints a proposal and plans nothing): the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
         text.AppendLine($"    (the repo's flight prefix and the same number); then `{pilot} flight plan <code>`. NEVER plan an idea on your own: only when the controller said to");
         text.AppendLine("    in so many words. When they only seem to want it, ask with an ask block whose choice names it in full: `Plan I381: <its title>`.");
         text.AppendLine($"  - \"fold I384 into PIL294\" is `{pilot} idea I384 fold PIL294`: the idea's text goes into PIL294's issue as a comment, then the idea is dropped as folded.");

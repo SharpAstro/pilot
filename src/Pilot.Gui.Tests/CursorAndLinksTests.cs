@@ -50,7 +50,7 @@ public sealed class CursorAndLinksTests
     };
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
-        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, Flights = { Mode = FlightsViewMode.List } };
 
     // A table's column dividers and its sortable titles are buttons too, which are DIR.Lib's own header cells and not links.
     private static bool IsLink(ClickableRegion r) => r.Result is HitResult.ButtonHit b && !b.Action.Contains(":table:", StringComparison.Ordinal);

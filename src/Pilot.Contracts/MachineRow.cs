@@ -28,6 +28,15 @@ public sealed record MachineRow
     /// <summary>The GPU; null where the platform does not say (no counters, no <c>nvidia-smi</c>).</summary>
     public MachineGpu? Gpu { get; init; }
 
+    /// <summary>Bytes per second received over the last minute, summed over the up, non-loopback interfaces; null where not read (an older node, or too few readings yet).</summary>
+    public double? NetInBytesPerSecond { get; init; }
+
+    /// <summary>Bytes per second sent over the last minute, as <see cref="NetInBytesPerSecond"/>.</summary>
+    public double? NetOutBytesPerSecond { get; init; }
+
+    /// <summary>The fastest up interface's link speed in bits per second, which the net bar is a share of; null where unknown.</summary>
+    public long? NetLinkBitsPerSecond { get; init; }
+
     /// <summary>The processes using most CPU, busiest first. Not required, so a row without them reads as none.</summary>
     public MachineProcess[] Processes
     {
@@ -51,15 +60,22 @@ public sealed record MachineRow
                 : $"{gpu.Percent:0}%"));
         }
         gauges.Add(new("mem", MemoryTotal > 0 ? Fraction(MemoryUsed * 100d / MemoryTotal) : 0, $"{Gigabytes(MemoryUsed)}/{Gigabytes(MemoryTotal)} GB"));
+        if (NetInBytesPerSecond is { } netIn && NetOutBytesPerSecond is { } netOut)
+        {
+            var bar = NetLinkBitsPerSecond is > 0 ? Math.Clamp(Math.Max(netIn, netOut) * 8d / NetLinkBitsPerSecond.Value, 0d, 1d) : 0d;
+            gauges.Add(new("net", bar, $"{Mbps(netIn)}/{Mbps(netOut)} Mbps (in/out)"));
+        }
         return [.. gauges];
     }
 
     /// <summary>
-    /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB</c>. The GPU part is
+    /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB · net 2.3/0.4 Mbps (in/out)</c>. The net part is left out when the node sends no figures, the GPU part is
     /// left out when the node has no GPU, and its memory when the platform does not say it; GB go to one decimal only
     /// where they are not whole.
     /// </summary>
     public string Line() => string.Join(" · ", Gauges().Select(g => $"{g.Label} {g.Figure}"));
+
+    private static string Mbps(double bytesPerSecond) => (bytesPerSecond * 8d / 1_000_000d).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
     private static double Fraction(double percent) => Math.Clamp(percent / 100d, 0d, 1d);
 
