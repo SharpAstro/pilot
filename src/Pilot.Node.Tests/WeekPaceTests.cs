@@ -166,7 +166,8 @@ public sealed class WeekPaceLegTests : LegHoldTestsBase
         // Unset, nothing waits; and a priority repo is exempt.
         _legs.Models = new RoleModels(new NodeSettings { WeekPace = 10, PriorityRepos = ["tianwen"] });
         await _legs.AdvanceAllAsync(Ct);
-        L("render").State.ShouldBe(LegState.Flying);
+        // The leg's start is a session (a validator before its worker), not necessarily Flying yet.
+        _workers.Started.Count.ShouldBeGreaterThan(started);
     }
 
     [Fact]
@@ -174,10 +175,12 @@ public sealed class WeekPaceLegTests : LegHoldTestsBase
     {
         await ParserDone();
         Usage(week: 95);
+        var started = _workers.Started.Count;
         _legs.Models = new RoleModels(new NodeSettings());
 
         await _legs.AdvanceAllAsync(Ct);
 
-        L("render").State.ShouldBe(LegState.Flying);
+        _workers.Started.Count.ShouldBeGreaterThan(started);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
     }
 }
