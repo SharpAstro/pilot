@@ -371,6 +371,24 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(true);
     }
 
+    /// <summary>Every idea image committed by UploadIdeaImageAsync, as (repo folder path, id, ext, bytes), in order.</summary>
+    public List<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
+
+    /// <summary>Every idea image read back by IdeaImageAsync, as (id, ext), in order.</summary>
+    public List<(string Id, string Ext)> ImageReads { get; } = [];
+
+    public Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
+    {
+        ImageUploads.Add((RepoKey(repoPath), id, ext, bytes));
+        return Task.FromResult($"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/blob/{IdeaImages.Branch}/ideas/{id}.{ext}?raw=true");
+    }
+
+    public Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
+    {
+        ImageReads.Add((id, ext));
+        return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
+    }
+
     public List<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
