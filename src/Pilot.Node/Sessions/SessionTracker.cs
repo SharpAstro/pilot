@@ -65,6 +65,9 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>What each session was started on, to check a live one against; null checks none.</summary>
     public StartOptionsBook? Starts { get; init; }
 
+    /// <summary>Whether a session or row id is one of the node's watchtowers (known by id, not by name); null knows none.</summary>
+    public Func<string, bool>? IsWatchtowerId { get; init; }
+
     /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
 
@@ -124,6 +127,10 @@ public sealed class SessionTracker : BackgroundService
     /// </summary>
     private SessionRoleInfo JoinFlight(SessionRoleInfo role, string? cwd)
     {
+        if (role.Role == SessionRole.Watchtower)
+        {
+            return role;
+        }
         // A leg's worker is measured against its leg's budget.
         if (role is { Flight: { } code, Leg: { } name, Budget: null }
             && _state.Legs(code).FirstOrDefault(l => l.Name == name) is { Budget: { } budget })
@@ -510,7 +517,20 @@ public sealed class SessionTracker : BackgroundService
         // A row built afresh from the listing keeps the copies it followed: they are this row's history, not the listing's.
         var role = SessionRoles.Resolve(agent.Name, background: agent.Kind == "background");
         string? renamed = null;
-        if (role.Role != SessionRole.AdHoc)
+        if (agent.Kind == "background" && (IsWatchtowerId?.Invoke(agent.SessionId) == true || IsWatchtowerId?.Invoke(id) == true))
+        {
+            // A watchtower the node started, known by id (pilot #517): whatever its title says now, a rename does not change its role.
+            _given[id] = (SessionRoleInfo.AdHoc with { Role = SessionRole.Watchtower }, _given.TryGetValue(id, out var was) ? was.Prefix : SessionRoles.MachinePrefixOf(agent.Name));
+        }
+        if (_given.TryGetValue(id, out var watch) && watch.Role.Role == SessionRole.Watchtower && agent.Name is { Length: > 0 })
+        {
+            role = watch.Role;
+            if (watch.Prefix is { } wprefix && !agent.Name.StartsWith(wprefix + "-", StringComparison.Ordinal))
+            {
+                renamed = $"{wprefix}-{agent.Name}";
+            }
+        }
+        else if (role.Role != SessionRole.AdHoc)
         {
             // The name says what the node made it: kept by row, so a rename later does not lose it.
             _given[id] = (role, SessionRoles.MachinePrefixOf(agent.Name));

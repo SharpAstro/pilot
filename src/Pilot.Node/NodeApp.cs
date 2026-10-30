@@ -362,6 +362,7 @@ public static class NodeApp
             Starts = services.GetRequiredService<StartOptionsBook>(),
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
+            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
