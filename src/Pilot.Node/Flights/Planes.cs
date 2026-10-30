@@ -27,18 +27,16 @@ public interface IGit
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli(NodeTraffic? traffic = null) : IGit
+public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null) : IGit
 {
     private static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(2);
 
-    private readonly TimeSpan _budget;
-
-    public GitCli() : this(DefaultBudget)
-    {
-    }
+    private readonly TimeSpan _budget = budget ?? DefaultBudget;
 
     /// <summary>A git CLI whose runs get <paramref name="budget"/> before they are killed (a test's seam; the node uses the default).</summary>
-    public GitCli(TimeSpan budget) => _budget = budget;
+    public GitCli(TimeSpan budget) : this(null, budget)
+    {
+    }
 
     // A command line over 32767 characters fails to start on Windows; stay well under it.
     private const int MaxPathChars = 24000;
