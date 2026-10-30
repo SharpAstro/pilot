@@ -42,6 +42,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 [JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
+[JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -186,6 +187,9 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>Where every repo the node knows stands, as last read (or marked not read yet); null from an older node.</summary>
     public ReposRow? Repos { get; init; }
+
+    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before it has said, and from an older node.</summary>
+    public NodeRow? Node { get; init; }
 }
 
 /// <summary>An idea was moved to another repo: its old id now points to the new one.</summary>

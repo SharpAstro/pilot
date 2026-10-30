@@ -54,6 +54,7 @@ public sealed class NodeState
     private MachineRow? _machine;
     private PullRequestsRow? _pullRequests;
     private ReposRow? _repos;
+    private NodeRow? _node;
     private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
@@ -906,6 +907,31 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>What the node last said it is (<see cref="NodeRow"/>); null before any.</summary>
+    public NodeRow? Node()
+    {
+        lock (_gate)
+        {
+            return _node;
+        }
+    }
+
+    /// <summary>
+    /// Puts what the node says it is when it differs meaningfully (<see cref="NodeRow.Differs"/>): the watchtower's clock-driven
+    /// figures alone would otherwise put a delta each tick and fill the journal.
+    /// </summary>
+    public void PutNode(NodeRow said)
+    {
+        lock (_gate)
+        {
+            if (_node is { } held && !NodeRow.Differs(held, said))
+            {
+                return;
+            }
+            Publish(new NodeChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = said });
+        }
+    }
+
     /// <summary>
     /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
     /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
@@ -1151,6 +1177,9 @@ public sealed class NodeState
             case ReposChangedEvent repos:
                 _repos = repos.Row;
                 break;
+            case NodeChangedEvent node:
+                _node = node.Row;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
@@ -1217,6 +1246,7 @@ public sealed class NodeState
         _machine = snapshot.Machine;
         _pullRequests = snapshot.PullRequests;
         _repos = snapshot.Repos;
+        _node = snapshot.Node;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -1254,6 +1284,7 @@ public sealed class NodeState
         Machine = _machine,
         PullRequests = _pullRequests,
         Repos = _repos,
+        Node = _node,
         Jobs = [.. _jobs.Values],
         Merges = [.. _merges.Values],
         PrReviews = [.. _prReviews.Values],

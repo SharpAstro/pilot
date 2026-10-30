@@ -46,15 +46,12 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
         string Status, bool Connected, NodeInfo? Node, string? NodeVersion, ReposRow? Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
-        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null);
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
         typeof(NodeFeed).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             is [System.Reflection.AssemblyInformationalVersionAttribute info, ..] ? info.InformationalVersion : "0.0.0");
-
-    /// <summary>How often what the node says it is (maintenance included) is read again while its stream is open.</summary>
-    public static readonly TimeSpan NodeRefresh = TimeSpan.FromSeconds(3);
 
     /// <param name="open">Opens the event stream, resuming after <c>since</c> on <c>stream</c> when given.</param>
     /// <param name="socketPath">The node's socket, as the header names the source.</param>
@@ -81,8 +78,17 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
     public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
-    /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
-    public NodeInfo? Node => Volatile.Read(ref _view).Node;
+    /// <summary>
+    /// What the node says it is: the fixed fields (version, process, folders) as of its last connection, and what changes
+    /// (maintenance, autopilot, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
+    /// </summary>
+    public NodeInfo? Node => NodeOf(Volatile.Read(ref _view));
+
+    // The changing fields come from the stream's node row, over the fixed ones asked once per connection.
+    private static NodeInfo? NodeOf(View view) =>
+        view.Node is { } info && view.Said is { } said
+            ? info with { Maintenance = said.Maintenance, Autopilot = said.Autopilot, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
+            : view.Node;
 
     /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>
     public NodeSummary Summary(DateTimeOffset now)
@@ -95,7 +101,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             DownSince = view.DownSince,
             RetryEvery = _retry,
             Status = view.Status,
-            Node = view.Node,
+            Node = NodeOf(view),
             Stream = view.Stream,
             Account = usage?.Account?.Line(),
             Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
@@ -240,19 +246,9 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                // What the node says it is can change while the stream stays open (maintenance), so it is read again meanwhile.
-                using var polling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                _ = PollNodeAsync(polling.Token);
-                try
+                while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
                 {
-                    while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
-                    {
-                        Apply(next);
-                    }
-                }
-                finally
-                {
-                    await polling.CancelAsync().ConfigureAwait(false);
+                    Apply(next);
                 }
 
                 SetStatus($"the node on {_socketPath} closed the stream; reconnecting", connected: false);
@@ -287,36 +283,8 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
-    // Asks the node what it is again every NodeRefresh while the stream is open, and draws again when it went into or out of
-    // maintenance, or began or stopped taking fleet flights.
-    private async Task PollNodeAsync(CancellationToken cancellationToken)
-    {
-        if (_nodeInfo is null)
-        {
-            return;
-        }
-        try
-        {
-            while (true)
-            {
-                await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
-                // The node as the immutable view holds it: no lock to take (the feed never waits on a reader).
-                // The watchtower's words are in it, so its starts and its churning mark move on the Fleet page.
-                (bool, bool, string?) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false, Pilot.Commands.WatchtowerWords.Line(Node?.Watchtower, DateTimeOffset.UtcNow));
-                var before = Seen();
-                await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                if (Seen() != before)
-                {
-                    Interlocked.Increment(ref _version);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
-    // The node's version for UpdateNote, and what it is for the fleet; a node that does not say leaves the last answer.
+    // Once per connection: the node's version for UpdateNote and the fixed fields of what it is; what changes comes down the stream (NodeRow).
+    // A node that does not say leaves the last answer.
     private async Task AskVersionAsync(CancellationToken cancellationToken)
     {
         if (_nodeVersion is null && _nodeInfo is null)
@@ -405,6 +373,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
         var pullRequests = _mirror.PullRequests;
         var repos = _mirror.Repos;
+        var said = _mirror.Node;
         var ideas = _mirror.Ideas.ToArray();
         var ideaMoves = _mirror.IdeaMoves.ToArray();
         var milestones = _mirror.Milestones.ToArray();
@@ -413,6 +382,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         {
             PullRequests = pullRequests,
             Repos = repos,
+            Said = said,
             Ideas = ideas,
             IdeaMoves = ideaMoves,
             Milestones = milestones,
