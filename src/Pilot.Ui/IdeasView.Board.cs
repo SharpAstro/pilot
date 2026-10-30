@@ -65,6 +65,13 @@ internal sealed partial class IdeasView<TSurface>
     /// <summary>The board the last tree was built from.</summary>
     internal IdeasBoard Board => _board;
 
+    /// <summary>The height of the pinned section's pane as the handle left it; null while it has not been dragged (a share of the page).</summary>
+    internal float? SplitExtent
+    {
+        get => _splitExtent;
+        set => _splitExtent = value;
+    }
+
     /// <summary>The item being dragged, or null.</summary>
     internal string? Dragging => _dragging;
 
@@ -462,7 +469,7 @@ internal sealed partial class IdeasView<TSurface>
                 {
                     continue;
                 }
-                var reply = await RunAsync(Verbs.AcceptMilestones, Verbs.RepoTarget(repo), [.. items.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))]);
+                var reply = await RunAsync(Verbs.AcceptMilestones, Verbs.RepoTarget(repo), [.. items.Select(i => i.Number).Order().Select(n => n.ToString(CultureInfo.InvariantCulture))]);
                 if (reply is null)
                 {
                     continue;
