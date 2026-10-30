@@ -1977,7 +1977,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // offering the step by hand, and the next sweep does not ring again. (ReviewTests opens one for real, on a bare origin.)
         (await Leg(Verbs.FinishLeg, "flight/TIA1/render", "done")).Ok.ShouldBeTrue();
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
-        (rung.Bin, rung.Title).ShouldBe((CardBin.Ring, "TIA1 could not open its PR by itself"));
+        rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
+        rung.Bin.ShouldBe(CardBin.Ring);
+        rung.Choices.Single().Label.ShouldBe("Open TIA1's PR now, asking the node again");
         rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);

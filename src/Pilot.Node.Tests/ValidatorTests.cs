@@ -154,9 +154,9 @@ public sealed class ValidatorTests : IDisposable
         card.Detail.ShouldBe("Planet.cs is gone: ls src/Planet.cs");
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe(
         [
-            ("Go anyway", Verbs.StartLeg, Render),
-            ("Remove leg", Verbs.RemoveLeg, Render),
-            ("Re-plan", Verbs.PlanFlight, "flight/TIA1"),
+            ("Start render as the tree is", Verbs.StartLeg, Render),
+            ("Drop render from TIA1", Verbs.RemoveLeg, Render),
+            ("Plan TIA1 again", Verbs.PlanFlight, "flight/TIA1"),
         ]);
         card.Choices[0].Args.ShouldBe(["anyway"]);
     }

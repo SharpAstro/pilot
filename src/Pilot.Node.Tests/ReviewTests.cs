@@ -520,7 +520,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((pr, true));
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s PR fails its checks"));
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        card.Title.ShouldStartWith($"{flight.Code}'s PR fails its checks: the PR's checks failed on ");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
@@ -944,9 +945,9 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA71"), "controller");
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
-        card.Title.ShouldBe("TIA71's review did not start");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Review again", Verbs.StartReview), ("Ready anyway", Verbs.Review)]);
-        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Review again starts it again");
+        card.Title.ShouldStartWith("TIA71's review did not start: ");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start TIA71's review again", Verbs.StartReview), ("Land TIA71 without a review", Verbs.Review)]);
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Start TIA71's review again starts it again");
     }
 
     [Fact]
@@ -967,7 +968,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
         Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Fix the failing checks");
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's PR fails its checks"));
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        card.Title.ShouldStartWith("TIA7's PR fails its checks: ");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
@@ -1715,7 +1717,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Land TIA2 with the review's findings unfixed", Verbs.Review)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];

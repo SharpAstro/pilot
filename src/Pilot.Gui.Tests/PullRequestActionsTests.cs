@@ -39,7 +39,7 @@ public sealed class PullRequestActionsTests
         Choices =
         [
             new CardChoice { Label = "Go around parser", Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight, "parser"), Args = ["resolve the conflicts"] },
-            new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
+            new CardChoice { Label = "Land the PR with the review's findings unfixed", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
         ],
     };
 
@@ -118,7 +118,7 @@ public sealed class PullRequestActionsTests
         Id = id, Bin = CardBin.Ring, Kind = kind, Subject = Verbs.FlightTarget(flight), Title = $"{flight}'s review asks for changes", At = Now, State = CardState.Open,
         Choices =
         [
-            new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
+            new CardChoice { Label = "Land the PR with the review's findings unfixed", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
             new CardChoice { Label = words, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight, "parser"), Args = ["the review asked for changes: x"] },
         ],
     };
