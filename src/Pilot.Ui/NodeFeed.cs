@@ -50,7 +50,8 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -214,6 +215,27 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
         return new ReposScreen(RepoLine.Build(view.Repos, view.Flights, view.Sessions, view.Cards, view.Legs, now), view.Status + UpdateNoteOf(view), now);
     }
+
+    /// <summary>
+    /// The Ideas page: the ideas the node reads, the open cards that ask about them, and the repos an idea can move to. Moving
+    /// needs the repos the node tracks, so with <paramref name="wanted"/> (the page is shown) they are kept fresh as the Repos page's are.
+    /// </summary>
+    public IdeasScreen Ideas(DateTimeOffset now, bool wanted)
+    {
+        var repos = Repos(now, wanted);
+        var view = Volatile.Read(ref _view);
+        return new IdeasScreen(view.Ideas ?? [], [.. view.Cards.Where(IdeasScreen.IsAsk)],
+            [.. repos.Lines.Where(l => l.Status.Tracked).Select(l => l.Status.Name).Distinct(StringComparer.OrdinalIgnoreCase)], view.Status + UpdateNoteOf(view), now)
+        {
+            Flights = view.Flights,
+            Moves = view.IdeaMoves ?? [],
+            Milestones = view.Milestones ?? [],
+            Issues = view.Issues ?? [],
+        };
+    }
+
+    /// <summary>How many ideas wait to be planned, for the rail.</summary>
+    public int NotedIdeas => Volatile.Read(ref _view).Ideas?.Count(i => i.State == IdeaState.Noted) ?? 0;
 
     /// <summary>Makes the next <see cref="Repos"/> read the repos again at once, without waiting for <see cref="RepoRefresh"/>: a sync just changed them.</summary>
     public void RefreshRepos()
@@ -430,9 +452,17 @@ internal sealed class NodeFeed : IAsyncDisposable
             _everConnected = true;
         }
         var pullRequests = _mirror.PullRequests;
+        var ideas = _mirror.Ideas.ToArray();
+        var ideaMoves = _mirror.IdeaMoves.ToArray();
+        var milestones = _mirror.Milestones.ToArray();
+        var issues = _mirror.Issues.ToArray();
         ImmutableInterlocked.Update(ref _view, view => view with
         {
             PullRequests = pullRequests,
+            Ideas = ideas,
+            IdeaMoves = ideaMoves,
+            Milestones = milestones,
+            Issues = issues,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,

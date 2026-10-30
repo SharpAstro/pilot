@@ -14,11 +14,17 @@ public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : Backgr
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        // The first sweep is at node start, not a minute on: a flight an update left with a head no review read is taken at once.
+        var first = true;
         while (!stopping.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(Interval, time, stopping);
+                if (!first)
+                {
+                    await Task.Delay(Interval, time, stopping);
+                }
+                first = false;
                 await legs.AdvanceAllAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)

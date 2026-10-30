@@ -201,6 +201,21 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    public async Task TheWatchtowersFixerOnAutopilotKeepsTheGuardsTheNodesOwnFixerKeeps()
+    {
+        // The review of #470: review fix from the watchtower on autopilot must not start what the node's own fixer would not.
+        Task<CommandResult> OnAutopilot(string pr) =>
+            _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = $"pr/{pr}", Args = [], Who = "du1-watchtower", Autopilot = true }, Ct);
+
+        // Another author's PR, Fix it not chosen: refused, and the person's card stays.
+        _github.Login = "controller";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        (await OnAutopilot("acme/widget#7")).Error.ShouldNotBeNull().ShouldContain("Fix it has not been chosen");
+        Fixers.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixOfferKind);
+    }
+
+    [Fact]
     public async Task ADesignQuestionRingsAndStartsNoFixer()
     {
         await Review("acme/widget#7", "changes", "README.md:1 design: should this be a service at all?");
@@ -313,6 +328,10 @@ public sealed class PrFixTests3 : PrFixTestsBase
         ring.Title.ShouldContain("3 rounds");
         ring.Detail.ShouldNotBeNull().ShouldContain("never right");
         ring.Link.ShouldNotBeNull().ShouldContain("/pull/7");
+        // Nor does the watchtower on autopilot start a fourth (the review of #470): that is the person's.
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Args = [], Who = "du1-watchtower", Autopilot = true }, Ct))
+            .Error.ShouldNotBeNull().ShouldContain("rounds of fixes");
+        Fixers.Length.ShouldBe(3);
     }
 
     [Fact]
@@ -371,5 +390,58 @@ public sealed class PrFixTests3 : PrFixTestsBase
         var at = Array.FindIndex(lines, l => l.Contains("acme/widget#7"));
         at.ShouldBeGreaterThanOrEqualTo(0);
         lines[at + 1].ShouldContain("fixing, du1-fix-widget-7, round 1");
+    }
+
+    [Fact]
+    public async Task AFixPrOnAPrWithNoReviewHereStartsAReviewFirstAndAFixPrOnAPassedReviewIsStillRefused()
+    {
+        var log = new StringWriter();
+        _reviews.Error = log;
+        _reviews.Of(Seven).ShouldBeNull();
+
+        var made = await Run(Verbs.FixPr, "acme/widget#7", "controller");
+
+        made.Error.ShouldBeNull();
+        var row = Row;
+        (row.State, row.Fixer).ShouldBe((PrReviewState.Reviewing, null));
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+        Fixers.ShouldBeEmpty();
+        log.ToString().ShouldContain($"fix-pr pr/acme/widget#7, asked by controller: no review of acme/widget#7 here, so a review was started first (started {row.Reviewer} at {row.Head[..8]})");
+
+        // Its verdict then goes the usual way: an approve leaves nothing to fix, and a fix-pr on it is refused.
+        (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+        Fixers.ShouldBeEmpty();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("did not ask for changes");
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AFixPrOnAPrWithNoReviewHereFixesItsFindingsWhenTheNewReviewAsksForChanges()
+    {
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        var reviewer = Row.Reviewer;
+
+        (await Run(Verbs.PrVerdict, "acme/widget#7", reviewer, "changes", "Wrong.", "README.md:1 wrong")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AFixPrWritesOneLineToTheLogStartedWhenItStartsAFixerAndRefusedWhenItDoesNot()
+    {
+        var log = new StringWriter();
+        _reviews.Error = log;
+        _github.Login = "controller";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        log.GetStringBuilder().Clear();
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull();
+
+        var lines = log.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        lines.Length.ShouldBe(2);
+        lines[0].ShouldBe($"fix-pr pr/acme/widget#7, asked by controller: started du1-fix-widget-7 at {Row.Head[..8]}");
+        lines[1].ShouldStartWith("fix-pr pr/acme/widget#7, asked by controller: refused: ");
+        lines[1].ShouldContain("fixing it already");
     }
 }

@@ -117,7 +117,8 @@ jobs:
   # --update-channel beta (the Settings page's Update channel) takes. <version> is the next patch after the latest tag,
   # a prerelease of it numbered by this run (2.0.4-beta.57), so tagging 2.0.4 is newer than every beta of it and a beta
   # node moves onto the release, then onto 2.0.5-beta.N with the next push. Debug and framework-dependent: quick to
-  # build, and it runs on the .NET runtime the machine has (with ASP.NET Core's, for the node). A prerelease is never
+  # build, and it runs on the .NET runtime the machine has (with ASP.NET Core's, for the node). Debug against the
+  # packages takes the .Debug twins (DIR.Lib.Debug and the rest), so its pilot-gui carries the debug inspector. A prerelease is never
   # GitHub's latest release, so a node on the stable channel never sees it.
   beta-publish:
     needs: build

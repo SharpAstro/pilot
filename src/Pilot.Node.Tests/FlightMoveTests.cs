@@ -338,7 +338,7 @@ public sealed class FlightMoveTests : IDisposable
         (await _flights.RunAsync(move.Command("tests"), Ct)).Error
             .ShouldBe("receive-flight is taken from another node of the fleet, under its grant, not from a client of DE1");
 
-        (await Receive(move with { Flight = move.Flight with { State = FlightState.Held } })).Error.ShouldBe("TIA900 is held: only a flying flight is handed over");
+        (await Receive(move with { Flight = move.Flight with { State = FlightState.Landed } })).Error.ShouldBe("TIA900 is landed: only a flight in the air is handed over");
 
         var wrongTarget = Under(move) with { Target = "flight/TIA1" };
         (await _flights.RunAsync(wrongTarget, Ct)).Error.ShouldBe("flight/TIA1 is not the flight in the record, TIA900");
@@ -637,6 +637,50 @@ public sealed class FlightMoveTests : IDisposable
         moved.Ok.ShouldBeTrue(moved.Error);
         MovedAway();
         _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind).Detail.ShouldNotBeNull().ShouldNotContain("maintenance");
+    }
+
+    [Fact]
+    public async Task AHeldFlightMovesByHandAndWaitsThereForTheFlightItWaitedForHere()
+    {
+        Fly(LegState.Planned);
+        _sender.PutFlight(new FlightRow
+        {
+            Code = "TIA901", Repo = "tianwen", RepoPath = Sending, Issue = 901, Branch = "flight/tia901", Worktree = "/nowhere", Base = "origin/main", State = FlightState.Flying,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        _sender.PutFlight(OnSender with { State = FlightState.Held, Connections = ["TIA901"] });
+
+        var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+
+        moved.Ok.ShouldBeTrue(moved.Error);
+        (OnSender.State, OnSender.MovedTo.ShouldNotBeNull().To).ShouldBe((FlightState.Landed, "DE1"));
+        // TIA901 is SE1's, so on DE1 the flight waits for it on SE1, and nothing of it starts meanwhile.
+        var there = _state.Flights().ShouldHaveSingleItem();
+        (there.State, there.Connections.Length).ShouldBe((FlightState.Held, 0));
+        var wait = there.PeerConnections.ShouldHaveSingleItem();
+        (wait.Code, wait.Node).ShouldBe(("TIA901", "SE1"));
+        _workers.Started.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AHeldFlightWaitingForAFlightOfTheReceiverWaitsForItThereAndFliesOnceItHasLanded(bool landed)
+    {
+        _state.PutFlight(new FlightRow
+        {
+            Code = "TIA433", Repo = "tianwen", RepoPath = Receiving, Issue = 433, Branch = "flight/tia433", Worktree = "/nowhere", Base = "origin/main",
+            State = landed ? FlightState.Landed : FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        var move = Sent();
+        move = move with { Flight = move.Flight with { State = FlightState.Held, PeerConnections = [new PeerConnection { Code = "TIA433", Node = "DE1", Since = DateTimeOffset.UnixEpoch }] } };
+
+        (await Receive(move)).Ok.ShouldBeTrue();
+
+        var flight = _state.Flights().Single(f => f.Code == Code);
+        flight.PeerConnections.ShouldBeEmpty();
+        flight.Connections.ShouldBe(["TIA433"]);
+        flight.State.ShouldBe(landed ? FlightState.Flying : FlightState.Held);
     }
 
     [Fact]

@@ -66,12 +66,14 @@
   </PropertyGroup>
 
   <!--
-    The sibling libraries' debug inspector exists only in their Debug builds, so only a Debug build against sibling
-    source can attach it: a package is built Release, and against one the inspector's types are absent (the org
-    CLAUDE.md's CS0234 trap). Set here in the project body, where $(Configuration) is settled, never in
-    Directory.Build.props, where a plain `dotnet build` still sees it empty.
+    Every Debug build attaches the live debug inspector. Against sibling source it is the siblings' own Debug build; against
+    the packages it is the .Debug twins (DIR.Lib.Debug, Console.Lib.Debug, SdlVulkan.Renderer.Debug, taken below in place of
+    the Release packages when Configuration is Debug), which carry the inspector's types, so the CS0234 trap of a Debug build
+    against a Release package no longer applies. The beta channel's zips are Debug builds against the packages, so they carry
+    the inspector. Set here in the project body, where $(Configuration) is settled, never in Directory.Build.props, where a
+    plain `dotnet build` still sees it empty.
   -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug' AND '$(UseLocalDirLib)' == 'true' AND '$(UseLocalSdlVulkanRenderer)' == 'true'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <DefineConstants>$(DefineConstants);PILOT_DEBUG_INSPECTOR</DefineConstants>
   </PropertyGroup>
 
@@ -79,14 +81,16 @@
     <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
-    <PackageReference Include="DIR.Lib" />
+    <PackageReference Include="DIR.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="DIR.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' == 'true'">
     <ProjectReference Include="$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' != 'true'">
-    <PackageReference Include="SdlVulkan.Renderer" />
+    <PackageReference Include="SdlVulkan.Renderer" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="SdlVulkan.Renderer.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalAppShell)' == 'true'">

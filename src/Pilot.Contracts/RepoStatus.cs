@@ -45,6 +45,12 @@ public sealed record RepoStatus
     /// <summary>Its open PRs.</summary>
     public PullRequestStatus[] PullRequests { get; init => field = value ?? []; } = [];
 
+    /// <summary>Its ideas, as the node last read its Ideas milestone: the open ones, then the dropped; empty when it has no such milestone.</summary>
+    public IdeaRow[] Ideas { get; init => field = value ?? []; } = [];
+
+    /// <summary>How many of <see cref="Ideas"/> are noted still.</summary>
+    public int NotedIdeas { get; init; }
+
     /// <summary>What could not be read, a note each (gh offline, git refusing): that part is empty or null above.</summary>
     public string[] Errors { get; init => field = value ?? []; } = [];
 
