@@ -17,14 +17,118 @@ public sealed record GitRun(int ExitCode, string Output, string Error)
 public interface IGit
 {
     Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="RunAsync"/> with LFS content smudged, for the one checkout a person builds and runs from (the owner's main
+    /// checkout, updated by <see cref="RepoSync"/>): a pointer there would break their next build with nothing to warn.
+    /// </summary>
+    Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunAsync(args, cwd, cancellationToken);
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli : IGit
+public sealed class GitCli(NodeTraffic? traffic = null) : IGit
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
+    // A command line over 32767 characters fails to start on Windows; stay well under it.
+    private const int MaxPathChars = 24000;
+
+    private readonly NodeTraffic _traffic = traffic ?? NodeTraffic.Shared;
+
+    /// <summary>Whether a git run can use the network, by its verb (options such as <c>-c k=v</c> and <c>-C dir</c> skipped).</summary>
+    public static bool UsesNetwork(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (a is "-c" or "-C" or "--git-dir" or "--work-tree" or "--namespace")
+            {
+                i++;
+                continue;
+            }
+            if (a.StartsWith('-'))
+            {
+                continue;
+            }
+            return a switch
+            {
+                "fetch" or "pull" or "push" or "clone" or "ls-remote" or "lfs" => true,
+                "remote" => args.Skip(i + 1).Contains("update"),
+                _ => false,
+            };
+        }
+        return false;
+    }
+
     public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var skipPushCheck = args.Count > 0 && args[0] == "push" && await PushChangesNoLfsAsync(args, cwd, cancellationToken);
+        return await RunCoreAsync(args, cwd, skipPushCheck, cancellationToken);
+    }
+
+    public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunCoreAsync(args, cwd, false, cancellationToken, smudge: true);
+
+    /// <summary>
+    /// True when the commits a plain <c>git push [remote [refspec]]</c> would send change no path git says is
+    /// <c>filter=lfs</c>, so git-lfs's pre-push upload check has nothing to find. Anything not understood (several
+    /// refspecs, a failing or slow git, a command line too long to start) answers false and the check stays.
+    /// </summary>
+    private async Task<bool> PushChangesNoLfsAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var positional = args.Skip(1).Where(a => !a.StartsWith('-')).ToList();
+        if (positional.Count is 0 or > 2)
+        {
+            return false;
+        }
+        var remote = positional[0];
+        var source = positional.Count == 2 ? positional[1].TrimStart('+').Split(':')[0] : "HEAD";
+        if (source.Length == 0)
+        {
+            return false;
+        }
+        try
+        {
+            // --cc lists what a merge commit changed against all its parents (plain --name-only prints nothing for a
+            // merge), so an LFS path a conflict resolution added still keeps the check. --relative drops paths outside
+            // cwd; every caller pushes from the plane's root, where that is none.
+            var log = await RunCoreAsync(["log", "-z", "--cc", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
+            if (!log.Ok)
+            {
+                return false;
+            }
+            var chunk = new List<string>();
+            var chars = 0;
+            foreach (var path in log.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct().Append(null))
+            {
+                if ((path is null || chars + path.Length + 3 > MaxPathChars) && chunk.Count > 0)
+                {
+                    List<string> attr = ["check-attr", "filter", "--", .. chunk];
+                    var run = await RunCoreAsync(attr, cwd, false, cancellationToken);
+                    if (!run.Ok || run.Output.Contains(": filter: lfs", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    chunk.Clear();
+                    chars = 0;
+                }
+                if (path is not null)
+                {
+                    chunk.Add(path);
+                    chars += path.Length + 3;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return false;
+        }
+    }
+
+    private async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken, bool smudge = false)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -42,8 +146,22 @@ public sealed class GitCli : IGit
         }
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
+        // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need. The update of
+        // the owner's main checkout (RunSmudgingAsync) is the exception, and leaves whatever the environment says.
+        if (!smudge)
+        {
+            start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+        }
+        // git-lfs's pre-push hook honours GIT_LFS_SKIP_PUSH (unlike --no-verify, it leaves a repo's own hooks running).
+        if (skipPushCheck)
+        {
+            start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
+        }
 
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+        var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
+        using var _ = process;
+        using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);

@@ -4,7 +4,7 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>A milestone of a repo on GitHub: its number, its title and when it is due, when it is.</summary>
-public sealed record Milestone(int Number, string Title, DateTimeOffset? DueOn = null);
+public sealed record Milestone(int Number, string Title, DateTimeOffset? DueOn = null, string Description = "", int OpenIssues = 0);
 
 /// <summary>An issue as GitHub has it: what an idea is read from, and what planning it checks first.</summary>
 /// <param name="Open">Open; false for a closed one.</param>
@@ -32,6 +32,7 @@ public static class IdeaRows
                 Repo = repo,
                 Title = issue.Title,
                 Body = issue.Body,
+                Images = IdeaImages.In(issue.Body),
                 State = !issue.Open ? IdeaState.Dropped : planned ? IdeaState.Planned : IdeaState.Noted,
                 UpdatedAt = issue.UpdatedAt,
                 Age = IdeaIds.Age(issue.CreatedAt, now),
@@ -85,7 +86,7 @@ public static class IdeaRows
 /// (made on the first one), id <c>I&lt;issue number&gt;</c>. Each verb checks the issue as GitHub has it now, never as the node
 /// last read it, and leaves the node's rows as GitHub then has them.
 /// </summary>
-public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time)
+public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null)
 {
     // Two plans of one idea must not both make a flight.
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -93,10 +94,56 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
     /// <summary>Where this says how long each step of noting an idea took: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea;
+    /// <summary>The copies of the images pasted into ideas, which are filed on GitHub with the idea; none for one built without.</summary>
+    public Attachments? Attachments { get; set; }
+
+    /// <summary>
+    /// <paramref name="body"/> with each <see cref="IdeaImages.Marker"/> in it replaced, where it stood, by the image on GitHub. Each copy is
+    /// uploaded once (<paramref name="filed"/> remembers the URL, for a save that is tried again); an image already a URL is left as it is.
+    /// A marker whose copy the node does not hold refuses the whole text, before anything is uploaded.
+    /// </summary>
+    private async Task<string> FileImagesAsync(string path, string body, Dictionary<string, string> filed, CancellationToken cancellationToken)
+    {
+        if (!body.Contains(IdeaImages.Scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return body;
+        }
+        var wanted = new List<string>();
+        IdeaImages.ReplaceMarkers(body, (alt, id, _) =>
+        {
+            wanted.Add(id);
+            return alt;
+        });
+        var copies = new Dictionary<string, (string Path, string Ext)>();
+        foreach (var id in wanted.Distinct().Where(id => !filed.ContainsKey(id)))
+        {
+            copies[id] = Attachments?.FindIdeaImage(id)
+                ?? throw new FlightException($"the image {id} in the idea's text is not one this node holds: paste it again");
+        }
+        foreach (var (id, copy) in copies)
+        {
+            var bytes = await File.ReadAllBytesAsync(copy.Path, cancellationToken);
+            filed[id] = await github.UploadIdeaImageAsync(path, id, copy.Ext, bytes, cancellationToken);
+        }
+        return IdeaImages.ReplaceMarkers(body, (alt, id, _) => $"![{alt}]({filed[id]})");
+    }
+
+    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
+        // Proposing writes nothing, so it must not queue behind (or hold up) the verbs that do: it runs Claude for minutes.
+        if (command.Verb == Verbs.ProposeMilestone)
+        {
+            try
+            {
+                return await ProposeAsync(command, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                return state.Complete(command, ex.Message);
+            }
+        }
         await _one.WaitAsync(cancellationToken);
         try
         {
@@ -158,7 +205,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         var chosen = given == Verbs.AnyRepo;
         var args = command.Args ?? [];
         var text = (chosen ? args.FirstOrDefault() ?? "" : string.Join(' ', args)).Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
-        var (title, body) = text.IndexOf('\n') is var cut and >= 0 ? (text[..cut].Trim(), text[(cut + 1)..].Trim()) : (text, "");
+        var (title, body) = IdeaText.Typed(text);
         if (title.Length == 0)
         {
             throw new FlightException("note-idea needs the idea's text: its first line is the title, the rest the body");
@@ -189,6 +236,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         }
         var milestone = await github.IdeasMilestoneAsync(path, cancellationToken);
         Step("milestone found");
+        body = await FileImagesAsync(path, body, [], cancellationToken);
         var issue = await github.CreateIssueInMilestoneAsync(path, title, body.Length > 0 ? body : null, milestone.Title, cancellationToken);
         Step("issue made");
         state.CloseCardsAbout(RepoCardSubject(text), "filed", CardKinds.IdeaRepo);
@@ -400,14 +448,19 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         {
             throw new FlightException("edit-idea takes the updated_at the edit started from (ISO 8601) and then the idea's text");
         }
-        var mine = IdeaText.Of(string.Join(' ', args.Skip(1)));
+        var mine = IdeaText.Typed(string.Join(' ', args.Skip(1)));
         if (mine.Title.Length == 0)
         {
             throw new FlightException("edit-idea needs the idea's text: its first line is the title, the rest the body");
         }
         (var name, var path, number) = await ResolveAsync(given, number, cancellationToken);
+        var filed = new Dictionary<string, string>();
         var saved = await SaveAsync(name, path, number, mine, startedFrom,
-            (now, text) => github.EditIssueAsync(path, number, text!.Title, text.Body, now.UpdatedAt, cancellationToken), cancellationToken);
+            async (now, text) =>
+            {
+                var body = await FileImagesAsync(path, text!.Body, filed, cancellationToken);
+                return await github.EditIssueAsync(path, number, text.Title, body, now.UpdatedAt, cancellationToken);
+            }, cancellationToken);
         await RefreshAsync(name, path, cancellationToken);
         return saved.Card is { } card
             ? state.Complete(command, null, way: IdeaEditWays.Asked, made: card.Id)
@@ -421,35 +474,100 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
     private async Task<CommandResult> TidyAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (_, path, issue) = await IdeaOfAsync(command, cancellationToken);
-        var proposed = await tidier.TidyAsync(new IdeaText(issue.Title, issue.Body), path, cancellationToken);
-        return state.Complete(command, null, made: IdeaIds.Id(issue.Number), tidy: new IdeaTidyProposal(proposed.Title, proposed.Body, issue.Title, issue.Body, issue.UpdatedAt));
+        var text = new IdeaText(issue.Title, issue.Body);
+        // Both are Claude runs and neither needs the other: together they take the longer one, not the sum (the CLI waits 100 s).
+        var tidying = tidier.TidyAsync(text, path, cancellationToken);
+        var proposing = ProposalAsync(text, path, cancellationToken);
+        var proposed = await tidying;
+        // A proposal never loses an image: one the tidy dropped is put back where it stood.
+        proposed = proposed with { Body = IdeaImagePrompt.Restore(issue.Body, proposed.Body) };
+        var milestone = await proposing;
+        return state.Complete(command, null, made: IdeaIds.Id(issue.Number),
+            tidy: new IdeaTidyProposal(proposed.Title, proposed.Body, issue.Title, issue.Body, issue.UpdatedAt) { Milestone = milestone });
+    }
+
+    /// <summary>The repo's open milestones but Ideas, the earliest due first.</summary>
+    private async Task<Milestone[]> OpenMilestonesAsync(string path, CancellationToken cancellationToken) =>
+        [.. (await github.MilestonesAsync(path, cancellationToken))
+            .Where(m => !string.Equals(m.Title, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.DueOn ?? DateTimeOffset.MaxValue).ThenBy(m => m.Number)];
+
+    /// <summary>
+    /// <c>propose-milestone idea/&lt;repo&gt;/I&lt;n&gt;</c>: the open milestones and Claude's proposal. Claude failing in any way, or naming a
+    /// milestone that is not open, leaves the list with no proposal and why in the note.
+    /// </summary>
+    private async Task<CommandResult> ProposeAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var (_, path, issue) = await IdeaOfAsync(command, cancellationToken);
+        return state.Complete(command, null, made: IdeaIds.Id(issue.Number), milestones: await ProposalAsync(new IdeaText(issue.Title, issue.Body), path, cancellationToken));
+    }
+
+    /// <summary>The list of open milestones with Claude's proposal; never throws for Claude (or the issue listing), which only blanks the proposal.</summary>
+    private async Task<MilestoneProposal> ProposalAsync(IdeaText idea, string path, CancellationToken cancellationToken)
+    {
+        Milestone[] open;
+        try
+        {
+            open = await OpenMilestonesAsync(path, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            return new MilestoneProposal([], Note: $"the milestones could not be read: {ex.Message}");
+        }
+        var choices = open.Select(m => new MilestoneChoice(m.Title, m.Description, m.DueOn, m.OpenIssues)).ToArray();
+        if (milestoner is null)
+        {
+            return new MilestoneProposal(choices, Note: "no proposal: this node has no one to propose with");
+        }
+        try
+        {
+            var contexts = await Task.WhenAll(open.Select(async m =>
+            {
+                var titles = (await github.MilestoneIssuesAsync(path, m.Title, cancellationToken))
+                    .Where(i => i.Open).Take(ClaudeIdeaMilestoner.IssuesShown).Select(i => i.Title).ToArray();
+                return new MilestoneContext(m, titles);
+            }));
+            var answer = await milestoner.ProposeAsync(idea, contexts, path, cancellationToken);
+            return new MilestoneProposal(choices, answer.Title, answer.NewTitle, answer.NewDescription, answer.Reason.Length > 0 ? answer.Reason : null);
+        }
+        catch (FlightException ex)
+        {
+            return new MilestoneProposal(choices, Note: $"no proposal: {ex.Message}");
+        }
     }
 
     /// <summary>
-    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; [milestone…]</c>: the milestone named, else the next open one (the earliest due, then the oldest);
-    /// a flight on the issue, which remembers its idea, and then the issue moved out of Ideas. Everything that can be refused is
-    /// refused before the flight is made.
+    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;milestone…&gt;</c> or <c>--new &lt;title&gt; [description…]</c>: the open milestone named, else a new one, made
+    /// on GitHub only once the flight is made (none named is refused, naming the open ones); a flight on the issue, which remembers its idea,
+    /// and then the issue moved out of Ideas. Everything that can be refused is refused before the flight is made.
     /// </summary>
     private async Task<CommandResult> PlanAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (name, path, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
-        var wanted = string.Join(' ', command.Args ?? []).Trim();
-        var open = (await github.MilestonesAsync(path, cancellationToken))
-            .Where(m => !string.Equals(m.Title, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase)).ToArray();
-        Milestone target;
-        if (wanted.Length > 0)
+        var args = command.Args ?? [];
+        var asksNew = args.Length > 0 && args[0] == Verbs.NewMilestoneArg;
+        var wanted = asksNew ? (args.Length > 1 ? args[1] : "").Trim() : string.Join(' ', args).Trim();
+        var newDescription = asksNew ? string.Join(' ', args.Skip(2)).Trim() : "";
+        var open = await OpenMilestonesAsync(path, cancellationToken);
+        var openNames = open.Length > 0 ? $"it has {string.Join(", ", open.Select(m => m.Title))}" : $"it has no open milestone but {IdeaIds.Milestone}";
+        if (wanted.Length == 0)
         {
-            target = open.FirstOrDefault(m => string.Equals(m.Title, wanted, StringComparison.OrdinalIgnoreCase))
-                ?? throw new FlightException(string.Equals(wanted, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase)
-                    ? $"{id} is in {IdeaIds.Milestone} already: plan it into another milestone"
-                    : $"{name} has no open milestone {wanted}{(open.Length > 0 ? $" (it has {string.Join(", ", open.Select(m => m.Title))})" : "")}");
+            throw new FlightException(asksNew
+                ? "plan-idea with a new milestone needs its title"
+                : $"plan-idea needs the milestone to plan {id} into, none is chosen for it ({name}: {openNames}): name one with --milestone, or a new one with --new-milestone");
         }
-        else
+        if (string.Equals(wanted, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase))
         {
-            target = open.OrderBy(m => m.DueOn ?? DateTimeOffset.MaxValue).ThenBy(m => m.Number).FirstOrDefault()
-                ?? throw new FlightException($"{name} has no open milestone but {IdeaIds.Milestone} to plan {id} into: name one with --milestone");
+            throw new FlightException($"{id} is in {IdeaIds.Milestone} already: plan it into another milestone");
         }
+        var existing = open.FirstOrDefault(m => string.Equals(m.Title, wanted, StringComparison.OrdinalIgnoreCase));
+        if (existing is null && !asksNew)
+        {
+            throw new FlightException($"{name} has no open milestone {wanted} ({openNames})");
+        }
+        var makeNew = existing is null;
+        var target = existing?.Title ?? wanted;
 
         var made = await flights.RunAsync(command with
         {
@@ -469,8 +587,13 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         }
         try
         {
+            // Every refusal is behind us: only now is a new milestone made.
+            if (makeNew)
+            {
+                target = (await github.CreateMilestoneAsync(path, wanted, newDescription, cancellationToken)).Title;
+            }
             await SaveAsync(name, path, issue.Number, null, issue.UpdatedAt,
-                (now, _) => github.MoveIssueAsync(path, issue.Number, target.Title, now.UpdatedAt, cancellationToken), cancellationToken);
+                (now, _) => github.MoveIssueAsync(path, issue.Number, target, now.UpdatedAt, cancellationToken), cancellationToken);
         }
         catch (FlightException ex)
         {

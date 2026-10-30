@@ -18,8 +18,14 @@ public sealed class ConnectTests : OverlapTestsBase
 
     public ConnectTests()
     {
-        // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it.
+        // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it; the fetch and the plane's base come from a
+        // bare copy of its own. Without it a plane fetched all of tianwen and its LFS files from GitHub, minutes a test.
+        var bare = Path.Combine(_root, "origin.git");
+        Git(_root, "clone", "-q", "--bare", Repo, bare);
         Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
+        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
+        Git(Repo, "fetch", "-q", "origin");
+        Git(Repo, "remote", "set-head", "origin", "main");
         _flights.Fleet = _fleet;
     }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Pilot.Contracts;
 using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
@@ -14,6 +15,41 @@ public sealed record IdeaText(string Title, string Body)
     {
         text = text.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
         return text.IndexOf('\n') is var cut and >= 0 ? new IdeaText(text[..cut].Trim(), text[(cut + 1)..].Trim()) : new IdeaText(text, "");
+    }
+
+    /// <summary>
+    /// Like <see cref="Of"/> for text a person typed or pasted: an image in the title line is no part of the title, so the images
+    /// of the lines up to the title go first in the body, and the title is the first line that has words left once they are out.
+    /// </summary>
+    public static IdeaText Typed(string text)
+    {
+        text = text.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        var lines = text.Split('\n');
+        var images = new List<string>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var clean = line;
+            var spans = IdeaImages.Spans(line);
+            images.AddRange(spans.Select(s => s.Raw));
+            foreach (var span in spans.OrderByDescending(s => s.At))
+            {
+                clean = clean.Remove(span.At, span.Length);
+            }
+            clean = spans.Length > 0 ? string.Join(' ', clean.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) : clean.Trim();
+            if (clean.Length == 0 && i < lines.Length - 1)
+            {
+                continue;
+            }
+            if (images.Count == 0)
+            {
+                return Of(text);
+            }
+            var rest = string.Join("\n", lines.Skip(i + 1)).Trim();
+            var body = string.Join("\n", images);
+            return new IdeaText(clean, rest.Length > 0 ? body + "\n" + rest : body);
+        }
+        return Of(text);
     }
 }
 
