@@ -22,7 +22,7 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
     public Func<string, bool> RestartedBySystemd { get; init; } = UnderSystemdUnit;
 
     /// <summary>
-    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess"/>,
+    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess()"/>,
     /// and it is pilot-node): the unit restarts it when it exits, whatever the exit code but those in
     /// <c>RestartPreventExitStatus</c>, so a clean stop is a restart and a successor would only fight the unit for the socket.
     /// </summary>
