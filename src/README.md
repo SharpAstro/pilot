@@ -653,6 +653,7 @@ pilot flight overlap <code> <other> [--pick fold|connect] [--file <path>…] <wh
 pilot flight separate <code> <other>           # plan it in parallel: a fresh planner is started, told the answer
 pilot flight connect-overlap <code> <other>    # the answer to connect: held until <other> (any node) lands, a fresh planner is started, told the answer
 pilot flight connect <code> <other>            # holds until <other>, a flight of this node or of a reachable one, has landed
+pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this node or a peer): the waits it made go, the flight flies when nothing else holds it, a Handled card says who; an overlap's connect is refused with why, and goes with --anyway (the person's)
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>

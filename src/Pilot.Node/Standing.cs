@@ -169,6 +169,10 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         {
             // The lookout may answer a ring card (a stall's Resume, Nudge or Go around): the chosen button's command is run again
             // under its own standing, so one that is the person's (Merge, Fold, Post) is refused there and the card stays open.
+            // Dropping an overlap's connection (--anyway) undoes the person's answer, as ConnectOverlap gave it: not the lookout's,
+            // not a flight session's. A hand connection (no --anyway) a flight session may drop on its own flight.
+            case StandingKind.Lookout or StandingKind.FlightSession when DropsOverlapAnswer(command):
+                return $"{command.Verb} {Verbs.AnywayFlag} undoes the controller's answer to an overlap: it is theirs, not {(Kind == StandingKind.Lookout ? "the watchtower's" : "a flight session's")}";
             case StandingKind.Lookout when yourOnly && !AnswersRing(command, state) || LookoutNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them";
             case StandingKind.FlightSession when yourOnly || FlightSessionNever.Contains(command.Verb):
@@ -189,6 +193,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return null;
         }
     }
+
+    private static bool DropsOverlapAnswer(CommandRequest command) =>
+        command.Verb == Verbs.Disconnect && (command.Args ?? []).Contains(Verbs.AnywayFlag, StringComparer.Ordinal);
 
     /// <summary>Whether <paramref name="command"/> answers (any choice) an open card in the ring bin that is no assistant's ask.</summary>
     private static bool AnswersRing(CommandRequest command, NodeState state) => command.Verb == Verbs.Answer && IsRing(command, state) && !IsAsk(command, state);
