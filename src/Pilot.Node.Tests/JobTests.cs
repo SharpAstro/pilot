@@ -940,6 +940,7 @@ public sealed class JobTests : IDisposable
         var restarter = new NodeRestarter(lifetime, Microsoft.Extensions.Logging.Abstractions.NullLogger<NodeRestarter>.Instance)
         {
             NodePath = "/opt/pilot/pilot-node",
+            RestartedBySystemd = _ => false,
             StartSuccessor = path =>
             {
                 successors.Add(path);

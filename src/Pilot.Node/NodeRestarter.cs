@@ -29,7 +29,14 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
     public static bool UnderSystemdUnit(string nodePath) => IsNode(nodePath) && IsUnitMainProcess();
 
     /// <summary>A test's answer to <see cref="IsUnitMainProcess()"/>, in place of the real process's; null reads the process.</summary>
-    internal static bool? UnitMainProcessOverride { get; set; }
+    /// <remarks>Flow-local (an <see cref="AsyncLocal{T}"/>), so a test that sets it is not seen by tests running beside it.</remarks>
+    internal static bool? UnitMainProcessOverride
+    {
+        get => _unitMainProcessOverride.Value;
+        set => _unitMainProcessOverride.Value = value;
+    }
+
+    private static readonly AsyncLocal<bool?> _unitMainProcessOverride = new();
 
     /// <summary>
     /// This process is the main process of a systemd service. <c>INVOCATION_ID</c> alone is not enough: every child inherits it,
