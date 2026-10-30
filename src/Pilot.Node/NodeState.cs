@@ -897,6 +897,12 @@ public sealed class NodeState
     {
         lock (_gate)
         {
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
+            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            {
+                return;
+            }
             if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
                 && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
             {
