@@ -76,12 +76,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey)
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey)
         {
             roles.Apply(updated);
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? $"{key} saved as {value}, and in force now"
-                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
@@ -174,6 +174,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
+        NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
         NodeSettings.MergeBatchKey => roles.MergeBatch ? "on" : "off",
         NodeSettings.WorkerLadderKey => roles.WorkerLadder ? "on" : "off",
         NodeSettings.WorkerModelMaxKey => roles.WorkerModelMax,
@@ -210,7 +211,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -222,6 +223,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => "off",
         NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.AutopilotKey => "off",
+        NodeSettings.ReviewDeepFirstKey => "on",
         NodeSettings.MergeBatchKey => "off",
         NodeSettings.WorkerLadderKey => "on",
         NodeSettings.WorkerModelMaxKey => RoleModels.DefaultWorkerModelMax,
@@ -253,6 +255,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
+        NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer-deep model; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
         NodeSettings.MergeBatchKey => ("Merge batches", "While on, a repo's merge queue entries that are ready (review passed at their head, checks green, nothing GitHub would refuse) are merged into one batch branch (pilot/batch/repo-machine-start-n: its base plus each PR, plain git), its CI run once on a draft PR from it, and landed together on green by a plain push of the base to the batch head. Only where the node may push the base: entries merged by merge, a base with no merge queue and no branch protection or rules (a queue repo batches by its own ruleset's group size). A red or conflicting batch, or one whose CI never starts, falls back to one entry at a time. A batch forms only from merges that overlap (asked while another merge of the repo is under way); an armed or autopilot merge is asked one at a time and merges alone. Off by default", ["on", "off"]),
         NodeSettings.WorkerLadderKey => ("Worker ladder", "While on, a leg redone steps its fresh worker up by attempt: attempts 1 and 2 on the leg's model and effort, attempt 3 on opus, attempt 4 on opus at xhigh, never below the leg's plan nor past the max settings; off keeps the leg's model", ["on", "off"]),
         NodeSettings.WorkerModelMaxKey => ("Worker model max", "The strongest model the worker ladder steps up to; opus by default", ["sonnet", "opus"]),

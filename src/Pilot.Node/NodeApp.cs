@@ -267,6 +267,24 @@ public static class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+            // The node's own row rides the same tick of the clock (a settings change has no event to hook).
+            builder.Services.AddHostedService(services =>
+            {
+                var state = services.GetRequiredService<NodeState>();
+                var models = services.GetRequiredService<RoleModels>();
+                var watchtower = services.GetRequiredService<Watchtower>();
+                return new NodeRowPublisher(state, () => new NodeRow
+                {
+                    Maintenance = models.Maintenance,
+                    Autopilot = models.Autopilot,
+                    AcceptsFleetFlights = models.AcceptsFleetFlights,
+                    Account = state.Usage()?.Account,
+                    Watchtower = watchtower.Health(),
+                }, services.GetRequiredService<TimeProvider>())
+                {
+                    Logger = services.GetService<ILogger<NodeRowPublisher>>(),
+                };
+            });
         }
         builder.Services.AddSingleton(services =>
         {
@@ -341,6 +359,7 @@ public static class NodeApp
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
             Error = logWriter,
+            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
