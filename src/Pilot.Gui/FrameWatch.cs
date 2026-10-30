@@ -52,11 +52,14 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         var hash = new HashCode();
         void Add(string? line) => hash.Add(line, StringComparer.Ordinal);
         hash.Add(header);
-        // The rail's tasks glyph and its hover, and the cards panel: beside every page.
+        // The rail's tasks and ideas glyphs and their hover, and the cards panel: beside every page.
         var (glyph, said) = PilotChrome<DIR.Lib.RgbaImage>.JobsGlyph(pages.Jobs, now);
         Add(glyph);
         Add(said);
-        Panel(ref hash, pages.Cards, pages.PullRequests?.Row);
+        (glyph, said) = PilotChrome<DIR.Lib.RgbaImage>.IdeasGlyph(pages.Ideas);
+        Add(glyph);
+        Add(said);
+        Panel(ref hash, pages.Cards, pages.PullRequests?.Row, pages.Ideas);
         if (page != PilotPage.Home)
         {
             hash.Add(version);
@@ -139,8 +142,8 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     }
 
     // The cards panel as CardsView draws it: the watchtower's line, the summary, each card's words and buttons (a PR's title
-    // opens its row only while the node lists the PR), a node out of reach, and the handled lines.
-    private static void Panel(ref HashCode hash, CardsScreen cards, PullRequestsRow? pullRequests)
+    // opens its row only while the node lists the PR) and the ideas it names, a node out of reach, and the handled lines.
+    private static void Panel(ref HashCode hash, CardsScreen cards, PullRequestsRow? pullRequests, IdeasScreen? ideas)
     {
         if (cards.Watchtower is { } tower)
         {
@@ -171,6 +174,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 hash.Add(choice.Note, StringComparer.Ordinal);
             }
             hash.Add(PullRequestLinks.Of(card) is { } pr && PullRequestLinks.Lists(pullRequests, pr));
+            foreach (var link in (ideas ?? IdeasScreen.Empty).LinksIn($"{card.Title}\n{card.Detail}")) hash.Add(link);
         }
         foreach (var held in cards.Held)
         {
