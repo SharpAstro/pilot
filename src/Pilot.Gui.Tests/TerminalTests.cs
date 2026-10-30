@@ -134,7 +134,7 @@ public sealed class TerminalTests
 
         CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
             .ShouldNotContain("flight/tia1611");
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored))
             .ShouldContain("flight/tia1611");
     }
 
@@ -164,7 +164,7 @@ public sealed class TerminalTests
                 }
                 : new TranscriptPage { Total = 4, Entries = [new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Fixed it." }] });
         };
-        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
         Described();
 
         sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
@@ -452,7 +452,7 @@ public sealed class TerminalTests
         narrow.ShouldContain("worker · ORB204 / parser");
         narrow.ShouldContain("xy1-orb204-parser");
 
-        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
         wide.ShouldContain("Model");
         wide.ShouldContain("Last response");
         wide.ShouldContain("Spend");

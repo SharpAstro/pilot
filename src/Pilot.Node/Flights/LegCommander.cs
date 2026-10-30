@@ -1987,8 +1987,11 @@ public sealed partial class LegCommander(
             var tip = (await git.RunAsync(["cat-file", "-e", $"{pr.Head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok ? pr.Head : "HEAD";
             if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, tip], flight.Worktree, cancellationToken)).Ok)
             {
-                // A PR GitHub has queued is left as it is (the caller says it is queued): a push would drop it from the queue.
-                if ((await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken))?.Kind == MergeKinds.Queued)
+                // A base with a merge queue is left to it: the queue builds the PR on top of the latest base (and of the entries
+                // ahead of it) itself, so the base merged in first only pushes a new head, whose PR checks run again before the
+                // queue is joined, at every landing on the base. Each landing restarted every waiting flight's wait that way
+                // (pilot #507 and #509, 2026-10-30). A PR GitHub has queued is left as it is too: a push would drop it from the queue.
+                if (await github.MergeQueueAsync(flight.RepoPath, pr.Number, cancellationToken) is not null)
                 {
                     return pr;
                 }

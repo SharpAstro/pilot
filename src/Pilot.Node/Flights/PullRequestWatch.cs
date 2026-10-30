@@ -85,7 +85,10 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         {
             var flights = state.Flights();
             var catalog = repos.Repos();
-            var tracked = TrackedRepos(flights, state.PrReviews());
+            // The repos flown and reviewed in, and the ones the catalog tracks besides (an idea, a PILOT.md): one rule with the repo read.
+            var tracked = TrackedRepos(flights, state.PrReviews())
+                .Concat(repos.Tracked().Select(r => r.GitHub).OfType<string>().Where(r => OwnerOf(r) is not null))
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var orgs = tracked.Select(r => OwnerOf(r)!).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var held = state.PullRequests();
             // A node with no GitHub repo has nothing to say, and says nothing until it has.
