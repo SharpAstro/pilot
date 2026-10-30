@@ -475,6 +475,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Every branch whose protection was asked, in order.</summary>
     public List<string> ProtectionAsked { get; } = [];
 
+    /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
+    public string? MergeQueueMethod { get; set; }
+
+    public Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(MergeQueueMethod);
+
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
         lock (ProtectionAsked)
