@@ -56,6 +56,7 @@ public sealed class LegCardTests
             ContextWindow = 200_000,
             State = state,
             WaitingFor = waitingFor,
+            SpendWeighted = 0,
             ApiError = apiError,
             ApiErrorResetsAt = resetsAt,
             LastResponseAt = Start,
