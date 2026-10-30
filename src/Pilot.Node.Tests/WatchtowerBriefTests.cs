@@ -7,13 +7,15 @@ namespace Pilot.Node.Tests;
 /// <summary>The watchtower's brief lets it press a person-only card only on the person's own word in the chat (PIL473).</summary>
 public class WatchtowerBriefTests
 {
-    private static string Brief() => Briefs.Watchtower("wt", [], [], [], "pilot");
+    /// <summary>The brief with line breaks folded to spaces, so a sentence wrapped across lines still matches.</summary>
+    private static string Brief() => string.Join(' ', Briefs.Watchtower("wt", [], [], [], "pilot").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
 
     [Fact]
     public void TheBriefTellsItToAnswerWithTheirWordsAsWhy()
     {
         var brief = Brief();
         brief.ShouldContain("`pilot answer <card> <choice> --why \"<their words, quoted>\"`");
+        brief.ShouldContain("press it for them in that same turn");
         brief.ShouldContain("in that same turn");
     }
 
