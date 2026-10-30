@@ -41,6 +41,8 @@ public sealed class IdeaRepoTests : IDisposable
             Git(repo, "init", "-q", "-b", "main");
             File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
             File.WriteAllText(Path.Combine(repo, name + ".slnx"), "<Solution />\n");
+            // A repo pilot works in, so the idea's repo choice offers it (RepoCatalog.Tracked).
+            File.WriteAllText(Path.Combine(repo, RepoCatalog.MarkerFile), "# PILOT.md\n");
             Git(repo, "remote", "add", "origin", $"https://github.com/SharpAstro/{name}.git");
             Git(repo, "add", ".");
             Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
@@ -215,5 +217,33 @@ public sealed class IdeaRepoTests : IDisposable
         prompt.ShouldContain("- tianwen (.NET) /r/tianwen");
         prompt.ShouldContain("flight TIA12");
         prompt.ShouldContain("Ring shadows\non the planet");
+        prompt.ShouldNotContain("image");
+    }
+
+    [Fact]
+    public void ThePromptNamesTheImagesAndTheLocalCopiesAtNoteTime()
+    {
+        RepoOption[] repos = [new("tianwen", ".NET", "/r/tianwen")];
+        var root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var attachments = new Attachments(root);
+            var id = attachments.AddIdeaImage([1, 2, 3], "png");
+            var body = $"on the planet\n![shot](pilot-attachment:{id}.png)";
+            var copies = IdeaImagePrompt.Copies(body, attachments);
+
+            var prompt = ClaudeIdeaRepoChooser.Prompt(new IdeaText("Ring shadows", body), repos, null, copies);
+
+            copies.ShouldHaveSingleItem();
+            prompt.ShouldContain("holds 1 image");
+            prompt.ShouldContain($"- {copies[0]}");
+            prompt.ShouldContain($"![shot](pilot-attachment:{id}.png)");
+            prompt.ShouldContain("never changed");
+            IdeaImagePrompt.Args(ClaudeIdeaRepoChooser.Model, copies, attachments).ShouldContain(attachments.IdeaFolder);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

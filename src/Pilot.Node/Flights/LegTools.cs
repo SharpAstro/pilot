@@ -33,13 +33,14 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     [GeneratedRegex(@"(?:backgrounded\s*\S\s*|claude stop\s+)([0-9a-f]{8})", RegexOptions.CultureInvariant)]
     private static partial Regex Job();
 
+    /// <summary>The start's whole arguments: what only a start takes (<c>--bg</c>, <c>-w</c>), then its session options.</summary>
     public static IReadOnlyList<string> Arguments(WorkerStart start)
     {
         var args = new List<string> { "--bg" };
@@ -47,6 +48,18 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             args.AddRange(["-w", plane]);
         }
+        args.AddRange(SessionArguments(start));
+        return args;
+    }
+
+    /// <summary>
+    /// The options a session keeps for its life: Remote Control, name, permission mode, <c>--strict-mcp-config</c>, model,
+    /// effort and disallowed tools. A start passes them, and a resume of a session Claude Code no longer has them on file
+    /// for passes them again (<see cref="ClaudeCliDelivery.ResumeArguments"/>).
+    /// </summary>
+    public static IReadOnlyList<string> SessionArguments(WorkerStart start)
+    {
+        var args = new List<string>();
         if (start.RemoteControl)
         {
             // Documented for interactive sessions; a background one takes it too (its record gains a bridgeSessionId).
@@ -90,6 +103,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         return job.Groups[1].Value;
     }
 
@@ -256,16 +270,6 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
     public string? Place => Position is { } position ? $"position {position}" : null;
 }
 
-/// <summary>How a flight's branch is brought up to date with its base.</summary>
-public enum UpdateWay
-{
-    /// <summary>The branch is rebased onto its base and pushed with a lease (a rebase-queue repo).</summary>
-    Rebase,
-
-    /// <summary>The base is merged into the branch and pushed plain (a squash or merge repo).</summary>
-    Merge,
-}
-
 /// <summary>
 /// What GitHub says of a PR that bears on its merge, as <see cref="GhCli.ReadMergeState"/> reads it: <paramref name="State"/>
 /// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>), the draft flag, <c>mergeStateStatus</c>, <c>mergeable</c> and <c>reviewDecision</c>, whether
@@ -304,6 +308,17 @@ public interface IGitHub
     Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Opens a draft PR from <paramref name="branch"/> (pushed already) into <paramref name="baseBranch"/>, so the checks a
+    /// <c>pull_request</c> starts run on it (a merge batch's branch, whose push alone starts no CI); returns its number.
+    /// </summary>
+    /// <exception cref="FlightException">gh could not open it.</exception>
+    Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken);
+
+    /// <summary>Closes PR <paramref name="number"/> unmerged, with <paramref name="comment"/>; one closed or merged already is left as it is.</summary>
+    /// <exception cref="FlightException">gh could not close it.</exception>
+    Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
     /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones
     /// aside), null with no checks or when GitHub would not say.
@@ -330,11 +345,11 @@ public interface IGitHub
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
-    /// How a flight's branch is brought up to date with its base in the repo at <paramref name="repoPath"/>: by the default
-    /// branch's merge queue method (its ruleset's <c>merge_queue</c> rule), else by the repo's allowed merge methods. Kept for a
-    /// while per repo. <see cref="UpdateWay.Rebase"/> when GitHub would not say, as the node always did.
+    /// Whether <paramref name="branch"/> of the repo at <paramref name="repoPath"/> is open to a plain push: no branch protection
+    /// (<c>branches/{branch}</c>'s <c>protected</c>) and no ruleset rule applying to it (<c>rules/branches/{branch}</c> empty).
+    /// False when either is set or GitHub would not say: an unreadable answer counts as protected.
     /// </summary>
-    Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken);
+    Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
@@ -458,9 +473,27 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Opens an issue in the repo and links it as a sub-issue of issue <paramref name="parent"/> (the sub-issues REST API, with the
+    /// new issue's database id); returns its number and URL. An issue that could not be linked is closed again, not left behind.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<SubTask> CreateSubIssueAsync(string repoPath, int parent, string title, string? body, CancellationToken cancellationToken);
+
+    /// <summary>Closes issue <paramref name="number"/> as not planned with <paramref name="comment"/>: a sub-issue whose leg was removed.</summary>
+    /// <exception cref="FlightException">gh could not close it.</exception>
+    Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
+    /// <summary>The sub-issues of issue <paramref name="parent"/>, open and closed; empty when gh cannot say.</summary>
+    Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken);
+
     /// <summary>The repo's open milestones.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>Makes a milestone called <paramref name="title"/> in the repo.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken);
 
     /// <summary>The repo's <see cref="IdeaIds.Milestone"/> milestone, made when it has none.</summary>
     /// <exception cref="FlightException">gh could not read or make it.</exception>
@@ -488,6 +521,17 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
 
+    /// <summary>The repo's open issues, in a milestone or in none, newest first.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts issue <paramref name="number"/> in the milestone called <paramref name="milestone"/>, or in none when it is null, when its
+    /// <c>updated_at</c> is still <paramref name="ifUpdatedAt"/>; false (nothing written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
     /// <summary>
     /// Transfers issue <paramref name="number"/> to <paramref name="toRepo"/> (<c>owner/name</c>), when its <c>updated_at</c> is still
     /// <paramref name="ifUpdatedAt"/>; returns the issue as it is there (a new number, and no milestone: a transfer drops it), or null (nothing
@@ -509,6 +553,17 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Commits an idea's image to <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch (made on first use,
+    /// as an orphan commit); returns the URL an issue body shows it by. GitHub has no API for its own issue attachments.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken);
+
+    /// <summary>The bytes of <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch; null when it is not there.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>
@@ -879,36 +934,30 @@ public sealed partial class GhCli : IGitHub
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
 
-    private static readonly TimeSpan UpdateWayFor = TimeSpan.FromHours(1);
-
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (UpdateWay Way, DateTimeOffset At)> _updateWay = new(StringComparer.OrdinalIgnoreCase);
-
-    public async Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken)
+    // Not kept: it is asked only when a merge batch would form, and a rule added since must stop the next batch's push.
+    public async Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var key = $"{repoPath}|{mergeMethod}";
-        if (_updateWay.TryGetValue(key, out var known) && DateTimeOffset.UtcNow - known.At < UpdateWayFor)
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/branches/{branch}", "--jq", ".protected"], repoPath, cancellationToken);
+        if (exit != 0 || !output.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
         {
-            return known.Way;
+            return false;
         }
-        var (exit, repoJson, _) = await RunAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
-        if (exit != 0)
+        var (rulesExit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return rulesExit == 0 && ParseNoRules(rules);
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: true only for an empty JSON array; any rule, or no JSON, is a rule.</summary>
+    internal static bool ParseNoRules(string rulesJson)
+    {
+        try
         {
-            // No answer: not kept, so the next push asks again. A way read before still stands: a merge-way repo is not rebased on a blip.
-            return known.At != default ? known.Way : UpdateWay.Rebase;
+            using var rules = JsonDocument.Parse(rulesJson);
+            return rules.RootElement is { ValueKind: JsonValueKind.Array } array && array.GetArrayLength() == 0;
         }
-        var rules = "[]";
-        if (ParseDefaultBranch(repoJson) is { } branch)
+        catch (JsonException)
         {
-            var (rulesExit, rulesOutput, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
-            if (rulesExit != 0)
-            {
-                return known.At != default ? known.Way : UpdateWay.Rebase;
-            }
-            rules = rulesOutput;
+            return false;
         }
-        var way = ParseUpdateWay(rules, repoJson, mergeMethod);
-        _updateWay[key] = (way, DateTimeOffset.UtcNow);
-        return way;
     }
 
     /// <summary><c>gh api repos/{owner}/{repo}</c>'s <c>default_branch</c>; null when it is no JSON or has none.</summary>
@@ -922,48 +971,6 @@ public sealed partial class GhCli : IGitHub
         catch (JsonException)
         {
             return null;
-        }
-    }
-
-    /// <summary>
-    /// How a branch is brought up to date from <c>gh api repos/{o}/{r}/rules/branches/{branch}</c> and the repo's own JSON: a
-    /// <c>merge_queue</c> rule's <c>merge_method</c> (REBASE rebases, SQUASH and MERGE merge the base in); with no queue, the
-    /// repo's allowed methods (only rebase allowed rebases), where the method the node merges with (<paramref name="mergeMethod"/>)
-    /// decides when the repo allows it: GitHub rebase-merges a PR with a merge commit in it and loses a conflict resolution, so a
-    /// repo that squashes only takes the base merged in where the node squashes. Rebase when either is unreadable.
-    /// </summary>
-    internal static UpdateWay ParseUpdateWay(string rulesJson, string repoJson, string? mergeMethod = null)
-    {
-        try
-        {
-            using var rules = JsonDocument.Parse(rulesJson);
-            if (rules.RootElement.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var rule in rules.RootElement.EnumerateArray())
-                {
-                    if (TextOf(rule, "type") == "merge_queue")
-                    {
-                        var method = rule.TryGetProperty("parameters", out var p) ? TextOf(p, "merge_method") : null;
-                        return string.Equals(method, "REBASE", StringComparison.OrdinalIgnoreCase) || method is null ? UpdateWay.Rebase : UpdateWay.Merge;
-                    }
-                }
-            }
-            using var repo = JsonDocument.Parse(repoJson);
-            bool Allows(string name) => repo.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
-            if (string.Equals(mergeMethod, "rebase", StringComparison.OrdinalIgnoreCase) && Allows("allow_rebase_merge"))
-            {
-                return UpdateWay.Rebase;
-            }
-            if (string.Equals(mergeMethod, "squash", StringComparison.OrdinalIgnoreCase) && Allows("allow_squash_merge")
-                || string.Equals(mergeMethod, "merge", StringComparison.OrdinalIgnoreCase) && Allows("allow_merge_commit"))
-            {
-                return UpdateWay.Merge;
-            }
-            return Allows("allow_squash_merge") || Allows("allow_merge_commit") ? UpdateWay.Merge : UpdateWay.Rebase;
-        }
-        catch (JsonException)
-        {
-            return UpdateWay.Rebase;
         }
     }
 
@@ -1185,6 +1192,34 @@ public sealed partial class GhCli : IGitHub
         }
         return await PullRequestAsync(repoPath, branch, cancellationToken)
             ?? throw new FlightException($"gh opened {branch}'s PR but could not read it back: {output.Trim()}");
+    }
+
+    public async Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        string[] args = ["pr", "create", "--draft", "--head", branch, "--base", baseBranch, "--title", title, "--body", body];
+        var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
+        if (exit != 0 && error.Contains("draft", StringComparison.OrdinalIgnoreCase) && error.Contains("not supported", StringComparison.OrdinalIgnoreCase))
+        {
+            // A repo whose plan has no draft PRs (a private repo on GitHub Free): an ordinary PR runs the same checks.
+            (exit, output, error) = await RunAsync([.. args.Where(a => a != "--draft")], repoPath, cancellationToken);
+        }
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not open {branch}'s draft PR: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return (await PullRequestAsync(repoPath, branch, cancellationToken))?.Number
+            ?? throw new FlightException($"gh opened {branch}'s draft PR but could not read it back: {output.Trim()}");
+    }
+
+    public async Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "close", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--comment", comment], repoPath, cancellationToken);
+        var said = (error.Trim().Length > 0 ? error : output).Trim();
+        // Closed already, or merged (a batch that landed fast-forwards the base to its PR's head), is the state wanted.
+        if (exit != 0 && !said.Contains("already closed", StringComparison.OrdinalIgnoreCase) && !said.Contains("already merged", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"gh could not close #{number}: {said}");
+        }
     }
 
     public async Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken)
@@ -1578,7 +1613,9 @@ public sealed partial class GhCli : IGitHub
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        using var process = Process.Start(start) ?? throw new FlightException("gh did not start");
+        var (process, counted) = NodeTraffic.Shared.Start("gh", start);
+        using var _ = process;
+        using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(timeout ?? Timeout);
         var output = process.StandardOutput.ReadToEndAsync(budget.Token);

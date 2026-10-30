@@ -11,12 +11,15 @@ namespace Pilot.Node.Sessions;
 /// <param name="Cwd">Its working folder, where the copy runs.</param>
 /// <param name="Text">The user turn.</param>
 /// <param name="RemoteControl">Whether the session had Remote Control on, so the copy keeps it: a resume drops it otherwise.</param>
-public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text, bool RemoteControl = false);
+/// <param name="StartOptions">The session options the node started it with, when it has them on record (<see cref="Flights.ClaudeWorkerLauncher.SessionArguments"/>).</param>
+/// <param name="OptionsOnFile">Whether Claude Code has respawn flags on file for this session id: then it wakes with them and the resume passes none.</param>
+public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text, bool RemoteControl = false, IReadOnlyList<string>? StartOptions = null, bool OptionsOnFile = false);
 
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
 /// <param name="ReplyTo">The sender's session row, when it is one on this node: the recipient is told to answer with a say to it.</param>
-public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null);
+/// <param name="SessionId">The recipient's session id, which finds its intercom endpoint; null when not known (the CLI relay then).</param>
+public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null, string? SessionId = null);
 
 /// <summary>A delivery that did not happen, with why: the say's error.</summary>
 public sealed class SessionDeliveryException(string message) : Exception(message);
@@ -39,10 +42,10 @@ public interface ISessionDelivery
     Task<string> ResumeAsync(ResumeRequest request, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sends the text to a live session over Claude Code's intercom, as a cross-session message, by a throwaway
+    /// Sends the text to a live session over Claude Code's intercom, as a cross-session message: written to its endpoint, else by a throwaway
     /// <c>claude -p</c> session allowed SendMessage. Reaches a session mid-turn and an interactive one, stopping neither.
     /// </summary>
-    /// <returns>The relay's answer.</returns>
+    /// <returns>The route it took, for the log.</returns>
     Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken);
 }
 
@@ -50,7 +53,7 @@ public interface ISessionDelivery
 /// <see cref="ISessionDelivery"/> by the <c>claude</c> CLI. Port of v1's <c>say()</c> (stop, then
 /// <c>--bg --resume</c>) and its intercom (<c>RELAY</c>, <c>RELAY_PROMPT</c>).
 /// </summary>
-public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder) : ISessionDelivery
+public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder, ClaudeProfile? profile = null) : ISessionDelivery
 {
     /// <summary>The name a message from the person who runs these sessions comes from, whichever client they typed it in.</summary>
     public const string ControllerName = "controller";
@@ -195,14 +198,23 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     }
 
     /// <summary>
-    /// The resume's arguments: the full session id and nothing else. A background session keeps the options it was started
-    /// with (its name, permission mode, model, effort, Remote Control, and a worker's --strict-mcp-config), and Claude
-    /// Code wakes it with them under its own id; any flag passed here makes it start a copy under a new id with those
-    /// flags alone. A worker's copy lost --strict-mcp-config and sat "blocked" on the repo's MCP approval, which a
-    /// background session has no one to ask (TIA1658's and TIA1774's workers, compacted, 2026-10-23). The session id
-    /// must be the full one: the short job id starts a copy too.
+    /// The resume's arguments. A session Claude Code has respawn flags on file for gets the full session id and nothing
+    /// else: a background session keeps the options it was started with (its name, permission mode, model, effort, Remote
+    /// Control, and a worker's --strict-mcp-config), and Claude Code wakes it with them under its own id; any flag passed
+    /// here makes it start a copy under a new id with those flags alone. A worker's copy lost --strict-mcp-config and sat
+    /// "blocked" on the repo's MCP approval, which a background session has no one to ask (TIA1658's and TIA1774's
+    /// workers, compacted, 2026-10-23). The session id must be the full one: the short job id starts a copy too.
+    /// <para>
+    /// A session id with nothing on file gets the options the node started the session with after the id. A compaction
+    /// continues a session under a new id with no respawn flags: the watchtower 484c1141 was continued as 9f042ff7 and
+    /// woke on opus[1m] (the person's default, not its own model) with no name, no --strict-mcp-config and no Remote
+    /// Control (2026-10-28).
+    /// </para>
     /// </summary>
-    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) => ["--bg", "--resume", request.SessionId];
+    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) =>
+        request.OptionsOnFile || request.StartOptions is not { Count: > 0 } options
+            ? ["--bg", "--resume", request.SessionId]
+            : ["--bg", "--resume", request.SessionId, .. options];
 
     /// <summary>v1's relay arguments, with ListAgents added for a name that is not enough.</summary>
     public static IReadOnlyList<string> RelayArguments(string from) =>
@@ -250,7 +262,38 @@ public sealed partial class ClaudeCliDelivery(IClaudeAgents agents, string relay
     public static string ReplyNote(string replyTo) =>
         $"{RelayMark} To answer, run: pilot say {replyTo} \"<your answer>\". Not SendMessage: it cannot reach the sender.)";
 
+    /// <summary>The route a relay took when it wrote straight to the session's endpoint.</summary>
+    public const string RouteDirect = "direct";
+
+    /// <summary>
+    /// The text to the session over its intercom endpoint (<see cref="Intercom"/>), and only when that fails by the
+    /// <c>claude -p</c> relay (<see cref="RelayViaCliAsync"/>).
+    /// </summary>
+    /// <returns>The route: <c>direct</c>, or <c>cli-relay (direct: why not)</c>.</returns>
     public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
+    {
+        string why;
+        try
+        {
+            var endpoint = request.SessionId is { } id ? profile?.FindIntercom(id) : null;
+            if (endpoint is null)
+            {
+                throw new SessionDeliveryException(profile is null || request.SessionId is null ? "no profile to find its endpoint in" : "no live process has its session record");
+            }
+            await Intercom.SendAsync(endpoint, request.From, RelayText(request.Text, request.ReplyTo), cancellationToken);
+            return RouteDirect;
+        }
+        catch (SessionDeliveryException ex)
+        {
+            why = ex.Message;
+        }
+
+        await RelayViaCliAsync(request, cancellationToken);
+        return $"cli-relay (direct: {why})";
+    }
+
+    /// <summary>The fallback: a throwaway <c>claude -p</c> session allowed SendMessage carries the text.</summary>
+    protected virtual async Task<string> RelayViaCliAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         var mark = $"======== {Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()[..4])} ========";
         var kind = request.Kind == SessionKind.Background ? "bg" : "interactive";

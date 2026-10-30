@@ -138,7 +138,8 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
                 return Outcome(RepoSyncStatus.Skipped, $"{branch} has diverged from {defaultRef} ({sync.Ahead} ahead, {sync.Behind} behind)");
             }
 
-            var merge = await RunAsync(["merge", "--ff-only", defaultRef], path, cancellationToken);
+            // The one checkout a person builds from: its LFS files get their content, not the planes' pointers.
+            var merge = await RunAsync(["merge", "--ff-only", defaultRef], path, cancellationToken, smudge: true);
             return merge.Ok
                 ? Outcome(RepoSyncStatus.Updated, $"{branch} took {sync.Behind} commit{(sync.Behind == 1 ? "" : "s")} from {defaultRef}")
                 : Outcome(RepoSyncStatus.Failed, $"git merge --ff-only {defaultRef} failed: {merge.Why}");
@@ -153,10 +154,10 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         }
     }
 
-    private async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    private async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken, bool smudge = false)
     {
         using var budget = Budget(cancellationToken);
-        return await git.RunAsync(args, cwd, budget.Token);
+        return smudge ? await git.RunSmudgingAsync(args, cwd, budget.Token) : await git.RunAsync(args, cwd, budget.Token);
     }
 
     private CancellationTokenSource Budget(CancellationToken cancellationToken)

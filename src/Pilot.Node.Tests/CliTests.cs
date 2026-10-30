@@ -331,6 +331,47 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PilotMergesPrintsTheOpenEntriesFirstPerRepoByPlaceThenTheEndedNewestFirstAtMostThirty()
+    {
+        var empty = await Pilot(_root, "merges");
+        (empty.Exit, empty.Output).ShouldBe((0, "No merges.\n"));
+
+        var at = DateTimeOffset.UtcNow.AddHours(-1);
+        MergeRow Row(string flight, string repo, int pr, MergeEntryState state, int? place, string why, int minutes) => new()
+        {
+            Flight = flight, Repo = repo, Pr = pr, Head = $"{pr:x4}aaaabbbbcccc", Method = "rebase", State = state, Why = why, Place = place,
+            AddedAt = at.AddMinutes(minutes), ChangedAt = at.AddMinutes(minutes + 1),
+        };
+        // Merging rows: open, and left alone by the node's own look, which no command drives here.
+        _node.State.PutMerge(Row("TIA1", "tianwen", 61, MergeEntryState.Merged, null, "merged: the flight lands", 1));
+        _node.State.PutMerge(Row("TIA2", "tianwen", 62, MergeEntryState.Merging, 2, "in the merge queue", 2));
+        _node.State.PutMerge(Row("TIA3", "tianwen", 63, MergeEntryState.Merging, 1, "in the merge queue", 3));
+        _node.State.PutMerge(Row("MOO4", "moons", 64, MergeEntryState.Merging, 1, "merging #64 (rebase)", 4));
+        _node.State.PutMerge(Row("TIA5", "tianwen", 65, MergeEntryState.Dropped, null, "check build failed on 0041aaaa", 5));
+
+        var (exit, output, _) = await Pilot(_root, "merges");
+
+        exit.ShouldBe(0);
+        output.ShouldBe(
+            "MOO4  #64  moons  1  0040aaaa  merging  · merging #64 (rebase)\n" +
+            "TIA3  #63  tianwen  1  003faaaa  merging  · in the merge queue\n" +
+            "TIA2  #62  tianwen  2  003eaaaa  merging  · in the merge queue\n" +
+            "TIA5  #65  tianwen  -  0041aaaa  dropped  · check build failed on 0041aaaa\n" +
+            "TIA1  #61  tianwen  -  003daaaa  merged  · merged: the flight lands\n");
+
+        // Thirty rows at most: the open ones first, the oldest ended ones left out.
+        for (var i = 0; i < 30; i++)
+        {
+            _node.State.PutMerge(Row($"OLD{i}", "tianwen", 100 + i, MergeEntryState.Dropped, null, "old", -60 + i));
+        }
+        var lines = (await Pilot(_root, "merges")).Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        lines.Length.ShouldBe(30);
+        lines.Take(3).ShouldAllBe(l => l.Contains("  merging  ", StringComparison.Ordinal));
+        lines[3].ShouldStartWith("TIA5  ");
+        lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
@@ -398,6 +439,17 @@ public sealed class CliTests : IAsyncLifetime
         jobs.Output.ShouldContain("j1  paused since ");
         jobs.Output.ShouldNotContain("running");
         (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
+    }
+
+    [Fact]
+    public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
+    {
+        var plane = await FlightWithAValidatorFlying("1612");
+
+        var (exit, output, error) = await Pilot(plane, "leg", "finish", "verified", "--leg", "TIA1612/render");
+
+        exit.ShouldNotBe(0);
+        (output + error).ShouldContain("only a failed leg is verified done");
     }
 
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
@@ -800,5 +852,34 @@ public sealed class CliTests : IAsyncLifetime
         PullRequestsMarkdown.Plain(null, needsMe: false, now).ShouldContain("pilot prs --refresh");
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro", "sebgod"], ReadAt = now }, needsMe: false, now).ShouldBe("No open pull requests in SharpAstro, sebgod.\n");
         PullRequestsMarkdown.Plain(new PullRequestsRow { Orgs = ["SharpAstro"], ReadAt = now, PullRequests = [row.PullRequests[0]] }, needsMe: true, now).ShouldBe("No pull requests need you in SharpAstro.\n");
+    }
+
+    [Fact]
+    public void PullRequestsHintHowToFixAReviewThatAsksForChangesInBothOutputsAndNothingElse()
+    {
+        var now = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
+        PullRequestRow Pr(int number, string? flight, string? review) => new()
+        {
+            Repo = "SharpAstro/pilot", Number = number, Title = $"T{number}", Url = $"https://github.com/SharpAstro/pilot/pull/{number}", Kind = PullRequestKind.Ready,
+            Label = "Ready", Author = "sebgod", UpdatedAt = now, Flight = flight, Review = review,
+        };
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro"], ReadAt = now,
+            PullRequests = [Pr(1, null, PullRequestReview.Changes), Pr(2, "PIL2", PullRequestReview.Changes), Pr(3, null, PullRequestReview.Passed), Pr(4, "PIL4", null)],
+        };
+        var plain = PullRequestsMarkdown.Plain(row, needsMe: false, now).ReplaceLineEndings("\n");
+        var markdown = PullRequestsMarkdown.Build(row, needsMe: false, now).ReplaceLineEndings("\n");
+        foreach (var (output, prefix) in new[] { (plain, "          -> "), (markdown, "- #") })
+        {
+            output.ShouldContain("pilot review fix SharpAstro/pilot#1");
+            output.ShouldContain("PIL2's review-changes card with Fix the review's findings");
+            // Two hints, for the two rows whose review asks for changes; none for a passed or an unreviewed one.
+            output.Split('\n').Count(l => l.Contains("review asks for changes")).ShouldBe(2);
+            output.ShouldNotContain("#3: review");
+            output.ShouldNotContain("PIL4's");
+        }
+        plain.ShouldContain("          -> review asks for changes: pilot review fix SharpAstro/pilot#1\n");
+        markdown.ShouldContain("- #1: review asks for changes: pilot review fix SharpAstro/pilot#1\n- #2: ");
     }
 }

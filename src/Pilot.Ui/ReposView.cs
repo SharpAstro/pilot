@@ -73,6 +73,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Opens a URL (a PR) or a folder.</summary>
     public Action<string>? OnOpen { get; set; }
 
+    /// <summary>Opens a flight's page on the Flights page, by code: where a PR of a flight goes. Null where the host has no such page.</summary>
+    public Action<string>? OnFlightCode { get; set; }
+
+    /// <summary>Opens the Pull requests page on a PR's row (<c>owner/name</c>, number). Null where the host has no such page.</summary>
+    public Action<string, int>? OnPullRequest { get; set; }
+
+    /// <summary>The node's open PRs, which the Pull requests page has rows for: a PR it does not list goes to the browser.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
+
     // The right-click menu of the PR links, which leave the app: Copy URL.
     private readonly LinkMenu _links = new();
 
@@ -190,8 +199,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         Palette.Use(Night);
         var shown = ShowAll ? screen.Lines : [.. screen.Lines.Where(l => l.Status.Tracked)];
+        // A clicked title's order (the screen's own order breaks ties); the repo selected before it is found again by its key,
+        // wherever the sort puts it. Its worktree sub-rows are drawn under it, so they follow.
+        var kept = Table.Sort is not null && Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Key : null;
+        shown = Table.Order(shown, _ => "", SortKeys);
         _lines = shown;
         _marked = shown.Any(l => l.Node is not null);
+        if (kept is not null && shown.ToList().FindIndex(l => l.Key == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, shown.Count);
+        }
         if (shown.Count == 0)
         {
             ListCursor.Close();
@@ -304,18 +321,38 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight),
-            ListColumn.Fixed("Checkout · diff", MainWidth, MainMin),
-            ListColumn.Optional("Open PRs · session", PullsWidth),
-            ListColumn.Optional("Worktrees · action", WorkWidth),
-            ListColumn.Optional("Flight · PR", LinkWidth),
+            Sorted(ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight)),
+            Sorted(ListColumn.Fixed("Checkout · diff", MainWidth, MainMin)),
+            Sorted(ListColumn.Optional("Open PRs · session", PullsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Worktrees · action", WorkWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Flight · PR", LinkWidth), descendingFirst: true),
         };
         if (_marked)
         {
-            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(1, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the counts as numbers, not as the words they are drawn in.
+    private static readonly IReadOnlyDictionary<string, Func<RepoLine, object?>> SortKeys = new Dictionary<string, Func<RepoLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Repo · worktree"] = l => l.Name.ToUpperInvariant(),
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Checkout · diff"] = l => l.Main,
+        ["Open PRs · session"] = l => l.Pulls.Count,
+        ["Worktrees · action"] = l => l.Worktrees.Count,
+        ["Flight · PR"] = l => l.Status.Flights,
+    };
 
     private static RGBAColor32 ChecksColor(string checks) => checks switch
     {
@@ -335,7 +372,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                         $"repo:{line.Key}:worktrees", () => Toggle(line), bare: true, color: Link, hover: RowHoverBg),
                     Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar().Whole(line.Name))
                 .WithGap(6f);
-        var pulls = line.Pulls.Take(2).Select(PullText).ToList();
+        var pulls = line.Pulls.Take(2).Select(p => PullText(line, p)).ToList();
         if (line.Pulls.Count > 0 && line.Status.GitHub is { } github && OnPullRequests is { } show)
         {
             // The count is a link to the Pull requests page, filtered to this repo: it says the "+N more" this line used to, and where to see them.
@@ -394,13 +431,17 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    // An open PR: its number and title (a click opens it), then draft or ready and where its checks stand.
-    private Layout.Node PullText(PullLine pull)
+    // An open PR: its number and title (a click opens its flight's page, else its row on the Pull requests page, else GitHub), then draft or ready and where its checks stand.
+    private Layout.Node PullText(RepoLine repo, PullLine pull)
     {
+        var github = repo.Status.GitHub;
+        var route = pull.Pr.Flight is { } code && OnFlightCode is { } flight
+            ? (Action?)(() => flight(code))
+            : RowRoute(github, pull);
         var cells = new List<Layout.Node>
         {
-            LinkOf(Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)), pull),
+            PullRequestLink.Of(_links, $"pr:{pull.Pr.Number}", pull.Text, $"{github}#{pull.Pr.Number}", pull.Pr.Url, OnOpen, route,
+                pull.Pr.Flight is { } c ? $"flight {c}'s page" : "the Pull requests page", Link, RowHoverBg, pull.Text.Length > TextFits, fill: true),
         };
         // Labels as the wizard shows an issue's: dim, after the title; a fixed share so a long list cannot push the checks off.
         if (pull.Pr.Labels.Length > 0)
@@ -412,16 +453,14 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return Layout.Builder.HStack([.. cells]).WithGap(8f).RowH(18f);
     }
 
-    // A PR link with the shared right-click menu, Copy URL; a PR the node gave no URL for has no link to copy.
-    private Layout.Node LinkOf(Layout.Node link, PullLine pull) => pull.Pr.Url is { } url ? _links.OnLink(link, url) : link;
+    // The PR's row on the Pull requests page, when the host has that page and the node lists the PR; else null: the browser's.
+    private Action? RowRoute(string? github, PullLine pull) =>
+        github is not null && OnPullRequest is { } open && PullRequestLinks.Lists(PullRequests, github, pull.Pr.Number)
+            ? () => open(github, pull.Pr.Number)
+            : null;
 
-    private void OpenUrl(PullLine pull)
-    {
-        if (pull.Pr.Url is { } url)
-        {
-            OnOpen?.Invoke(url);
-        }
-    }
+    // Chars of a PR line's text that fit its column without a cut at the usual width: longer ones carry the whole text as a tooltip.
+    private const int TextFits = 28;
 
     // One worktree of a repo, under it: its branch with its flight, the diff against the default branch, its session and what
     // it last said, what waits on the controller, and its PR. Not a row the arrows step through, but every link is a click.
@@ -441,8 +480,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
             : Layout.Builder.Text("no flight", 12f, Dim);
         var pull = worktree.Pull is { } pr
-            ? LinkOf(Layout.Builder.Text($"PR #{pr.Pr.Number}{Followable.Away}", 12f, Link).BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr)), pr)
+            ? PullRequestLink.Of(_links, $"repo:{repo.Key}:pr:{pr.Pr.Number}", $"PR #{pr.Pr.Number}", $"{repo.Status.GitHub}#{pr.Pr.Number}", pr.Pr.Url, OnOpen,
+                RowRoute(repo.Status.GitHub, pr), "the Pull requests page", Link, RowHoverBg, mayBeCut: false, fill: false)
             : Layout.Builder.Text("no PR", 12f, Dim);
         var cells = new List<Layout.Node>
         {
