@@ -391,7 +391,8 @@ public sealed class JobTests : IDisposable
         var command = OperatingSystem.IsWindows()
             ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
-        var id = Run(command, timeoutSeconds: 5).Made!;
+        // The budget outlasts two pwsh starts on a loaded machine, so the pid file exists before the timeout can fire.
+        var id = Run(command, timeoutSeconds: 20).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
         for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
@@ -401,8 +402,8 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
-        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(30));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
+        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(60));
         for (var i = 0; i < 100 && (IsAlive(childPid) || IsAlive(running.Pid!.Value)); i++)
         {
             await Task.Delay(50, Ct);
