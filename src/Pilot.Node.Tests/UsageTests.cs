@@ -143,6 +143,30 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
+    public void AfterALoginChangeTheLastAccountsFiguresAreNotPutAsTheNewOnesUntilTheStatusLineWritesAgain()
+    {
+        // The owner switched accounts and the node said 87% of the week for one that had used 6% (DE1, 2026-10-30): the file the
+        // status line writes names no account, so it still held the old account's figures.
+        var reader = new UsageReader(_state, File, _time) { AccountFile = Account("""{"oauthAccount":{"emailAddress":"ada@example.org"}}""") };
+        Write(80, Reset, seven: 87);
+        reader.Read();
+        _state.Usage()!.SevenDay!.UsedPercent.ShouldBe(87);
+
+        _time.Advance(TimeSpan.FromMinutes(30));
+        Account("""{"oauthAccount":{"emailAddress":"bo@example.org"}}""");
+        reader.Read();
+        // The new login, with no figures yet: not ada's 87% under bo's name.
+        _state.Usage()!.Account!.Email.ShouldBe("bo@example.org");
+        _state.Usage()!.HasFigures.ShouldBeFalse();
+
+        // The status line writes bo's: those are put.
+        Write(34, Reset, seven: 6, writtenAt: Now.AddMinutes(31).ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.SevenDay!.UsedPercent.ShouldBe(6);
+        _state.Usage()!.Account!.Email.ShouldBe("bo@example.org");
+    }
+
+    [Fact]
     public void NearlySpentTheFiveHourWindowRaisesOneCardPerWindow()
     {
         var reader = new UsageReader(_state, File, _time);

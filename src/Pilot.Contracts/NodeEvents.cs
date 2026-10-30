@@ -30,6 +30,9 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
+[JsonDerivedType(typeof(MergeAddedEvent), "mergeAdded")]
+[JsonDerivedType(typeof(MergeChangedEvent), "mergeChanged")]
+[JsonDerivedType(typeof(MergeRemovedEvent), "mergeRemoved")]
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
 [JsonDerivedType(typeof(IdeasChangedEvent), "ideasChanged")]
@@ -111,6 +114,15 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly JobRow[]? _jobs;
+
+    /// <summary>Every merge queue entry, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MergeRow[] Merges
+    {
+        get => _merges ?? [];
+        init => _merges = value;
+    }
+
+    private readonly MergeRow[]? _merges;
 
     /// <summary>Every PR review, closed ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public PrReviewRow[] PrReviews

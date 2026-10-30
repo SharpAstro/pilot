@@ -856,22 +856,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             return null;
         }
-        var title = Whole(Layout.Builder.Text(Titled(card), 14f, Link)
-                .BgHover(CardHover)
-                .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => route(card, pr))
-                .WStar().HStar(), card.Title, card.Title.Length > TitleFits);
-        if (card.Title.Length <= TitleFits)
-        {
-            title = title.WithTooltip($"Show {pr} on the Pull requests page");
-        }
-        // The browser's own, small: a mark, not a word, so it reads as the way out and the title as the way in.
-        var away = _links.OnLink(Layout.Builder.Text("↗", 11f, Link, TextAlign.Center, TextAlign.Center)
-            .Pad(6f, 0f)
-            .WAuto().HStar()
-            .BgHover(CardHover)
-            .Follows(new HitResult.ButtonHit($"card:{card.Id}:browser"), _ => OnOpen?.Invoke(PullRequestLinks.Url(pr)))
-            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left), PullRequestLinks.Url(pr));
-        return Layout.Builder.HStack(title, away).RowH(22f);
+        return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left, tall: true,
+                browserAction: $"card:{card.Id}:browser")
+            .HFixed(22f);
     }
 
     // A closed card's button as it was, the same size, answering nothing.

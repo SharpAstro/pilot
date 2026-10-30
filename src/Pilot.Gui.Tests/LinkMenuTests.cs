@@ -184,7 +184,7 @@ public sealed class LinkMenuTests
         new(RepoLine.Build(SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), [], [], [], [], Live.At), "live", Live.At);
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
-        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, Flights = { Mode = FlightsViewMode.List } };
 
     private static List<ClickableRegion> RegionsOf(IPixelWidget widget)
     {

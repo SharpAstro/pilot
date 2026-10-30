@@ -30,6 +30,7 @@ public sealed class IdeasPaneTests
         Age = age,
         Origin = origin,
         Url = $"https://github.com/SharpAstro/{repo}/issues/{number}",
+        Images = IdeaImages.In(body),
     };
 
     private static IdeasScreen Screen(IEnumerable<IdeaRow> ideas, IEnumerable<CardRow>? asks = null, params string[] repos) =>
@@ -106,6 +107,18 @@ public sealed class IdeasPaneTests
         var (chrome, _, _) = Chrome(renderer);
         Draw(chrome, screen);
         chrome.Page.ShouldBe(PilotPage.Ideas);
+    }
+
+    [Fact]
+    public void TheTitleNamesTheNodeAndNoNodePillIsOfferedWithSeveralNodes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.Nodes = new NodeFilter { Choices = [new NodeMark("here", "/sock", "DE1", Here: true), new NodeMark("se1", "http://se1", "SE1", Here: false)] };
+        var screen = Sample();
+
+        Texts(renderer, chrome, screen, 1280).Select(t => t.Text).ShouldContain("DE1's ideas (this machine)");
+        Actions(Regions(chrome, screen)).ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -295,25 +308,15 @@ public sealed class IdeasPaneTests
         Click(regions, "ideas:open:pilot I381");
         opened.ShouldBe([idea.Url]);
 
-        // Plan: the next open milestone by default.
+        // Plan asks the node where it belongs; no 'next open milestone' is left (the owner, 2026-10-29: "not sure what it wants from me").
         Click(regions, "ideas:plan:pilot I381");
         chrome.Ideas.OpenAction.ShouldBe(("pilot I381", IdeasView<RgbaImage>.Mode.Plan));
-        // The box says what it wants and that it may stay empty (the owner, 2026-10-29: "not sure what it wants from me").
+        await Task.WhenAll(tasks);
+        sent.Last().Verb.ShouldBe(Verbs.ProposeMilestone);
         var said = Spoken(renderer, chrome, screen, 1280);
         said.ShouldContain("Plan makes I381 a flight: its issue goes into a milestone and a planner starts on it.");
-        said.ShouldContain("milestone (optional)");
-        said.ShouldContain("Enter plans it (an empty box: the next open milestone)");
-        regions = Regions(chrome, screen);
-        Click(regions, "ideas:plan-next:pilot I381");
-        await Task.WhenAll(tasks);
-        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.PlanIdea, "idea/pilot/I381"));
-        sent.Last().Args.ShouldBeEmpty();
-
-        // Plan, naming a milestone.
-        chrome.Ideas.OpenOn(idea, IdeasView<RgbaImage>.Mode.Plan);
-        Draw(chrome, screen);
-        await chrome.Ideas.RowInput.OnCommit!("v2.3");
-        sent.Last().Args.ShouldBe(["v2.3"]);
+        said.ShouldNotContain("next open");
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:plan-next:pilot I381");
 
         // Drop asks why: nothing goes without one.
         var before = sent.Count;
@@ -351,6 +354,196 @@ public sealed class IdeasPaneTests
         await Task.WhenAll(tasks);
         (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.MoveIdea, "idea/pilot/I381"));
         sent.Last().Args.ShouldBe(["tianwen"]);
+    }
+
+    private static MilestoneProposal Proposal(string? title = "v2.3", string? newTitle = null, string? newDescription = null) => new(
+        [new MilestoneChoice("v2.2", "", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), 2), new MilestoneChoice("v2.3", "", new DateTimeOffset(2026, 12, 5, 0, 0, 0, TimeSpan.Zero), 7), new MilestoneChoice("Rings", "", null, 0)],
+        title, newTitle, newDescription, "it touches the pane v2.3 reworks");
+
+    private static async Task<(PilotChrome<RgbaImage> Chrome, List<(string Verb, string Target, string[] Args)> Sent, IdeasScreen Screen, IdeaRow Idea, RgbaImageRenderer Renderer)> OpenPlan(MilestoneProposal? proposal, bool ok = true, TaskCompletionSource? hold = null)
+    {
+        var renderer = new RgbaImageRenderer(1280, 1200);
+        var (chrome, sent, tasks) = Chrome(renderer, ok ? new IdeaReply(true, Milestones: proposal) : new IdeaReply(false, "claude is offline"));
+        var screen = Sample();
+        var idea = screen.Ideas.First(i => i.Number == 381);
+        // Claude's answer is held back until the test has seen the page waiting for it.
+        var gate = hold ?? new TaskCompletionSource();
+        var answer = chrome.Ideas.Send!;
+        chrome.Ideas.Send = async (verb, target, args, token) =>
+        {
+            var reply = await answer(verb, target, args, token);
+            if (verb == Verbs.ProposeMilestone)
+            {
+                await gate.Task;
+            }
+            return reply;
+        };
+        Draw(chrome, screen, 1280, 1200);
+        chrome.Ideas.OpenOn(idea, IdeasView<RgbaImage>.Mode.Plan);
+        Draw(chrome, screen, 1280, 1200);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("Claude is choosing a milestone…");
+        if (hold is not null)
+        {
+            return (chrome, sent, screen, idea, renderer);
+        }
+        gate.SetResult();
+        await Task.WhenAll(tasks);
+        Draw(chrome, screen, 1280, 1200);
+        sent.Last().Verb.ShouldBe(Verbs.ProposeMilestone);
+        return (chrome, sent, screen, idea, renderer);
+    }
+
+    [Fact]
+    public async Task PlanListsTheOpenMilestonesWithTheProposalFirstMarkedAndChosen()
+    {
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(Proposal());
+        using var _ = renderer;
+        var text = Spoken(renderer, chrome, screen, 1280);
+        var proposed = text.IndexOf("● v2.3 · proposed · due 5 Dec 2026 · 7 open", StringComparison.Ordinal);
+        proposed.ShouldBeGreaterThanOrEqualTo(0);
+        text.IndexOf("v2.2 · due 1 Nov 2026 · 2 open", StringComparison.Ordinal).ShouldBeGreaterThan(proposed);
+        text.ShouldContain("it touches the pane v2.3 reworks");
+        text.ShouldContain("Rings · 0 open");
+
+        Click(Regions(chrome, screen), "ideas:plan-go:pilot I381");
+        await Task.Yield();
+        sent.Last().Verb.ShouldBe(Verbs.PlanIdea);
+        sent.Last().Args.ShouldBe(["v2.3"]);
+
+        // Enter plans the one chosen, after another pick.
+        chrome.Ideas.OpenOn(idea, IdeasView<RgbaImage>.Mode.Plan);
+        Draw(chrome, screen, 1280, 1200);
+        Click(Regions(chrome, screen), "ideas:milestone:pilot I381:m:Rings");
+        await chrome.Ideas.RowInput.OnCommit!("");
+        sent.Last().Args.ShouldBe(["Rings"]);
+    }
+
+    [Fact]
+    public async Task TypingWhileClaudeIsStillChoosingOffersAndPlansNothing()
+    {
+        var hold = new TaskCompletionSource();
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(Proposal(), hold: hold);
+        using var _ = renderer;
+        chrome.Ideas.RowInput.Text = "v2";
+        var text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("Claude is choosing a milestone…");
+        text.ShouldNotContain("new milestone: v2");
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:plan-go:pilot I381");
+        var before = sent.Count;
+        await chrome.Ideas.RowInput.OnCommit!("v2");
+        sent.Count.ShouldBe(before);
+        sent.Any(s => s.Verb == Verbs.PlanIdea).ShouldBeFalse();
+        chrome.Ideas.Said.ShouldContain("still choosing");
+
+        // The answer lands: the filter now narrows the open milestones.
+        hold.SetResult();
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Draw(chrome, screen, 1280, 1200);
+        text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("v2.3");
+        text.ShouldContain("v2.2");
+        text.ShouldNotContain("new milestone: v2");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:plan-go:pilot I381");
+    }
+
+    [Fact]
+    public async Task TypingFiltersTheListIgnoringCaseAndOffersTheTypedTextAsANewMilestone()
+    {
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(Proposal());
+        using var _ = renderer;
+        chrome.Ideas.RowInput.Text = "RING";
+        var text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("Rings");
+        text.ShouldNotContain("v2.2");
+        text.ShouldNotContain("new milestone: RING");
+
+        chrome.Ideas.RowInput.Text = "Lunar phases";
+        text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("new milestone: Lunar phases");
+        text.ShouldNotContain("Rings");
+        await chrome.Ideas.RowInput.OnCommit!("Lunar phases");
+        sent.Last().Verb.ShouldBe(Verbs.PlanIdea);
+        sent.Last().Args.ShouldBe([Verbs.NewMilestoneArg, "Lunar phases"]);
+    }
+
+    [Fact]
+    public async Task ASuggestedNewMilestoneShowsItsDescriptionAndIsMadeOnlyWhenPlanned()
+    {
+        var suggested = Proposal(title: null, newTitle: "Observatory", newDescription: "Dome and roof control");
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(suggested);
+        var text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldContain("● new milestone: Observatory · proposed");
+        text.ShouldContain("Dome and roof control");
+        await chrome.Ideas.RowInput.OnCommit!("");
+        sent.Last().Args.ShouldBe([Verbs.NewMilestoneArg, "Observatory", "Dome and roof control"]);
+        renderer.Dispose();
+
+        // Declined: another pick goes, and no new milestone with it.
+        (chrome, sent, screen, idea, renderer) = await OpenPlan(suggested);
+        using var _ = renderer;
+        Click(Regions(chrome, screen), "ideas:milestone:pilot I381:m:v2.2");
+        Click(Regions(chrome, screen), "ideas:plan-go:pilot I381");
+        await Task.Yield();
+        sent.Last().Args.ShouldBe(["v2.2"]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithNoProposalNothingIsChosenAndPlanWaitsForAPick(bool offline)
+    {
+        var (chrome, sent, screen, idea, renderer) = await OpenPlan(offline ? null : new MilestoneProposal([new MilestoneChoice("v2.3", "", null, 1)], Note: "Claude gave no answer"), ok: !offline);
+        using var _ = renderer;
+        var text = Spoken(renderer, chrome, screen, 1280);
+        text.ShouldNotContain("● ");
+        var actions = Actions(Regions(chrome, screen)).ToList();
+        actions.ShouldNotContain("ideas:plan-go:pilot I381");
+        if (!offline)
+        {
+            actions.ShouldContain("ideas:milestone:pilot I381:m:v2.3");
+        }
+        var before = sent.Count;
+        await chrome.Ideas.RowInput.OnCommit!("");
+        sent.Count.ShouldBe(before);
+        chrome.Ideas.Said.ShouldContain("pick a milestone");
+
+        if (!offline)
+        {
+            Click(Regions(chrome, screen), "ideas:milestone:pilot I381:m:v2.3");
+            Actions(Regions(chrome, screen)).ShouldContain("ideas:plan-go:pilot I381");
+        }
+    }
+
+    [Fact]
+    public async Task APlanOpenedAfterATidyStartsFromItsMilestoneProposalAndTheTidyShowsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1200);
+        var tidy = new IdeaTidyProposal("Ideas pane", "Show ideas.", "ideas pane", "show ideas", Updated.AddHours(1)) { Milestone = Proposal() };
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Tidy: tidy));
+        var screen = Sample();
+        Click(Regions(chrome, screen), "ideas:tidy:pilot I381");
+        await Task.WhenAll(tasks);
+        Draw(chrome, screen, 1280, 1200);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("v2.3");
+
+        var asked = sent.Count;
+        Click(Regions(chrome, screen), "ideas:plan:pilot I381");
+        await Task.WhenAll(tasks);
+        sent.Count.ShouldBe(asked);
+        Draw(chrome, screen, 1280, 1200);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("● v2.3 · proposed");
+    }
+
+    [Fact]
+    public async Task ThePlanListDrawsNoTextOverText()
+    {
+        var (chrome, _, screen, _, renderer) = await OpenPlan(Proposal(newTitle: "Observatory", newDescription: "Dome and roof control, the weather station and the safety monitor"));
+        using var _r = renderer;
+        foreach (var width in new[] { 480f, 1280f })
+        {
+            var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > TopBar.Height).Select(f => f.Line).ShouldBeEmpty($"at {width} wide");
+        }
     }
 
     [Fact]
@@ -552,5 +745,231 @@ public sealed class IdeasPaneTests
                 }
             }
         }
+    }
+
+    private const string Marked = "Show it.\n\n![shot](pilot-attachment:abc123.png)\n\n![out](https://example.com/x.jpg)";
+
+    // Ctrl+V and a drop need a node to keep the image: a fake one answers with this id, or refuses.
+    private static List<(int Length, string Ext)> Imaging(PilotChrome<RgbaImage> chrome, bool image = true, string? refuse = null)
+    {
+        var uploaded = new List<(int, string)>();
+        chrome.Ideas.GetClipboardImage = () => image ? (new byte[] { 1, 2, 3 }, "png") : null;
+        chrome.Ideas.Upload = (bytes, ext, _) =>
+        {
+            uploaded.Add((bytes.Length, ext));
+            return Task.FromResult(refuse is null ? ((string?)"abc123", (string?)null) : (null, refuse));
+        };
+        return uploaded;
+    }
+
+    private static bool Paste(PilotChrome<RgbaImage> chrome, TextEditorState box) => box.OnKeyOverride!.Invoke(TextInputKey.Paste);
+
+    [Fact]
+    public async Task CtrlVOfAnImagePutsItsMarkerAtTheCaretOfTheNoteBox()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome);
+        Draw(chrome, Sample());
+        chrome.Ideas.NoteInput.InsertText("see  now");
+        chrome.Ideas.NoteInput.CursorPos = 4;
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+        // The upload ends on the pool; the marker goes into the box when the render thread draws the next frame.
+        chrome.Ideas.NoteInput.Text.ShouldBe("see  now");
+        Draw(chrome, Sample());
+
+        uploaded.ShouldBe([(3, "png")]);
+        chrome.Ideas.NoteInput.Text.ShouldBe("see ![screenshot](pilot-attachment:abc123.png) now");
+    }
+
+    [Fact]
+    public async Task CtrlVOfAnImageInAnEditPutsItsMarkerAtTheCaretOfTheEditBox()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        Imaging(chrome);
+        var screen = Sample();
+        Draw(chrome, screen);
+        chrome.Ideas.OpenOn(screen.Ideas[0], IdeasView<RgbaImage>.Mode.Edit);
+        Draw(chrome, screen);
+        chrome.Ideas.EditInput.CursorPos = "Ideas pane".Length;
+
+        Paste(chrome, chrome.Ideas.EditInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+        Draw(chrome, screen);
+
+        chrome.Ideas.EditInput.Text.ShouldStartWith("Ideas pane![screenshot](pilot-attachment:abc123.png)\n");
+        chrome.Ideas.NoteInput.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void ACtrlVOfTextOnlyIsLeftToThePaste()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome, image: false);
+        Draw(chrome, Sample());
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeFalse();
+
+        tasks.ShouldBeEmpty();
+        uploaded.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusedUploadIsSaidUnderTheBoxItWasPastedIn()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        Imaging(chrome, refuse: "the image is over 10 MB");
+        var screen = Sample();
+        Draw(chrome, screen);
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+
+        chrome.Ideas.NoteInput.Text.ShouldBe("");
+        Spoken(renderer, chrome, screen).ShouldContain("image not uploaded: the image is over 10 MB");
+    }
+
+    [Fact]
+    public async Task WhileAnImageGoesUpTheBoxSaysSo()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var gate = new TaskCompletionSource<(string?, string?)>();
+        chrome.Ideas.GetClipboardImage = () => (new byte[] { 1 }, "png");
+        chrome.Ideas.Upload = (_, _, _) => gate.Task;
+        var screen = Sample();
+        Draw(chrome, screen);
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        Spoken(renderer, chrome, screen).ShouldContain("uploading image");
+        gate.SetResult(("abc123", null));
+        await Task.WhenAll(tasks);
+
+        Spoken(renderer, chrome, screen).ShouldNotContain("uploading image");
+        Draw(chrome, screen);
+        chrome.Ideas.NoteInput.Text.ShouldContain("abc123");
+    }
+
+    [Fact]
+    public async Task ADroppedImageFileGoesInTheNoteBoxOrTheOpenEditAndAnythingElseIsIgnored()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome);
+        var screen = Sample();
+        Draw(chrome, screen);
+        var dir = Directory.CreateTempSubdirectory("pilot-drop-");
+        try
+        {
+            var png = Path.Combine(dir.FullName, "shot.PNG");
+            var text = Path.Combine(dir.FullName, "notes.txt");
+            File.WriteAllBytes(png, [9, 9, 9, 9]);
+            File.WriteAllText(text, "not an image");
+
+            chrome.Ideas.DropFile(text).ShouldBeFalse();
+            tasks.ShouldBeEmpty();
+
+            chrome.Ideas.DropFile(png).ShouldBeTrue();
+            await Task.WhenAll(tasks);
+            Draw(chrome, screen);
+            uploaded.ShouldBe([(4, "png")]);
+            chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
+
+            chrome.Ideas.OpenOn(screen.Ideas[0], IdeasView<RgbaImage>.Mode.Edit);
+            Draw(chrome, screen);
+            chrome.Ideas.DropFile(png).ShouldBeTrue();
+            await Task.WhenAll(tasks);
+            Draw(chrome, screen);
+            chrome.Ideas.EditInput.Text.ShouldEndWith("![screenshot](pilot-attachment:abc123.png)");
+            chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    private static IdeasScreen WithImages() => Screen([Idea(381, "Ideas pane", Marked), Idea(380, "Rail count", "")]);
+
+    private static List<RectF32> WirePictures(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer)
+    {
+        var painted = new List<RectF32>();
+        var rgba = new byte[20 * 10 * 4];
+        Array.Fill(rgba, (byte)200);
+        var picture = new AttachmentPicture(20, 10, rgba);
+        chrome.Gallery.Lookup = _ => picture;
+        var blit = AttachmentPictures.PaintOn(renderer.Surface);
+        chrome.Gallery.Draw = (p, rect) =>
+        {
+            painted.Add(rect);
+            blit(p, rect);
+        };
+        return painted;
+    }
+
+    [Fact]
+    public void AnIdeaWithImagesShowsThumbnailsAndALinkedOutImageShowsItsExtension()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        var painted = WirePictures(chrome, renderer);
+        var screen = WithImages();
+
+        var regions = Regions(chrome, screen);
+
+        painted.Count.ShouldBe(1);
+        Actions(regions).ShouldContain("attachment:idea:pilot I381:abc123");
+        Actions(regions).ShouldContain(a => a.StartsWith("attachment:idea:pilot I381:#"));
+        var spoken = Spoken(renderer, chrome, screen);
+        spoken.ShouldContain("JPG");
+        spoken.ShouldContain("Show it.");
+        // The Markdown of an image is not shown as text beside its thumbnail.
+        spoken.ShouldNotContain("pilot-attachment");
+    }
+
+    [Fact]
+    public void AClickOnAThumbnailOpensTheViewerAndEscapeShutsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        var painted = WirePictures(chrome, renderer);
+        var screen = WithImages();
+        Click(Regions(chrome, screen), "attachment:idea:pilot I381:abc123");
+
+        chrome.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("abc123");
+        painted.Clear();
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("attachment:close");
+        painted.ShouldNotBeEmpty();
+
+        chrome.Ideas.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
+        chrome.Gallery.Viewing.ShouldBeNull();
+
+        Click(Regions(chrome, screen), "attachment:idea:pilot I381:abc123");
+        Click(Regions(chrome, screen), "attachment:close");
+        chrome.Gallery.Viewing.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(480)]
+    [InlineData(1280)]
+    public void ThePageWithImagesHasNoTextOverTextAtNarrowAndWideSizes(int width)
+    {
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        WirePictures(chrome, renderer);
+        chrome.Ideas.GetClipboardImage = () => null;
+        chrome.Ideas.Upload = (_, _, _) => Task.FromResult(((string?)"abc123", (string?)null));
+        var screen = WithImages();
+        Draw(chrome, screen, width, 900);
+
+        var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+        TextOverlap.Faults(arranged).ShouldBeEmpty($"at {width} wide");
     }
 }

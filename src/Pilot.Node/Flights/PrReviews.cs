@@ -1131,11 +1131,12 @@ public sealed class PrReviews(
     }
 
     /// <summary>
-    /// Rebases the branch of <paramref name="pr"/> onto its base in a throwaway worktree of the clone pilot holds and pushes it
-    /// with <c>--force-with-lease</c> on the head read; a recheck of the controller's own PR (#286). Null when it is pushed; else
-    /// why not, and whether the rebase conflicted (undone, nothing pushed).
+    /// Merges the base of <paramref name="pr"/> into its branch (<c>git merge --no-edit</c>) in a throwaway worktree of the clone pilot
+    /// holds and pushes it plainly, a fast-forward of the head read; a recheck of the controller's own PR (#286). Never a rebase and
+    /// never a force push, as with a flight's branch (#395). Null when it is pushed; else why not, and whether the merge conflicted
+    /// (aborted, nothing pushed).
     /// </summary>
-    public async Task<(bool Conflicts, string Why)?> RebaseOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
+    public async Task<(bool Conflicts, string Why)?> MergeBaseIntoOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
     {
         var clone = TrackedClone(pr);
         if (clone is null)
@@ -1151,7 +1152,7 @@ public sealed class PrReviews(
             return (false, "a fixer is working on its branch");
         }
         var branch = read.HeadRef;
-        var worktree = Path.Combine(clone, ".claude", "worktrees", $"rebase-{Slug(pr.Name)}-{pr.Number}");
+        var worktree = Path.Combine(clone, ".claude", "worktrees", $"update-{Slug(pr.Name)}-{pr.Number}");
         try
         {
             var fetch = await git.RunAsync(["fetch", "--quiet", "origin", read.Base, $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
@@ -1165,13 +1166,14 @@ public sealed class PrReviews(
                 return (false, $"{branch} is not at the head read from GitHub ({Short(read.Head)}), so it is left alone");
             }
             worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
-            var rebase = await git.RunAsync(["rebase", $"origin/{read.Base}"], worktree, cancellationToken);
-            if (!rebase.Ok)
+            var merge = await git.RunAsync(["merge", "--no-edit", $"origin/{read.Base}"], worktree, cancellationToken);
+            if (!merge.Ok)
             {
-                await git.RunAsync(["rebase", "--abort"], worktree, cancellationToken);
-                return (true, $"rebasing {branch} onto {read.Base} conflicts ({rebase.Why})");
+                await git.RunAsync(["merge", "--abort"], worktree, cancellationToken);
+                return (true, $"merging {read.Base} into {branch} conflicts ({merge.Why})");
             }
-            var push = await git.RunAsync(["push", $"--force-with-lease=refs/heads/{branch}:{read.Head}", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
+            // A plain push: the merge sits on the head read, so it is a fast-forward, refused if the branch moved since.
+            var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
             return push.Ok ? null : (false, $"git could not push {branch}: {push.Why}");
         }
         catch (FlightException ex)

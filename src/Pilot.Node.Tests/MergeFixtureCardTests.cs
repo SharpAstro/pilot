@@ -102,7 +102,7 @@ public sealed class MergeFixtureCardTests
     [Theory]
     [InlineData("conflicts", "conflicts with its base")]
     [InlineData("behind", "is behind its base")]
-    public async Task ConflictsAndBehindShowAsAGoAroundThatRebasesAndLinkTheirPr(string fixture, string title)
+    public async Task ConflictsAndBehindShowAsAGoAroundAndLinkTheirPr(string fixture, string title)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Ready(node);

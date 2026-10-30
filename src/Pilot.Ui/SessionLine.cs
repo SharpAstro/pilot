@@ -141,7 +141,7 @@ internal sealed partial record SessionLine
         };
     }
 
-    private static int StateOrder(SessionState state) => state switch
+    internal static int StateOrder(SessionState state) => state switch
     {
         SessionState.Waiting => 0,
         SessionState.Working => 1,
