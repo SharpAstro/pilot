@@ -594,6 +594,11 @@ public sealed partial class LegCommander(
             return;
         }
         _rung[current.Code] = $"failed {step.Target}";
+        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner.
+        if (step.Verb == Verbs.OpenPr && result.Error?.Contains(" conflicts", StringComparison.Ordinal) == true)
+        {
+            return;
+        }
         state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
             [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
