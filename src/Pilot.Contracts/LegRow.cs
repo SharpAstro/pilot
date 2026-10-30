@@ -101,6 +101,13 @@ public sealed record LegRow
     /// </summary>
     public LegWait? Wait { get; init; }
 
+    /// <summary>
+    /// Where the node wrote this leg in the flight's work item (a sub-issue, a Shortcut task); null when it has not, as for a leg
+    /// written before sub-tasks or in a repo that has them off.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SubTask? SubTask { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
