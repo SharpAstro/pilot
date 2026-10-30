@@ -391,4 +391,23 @@ public sealed class PrFixTests3 : PrFixTestsBase
         at.ShouldBeGreaterThanOrEqualTo(0);
         lines[at + 1].ShouldContain("fixing, du1-fix-widget-7, round 1");
     }
+
+    [Fact]
+    public async Task AFixPrWritesOneLineToTheLogStartedWhenItStartsAFixerAndRefusedWhenItDoesNot()
+    {
+        var log = new StringWriter();
+        _reviews.Error = log;
+        _github.Login = "controller";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        log.GetStringBuilder().Clear();
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull();
+
+        var lines = log.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        lines.Length.ShouldBe(2);
+        lines[0].ShouldBe($"fix-pr pr/acme/widget#7, asked by controller: started du1-fix-widget-7 at {Row.Head[..8]}");
+        lines[1].ShouldStartWith("fix-pr pr/acme/widget#7, asked by controller: refused: ");
+        lines[1].ShouldContain("fixing it already");
+    }
 }
