@@ -28,7 +28,8 @@ public sealed class ClaudeIdeaMilestoner : IIdeaMilestoner
     /// <summary>How many open issues of a milestone Claude is shown.</summary>
     public const int IssuesShown = 8;
 
-    public static string Prompt(IdeaText idea, MilestoneContext[] open)
+    /// <summary>The open milestones as Claude is shown them: each with its due date, count, description and a few of its open issues; empty for none.</summary>
+    public static string Listing(MilestoneContext[] open)
     {
         var text = new StringBuilder();
         foreach (var (milestone, issues) in open)
@@ -49,6 +50,12 @@ public sealed class ClaudeIdeaMilestoner : IIdeaMilestoner
                 text.Append("    * ").AppendLine(title);
             }
         }
+        return text.ToString();
+    }
+
+    public static string Prompt(IdeaText idea, MilestoneContext[] open)
+    {
+        var listing = Listing(open);
         return $$"""
             Decide which milestone of a GitHub repo this idea belongs in. Nothing is changed: you only propose.
             - Choose one of the open milestones below when the idea fits its theme, by its exact title.
@@ -60,7 +67,7 @@ public sealed class ClaudeIdeaMilestoner : IIdeaMilestoner
             {{idea.Joined}}
 
             === THE OPEN MILESTONES ===
-            {{(text.Length > 0 ? text.ToString() : "(none)")}}
+            {{(listing.Length > 0 ? listing : "(none)")}}
             """;
     }
 
