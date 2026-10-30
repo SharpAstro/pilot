@@ -244,11 +244,9 @@ if (File.Exists(iconPath) && PngImageDecoder.TryDecodeRgba8(File.ReadAllBytes(ic
 window.GetSizeInPixels(out var width, out var height);
 using var context = VulkanContext.Create(window.Instance, window.Surface, (uint)width, (uint)height);
 using var renderer = new VkRenderer(context, (uint)width, (uint)height);
-// Every text measure is remembered by text, font and size, so a leaf costs a lookup, not a fit, in an unchanged frame.
-var memo = new MemoMeasureRenderer<VulkanContext>(renderer);
-var view = new SessionsView<VulkanContext>(memo);
+var view = new SessionsView<VulkanContext>(renderer);
 // The In play / Everything choice is kept in the user's GUI file, so a restart opens as the window was left.
-var chrome = new PilotChrome<VulkanContext>(memo, view, PlayFilter.DefaultFile) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
+var chrome = new PilotChrome<VulkanContext>(renderer, view, PlayFilter.DefaultFile) { FontPath = SessionsCapture.FontPath, DpiScale = window.DisplayScale };
 
 using var cts = new CancellationTokenSource();
 // Logging as tianwen's GUI does it: a logger of its own, and the renderer's pointed at the same factory, so its lines get
@@ -335,6 +333,9 @@ void OpenAway(string location, Action? failed = null) => tracker.Run(async () =>
         loop.RequestRedraw();
     }
 }, $"open {location}");
+// The release the update light shows, as the render thread last drew the header (null while none shows): the page builder
+// asks a frame each second while it is lit and unlit in turn, and none while there is no light.
+string? lightShown = null;
 if (feed is not null && client is not null && clients is not null)
 {
     view.CanSay = true;
@@ -418,7 +419,9 @@ if (feed is not null && client is not null && clients is not null)
                     ? $"pilot-gui: update light on: the node (pid {node.ProcessId}) runs pilot {newer}, this window {NodeFeed.ClientVersion} from {AppContext.BaseDirectory}"
                     : $"pilot-gui: no update light: the node (pid {node.ProcessId}) runs pilot {newer}, but this window ({NodeFeed.ClientVersion}) runs from {AppContext.BaseDirectory}, not the node's folder, so a restart would not pick it up");
             }
-            return nodeFolder.Beside ? newer : null;
+            var shown = nodeFolder.Beside ? newer : null;
+            Volatile.Write(ref lightShown, shown);
+            return shown;
         };
         chrome.About.Restart = () =>
         {
@@ -922,7 +925,7 @@ if (feed is not null)
                 var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
                 if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
                     && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
-                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes))))
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))))))
                 {
                     continue;
                 }
@@ -940,8 +943,9 @@ if (feed is not null)
                 // different text.
                 var made = Tuple.Create(pages, fleetScreen);
                 Volatile.Write(ref latest, made);
-                var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes);
-                var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header));
+                var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown)));
+                var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header,
+                    FrameWatch.LanLine(chrome.Flights.Lan, now)));
                 frameWatch.Built(System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted));
                 if (!worth)
                 {

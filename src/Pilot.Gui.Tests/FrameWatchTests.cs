@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-public class FrameWatchTests
+public partial class FrameWatchTests
 {
     private sealed class Capture : ILogger
     {
@@ -205,4 +205,156 @@ public class FrameWatchTests
         nodes.Down = new Dictionary<string, DateTimeOffset?> { ["se1:7313"] = T0 };
         FrameWatch.Header(false, false, null, nodes).ShouldNotBe(two, "SE1 went down: its pill says when it was last heard");
     }
+
+    [Fact]
+    public void The_update_light_s_phase_moves_the_header_each_second_only_while_it_shows()
+    {
+        var nodes = new NodeFilter();
+        var ms = 0L;
+        var about = new AboutCard { Clock = () => ms };
+        long At(long clock, string? shown)
+        {
+            ms = clock;
+            return FrameWatch.Header(false, false, "2.4.1", nodes, FrameWatch.Light(about, shown));
+        }
+
+        At(0, "2.4.1").ShouldNotBe(At(1000, "2.4.1"), "lit, then unlit a second later");
+        At(1000, "2.4.1").ShouldNotBe(At(2000, "2.4.1"));
+        At(0, "2.4.1").ShouldBe(At(500, "2.4.1"), "the same phase within its second");
+        At(0, null).ShouldBe(At(1000, null), "no light shows (a window run from a plane): nothing pulses, no frame");
+    }
+
+    [Fact]
+    public void The_LAN_row_s_seconds_move_the_Flights_page_and_nothing_else()
+    {
+        var pages = Busy(T0);
+        var fleet = new FleetScreen([], T0);
+        var lan = LanWatch.Over(() => [], T0);
+        long At(PilotPage page, int seconds) =>
+            FrameWatch.Fingerprint(pages, fleet, T0 + TimeSpan.FromSeconds(seconds), page, lan: FrameWatch.LanLine(lan, T0 + TimeSpan.FromSeconds(seconds)));
+
+        At(PilotPage.Flights, 3).ShouldNotBe(At(PilotPage.Flights, 4), "LAN: discovering (3 s), then (4 s)");
+        At(PilotPage.Jobs, 3).ShouldBe(At(PilotPage.Jobs, 4));
+        // Once a node is heard and no ask waits, the row is not drawn.
+        FrameWatch.LanLine(LanWatch.Over(() => [new LanNode("10.0.0.9:7313", "SE1")], T0), T0 + TimeSpan.FromSeconds(3)).ShouldBeNull();
+    }
+
+    [Fact]
+    public void The_Ideas_page_turns_over_each_second_as_Settings_does()
+    {
+        // An idea's "checked 12s ago" is counted from a readiness the Ideas view holds itself, which the pages do not carry.
+        var pages = Busy(T0);
+        var fleet = new FleetScreen([], T0);
+        long At(PilotPage page, int seconds) => FrameWatch.Fingerprint(pages, fleet, T0 + TimeSpan.FromSeconds(seconds), page);
+
+        At(PilotPage.Ideas, 0).ShouldNotBe(At(PilotPage.Ideas, 1));
+        At(PilotPage.Settings, 0).ShouldNotBe(At(PilotPage.Settings, 1));
+        At(PilotPage.Repos, 0).ShouldBe(At(PilotPage.Repos, 1), "a page with no clock text of its own stays as it was");
+    }
+
+    /// <summary>Every text the chrome draws, in order; nothing is painted.</summary>
+    private sealed class DrawnText(uint width, uint height) : DIR.Lib.RgbaImageRenderer(width, height)
+    {
+        public List<string> Texts { get; } = [];
+
+        public override void DrawText(ReadOnlySpan<char> text, string fontFamily, float fontSize, DIR.Lib.RGBAColor32 fontColor, in DIR.Lib.RectInt layout,
+            DIR.Lib.TextAlign horizAlignment = DIR.Lib.TextAlign.Center, DIR.Lib.TextAlign vertAlignment = DIR.Lib.TextAlign.Near) => Texts.Add(text.ToString());
+    }
+
+    public static TheoryData<string> Pages() =>
+    [
+        .. Enum.GetValues<PilotPage>().Where(p => p != PilotPage.Cards).Select(p => p.ToString()),
+        "flight page",
+        "Flights with the LAN row",
+    ];
+
+    // The moments the same rows are drawn at: a second on; across the summaries' minute (made 200 s before PageData.Now, so their
+    // "made 3m ago" turns at +40 s, where nothing else does); across the rows' minute (they sit on whole minutes of PageData.Now);
+    // a minute and a second on; and an hour on.
+    private static readonly int[] Moments = [0, 1, 39, 40, 41, 59, 60, 61, 119, 120, 3600];
+
+    /// <summary>
+    /// Builds publish only when the fingerprint moves, so every text a page draws that turns over with the clock alone (the
+    /// rows unchanged, the feeds' version the same) has to move its page's fingerprint, or the window shows it frozen. Each page
+    /// is drawn by the chrome, as the window draws it, from the same rows at moments a second, a minute and an hour apart; where
+    /// what it draws differs, so must the fingerprint. The "as of" in a page's source line is left out: it says when the shown
+    /// pages were built, and an idle page is not built again for it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public void Every_text_a_page_draws_from_the_clock_moves_its_fingerprint(string page)
+    {
+        var shown = page is "flight page" or "Flights with the LAN row" ? PilotPage.Flights : Enum.Parse<PilotPage>(page);
+        // The LAN row turns over each second for its first ten, which would hide any other text's turn on the Flights page.
+        var drawn = Moments.Select(s => Draw(page, shown, PageData.Now + TimeSpan.FromSeconds(s), lan: page == "Flights with the LAN row")).ToList();
+        drawn.ShouldAllBe(d => d.Text.Length > 0, $"{page} draws no text");
+        for (var i = 1; i < drawn.Count; i++)
+        {
+            if (drawn[i].Text != drawn[i - 1].Text)
+            {
+                drawn[i].Fingerprint.ShouldNotBe(drawn[i - 1].Fingerprint,
+                    $"{page} from +{Moments[i - 1]} s to +{Moments[i]} s draws {Differ(drawn[i - 1].Text, drawn[i].Text)} with the same fingerprint");
+            }
+        }
+    }
+
+    [Fact]
+    public void The_clock_alone_changes_what_some_pages_draw()
+    {
+        // The table above is not empty: a session's "3m ago", a running job's seconds, the LAN row's and a summary's "made" do turn over.
+        string At(PilotPage page, int seconds) => Draw(page.ToString(), page, PageData.Now + TimeSpan.FromSeconds(seconds)).Text;
+
+        At(PilotPage.Sessions, 59).ShouldNotBe(At(PilotPage.Sessions, 60));
+        At(PilotPage.Jobs, 0).ShouldNotBe(At(PilotPage.Jobs, 1));
+        Draw("LAN", PilotPage.Flights, PageData.Now, lan: true).Text.ShouldNotBe(Draw("LAN", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(1), lan: true).Text);
+        // The summary card's "made 3m ago" turns at +40 s, on Home and on a flight's page.
+        At(PilotPage.Home, 39).ShouldNotBe(At(PilotPage.Home, 40));
+        Draw("flight page", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(39)).Text.ShouldNotBe(Draw("flight page", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(40)).Text);
+    }
+
+    private static string Differ(string a, string b)
+    {
+        var from = 0;
+        while (from < a.Length && from < b.Length && a[from] == b[from]) from++;
+        string Around(string s) => s.Substring(Math.Max(0, from - 40), Math.Min(s.Length - Math.Max(0, from - 40), 100)).ReplaceLineEndings(" | ");
+        return $"'{Around(a)}' then '{Around(b)}'";
+    }
+
+    private static (string Text, long Fingerprint) Draw(string page, PilotPage shown, DateTimeOffset at, bool lan = false)
+    {
+        var data = PageData.At(at);
+        var here = data.Nodes[0];
+        // The summary card on Home (every node's, as two nodes are shown) and on the first flight's page, made 200 s before Now.
+        var made = PageData.Now - TimeSpan.FromSeconds(200);
+        var summaries = new SummaryShelf(data.Nodes, new Dictionary<(string Node, string Scope), SummaryRow>
+        {
+            [(here.Key, SummaryRow.AllNodesScope)] = new() { Scope = SummaryRow.AllNodesScope, Markdown = "All calm.", MadeAt = made, Tokens = 10 },
+            [(here.Key, data.Flights.Lines[0].Code)] = new() { Scope = data.Flights.Lines[0].Code, Markdown = "On its way.", MadeAt = made, Tokens = 10 },
+        });
+        var ideas = new IdeasScreen([], [], [], "test", at);
+        var pages = new FleetPages(data.Sessions, data.Flights, data.Jobs, [.. data.Jobs.Lines.Select(l => l.Row)], data.Cards, data.Repos, summaries, data.Machines, data.PullRequests, ideas);
+
+        using var renderer = new DrawnText(1600, 900);
+        var chrome = new PilotChrome<DIR.Lib.RgbaImage>(renderer, new SessionsView<DIR.Lib.RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Play.ShowEverything();
+        chrome.Nodes.Choices = data.Nodes;
+        chrome.Summaries.Shelf = summaries;
+        chrome.Flights.Jobs = pages.JobRows;
+        // Discovering since Now: "LAN: discovering (N s)" for ten seconds, then still listening. Without it, a node is heard and
+        // the row is not drawn.
+        chrome.Flights.Lan = lan ? LanWatch.Over(() => [], PageData.Now) : LanWatch.Over(() => [new LanNode("10.0.0.9:47731", "LE1")], PageData.Now);
+        chrome.Show(shown);
+        if (page == "flight page")
+        {
+            chrome.Flights.OpenDetail(data.Flights.Lines[0].Code);
+        }
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new DIR.Lib.RectF32(0, 0, 1600, 900), data.Machines, ideas);
+
+        var text = AsOf().Replace(string.Join("\n", renderer.Texts), "as of");
+        var header = FrameWatch.Header(false, false, null, chrome.Nodes);
+        return (text, FrameWatch.Fingerprint(pages, data.Fleet, at, shown, version: 1, header, FrameWatch.LanLine(chrome.Flights.Lan, at)));
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"as of\s+\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\s+UTC")]
+    private static partial System.Text.RegularExpressions.Regex AsOf();
 }

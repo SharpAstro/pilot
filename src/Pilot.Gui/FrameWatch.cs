@@ -35,14 +35,16 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
 
     /// <summary>
     /// What the header of every page shows that the builder reads and the render thread does not get from the pages: this node's
-    /// maintenance and autopilot, the update light's release, and the node pills (each node's name, and when a down one was last heard).
+    /// maintenance and autopilot, the update light's release and, while the light shows, its phase (<paramref name="light"/>,
+    /// <see cref="Light"/>), and the node pills (each node's name, and when a down one was last heard).
     /// </summary>
-    internal static long Header(bool maintenance, bool autopilot, string? newer, NodeFilter nodes)
+    internal static long Header(bool maintenance, bool autopilot, string? newer, NodeFilter nodes, bool? light = null)
     {
         var hash = new HashCode();
         hash.Add(maintenance);
         hash.Add(autopilot);
         hash.Add(newer, StringComparer.Ordinal);
+        hash.Add(light);
         hash.Add(nodes.All);
         foreach (var choice in nodes.Choices)
         {
@@ -53,14 +55,26 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     }
 
     /// <summary>
+    /// The update light's phase while it shows <paramref name="shown"/> (what <see cref="AboutCard.Newer"/> last answered the
+    /// render thread), null while no light shows: lit and unlit a second each, so a frame a second is asked only while it pulses.
+    /// </summary>
+    internal static bool? Light(AboutCard about, string? shown) => shown is null ? null : about.Lit;
+
+    /// <summary>
+    /// What the Flights page's LAN row says (<see cref="LanWatch.Line"/>), counted in seconds while it discovers or an ask waits;
+    /// null while the row is not drawn.
+    /// </summary>
+    internal static string? LanLine(LanWatch? lan, DateTimeOffset now) => lan is { Quiet: false } ? lan.Line(now) : null;
+
+    /// <summary>
     /// A fingerprint of what the window draws from the built pages on <paramref name="page"/>: the page's own text (every row's
     /// dump line, which carries its own "ago"), the cards panel and the rail, which every page has, and <paramref name="header"/>
     /// (<see cref="Header"/>). It moves exactly when some of that text does, whenever its second or minute turns over.
     /// Home's is whole: a node event that changes nothing Home draws (a busy worker's last response, on a node of hundreds of
     /// sessions) leaves it as it was. The other pages' are not, so <paramref name="version"/> (the feeds' combined version) is
-    /// part of theirs, and any node event redraws them.
+    /// part of theirs, and any node event redraws them. <paramref name="lan"/> is the Flights page's LAN row (<see cref="LanLine"/>).
     /// </summary>
-    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now, PilotPage page = PilotPage.Home, long version = 0, long header = 0)
+    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now, PilotPage page = PilotPage.Home, long version = 0, long header = 0, string? lan = null)
     {
         var hash = new HashCode();
         void Add(string? line) => hash.Add(line, StringComparer.Ordinal);
@@ -112,6 +126,8 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 }
                 break;
             case PilotPage.Flights:
+                // The LAN row's seconds while it discovers or an ask waits (the summary card of a flight's detail is added below).
+                Add(lan);
                 foreach (var line in pages.Flights.Lines)
                 {
                     Add(line.ToDumpLine());
@@ -124,6 +140,8 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 break;
             case PilotPage.Jobs:
                 foreach (var line in pages.Jobs.Lines) Add(line.ToDumpLine());
+                // Who holds the queue, "held for 12m 4s": counted in seconds.
+                Add(pages.Jobs.Holder);
                 break;
             case PilotPage.Fleet:
                 foreach (var line in fleet.Lines) Add(line.ToDumpLine());
@@ -143,11 +161,15 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 }
                 break;
             case PilotPage.Settings:
-                // Settings' "checked Ns ago" is counted from the clock in seconds, so an open Settings page turns over each second.
+            case PilotPage.Ideas:
+                // Settings' "checked Ns ago" is counted from the clock in seconds, and so is an idea's "checked 12s ago", from a
+                // readiness the Ideas view holds itself (a check it asked for), out of reach of the pages: an open Settings or
+                // Ideas page turns over each second.
                 hash.Add(now.ToUnixTimeSeconds());
                 break;
         }
-        if (page is PilotPage.Home or PilotPage.Chat && pages.Summaries is { } shelf)
+        // The summary card's "made 3m ago": on Home, and on a flight's detail on the Flights page.
+        if (page is PilotPage.Home or PilotPage.Flights && pages.Summaries is { } shelf)
         {
             foreach (var row in shelf.Rows.Values) Add(SessionLine.Ago(now - row.MadeAt));
         }

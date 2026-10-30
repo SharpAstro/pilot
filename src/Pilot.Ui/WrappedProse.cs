@@ -24,7 +24,8 @@ internal static class WrappedProse
     /// <summary>
     /// <paramref name="text"/> cut after the last whole word within <paramref name="chars"/> characters: the words past what
     /// <paramref name="chars"/> could fill the capped lines with are never made into leaves, so each frame fits a bounded few
-    /// however long the text (the whole text is on hover where the caller keeps it). One word longer than the budget is kept whole.
+    /// however long the text (the whole text is on hover where the caller keeps it). A text with no whitespace within the budget
+    /// (one word longer than it: a path, a URL) is cut at the budget itself, so it too is a bounded few pieces (<see cref="Break"/>).
     /// </summary>
     internal static string Bound(string text, int chars)
     {
