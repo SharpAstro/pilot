@@ -423,8 +423,9 @@ public sealed class WatchtowerChatTests : IDisposable
         // And the fixer is among what it may do on autopilot.
         brief.ShouldContain("start a fixer on a PR outside a flight whose review asked for changes (`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`)");
         brief.ShouldContain("The node refuses it past its third round, on a design question and on another author's PR");
-        // Nothing promised that the node refuses it: a design question and a capped flight stay the person's.
-        brief.ShouldContain("are the person's: say so on the card and leave it to them.");
+        // Nothing promised that the node refuses it: a design question and a capped flight stay the person's unless they ask
+        // for it in the chat (#473).
+        brief.ShouldContain("are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
     }
 
     [Fact]
