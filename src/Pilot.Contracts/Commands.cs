@@ -297,6 +297,12 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
+    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// </summary>
+    public const string AllowRound = "allow-round";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>

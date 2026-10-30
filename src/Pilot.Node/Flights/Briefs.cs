@@ -789,6 +789,12 @@ public static class Briefs
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (Redo leg) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
+        text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
+        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes) and make the small ones");
+        text.AppendLine("  yourself in the plane. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
+        text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
+        text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
