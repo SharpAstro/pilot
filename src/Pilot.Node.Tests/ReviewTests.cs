@@ -883,7 +883,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndReviewedAfresh()
+    public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndKeepsItsPass()
     {
         var flight = await NewFlight("6", "parser");
         await Fly(flight, "parser");
@@ -898,7 +898,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         (await _legs.RebaseOntoBaseAsync("TIA6", Ct)).ShouldBeNull();
 
         Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F("TIA6").Review.ShouldNotBeNull().ShouldSatisfyAllConditions(r => r.State.ShouldBe(ReviewState.Passed), r => r.ReviewedHead.ShouldBe(Git(F("TIA6").Worktree, "rev-parse", "HEAD")));
         Open().ShouldBeEmpty();
     }
 
@@ -925,7 +925,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         F("TIA16").MergeWhenGreen.ShouldBeNull();
         _github.AutoMergeDisarmed.ShouldBe([pr.Number]);
         _state.Cards().Where(c => c.Kind == PrChecks.MergeDropped || c.Kind == LegCommander.MergeFailed).ShouldBeEmpty();
-        F("TIA16").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F("TIA16").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -1551,7 +1551,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         _github.Merged.ShouldBeEmpty();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
@@ -1572,7 +1572,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         _github.Merged.ShouldBeEmpty();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
