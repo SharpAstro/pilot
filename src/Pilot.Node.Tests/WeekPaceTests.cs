@@ -143,6 +143,7 @@ public sealed class WeekPaceLegTests : LegHoldTestsBase
     private async Task ParserDone()
     {
         await FlyingParser();
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
     }
 
