@@ -186,6 +186,7 @@ internal sealed class PilotChrome<TSurface>
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
+        Repos.OnPullRequest = OpenPullRequest;
         Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
@@ -744,6 +745,11 @@ internal sealed class PilotChrome<TSurface>
                 Flights.OpenDetail(code);
             }
         });
+        Repos.OnFlightCode = code => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, show);
+            Flights.OpenDetail(code);
+        });
         Repos.OnSession = line => Navigate(() =>
         {
             Switch(PilotPage.Sessions, show);
@@ -980,6 +986,7 @@ internal sealed class PilotChrome<TSurface>
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
         Cards.PullRequests = pullRequests?.Row;
+        Repos.PullRequests = pullRequests?.Row;
         Cards.Focus = Page switch
         {
             PilotPage.Flights => Flights.FocusCode,

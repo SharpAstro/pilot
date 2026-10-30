@@ -240,11 +240,14 @@ public sealed class ReposPageTests
             CellLayout.HitTest(arranged, node.Bounds.X, node.Bounds.Y);
         }
 
-        // A PR, in the repo's row and in the worktree's, opens its URL.
+        // A PR of a flight, in the repo's row, opens that flight's page; the worktree's "PR #n" is the browser's where the node lists no PRs.
         Click(b => b.Action == "pr:205");
-        opened.ShouldBe(["https://github.com/example-org/orbit/pull/205"]);
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.OpenCode.ShouldBe("ORB190");
+        opened.ShouldBeEmpty();
+        chrome.Show(PilotPage.Repos);
         Click(b => b.Action.EndsWith(":pr:205", StringComparison.Ordinal));
-        opened.Count.ShouldBe(2);
+        opened.ShouldBe(["https://github.com/example-org/orbit/pull/205"]);
 
         // The session opens its transcript on the Sessions page.
         Click(b => b.Action.EndsWith(":session:c3d4e5f6", StringComparison.Ordinal));
