@@ -170,7 +170,8 @@ public static class PilotCommand
             SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
-        // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
+        // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)
+        // or the Handled line it leaves (on).
         var actingOn = new Option<string?>("--why") { Description = "The message you are acting on, in your words: recorded with a command only the person may do, whose card or Handled line shows it" };
 
         Argument<string> Arg(string name, string description) => new(name) { Description = description };
@@ -717,11 +718,13 @@ public static class PilotCommand
         });
         var card = Arg("card", "The card's id, as c3");
         var choice = Words("choice", "The choice's number or label");
-        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice } },
-            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct));
-        var dismissWhy = Words("why", "Why it needs nothing", required: false);
-        var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissWhy } },
-            (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], who, ct));
+        // --why is the message acted on, as for the person's own commands: the watchtower quotes the person's words in its chat
+        // with it, and the node takes such an answer or dismissal as theirs. A dismissal's reason stays its own words.
+        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct, p.GetValue(actingOn)));
+        var dismissReason = Words("reason", "Why it needs nothing", required: false);
+        var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissReason }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissReason) ?? [], who, ct, p.GetValue(actingOn)));
 
         // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
         var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
