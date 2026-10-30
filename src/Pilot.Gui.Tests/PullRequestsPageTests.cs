@@ -857,7 +857,7 @@ public sealed class PullRequestsPageTests
         var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR");
         var card = new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "stop", Subject = Verbs.FlightTarget("PIL252"), Title = "PIL252 is ready to merge", At = Now, State = CardState.Open };
         var card2 = new CardRow { Id = "c2", Bin = CardBin.Ring, Kind = "stop", Subject = Verbs.FlightTarget("TIA1799"), Title = "TIA1799's PR conflicts with main", At = Now, State = CardState.Open };
-        foreach (var (width, height) in new[] { (1280, 800), (2000, 1000) })
+        foreach (var (width, height) in new[] { (900, 800), (1800, 1000) })
         {
             foreach (var night in new[] { false, true })
             {
@@ -867,12 +867,20 @@ public sealed class PullRequestsPageTests
                 chrome.Night.On = night;
                 var sessions = new SessionsScreen([], "live from the node on node.sock", Now);
                 // The stale read (an hour old) in one of the four: the amber source line.
-                var screen = Screen(night && width == 1280 ? Row(readAt: Now - TimeSpan.FromMinutes(9)) : Row());
+                var screen = Screen(night && width == 900 ? Row(readAt: Now - TimeSpan.FromMinutes(9)) : Row());
                 chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
                 // A moment later: the first row selected (a flight's) lights its card.
                 page.Select(page.IndexOf(page.VisiblePullRequests.First(r => r.Flight == "PIL252").Url));
                 chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
                 chrome.Cards.Focus.ShouldBe("PIL252");
+                // The tree: a repo and an org folded, and a header (the folded repo's) selected.
+                page.Toggle("SharpAstro/DIR.Lib");
+                page.ToggleOrg("sebgod");
+                chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
+                page.SelectedRow.ShouldNotBeNull();
+                page.Select(page.Rows.ToList().FindIndex(r => r.Item.Pr is null && r.Item.Key.EndsWith("SharpAstro/DIR.Lib", StringComparison.Ordinal)));
+                chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
+                page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
                 if (dir is { Length: > 0 })
                 {
                     Directory.CreateDirectory(dir);

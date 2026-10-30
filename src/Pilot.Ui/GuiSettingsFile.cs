@@ -13,6 +13,9 @@ internal sealed record GuiSettings
 
     /// <summary>Whether the window is painted red on black (the header's Night switch).</summary>
     public bool Night { get; init; }
+
+    /// <summary>What is folded on the Pull requests page: <c>org:name</c> and <c>repo:owner/name</c>, kept for an org or repo no longer listed.</summary>
+    public List<string> PullRequestFolds { get; init; } = [];
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -37,9 +40,11 @@ internal sealed class GuiSettingsFile : IDisposable
     private readonly Timer _pending;
     private int _dirty;
     private volatile bool _night;
+    private ImmutableArray<string> _folds;
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night, List<string> folds)
     {
+        _folds = [.. folds];
         Path = path;
         _night = night;
         _tables = tables.ToImmutableDictionary(t => t.Key, t => (IReadOnlyDictionary<string, float>)t.Value, StringComparer.Ordinal);
@@ -58,11 +63,13 @@ internal sealed class GuiSettingsFile : IDisposable
         path ??= DefaultPath;
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         var night = false;
+        var folds = new List<string>();
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
+                folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 foreach (var (page, widths) in settings.Tables)
                 {
                     if (widths is not null)
@@ -76,8 +83,9 @@ internal sealed class GuiSettingsFile : IDisposable
         {
             tables.Clear();
             night = false;
+            folds.Clear();
         }
-        return new GuiSettingsFile(path, tables, night);
+        return new GuiSettingsFile(path, tables, night, folds);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -105,6 +113,21 @@ internal sealed class GuiSettingsFile : IDisposable
         table.Changed += Touch;
     }
 
+    /// <summary>The folds the file holds for the Pull requests page.</summary>
+    public IReadOnlyList<string> PullRequestFolds => _folds;
+
+    /// <summary>Gives <paramref name="page"/> the folds this file holds, and keeps the file current: a fold or unfold writes it, a moment later.</summary>
+    public void Attach<TSurface>(PullRequestsView<TSurface> page)
+    {
+        page.RestoreFolds(_folds);
+        // Read on the thread that builds the page; the timer's write only reads the copy.
+        page.FoldsChanged += () =>
+        {
+            _folds = [.. page.Folds];
+            Touch();
+        };
+    }
+
     private void Touch()
     {
         Interlocked.Exchange(ref _dirty, 1);
@@ -120,7 +143,7 @@ internal sealed class GuiSettingsFile : IDisposable
         }
         ImmutableInterlocked.Update(ref _tables, held => held.SetItems(Volatile.Read(ref _attached).Select(t => KeyValuePair.Create(t.Page, t.Saved))));
         var json = JsonSerializer.Serialize(
-            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night },
+            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night, PullRequestFolds = [.. _folds] },
             GuiSettingsJsonContext.Default.GuiSettings);
 
         try

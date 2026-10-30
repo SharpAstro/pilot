@@ -761,6 +761,7 @@ internal sealed class PilotChrome<TSurface>
             file.Attach(table);
             table.Changed += redraw;
         }
+        file.Attach(PullRequests);
         file.Attach(Night);
         Night.Changed += _ => redraw();
     }

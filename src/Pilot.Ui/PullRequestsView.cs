@@ -140,6 +140,60 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private readonly Dictionary<string, PullRequestNode> _repoNodes = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<TreeRowItem<PullRequestNode>> _rows = [];
 
+    // Folds named (restored from the settings file) for an org or repo this page has not listed yet: kept, and applied when it comes.
+    private readonly HashSet<string> _pendingFolds = new(StringComparer.OrdinalIgnoreCase);
+    private string[] _savedFolds = [];
+
+    /// <summary>Raised, from the thread that builds the page, when what is folded changes (a click, a key, a restore).</summary>
+    public event Action? FoldsChanged;
+
+    /// <summary>
+    /// What is folded as <c>org:name</c> and <c>repo:owner/name</c>, in a stable order, including a fold of an org or repo
+    /// the page does not list now: it is kept, and folded again when it comes back.
+    /// </summary>
+    public IReadOnlyList<string> Folds
+    {
+        get
+        {
+            var folded = _orgNodes.Where(n => !_tree.IsExpanded(n.Value)).Select(n => "org:" + n.Key)
+                .Concat(_repoNodes.Where(n => !_tree.IsExpanded(n.Value)).Select(n => "repo:" + n.Key))
+                .Concat(_pendingFolds);
+            return [.. folded.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)];
+        }
+    }
+
+    /// <summary>Folds what <paramref name="folds"/> names (see <see cref="Folds"/>) and unfolds what it does not; a name not listed yet waits for its node.</summary>
+    public void RestoreFolds(IEnumerable<string>? folds)
+    {
+        _pendingFolds.Clear();
+        var wanted = new HashSet<string>(folds ?? [], StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, node) in _orgNodes)
+        {
+            Apply(node, wanted.Remove("org:" + name));
+        }
+        foreach (var (name, node) in _repoNodes)
+        {
+            Apply(node, wanted.Remove("repo:" + name));
+        }
+        _pendingFolds.UnionWith(wanted.Where(k => k.StartsWith("org:", StringComparison.Ordinal) || k.StartsWith("repo:", StringComparison.Ordinal)));
+        _savedFolds = [.. Folds];
+
+        void Apply(PullRequestNode node, bool folded)
+        {
+            if (folded) _tree.Collapse(node); else _tree.Expand(node);
+        }
+    }
+
+    private void NoteFolds()
+    {
+        var now = Folds;
+        if (!now.SequenceEqual(_savedFolds, StringComparer.Ordinal))
+        {
+            _savedFolds = [.. now];
+            FoldsChanged?.Invoke();
+        }
+    }
+
     /// <summary>The page's table: its columns' widths, which a drag on a title's divider changes and the GUI keeps.</summary>
     public ListTable Table { get; } = new("pull requests");
 
@@ -242,7 +296,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         if (!nodes.TryGetValue(name, out var node))
         {
             nodes[name] = node = new PullRequestNode();
-            _tree.Expand(node);
+            if (!_pendingFolds.Remove((ReferenceEquals(nodes, _orgNodes) ? "org:" : "repo:") + name))
+            {
+                _tree.Expand(node);
+            }
         }
         return node;
     }
@@ -604,6 +661,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         root.Children = children;
         _rows = _tree.Flatten(root, n => n.Children, n => n.Children.Count > 0 || (n.Org is { } o && NoteRows(o) > 0), includeRoot: false);
+        NoteFolds();
     }
 
     private int IndexOfFirstPr()
