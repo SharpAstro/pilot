@@ -52,6 +52,9 @@ public static class NodeWire
     /// <summary>The ledger's waste over a window, a <see cref="SpendWasteReport"/>: <c>/api/v1/spend/waste?window=5h|today|week</c>.</summary>
     public const string SpendWasteRoute = "/api/v1/spend/waste";
 
+    /// <summary>One flight's spend so far, per leg and round, a <see cref="SpendFlightReport"/>: <c>/api/v1/spend/flight?code=PIL515</c>.</summary>
+    public const string SpendFlightRoute = "/api/v1/spend/flight";
+
     /// <summary>The node's jobs: <c>/api/v1/jobs/&lt;id&gt;/log</c> is one's output, its end, as a <see cref="JobLog"/>.</summary>
     public const string JobsRoute = "/api/v1/jobs";
 

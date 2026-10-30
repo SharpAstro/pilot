@@ -548,6 +548,12 @@ public static class NodeApp
                 ? Results.Json(ResponseEnvelope<SpendWasteReport>.Ok(waste), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport)
                 : Results.Json(ResponseEnvelope<SpendWasteReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, statusCode: 400));
 
+        // One flight's spend so far, per leg and round: the flight's page.
+        app.MapGet(NodeWire.SpendFlightRoute, (string? code, SpendLedger ledger, TimeProvider time) =>
+            !string.IsNullOrWhiteSpace(code)
+                ? Results.Json(ResponseEnvelope<SpendFlightReport>.Ok(ledger.FlightReport(code, time.GetUtcNow()) ?? new SpendFlightReport { Flight = code, From = time.GetUtcNow(), To = time.GetUtcNow(), Messages = 0, Tokens = 0, Weighted = 0, Legs = [] }), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport)
+                : Results.Json(ResponseEnvelope<SpendFlightReport>.Fail("Give a flight code: ?code=PIL515", 400), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, statusCode: 400));
+
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
         app.MapGet(NodeWire.JobLogPattern, (string id, NodeState state, JobRunner jobs) =>

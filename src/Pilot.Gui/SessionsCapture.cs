@@ -71,7 +71,7 @@ internal static class SessionsCapture
     /// <param name="openFlight">The code of the flight whose page the Flights page shows in place of its table.</param>
     public static SessionsView<RgbaImage> Render(RgbaImageRenderer renderer, SessionsScreen screen, float dpiScale = 1f, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null, bool inPlay = false, IReadOnlyList<MachineLine>? machines = null,
-        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null)
+        string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today")
     {
         var view = new SessionsView<RgbaImage>(renderer) { CanSay = canSay };
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = FontPath, DpiScale = dpiScale };
@@ -85,6 +85,13 @@ internal static class SessionsCapture
         chrome.Jobs.CanCommand = canSay;
         chrome.Cards.CanTell = canSay;
         chrome.Show(page);
+        // A file's spend: the Spend page's window and the flight page's per-leg figures.
+        var spendScreen = spend is null ? null : SpendScreen.From(spend, spendWindow, screen.Source, screen.AsOf);
+        if (spend is not null)
+        {
+            chrome.Spend.Pick(spendWindow);
+            chrome.Flights.Spend = spend.Flights;
+        }
         if (repos is not null)
         {
             chrome.Repos.ExpandAll(repos);
@@ -116,7 +123,7 @@ internal static class SessionsCapture
             }
         }
         var window = new RectF32(0, 0, renderer.Width, renderer.Height);
-        chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
+        chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines, null, spendScreen);
         if (hover is not null)
         {
             // The hover text the window shows once the pointer has rested on the region, painted last, over everything.
@@ -127,7 +134,7 @@ internal static class SessionsCapture
             // A drag as the window gets one: a press at the start of the first run, a move to the end of the last, a release.
             // The selection is only offered where a copy has somewhere to go, so a capture's goes nowhere.
             chrome.Flights.CopyText = _ => { };
-            chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
+            chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines, null, spendScreen);
             var (from, to) = select.Split('|') is [var a, var b] ? (a.Trim(), b.Trim()) : (select.Trim(), select.Trim());
             var runs = chrome.Flights.SelectableTextRegions.ToArray();
             var first = Array.FindIndex(runs, r => r.Text.StartsWith(from, StringComparison.Ordinal));
@@ -138,7 +145,7 @@ internal static class SessionsCapture
                 chrome.HandleInput(new InputEvent.MouseDown(start.X + 0.5f, start.Y + start.Height / 2f));
                 chrome.HandleInput(new InputEvent.MouseMove(end.X + end.Width - 0.5f, end.Y + end.Height / 2f, MouseButton.Left));
                 chrome.HandleInput(new InputEvent.MouseUp(end.X + end.Width - 0.5f, end.Y + end.Height / 2f));
-                chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines);
+                chrome.Render(screen, flights, cards, jobs, null, repos, pullRequests, window, machines, null, spendScreen);
             }
         }
         return view;
@@ -168,10 +175,10 @@ internal static class SessionsCapture
     /// <summary>Renders one frame to <paramref name="pngPath"/> and its rows to <c>&lt;pngPath&gt;.rows.txt</c>; returns the dump's path.</summary>
     public static string Write(SessionsScreen screen, string pngPath, int width, int height, bool canSay = false,
         FlightsScreen? flights = null, PilotPage page = PilotPage.Sessions, CardsScreen? cards = null, JobsScreen? jobs = null, string? openFlight = null, ReposScreen? repos = null,
-        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null)
+        IReadOnlyList<MachineLine>? machines = null, string? hover = null, FlightsViewMode? flightsView = null, string? select = null, PullRequestsScreen? pullRequests = null, string? layers = null, bool night = false, string? fold = null, SpendSnapshot? spend = null, string spendWindow = "today")
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold);
+        Render(renderer, screen, canSay: canSay, flights: flights, page: page, cards: cards, jobs: jobs, openFlight: openFlight, repos: repos, machines: machines, hover: hover, flightsView: flightsView, select: select, pullRequests: pullRequests, layers: layers, night: night, fold: fold, spend: spend, spendWindow: spendWindow);
         if (Path.GetDirectoryName(Path.GetFullPath(pngPath)) is { } folder)
         {
             Directory.CreateDirectory(folder);
@@ -181,11 +188,13 @@ internal static class SessionsCapture
         var rowsPath = pngPath + ".rows.txt";
         var open = page == PilotPage.Flights ? flights?.Lines.FirstOrDefault(l => l.Code == openFlight) : null;
         File.WriteAllText(rowsPath, open is not null
-            ? FlightDetail.From(open, flights!.AsOf).ToDump() + "\n"
+            ? FlightDetail.From(open, flights!.AsOf, spend?.Flights.FirstOrDefault(f => f.Flight == open.Code)).ToDump() + "\n"
             : page == PilotPage.Flights && flights is not null
             ? string.Concat(flights.Lines.Select(l => l.ToDumpLine() + "\n"))
             : page == PilotPage.Repos && repos is not null
                 ? string.Concat(repos.Lines.Where(l => l.Status.Tracked).SelectMany(l => l.Worktrees.Select(w => w.ToDumpLine()).Prepend(l.ToDumpLine())).Select(t => t + "\n"))
+            : page == PilotPage.Spend
+                ? (spend is null ? "no spend in the file" : SpendScreen.From(spend, spendWindow, screen.Source, screen.AsOf).ToDump()) + "\n"
             : page == PilotPage.PullRequests
                 ? PullRequestsDump(pullRequests) + "\n"
             : page == PilotPage.Jobs && jobs is not null

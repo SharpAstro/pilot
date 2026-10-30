@@ -176,6 +176,48 @@ public sealed partial class SpendLedger
         };
     }
 
+    /// <summary>
+    /// What <paramref name="flight"/> has spent so far, in all and per leg and round: every message the ledger holds for it, so since
+    /// its first. Null for a flight the ledger holds nothing for.
+    /// </summary>
+    public SpendFlightReport? FlightReport(string flight, DateTimeOffset now)
+    {
+        SpendEntry[] mine;
+        lock (_lock)
+        {
+            mine = [.. _entries.Values.Where(e => string.Equals(e.Flight, flight, StringComparison.OrdinalIgnoreCase)).OrderBy(e => e.At)];
+        }
+        if (mine.Length == 0)
+        {
+            return null;
+        }
+        SpendRoundRow Round(int round, SpendEntry[] entries) => new() { Round = round, Messages = entries.Length, Tokens = entries.Sum(e => e.Tokens), Weighted = entries.Sum(e => e.Usage.WeightedTwentieths) / 20 };
+        return new SpendFlightReport
+        {
+            Flight = mine[0].Flight!,
+            From = mine[0].At,
+            To = now,
+            Messages = mine.Length,
+            Tokens = mine.Sum(e => e.Tokens),
+            Weighted = mine.Sum(e => e.Usage.WeightedTwentieths) / 20,
+            Legs =
+            [
+                .. mine.GroupBy(e => e.Leg ?? "-", StringComparer.Ordinal).Select(g =>
+                {
+                    var entries = g.ToArray();
+                    return new SpendLegRow
+                    {
+                        Leg = g.Key,
+                        Messages = entries.Length,
+                        Tokens = entries.Sum(e => e.Tokens),
+                        Weighted = entries.Sum(e => e.Usage.WeightedTwentieths) / 20,
+                        Rounds = [.. entries.GroupBy(e => e.Round).OrderBy(r => r.Key).Select(r => Round(r.Key, [.. r]))],
+                    };
+                }),
+            ],
+        };
+    }
+
     // The rows of one grouping, the largest first. Shares are in tenths of a percent by the largest remainder, so they add up to 100.
     private static SpendRow[] Rows(SpendEntry[] entries, Func<SpendEntry, string> key)
     {
