@@ -1358,6 +1358,42 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(flight.Worktree, "ls-remote", "origin", "flight/tia16").ShouldStartWith(pushed);
     }
 
+    [Fact]
+    public async Task AGoAroundsLegFailedWithItsFixPushedIsFinishedByTheNodeAndReviewedAfresh()
+    {
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "20", "Flight 20")).Ok.ShouldBeTrue();
+        var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
+        (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=Its check passes",
+            "check=dotnet test", "item=The step")).Ok.ShouldBeTrue();
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var leg = _state.Legs(flight.Code).Single();
+        var worker = leg.Worker!;
+        var started = _workers.Started.Count;
+
+        // The worker made the fix and pushed it itself, then lost its way at the end and said it failed.
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the fix");
+        Git(flight.Worktree, "push", "-q", "origin", $"HEAD:{flight.Branch}");
+        for (var step = 1; step <= leg.Checklist.Count(); step++)
+        {
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, $"{step}")).Ok.ShouldBeTrue();
+        }
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "lost my way")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        Open().ShouldNotContain(c => c.Kind == "leg-failed");
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.SelfFinishedKind);
+        _workers.Started.Skip(started).Select(w => w.Name).ShouldContain(Reviewer(flight.Code));
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+    }
+
     [Theory]
     [InlineData("18")]
     [InlineData("19")]
