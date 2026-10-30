@@ -835,6 +835,9 @@ public static class Briefs
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
+        text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
+        text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
