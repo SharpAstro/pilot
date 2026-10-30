@@ -79,4 +79,33 @@ public sealed class OpenPrBaseTests : ReviewTestsBase
         Git(flight.Worktree, "status", "--porcelain").ShouldBe("");
         F(flight.Code).PullRequest.ShouldBeNull();
     }
+
+    [Fact]
+    public async Task TheNodesOwnOpenThatConflictedOpensThePrOnceTheConflictIsResolvedAndItsCardClosed()
+    {
+        var (flight, _) = await PushedFlightWhoseBaseMoved("clash.txt", "theirs\n");
+        _legs.Models = new RoleModels(new NodeSettings());
+        await _legs.AdvanceAllAsync(Ct);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == "pr-conflicts").ShouldHaveSingleItem();
+        // A flight with no PR is told to open it, not to review a PR it does not have.
+        card.Detail.ShouldNotBeNull().ShouldContain($"pilot flight pr {flight.Code}");
+
+        // Resolved in the plane as the watchtower does: the base merged in, the conflict settled, pushed plain.
+        Git(flight.Worktree, "fetch", "-q", "origin");
+        Should.Throw<InvalidOperationException>(() => Git(flight.Worktree, "merge", "--no-edit", "origin/main"));
+        File.WriteAllText(Path.Combine(flight.Worktree, "clash.txt"), "both\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--no-edit");
+        Git(flight.Worktree, "push", "-q", "origin", flight.Branch);
+
+        // While the card is open the sweep leaves the open alone.
+        await _legs.AdvanceAllAsync(Ct);
+        F(flight.Code).PullRequest.ShouldBeNull();
+
+        _state.CloseCard(card.Id, "resolved", "watchtower");
+        await _legs.AdvanceAllAsync(Ct);
+
+        F(flight.Code).PullRequest.ShouldNotBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.NextStepKind || c.Kind == "pr-conflicts");
+    }
 }

@@ -575,6 +575,12 @@ public sealed partial class LegCommander(
         {
             return;
         }
+        // An open that conflicted waits on the watchtower's pr-conflicts card: once that card closes (the base merged in and pushed), the
+        // sweep opens the PR itself, as no ring offers it.
+        if (step.Verb == Verbs.OpenPr && state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(current.Code)))
+        {
+            return;
+        }
         var result = await RunAsync(step, cancellationToken);
         if (result.Ok)
         {
@@ -596,12 +602,13 @@ public sealed partial class LegCommander(
         {
             return;
         }
-        _rung[current.Code] = $"failed {step.Target}";
-        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner.
-        if (step.Verb == Verbs.OpenPr && result.Error?.Contains(" conflicts", StringComparison.Ordinal) == true)
+        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
+        // sweep opens the PR once that card closes.
+        if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
             return;
         }
+        _rung[current.Code] = $"failed {step.Target}";
         state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
             [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
@@ -2256,7 +2263,7 @@ public sealed partial class LegCommander(
             return (repaired, pr, mergedBase);
         });
         }
-        catch (FlightException ex) when (ex.Message.Contains(" conflicts", StringComparison.Ordinal))
+        catch (FlightException ex) when (IsConflict(ex.Message))
         {
             // A base that conflicts is the watchtower's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
             // the same pr-conflicts card the update paths raise, not a ring that the flight could not open its PR by itself.
@@ -2265,6 +2272,8 @@ public sealed partial class LegCommander(
         }
         var (repaired, pr, mergedBase) = opened;
         Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
+        // The PR opened, so a conflict that held its opening is resolved.
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
@@ -2886,7 +2895,7 @@ public sealed partial class LegCommander(
         }
         var number = flight.PullRequest is { } n ? $"PR #{n}" : "branch";
         state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
-            $"{why}. The plane is {flight.Worktree}: {ConflictBrief(why)}, then `pilot flight review {code}`. {ResolveConflict} only if the conflict is real work, not a merge.",
+            $"{why}. The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} only if the conflict is real work, not a merge.",
             choices, link: flight.PullRequestUrl,
             summary: $"The {number} of {code} conflicts with its base. The watchtower merges the base into the plane and resolves it; {ResolveConflict} has a worker do it, for real work only.");
         return Task.FromResult<string?>(null);
@@ -3238,7 +3247,7 @@ public sealed partial class LegCommander(
             if (!merge.Ok)
             {
                 await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
-                throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and merging {remoteBase} into its plane conflicts: {merge.Why}. Merge it by hand, then open the PR");
+                throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and merging {remoteBase} into its plane conflicts ({merge.Why}). Merge it by hand, then open the PR");
             }
         }
         // The caller records the new base, under the lock: this runs with it let go.
