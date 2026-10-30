@@ -57,17 +57,18 @@ public static class RepoTypes
 }
 
 /// <summary>The choice as a one-shot <c>claude -p</c> on a light model.</summary>
-public sealed class ClaudeIdeaRepoChooser : IIdeaRepoChooser
+public sealed class ClaudeIdeaRepoChooser(Attachments? attachments = null) : IIdeaRepoChooser
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     public const string Model = "haiku";
 
-    public static string Prompt(IdeaText text, IReadOnlyList<RepoOption> repos, string? context) => $$"""
+    /// <param name="copies">The local files of the idea's images the node holds (at note time, the uploaded markers' copies), which Claude may Read.</param>
+    public static string Prompt(IdeaText text, IReadOnlyList<RepoOption> repos, string? context, IReadOnlyList<string>? copies = null) => $$"""
         Choose the repo a new idea belongs in. Use the names, types and paths of the repos below, what the idea mentions, and the context the person was in.
         Answer with the one repo it belongs in. Only when two or more fit equally well and you cannot tell them apart, answer with those few, never more than four.
         Never guess: when none fits, answer with none. Never change the idea. Choose only among the repos listed, by their names exactly.
-        Answer with one JSON object and nothing else: {"repos": ["name", ...]}.
+        {{IdeaImagePrompt.ForChoice(text.Body, copies ?? [])}}Answer with one JSON object and nothing else: {"repos": ["name", ...]}.
 
         === REPOS ===
         {{string.Join('\n', repos.Select(r => $"- {r.Name} ({r.Type}) {r.Path}"))}}
@@ -82,9 +83,10 @@ public sealed class ClaudeIdeaRepoChooser : IIdeaRepoChooser
     public async Task<string[]> ChooseAsync(IdeaText text, IReadOnlyList<RepoOption> repos, string? context, CancellationToken cancellationToken)
     {
         ClaudeRun run;
+        var copies = IdeaImagePrompt.Copies(text.Body, attachments);
         try
         {
-            run = await ClaudeCli.RunAsync(["-p", "--model", Model], Prompt(text, repos, context), System.IO.Path.GetTempPath(), Timeout, cancellationToken);
+            run = await ClaudeCli.RunAsync(IdeaImagePrompt.Args(Model, copies, attachments), Prompt(text, repos, context, copies), System.IO.Path.GetTempPath(), Timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is TimeoutException or FileNotFoundException or InvalidOperationException)
         {

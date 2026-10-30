@@ -45,6 +45,17 @@ internal sealed record GuiOptions
     /// <summary>With <c>--flight</c>: drag over the page's text from the run that starts with the words before the <c>|</c> to the run that starts with those after it, so the capture shows the selection.</summary>
     public string? Select { get; init; }
 
+    /// <summary>With <c>--capture</c>: other nodes shown beside this one, each <c>NAME=snapshot.json</c> or a node's name or <c>host:port</c> on the LAN.</summary>
+    public string[] Peers { get; init; } = [];
+
+    /// <summary>With <c>--peer</c> and <c>--snapshot</c>: what this node is called on the page (a live capture takes its machine prefix).</summary>
+    public string? HereName { get; init; }
+
+    /// <summary>With <c>--page flights</c>: the map's layers to set, a comma list (no-landed, arcs, no-held, no-pr, node=&lt;key&gt;, closed).</summary>
+    public string? Layers { get; init; }
+
+    /// <summary>With <c>--capture</c>: paint the window red on black, as the header's Night switch does.</summary>
+    public bool Night { get; init; }
     /// <summary>With <c>--page prs</c>: the orgs (<c>SharpAstro</c>) and repos (<c>SharpAstro/pilot</c>) to fold, comma-separated, so the capture shows them folded.</summary>
     public string? Fold { get; init; }
 
@@ -77,6 +88,10 @@ internal sealed record GuiOptions
         var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
         view.AcceptOnlyFromAmong("canvas", "grid", "list");
         var select = new Option<string?>("--select") { Description = "With --flight: drag over the page's text in the capture, from the run starting with the words before the | to the run starting with those after it" };
+        var peer = new Option<string[]>("--peer") { Description = "With --capture: another node on the page, NAME=snapshot.json or a node's name or host:port (repeatable)" };
+        var hereName = new Option<string?>("--here-name") { Description = "With --peer and --snapshot: what this node is called on the page" };
+        var layers = new Option<string?>("--layers") { Description = "With --page flights: the map's layers, a comma list: no-landed, arcs, no-held, no-pr, node=<key>, closed" };
+        var night = new Option<bool>("--night") { Description = "With --capture: paint the window with the Night palette" };
         var fold = new Option<string?>("--fold") { Description = "With --page prs: fold these orgs (SharpAstro) or repos (SharpAstro/pilot), comma-separated, so the capture shows them folded" };
         var exitAfter = new Option<string?>("--exit-after") { Description = "Close the window by itself after this long: 5s, 500ms, 2m" };
         var say = new Option<string[]>("--say")
@@ -88,7 +103,7 @@ internal sealed record GuiOptions
 
         var root = new RootCommand("pilot v2's GUI: every Claude session on the machine, live from the node")
         {
-            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, fold, exitAfter, say },
+            Options = { snapshot, socket, node, capture, size, page, flight, hover, view, select, peer, hereName, layers, night, fold, exitAfter, say },
         };
         var parsed = root.Parse([.. args]);
 
@@ -116,6 +131,11 @@ internal sealed record GuiOptions
             Hover = parsed.GetValue(hover),
             View = parsed.GetValue(view) switch { "canvas" => FlightsViewMode.Canvas, "grid" => FlightsViewMode.Grid, "list" => FlightsViewMode.List, _ => null },
             Select = parsed.GetValue(select),
+            // The shared empty array, so a command line with no peer equals a default GuiOptions (arrays compare by reference).
+            Peers = parsed.GetValue(peer) is { Length: > 0 } peers ? peers : [],
+            HereName = parsed.GetValue(hereName),
+            Layers = parsed.GetValue(layers),
+            Night = parsed.GetValue(night),
             Fold = parsed.GetValue(fold),
             Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
         };

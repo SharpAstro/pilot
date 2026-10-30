@@ -308,7 +308,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
     /// <summary>
     /// A recheck on a PR with a flight of this node's, GitHub read afresh and one thing done, in this order: a conflict or a PR
-    /// behind its base is rebased as the queue-conflict path does, red checks on a passed review send it back as changes, a head
+    /// behind its base has the base merged in as the queue-conflict path does, red checks on a passed review send it back as changes, a head
     /// the review never read is reviewed, and a passed, green, clean one goes to the merge by the usual rule. The explicit ask
     /// bypasses <see cref="PrChecks"/>' once-a-head sets, which it leaves as they are.
     /// </summary>
@@ -344,19 +344,16 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
         if (pr.Mergeable == "CONFLICTING" || merge is { Kind: MergeKinds.Conflicts or MergeKinds.Behind })
         {
-            if (await legs.RebaseOntoBaseAsync(code, cancellationToken) is not { } why)
+            if (await legs.BringUpToDateAsync(code, cancellationToken) is not { } why)
             {
                 var onto = (Now(code)?.Base ?? flight.Base).Replace("origin/", "", StringComparison.Ordinal);
-                var restarted = Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
-                return await FinishAsync(entry, pr, $"{(await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} {onto}, {restarted}", LabelOf(code), cancellationToken);
+                var restarted = Now(code)?.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } kept } ? $"its review carried over to {Short8(kept)}"
+                    : Now(code)?.Review?.ReviewedHead is { Length: > 0 } read ? $"review restarted at {Short8(read)}" : "its review has not started yet";
+                return await FinishAsync(entry, pr, $"brought up to date with {onto}, {restarted}", LabelOf(code), cancellationToken);
             }
-            // A rebase that conflicts rings as PrChecks rings it, and the Handled line says so too.
+            // A merge that conflicts goes to the watchtower as PrChecks hands it, and the Handled line says so too.
             var notSent = await legs.ConflictsAsync(code, why, cancellationToken);
-            if (notSent is not null)
-            {
-                state.RaiseCard(CardBin.Ring, "pr-conflicts", subject, $"{code}'s PR #{entry.Number} conflicts with its base", $"{why} ({notSent})", link: pr.Url);
-            }
-            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": sent back as changes, its last leg redone to resolve it" : $" ({notSent}), rung")}", LabelOf(code), cancellationToken);
+            return await FinishAsync(entry, pr, $"{why}{(notSent is null ? ": the watchtower is told to resolve it in the plane" : $" ({notSent})")}", LabelOf(code), cancellationToken);
         }
 
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })
@@ -415,8 +412,8 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
     /// <summary>
     /// A recheck on a PR this node reviewed with <c>review-pr</c>, GitHub read afresh, in this order: a PR no longer open loses
     /// the label; one in the merge queue is left there; a head other than the review's is reviewed afresh; a conflict (or a PR
-    /// behind its base) on the controller's own branch (author the gh login, in the base repo) is rebased and reviewed afresh, and
-    /// on anyone's else, or one whose rebase conflicts, is a For-you card (a flight's own branch is the flight path's);
+    /// behind its base) on the controller's own branch (author the gh login, in the base repo) has the base merged in and is reviewed
+    /// afresh, and on anyone's else, or one whose merge of the base conflicts, is a For-you card (a flight's own branch is the flight path's);
     /// a passed, green one goes to the merge queue by <see cref="PrReviews.QueueWhenGreenAsync"/>'s rule.
     /// </summary>
     private async Task<Outcome> ForReviewedAsync(Entry entry, PrReviewRow review, PullRequest pr, CancellationToken cancellationToken)
@@ -455,19 +452,19 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             string? tried = null;
             if (own)
             {
-                // The controller's own branch in the base repo: pilot rebases it, as it does a flight's.
+                // The controller's own branch in the base repo: pilot merges its base in and pushes plainly, as it does a flight's.
                 var parts = entry.Repo.Split('/');
-                switch (await reviews.RebaseOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
+                switch (await reviews.MergeBaseIntoOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
                 {
                     case null:
                         var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
                         if (!started.Ok)
                         {
-                            Fail(entry, $"rebased onto {pr.Base}, but the review did not start: {started.Error}", pr.Url);
+                            Fail(entry, $"{pr.Base} merged in, but the review did not start: {started.Error}", pr.Url);
                             return Outcome.Kept;
                         }
-                        state.CloseCardsAbout(subject, "rebased", ConflictKind);
-                        return await FinishAsync(entry, pr, $"rebased onto {pr.Base}, review restarted", PilotMarks.Reviewing, cancellationToken);
+                        state.CloseCardsAbout(subject, "its base merged in", ConflictKind);
+                        return await FinishAsync(entry, pr, $"{pr.Base} merged in, review restarted", PilotMarks.Reviewing, cancellationToken);
                     case { Why: var why }:
                         tried = why;
                         break;
@@ -475,8 +472,8 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
             state.CloseCardsAbout(subject, "looked at again", ConflictKind);
             state.RaiseCard(CardBin.ForYou, ConflictKind, subject, $"{Short(entry.Repo, entry.Number)} {what}",
-                $"It is not pilot's branch to rebase{(tried is null ? (string.IsNullOrEmpty(pr.Author) ? "" : $": it is {pr.Author}'s") : $" (yours, but {tried})")}. Rebase it and push, and it is looked at again with the label.", link: pr.Url);
-            return await FinishAsync(entry, pr, tried is null ? $"{what}, not pilot's branch to rebase: a card asks you" : $"{what}, not rebased ({tried}): a card asks you", PilotMarks.Conflicts, cancellationToken);
+                $"It is not pilot's branch to update{(tried is null ? (string.IsNullOrEmpty(pr.Author) ? "" : $": it is {pr.Author}'s") : $" (yours, but {tried})")}. Bring it up to date with its base and push, and it is looked at again with the label.", link: pr.Url);
+            return await FinishAsync(entry, pr, tried is null ? $"{what}, not pilot's branch to update: a card asks you" : $"{what}, its base not merged in ({tried}): a card asks you", PilotMarks.Conflicts, cancellationToken);
         }
 
         if (review.State != PrReviewState.Reviewing && review.Verdict is "approve" or "comment" && review.QueuedAt is null)

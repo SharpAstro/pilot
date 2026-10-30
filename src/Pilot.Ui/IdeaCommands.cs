@@ -14,7 +14,7 @@ internal static class IdeaCommands
         var envelope = await client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
         if (envelope.Response is { Ok: true } result)
         {
-            return new IdeaReply(true, null, result.Way, result.Made, result.Tidy, result.Milestones);
+            return new IdeaReply(true, null, result.Way, result.Made, result.Tidy, result.Milestones, result.Readiness, result.Suggestions);
         }
         return new IdeaReply(false, envelope.Response?.Error ?? envelope.Error ?? "the node did not answer");
     }

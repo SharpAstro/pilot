@@ -274,6 +274,169 @@ public sealed class TrackerTests : IDisposable
         result.Error.ShouldNotBeNull().ShouldContain("sc-N");
     }
 
+    /// <summary>A Shortcut that answers by what it is asked: (method, url, body) in, (status, body) out; each request is kept as that triple.</summary>
+    private sealed class RoutedShortcut(Func<HttpMethod, string, string?, (HttpStatusCode Status, string Body)> answer) : HttpMessageHandler
+    {
+        public List<(HttpMethod Method, string Url, string? Body)> Asked { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            var url = request.RequestUri!.ToString();
+            Asked.Add((request.Method, url, body));
+            var (status, text) = answer(request.Method, url, body);
+            return new HttpResponseMessage(status) { Content = new StringContent(text) };
+        }
+    }
+
+    private const string StoryUrl = "https://api.app.shortcut.com/api/v3/stories/101645";
+
+    private const string StoryJson = """
+        {"id":101645,"app_url":"https://app.shortcut.com/bullclip/story/101645/cards","tasks":[
+          {"id":555,"description":"parser","complete":true},
+          {"id":556,"description":"a person's own task","complete":false}]}
+        """;
+
+    private static (RoutedShortcut Handler, ShortcutTracker Tracker) Shortcut(string? token = "secret", HttpStatusCode refused = HttpStatusCode.OK)
+    {
+        var handler = new RoutedShortcut((method, url, _) =>
+            refused != HttpStatusCode.OK ? (refused, "")
+            : method == HttpMethod.Post && url == StoryUrl + "/tasks" ? (HttpStatusCode.Created, """{"id":557,"description":"parser","complete":false}""")
+            : method == HttpMethod.Put && url.StartsWith(StoryUrl + "/tasks/", StringComparison.Ordinal) ? (HttpStatusCode.OK, """{"id":555,"complete":true}""")
+            : method == HttpMethod.Delete && url.StartsWith(StoryUrl + "/tasks/", StringComparison.Ordinal) ? (HttpStatusCode.NoContent, "")
+            : method == HttpMethod.Get && url == StoryUrl ? (HttpStatusCode.OK, StoryJson)
+            : (HttpStatusCode.NotFound, ""));
+        return (handler, new ShortcutTracker(new HttpClient(handler), () => token));
+    }
+
+    [Fact]
+    public async Task AShortcutTaskIsAddedWithItsDescriptionAndItsIdAndPageAreKept()
+    {
+        var (handler, tracker) = Shortcut();
+        var sub = await tracker.AddSubTaskAsync(Repo, 101645, "parser", Ct);
+        sub.Id.ShouldBe("557");
+        sub.Url.ShouldBe("https://app.shortcut.com/bullclip/story/101645/cards");
+        var post = handler.Asked[0];
+        post.Method.ShouldBe(HttpMethod.Post);
+        post.Url.ShouldBe(StoryUrl + "/tasks");
+        JsonDocument.Parse(post.Body!).RootElement.GetProperty("description").GetString().ShouldBe("parser");
+    }
+
+    [Fact]
+    public async Task AShortcutTaskIsSetCompleteByAPutOnItsOwnUrl()
+    {
+        var (handler, tracker) = Shortcut();
+        await tracker.CompleteSubTaskAsync(Repo, 101645, new SubTask { Id = "555" }, Ct);
+        var put = handler.Asked.Single();
+        put.Method.ShouldBe(HttpMethod.Put);
+        put.Url.ShouldBe(StoryUrl + "/tasks/555");
+        JsonDocument.Parse(put.Body!).RootElement.GetProperty("complete").GetBoolean().ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AShortcutTaskOfARemovedLegIsDeletedAndTheEmptyAnswerIsAccepted()
+    {
+        var (handler, tracker) = Shortcut();
+        await tracker.RemoveSubTaskAsync(Repo, 101645, new SubTask { Id = "555" }, Ct);
+        handler.Asked.Single().ShouldBe((HttpMethod.Delete, StoryUrl + "/tasks/555", null));
+    }
+
+    [Fact]
+    public async Task AStorysTasksAreReadWithTheirTitleStateAndPage()
+    {
+        var (_, tracker) = Shortcut();
+        var tasks = await tracker.SubTasksAsync(Repo, 101645, Ct);
+        tasks.ShouldBe([
+            new SubTaskItem("555", "parser", true, "https://app.shortcut.com/bullclip/story/101645/cards"),
+            new SubTaskItem("556", "a person's own task", false, "https://app.shortcut.com/bullclip/story/101645/cards"),
+        ]);
+    }
+
+    [Fact]
+    public async Task ShortcutTasksReadAsNoneWhenTheStoryCannotBeRead()
+    {
+        (await Shortcut(refused: HttpStatusCode.Forbidden).Tracker.SubTasksAsync(Repo, 101645, Ct)).ShouldBeEmpty();
+        (await Shortcut(token: null).Tracker.SubTasksAsync(Repo, 101645, Ct)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AShortcutRefusalOfATaskCallThrowsAFlightExceptionNamingTheStory()
+    {
+        var (_, refusing) = Shortcut(refused: HttpStatusCode.Forbidden);
+        (await Should.ThrowAsync<FlightException>(() => refusing.AddSubTaskAsync(Repo, 101645, "parser", Ct))).Message.ShouldContain("403");
+        (await Should.ThrowAsync<FlightException>(() => refusing.CompleteSubTaskAsync(Repo, 101645, new SubTask { Id = "555" }, Ct))).Message.ShouldContain("sc-101645");
+        (await Should.ThrowAsync<FlightException>(() => refusing.RemoveSubTaskAsync(Repo, 101645, new SubTask { Id = "555" }, Ct))).Message.ShouldContain("sc-101645");
+
+        var (silent, tokenless) = Shortcut(token: null);
+        (await Should.ThrowAsync<FlightException>(() => tokenless.AddSubTaskAsync(Repo, 101645, "parser", Ct))).Message.ShouldContain("SHORTCUT_API_TOKEN");
+        silent.Asked.ShouldBeEmpty();
+
+        var (_, working) = Shortcut();
+        (await Should.ThrowAsync<FlightException>(() => working.CompleteSubTaskAsync(Repo, 101645, new SubTask { Id = "x" }, Ct))).Message.ShouldContain("not the id");
+    }
+
+    [Fact]
+    public async Task AGitHubSubIssueIsMadeClosedAndListedThroughTheFlightsIssue()
+    {
+        var github = new FakeGitHub();
+        github.Issues[12] = "the flight's issue";
+        var tracker = new GitHubTracker(github);
+
+        var sub = await tracker.AddSubTaskAsync(Repo, 12, "parser", Ct);
+        sub.Id.ShouldBe("13");
+        sub.Url.ShouldBe("https://github.com/owner/repo/issues/13");
+        github.SubIssuesCreated.Single().ShouldBe((12, "parser", "A leg of the flight working on #12."));
+        (await tracker.SubTasksAsync(Repo, 12, Ct)).ShouldBe([new SubTaskItem("13", "parser", false, sub.Url)]);
+
+        await tracker.CompleteSubTaskAsync(Repo, 12, sub, Ct);
+        github.ClosedIssues.Single().Number.ShouldBe(13);
+        (await tracker.SubTasksAsync(Repo, 12, Ct)).Single().Done.ShouldBeTrue();
+
+        var removed = await tracker.AddSubTaskAsync(Repo, 12, "gone", Ct);
+        await tracker.RemoveSubTaskAsync(Repo, 12, removed, Ct);
+        github.ClosedNotPlanned.Single().Number.ShouldBe(int.Parse(removed.Id));
+        (await tracker.SubTasksAsync(Repo, 12, Ct)).Select(i => i.Done).ShouldBe([true, true]);
+    }
+
+    [Fact]
+    public async Task AGitHubRefusalAndASubIssueIdThatIsNoNumberAreFlightExceptions()
+    {
+        var github = new FakeGitHub { SubIssueFails = "GitHub would not link #13 as a sub-issue of #12" };
+        var tracker = new GitHubTracker(github);
+        (await Should.ThrowAsync<FlightException>(() => tracker.AddSubTaskAsync(Repo, 12, "parser", Ct))).Message.ShouldContain("would not link");
+        (await Should.ThrowAsync<FlightException>(() => tracker.CompleteSubTaskAsync(Repo, 12, new SubTask { Id = "abc" }, Ct))).Message.ShouldContain("not the number");
+        (await Should.ThrowAsync<FlightException>(() => tracker.RemoveSubTaskAsync(Repo, 12, new SubTask { Id = "abc" }, Ct))).Message.ShouldContain("not the number");
+    }
+
+    private static LegRow Leg(SubTask? sub = null) => new()
+    {
+        Flight = "BUL101645",
+        Name = "parser",
+        Order = 1,
+        Goal = "g",
+        DoneWhen = "d",
+        State = LegState.Planned,
+        SubTask = sub,
+    };
+
+    [Fact]
+    public void ALegsSubTaskSurvivesTheJsonRoundTrip()
+    {
+        var json = JsonSerializer.Serialize(Leg(new SubTask { Id = "13", Url = "https://github.com/o/r/issues/13" }), PilotJsonContext.Default.LegRow);
+        json.ShouldContain("\"subTask\":{\"id\":\"13\",\"url\":\"https://github.com/o/r/issues/13\"}");
+        JsonSerializer.Deserialize(json, PilotJsonContext.Default.LegRow)!.SubTask.ShouldBe(new SubTask { Id = "13", Url = "https://github.com/o/r/issues/13" });
+    }
+
+    [Fact]
+    public void ALegWrittenBeforeSubTasksReadsAsNullAndWritesNoField()
+    {
+        var json = JsonSerializer.Serialize(Leg(), PilotJsonContext.Default.LegRow);
+        json.ShouldNotContain("subTask");
+        var back = JsonSerializer.Deserialize(json, PilotJsonContext.Default.LegRow)!;
+        back.SubTask.ShouldBeNull();
+        back.Name.ShouldBe("parser");
+    }
+
     [Fact]
     public void TheShortcutTokenSettingIsSavedAndCleared()
     {

@@ -59,6 +59,59 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
 
+    /// <summary>What each session was started on, to check a live one against; null checks none.</summary>
+    public StartOptionsBook? Starts { get; init; }
+
+    /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
+    public TextWriter Error { get; init; } = TextWriter.Null;
+
+    // By row id: what each live session was found to run on that differs from its start, as last said once; and the rows to
+    // resume as a copy on their recorded options because of it.
+    private readonly Dictionary<string, string> _saidMismatch = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly HashSet<string> _mismatched = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>Whether the row's session runs on another model or effort than it was started on: its next wake carries its recorded options.</summary>
+    public bool IsMismatched(string rowId)
+    {
+        lock (_mismatched)
+        {
+            return _mismatched.Contains(rowId);
+        }
+    }
+
+    private void CheckModels()
+    {
+        if (Starts is null)
+        {
+            return;
+        }
+        foreach (var (id, row) in _rows)
+        {
+            string? found = null;
+            if (row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                && Starts.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [ListedName(row), row.Name]) is { } start)
+            {
+                found = SessionModelCheck.Mismatch(row, start);
+            }
+            lock (_mismatched)
+            {
+                if (found is null)
+                {
+                    _mismatched.Remove(id);
+                    _saidMismatch.Remove(id);
+                    continue;
+                }
+                _mismatched.Add(id);
+            }
+            if (_saidMismatch.TryGetValue(id, out var said) && said == found)
+            {
+                continue;
+            }
+            _saidMismatch[id] = found;
+            Error.WriteLine($"model check: session {row.Name} ({id}) runs on {found}; the setting says no change mid-session, so a watchtower is replaced and any other wakes as a copy on its recorded options");
+        }
+    }
+
     /// <summary>Where the images a session's artifacts name are kept; an archived session's copies go. Null keeps none.</summary>
     public Attachments? Attachments { get; init; }
 
@@ -180,6 +233,9 @@ public sealed class SessionTracker : BackgroundService
         return new Resuming(this, row.Id);
     }
 
+    /// <summary>Claude Code's profile folder, which says whether a session has respawn flags on file.</summary>
+    public ClaudeProfile Profile => _options.Profile;
+
     /// <summary>
     /// The name a row's session is resumed under, and listed by: its own, not the one its row shows (a renamed session's row
     /// carries the node's prefix before it). Null for a session with no name.
@@ -284,7 +340,7 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent, listed) is not { } id)
             {
                 continue;
             }
@@ -338,6 +394,7 @@ public sealed class SessionTracker : BackgroundService
             }
         }
 
+        CheckModels();
         _logger.LogDebug("Polled {Count} sessions in {Elapsed} ms (listing {Listing} ms)", listed.Count, (long)clock.Elapsed.TotalMilliseconds, (long)listing.TotalMilliseconds);
     }
 
@@ -345,7 +402,7 @@ public sealed class SessionTracker : BackgroundService
     /// The row a listed session is: the row it continues when it is a resumed copy, else its own short id. Null for a
     /// copy whose resume has not finished yet, which <see cref="CompleteResume"/> is about to give its row.
     /// </summary>
-    private string? RowIdOf(ClaudeAgentRow agent)
+    private string? RowIdOf(ClaudeAgentRow agent, IReadOnlyList<ClaudeAgentRow> listed)
     {
         if (_rowOf.TryGetValue(agent.SessionId, out var row))
         {
@@ -357,7 +414,39 @@ public sealed class SessionTracker : BackgroundService
         {
             return null;
         }
+        if (!_rows.ContainsKey(id) && agent.Kind == "background" && FoldedInto(agent, listed) is { } older)
+        {
+            return older;
+        }
         return id;
+    }
+
+    /// <summary>
+    /// The row a watchtower's compaction continues: a background watchtower listed under a new session id, while a live row
+    /// of the same name and folder has no process under its own any more. The row follows the continuation (the old id goes
+    /// to <see cref="SessionRow.EarlierSessionIds"/>), so there is one row, not the old one beside a new one (DE1, 2026-10-29).
+    /// A fresh watchtower the node started beside a running one is not folded: the older one still has its process.
+    /// </summary>
+    private string? FoldedInto(ClaudeAgentRow agent, IReadOnlyList<ClaudeAgentRow> listed)
+    {
+        if (SessionRoles.Resolve(agent.Name, background: true).Role != SessionRole.Watchtower)
+        {
+            return null;
+        }
+        var older = _rows.Values.FirstOrDefault(r => r.Kind == SessionKind.Background && r.Role == SessionRole.Watchtower
+            && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+            && r.SessionId != agent.SessionId && ListedName(r) == agent.Name
+            && string.Equals(r.Cwd, agent.Cwd, StringComparison.OrdinalIgnoreCase)
+            && !_resuming.ContainsKey(r.Id) && !HasProcess(listed, r.SessionId));
+        if (older is null)
+        {
+            return null;
+        }
+        _superseded.Add(older.SessionId);
+        _transcripts.Remove(older.SessionId);
+        _rowOf[agent.SessionId] = older.Id;
+        Put(older with { EarlierSessionIds = [.. older.EarlierSessionIds ?? [], older.SessionId] });
+        return older.Id;
     }
 
     // The process of each live session, by row id, as the last listing gave it; read by the machine sampler off the poll's thread.

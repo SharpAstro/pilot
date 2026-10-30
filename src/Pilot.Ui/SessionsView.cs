@@ -87,6 +87,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
     private const float SpendWidth = 160f;
+    private const float AgeWidth = 70f;
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;
 
@@ -133,6 +134,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     public ListTable Table { get; } = new("sessions");
     private IReadOnlyList<SessionLine> _lines = [];
     private Func<SessionLine, bool>? _pendingFirst;
+
+    /// <summary>The rows as the last frame showed them: filtered and in the clicked sort's order, the order <see cref="Selected"/> indexes.</summary>
+    internal IReadOnlyList<SessionLine> Shown => _lines;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -355,6 +359,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             screen = screen.InPlay(_pinned);
         }
+        // A clicked title's order, before the selection is resolved: it follows its session by key, wherever the sort puts it.
+        screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
         _lines = screen.Lines;
         _marked = screen.Lines.Any(l => l.Node is not null);
         if (_pendingFirst is { } wanted)
@@ -728,20 +734,43 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Session", SessionMin, SessionSqueezedMin, SessionSqueezedWeight),
-            ListColumn.Optional("Model", ModelWidth),
-            ListColumn.Fixed("Context", ContextWidth),
-            ListColumn.Optional("Last response", LastWidth),
-            ListColumn.Fixed(StateTitle, StateWidth, StateMin),
-            ListColumn.Optional("Spend", SpendWidth),
+            Sorted(ListColumn.Star("Session", SessionMin, SessionSqueezedMin, SessionSqueezedWeight)),
+            Sorted(ListColumn.Optional("Model", ModelWidth)),
+            Sorted(ListColumn.Fixed("Context", ContextWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Last response", LastWidth), descendingFirst: true),
+            Sorted(ListColumn.Fixed(StateTitle, StateWidth, StateMin)),
+            Sorted(ListColumn.Optional("Spend", SpendWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Age", AgeWidth)),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by, under its title: the figures as numbers, not as the words they are drawn in.
+    private static readonly IReadOnlyDictionary<string, Func<SessionLine, object?>> SortKeys = new Dictionary<string, Func<SessionLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Session"] = l => l.Name,
+        ["Model"] = l => (l.Row.Model ?? "", l.Row.Effort ?? ""),
+        ["Context"] = l => l.Row.ContextTokens,
+        ["Last response"] = l => l.Row.LastResponseAt ?? DateTimeOffset.MinValue,
+        [StateTitle] = l => SessionLine.StateOrder(l.Row.State),
+        ["Spend"] = l => l.Row.SpendWeighted,
+        ["Age"] = l => l.Row.StartedAt,
+    };
 
     private const string StateTitle = "State";
 
@@ -761,6 +790,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
                 (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),
+            Cell(Layout.Builder.Text(line.Age, 14f, body)),
             Act(line, index),
         };
         if (_marked)

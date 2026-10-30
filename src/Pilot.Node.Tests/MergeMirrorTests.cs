@@ -191,7 +191,7 @@ public sealed class MergeMirrorTests
     [Theory]
     [InlineData(MergeKinds.Conflicts, "conflicts with its base")]
     [InlineData(MergeKinds.Behind, "is behind its base")]
-    public async Task ConflictsOrBehindTurnTheCardToAGoAroundThatRebasesWithNoMerge(string kind, string title)
+    public async Task ConflictsOrBehindTurnTheCardToAGoAroundThatMergesTheBaseInWithNoMerge(string kind, string title)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         // Its review is not a passed one, so the node cannot send it back by itself and the card is where the person acts.
@@ -204,7 +204,7 @@ public sealed class MergeMirrorTests
         card.Kind.ShouldBe(LegCommander.PrReady);
         card.Title.ShouldContain(title);
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround)]);
-        card.Choices[0].Args.Single().ShouldContain("rebase the plane onto its base");
+        card.Choices[0].Args.Single().ShouldContain("merge origin/<base> into the plane");
         node.GitHub.Merged.ShouldBeEmpty();
     }
 

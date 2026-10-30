@@ -16,6 +16,7 @@ public sealed class PushTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "p2push-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly LegCommander _legs;
+    private readonly RecordingGit _git;
     private readonly FlightRow _flight;
 
     public PushTests()
@@ -33,7 +34,7 @@ public sealed class PushTests : IDisposable
         Git(Plane, "push", "-q", "-u", "origin", Branch);
         Git(_root, "clone", "-q", "-b", Branch, Remote, "other");
 
-        var git = new GitCli();
+        var git = _git = new RecordingGit(new GitCli());
         var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), flights, options, TimeProvider.System);
@@ -56,7 +57,7 @@ public sealed class PushTests : IDisposable
         Commit(Plane, "mine");
         var head = Git(Plane, "rev-parse", "HEAD");
 
-        await _legs.PushAsync(_flight, repaired: false, Ct);
+        await _legs.PushAsync(_flight, Ct);
 
         Git(Remote, "rev-parse", Branch).ShouldBe(head);
     }
@@ -72,7 +73,7 @@ public sealed class PushTests : IDisposable
         Commit(Plane, "mine");
         var mine = Git(Plane, "rev-parse", "HEAD");
 
-        await _legs.PushAsync(_flight, repaired: false, Ct);
+        await _legs.PushAsync(_flight, Ct);
 
         var pushed = Git(Remote, "rev-parse", Branch);
         pushed.ShouldNotBe(theirs);
@@ -94,7 +95,7 @@ public sealed class PushTests : IDisposable
         Commit(Plane, "mine");
         var mine = Git(Plane, "rev-parse", "HEAD");
 
-        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(_flight, repaired: false, Ct));
+        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(_flight, Ct));
 
         ex.Message.ShouldContain(theirs[..8]);
         ex.Message.ShouldContain(mine[..8]);
@@ -111,39 +112,86 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
-    public async Task A_rebase_the_node_made_goes_up_with_a_lease_on_the_head_read_before_it()
+    public async Task A_head_rewritten_after_its_push_is_merged_with_the_pushed_history_never_forced_over_it()
     {
         File.WriteAllText(Path.Combine(Plane, "mine.txt"), "mine\n");
         Commit(Plane, "mine");
         Git(Plane, "push", "-q", "origin", Branch);
-        // The plane rewrites its branch (as a rebase does) and pushes with the lease on the head fetched before.
-        Git(Plane, "fetch", "-q", "origin");
+        var pushed = Git(Remote, "rev-parse", Branch);
+        // The plane rewrites its branch (as a rebase or an amend does): its head no longer holds the pushed one.
         Git(Plane, "commit", "-q", "--amend", "-m", "mine, rewritten", "--date=2001-01-01T00:00:00");
-        var rewritten = Git(Plane, "rev-parse", "HEAD");
 
-        await _legs.PushAsync(_flight, repaired: true, Ct);
+        await _legs.PushAsync(_flight, Ct);
 
-        Git(Remote, "rev-parse", Branch).ShouldBe(rewritten);
+        // The pushed head is still in the branch's history: nothing was overwritten, as a force push would have.
+        Git(Remote, "merge-base", "--is-ancestor", pushed, Branch).ShouldBe("");
+        Git(Remote, "rev-parse", Branch).ShouldBe(Git(Plane, "rev-parse", "HEAD"));
+        _git.Calls.ShouldNotContain(c => c.Any(a => a.StartsWith("--force", StringComparison.Ordinal)));
     }
 
     [Fact]
-    public async Task A_rebase_the_node_made_never_overwrites_a_push_made_after_the_remote_head_was_read()
+    public async Task A_clean_update_merges_the_base_in_and_pushes_without_force_and_no_git_rebase_is_run()
     {
+        // Main moves on after the branch was cut.
+        Git(Plane, "checkout", "-q", "main");
+        File.WriteAllText(Path.Combine(Plane, "later.txt"), "later\n");
+        Commit(Plane, "later on main");
+        Git(Plane, "push", "-q", "origin", "main");
+        Git(Plane, "checkout", "-q", Branch);
         File.WriteAllText(Path.Combine(Plane, "mine.txt"), "mine\n");
         Commit(Plane, "mine");
-        Git(Plane, "push", "-q", "origin", Branch);
-        Git(Plane, "fetch", "-q", "origin");
-        Git(Plane, "commit", "-q", "--amend", "-m", "mine, rewritten", "--date=2001-01-01T00:00:00");
-        // Someone pushes after the head was read: the pinned lease refuses, where a bare one would have taken it from a fetch.
-        Git(Other, "pull", "-q", "origin", Branch);
-        File.WriteAllText(Path.Combine(Other, "theirs.txt"), "theirs\n");
-        Commit(Other, "theirs");
-        Git(Other, "push", "-q", "origin", Branch);
-        var theirs = Git(Other, "rev-parse", "HEAD");
+        var mine = Git(Plane, "rev-parse", "HEAD");
 
-        await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(_flight, repaired: true, Ct));
+        await _legs.PushAsync(_flight, Ct);
 
-        Git(Remote, "rev-parse", Branch).ShouldBe(theirs);
+        var pushed = Git(Remote, "rev-parse", Branch);
+        pushed.ShouldBe(Git(Plane, "rev-parse", "HEAD"));
+        Git(Remote, "merge-base", "--is-ancestor", mine, Branch).ShouldBe("");
+        Git(Remote, "merge-base", "--is-ancestor", "main", Branch).ShouldBe("");
+        _git.Calls.ShouldContain(c => c.SequenceEqual(new[] { "merge", "--no-edit", "origin/main" }));
+        _git.Calls.ShouldContain(c => c.SequenceEqual(new[] { "push", "-u", "origin", Branch }));
+        _git.Calls.ShouldNotContain(c => c.Contains("rebase"));
+        _git.Calls.ShouldNotContain(c => c.Any(a => a.StartsWith("--force", StringComparison.Ordinal) || a == "-f"));
+    }
+
+    [Fact]
+    public async Task A_conflicting_base_merge_is_aborted_and_refused_with_nothing_pushed_and_no_rebase()
+    {
+        Git(Plane, "checkout", "-q", "main");
+        File.WriteAllText(Path.Combine(Plane, "shared.txt"), "one\nmain\nthree\n");
+        Commit(Plane, "main edits shared");
+        Git(Plane, "push", "-q", "origin", "main");
+        Git(Plane, "checkout", "-q", Branch);
+        File.WriteAllText(Path.Combine(Plane, "shared.txt"), "one\nmine\nthree\n");
+        Commit(Plane, "mine edits shared");
+        var mine = Git(Plane, "rev-parse", "HEAD");
+        var remote = Git(Remote, "rev-parse", Branch);
+
+        var ex = await Should.ThrowAsync<FlightException>(() => _legs.PushAsync(_flight, Ct));
+
+        ex.Message.ShouldContain("conflicts");
+        ex.Message.ShouldContain("never a rebase");
+        Git(Plane, "rev-parse", "HEAD").ShouldBe(mine);
+        Git(Plane, "status", "--porcelain").ShouldBe("");
+        File.Exists(Path.Combine(Plane, ".git", "MERGE_HEAD")).ShouldBeFalse();
+        Git(Remote, "rev-parse", Branch).ShouldBe(remote);
+        _git.Calls.ShouldContain(c => c.SequenceEqual(new[] { "merge", "--abort" }));
+        _git.Calls.ShouldNotContain(c => c.Contains("rebase") || c.Contains("push"));
+    }
+
+    /// <summary>git that remembers every call, so a test can say what was never run.</summary>
+    private sealed class RecordingGit(IGit inner) : IGit
+    {
+        public List<string[]> Calls { get; } = [];
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            lock (Calls)
+            {
+                Calls.Add([.. args]);
+            }
+            return inner.RunAsync(args, cwd, cancellationToken);
+        }
     }
 
     public void Dispose()

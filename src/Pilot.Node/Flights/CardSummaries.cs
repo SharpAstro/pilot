@@ -40,7 +40,7 @@ public static partial class CardSummaries
             LegCommander.MergeFailed => $"The merge of {what} did not go through. Redo leg sends a fresh worker to fix it; Merge tries once more.",
             "leg-failed" => $"The worker of {what} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.",
             "pr-checks-failed" => $"The PR of {what} fails its checks. The node could not send the last leg back; redo it from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.",
-            "pr-conflicts" => $"The PR of {what} conflicts with its base. The node could not rebase it or send the last leg back; redo the last leg from the flight page or with pilot leg go-around, or resolve it by hand, then dismiss this.",
+            "pr-conflicts" => $"The PR of {what} conflicts with its base. The node could not merge the base in; the watchtower resolves it in the plane (merge, check, plain push), and the last leg is redone only if it is real work, from the flight page or with pilot leg go-around.",
             LegWatch.Stopped => $"The worker of {what} hit the usage limit. It resumes when the window resets; nothing to do.",
             LegWatch.Idle or LegWatch.Waiting => $"The worker of {what} stopped with its leg unfinished. Nudge tells it to carry on; Redo leg starts a fresh one.",
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Resume brings it back; Redo leg starts a fresh one.",

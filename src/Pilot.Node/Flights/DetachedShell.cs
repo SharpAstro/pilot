@@ -306,6 +306,46 @@ public sealed class DetachedShell : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern int ResumeThread(nint thread);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(nint job, int infoClass, out BasicAndIoAccounting info, int length, nint returned);
+
+    private const int JobObjectBasicAndIoAccountingInformation = 8;
+
+    // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION (4 x LARGE_INTEGER, 4 x DWORD) then IO_COUNTERS (6 x ULONGLONG).
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicAndIoAccounting
+    {
+        public long TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses;
+        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    }
+
+    /// <summary>
+    /// An anonymous job object holding <paramref name="process"/> (and so what it starts), for reading its I/O accounting after it
+    /// ends (<see cref="JobOtherTransfer"/>); 0 where it cannot be made. Nested under a job the node is itself in (Windows 8 and later).
+    /// </summary>
+    internal static nint CreateAccountingJob(Process process)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return 0;
+        }
+        var job = CreateJobObjectW(0, null!);
+        if (job != 0 && !AssignProcessToJobObject(job, process.Handle))
+        {
+            CloseHandle(job);
+            return 0;
+        }
+        return job;
+    }
+
+    /// <summary>The job's OtherTransferCount: the bytes of every non-read, non-write I/O of its processes, which carries socket traffic.</summary>
+    internal static long JobOtherTransfer(nint job) =>
+        QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation, out var info, Marshal.SizeOf<BasicAndIoAccounting>(), 0) ? (long)info.OtherTransferCount : 0;
+
+    internal static void CloseJob(nint job) => CloseHandle(job);
+
     /// <summary>The job object's name: the job's id and a hash of its log path, so two nodes on one machine that both have a <c>j1</c> never share one.</summary>
     private static string JobName(string jobId, string logPath) =>
         $"pilot-job-{jobId}-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(logPath)))[..12]}";

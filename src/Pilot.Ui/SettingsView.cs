@@ -11,7 +11,8 @@ namespace Pilot.Ui;
 /// "checking…" until they answer, then how old they are. A button or a field's Enter is one verb on the node
 /// (<c>setup node</c>, <c>set node</c>); the control shows it is working until the node answers, and a changed setting is
 /// shown from the answer's row, never from the click and with no second read. This machine's node only: a node on the LAN
-/// does not show its settings to another machine. Generic over the surface, as the other pages are.
+/// does not show its settings to another machine, so the title names this node's owner, the top bar offers no node pills, and
+/// a line under the bar says another node's settings are changed on that machine. Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
@@ -119,7 +120,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
 
-    /// <summary>The window's node selection, whose pills the top bar shows while there is more than one node.</summary>
+    /// <summary>The window's node selection, which names this node's owner; the Settings top bar shows no pills.</summary>
     public NodeFilter? Nodes { get; set; }
 
     /// <summary>The page as last read, or null before the first read.</summary>
@@ -147,9 +148,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // The line waiting for the page sits at the top, in the gutter, where the page's first row will be: stretched on its own
         // it was drawn two thirds down, against the rail.
         var body = page is null
-            ? Layout.Builder.VStack(Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f)).Pad(Gutter, 8f)
+            ? Layout.Builder.VStack([.. OtherNodesRow(), Layout.Builder.Text(problem is null ? (Load is null ? "settings are the node's: open pilot on a node" : "reading the node's settings…") : $"the node did not send its settings: {problem}", 13f, Dim).RowH(28f)]).Pad(Gutter, 8f)
             : Main(page, read, now);
-        var tree = Layout.Builder.VStack(Header(page, read.Checks, problem), body.Stretch()).Bg(Ground).Stretch();
+        var header = Header(page, read.Checks, problem);
+        var tree = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(tree) ?? tree;
     }
 
@@ -365,12 +367,24 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         });
     }
 
+    /// <summary>Whose settings these are: this machine's node, named as the Chat page names its watchtower's owner.</summary>
+    internal string Owner => TopBar.ThisNodeName(Nodes);
+
+    /// <summary>The line under the bar while the window knows more than one node: the settings route is this machine's only.</summary>
+    internal const string OtherNodesLine = "another node's settings are changed on that machine";
+
+    /// <summary>The line about other nodes, as the page's first row, while there is more than one node.</summary>
+    private IEnumerable<Layout.Node> OtherNodesRow() => Nodes is { } nodes && nodes.Choices.Count() > 1
+        ? [Layout.Builder.Text(OtherNodesLine, 12f, Dim).RowH(22f).Pad(Gutter, 0f)]
+        : [];
+
     private Layout.Node Header(SettingsPage? page, SetupChecks? checks, string? problem) =>
-        TopBar.Build(new PageHeader("settings")
+        // No node pills: these settings are this machine's, and a pill would leave them silently on this node.
+        TopBar.Build(new PageHeader($"{Owner}'s settings (this machine)")
         {
             Counts = page is null ? "" : Summary(page, checks),
             Source = Said ?? page?.Restart ?? (page is null ? (problem ?? "") : $"saved in {page.File} · the command line wins over it"),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, Autopilot, About, Night));
 
     /// <summary>The header's counts: the setup steps left only once the checks are known, then what is saved for the next start.</summary>
     internal static string Summary(SettingsPage page, SetupChecks? checks)
@@ -389,7 +403,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private Layout.Node Main(SettingsPage page, Seen read, DateTimeOffset now)
     {
-        var rows = new List<Layout.Node>();
+        var rows = new List<Layout.Node>(OtherNodesRow());
         if (LoadChecks is not null)
         {
             rows.Add(SetupSection(read));
@@ -447,7 +461,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     // Setup's heading carries the refresh: it measures the checks again, and shows it is working until the node answers.
     private Layout.Node SetupSection(Seen read)
     {
-        var hint = read.ChecksProblem is { } problem ? $"could not read the checks again: {problem}" : "what it takes for this machine's node to be part of the fleet";
+        var hint = read.ChecksProblem is { } problem ? $"could not read the checks again: {problem}" : $"what it takes for {Owner} to be part of the fleet";
         return Layout.Builder.HStack(
                 Layout.Builder.Text("Setup", 15f, Bright).WAuto(),
                 Layout.Builder.Text(hint, 12f, read.ChecksProblem is null ? Faint : Todo).WStar(),
