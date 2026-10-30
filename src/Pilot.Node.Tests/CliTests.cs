@@ -331,6 +331,47 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PilotMergesPrintsTheOpenEntriesFirstPerRepoByPlaceThenTheEndedNewestFirstAtMostThirty()
+    {
+        var empty = await Pilot(_root, "merges");
+        (empty.Exit, empty.Output).ShouldBe((0, "No merges.\n"));
+
+        var at = DateTimeOffset.UtcNow.AddHours(-1);
+        MergeRow Row(string flight, string repo, int pr, MergeEntryState state, int? place, string why, int minutes) => new()
+        {
+            Flight = flight, Repo = repo, Pr = pr, Head = $"{pr:x4}aaaabbbbcccc", Method = "rebase", State = state, Why = why, Place = place,
+            AddedAt = at.AddMinutes(minutes), ChangedAt = at.AddMinutes(minutes + 1),
+        };
+        // Merging rows: open, and left alone by the node's own look, which no command drives here.
+        _node.State.PutMerge(Row("TIA1", "tianwen", 61, MergeEntryState.Merged, null, "merged: the flight lands", 1));
+        _node.State.PutMerge(Row("TIA2", "tianwen", 62, MergeEntryState.Merging, 2, "in the merge queue", 2));
+        _node.State.PutMerge(Row("TIA3", "tianwen", 63, MergeEntryState.Merging, 1, "in the merge queue", 3));
+        _node.State.PutMerge(Row("MOO4", "moons", 64, MergeEntryState.Merging, 1, "merging #64 (rebase)", 4));
+        _node.State.PutMerge(Row("TIA5", "tianwen", 65, MergeEntryState.Dropped, null, "check build failed on 0041aaaa", 5));
+
+        var (exit, output, _) = await Pilot(_root, "merges");
+
+        exit.ShouldBe(0);
+        output.ShouldBe(
+            "MOO4  #64  moons  1  0040aaaa  merging  · merging #64 (rebase)\n" +
+            "TIA3  #63  tianwen  1  003faaaa  merging  · in the merge queue\n" +
+            "TIA2  #62  tianwen  2  003eaaaa  merging  · in the merge queue\n" +
+            "TIA5  #65  tianwen  -  0041aaaa  dropped  · check build failed on 0041aaaa\n" +
+            "TIA1  #61  tianwen  -  003daaaa  merged  · merged: the flight lands\n");
+
+        // Thirty rows at most: the open ones first, the oldest ended ones left out.
+        for (var i = 0; i < 30; i++)
+        {
+            _node.State.PutMerge(Row($"OLD{i}", "tianwen", 100 + i, MergeEntryState.Dropped, null, "old", -60 + i));
+        }
+        var lines = (await Pilot(_root, "merges")).Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        lines.Length.ShouldBe(30);
+        lines.Take(3).ShouldAllBe(l => l.Contains("  merging  ", StringComparison.Ordinal));
+        lines[3].ShouldStartWith("TIA5  ");
+        lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();

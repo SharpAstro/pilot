@@ -76,8 +76,8 @@ public sealed record FlightRow
 
     /// <summary>
     /// The head its PR merged at while a leg was planned or flying (#342): the merge went without that leg's work, so the flight
-    /// is not landed as merged, and when its legs are done the plane is rebased onto the base from this head and goes up as a
-    /// new PR. Null otherwise.
+    /// is not landed as merged, and when its legs are done the base, which holds this head, is merged into the plane and it goes up
+    /// as a new PR. Null otherwise.
     /// </summary>
     public string? MergedHead { get; init; }
 

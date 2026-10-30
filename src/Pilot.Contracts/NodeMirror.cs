@@ -46,6 +46,11 @@ public sealed class NodeMirror
     /// <summary>The jobs, by id.</summary>
     public IReadOnlyDictionary<string, JobRow> Jobs => _jobs;
 
+    private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
+
+    /// <summary>The merge queue's entries, by flight code.</summary>
+    public IReadOnlyDictionary<string, MergeRow> Merges => _merges;
+
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
@@ -106,6 +111,11 @@ public sealed class NodeMirror
             foreach (var job in snapshot.Jobs ?? [])
             {
                 _jobs[job.Id] = job;
+            }
+            _merges.Clear();
+            foreach (var merge in snapshot.Merges ?? [])
+            {
+                _merges[merge.Flight] = merge;
             }
             _prReviews.Clear();
             foreach (var review in snapshot.PrReviews ?? [])
@@ -173,6 +183,15 @@ public sealed class NodeMirror
                 break;
             case JobChangedEvent changed:
                 _jobs[changed.Job.Id] = changed.Job;
+                break;
+            case MergeAddedEvent added:
+                _merges[added.Merge.Flight] = added.Merge;
+                break;
+            case MergeChangedEvent changed:
+                _merges[changed.Merge.Flight] = changed.Merge;
+                break;
+            case MergeRemovedEvent removed:
+                _merges.Remove(removed.Flight);
                 break;
             case PrReviewAddedEvent added:
                 _prReviews[Verbs.PrTarget(added.Review.Repo, added.Review.Number)] = added.Review;

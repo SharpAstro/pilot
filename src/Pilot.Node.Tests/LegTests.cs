@@ -395,6 +395,9 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }
 
+    /// <summary>One branch's PR, by branch, over <see cref="Pr"/>: flights whose PRs are told apart.</summary>
+    public Dictionary<string, PullRequest> PrOf { get; } = new(StringComparer.Ordinal);
+
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -403,7 +406,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        return Pr is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
+        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. labels] : [] } : null;
     }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
@@ -422,10 +425,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What ChecksSummaryAsync answers for any PR, and so what ChecksAsync's status is; null to derive it from <see cref="Checks"/>, with no counts.</summary>
     public ChecksSummary? Summary { get; set; }
 
-    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Summary?.Status ?? Checks);
+    /// <summary>What ChecksSummaryAsync answers for one PR, by number, over <see cref="Summary"/>: null for a PR with no checks (yet).</summary>
+    public Dictionary<int, ChecksSummary?> SummaryOf { get; } = [];
+
+    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks);
 
     public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
+        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? new ChecksSummary(status, 0, 0) : null));
 
     /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
     public bool AutoMergeAllowed { get; set; }
@@ -444,10 +451,20 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
-    /// <summary>How the repo's base is merged up to date, as UpdateWayAsync answers: a rebase-queue repo by default.</summary>
-    public UpdateWay UpdateWay { get; set; } = UpdateWay.Rebase;
+    /// <summary>Base branches GitHub protects (branch protection or a ruleset rule), by name; any other is open to a plain push.</summary>
+    public HashSet<string> ProtectedBranches { get; } = new(StringComparer.Ordinal);
 
-    public Task<UpdateWay> UpdateWayAsync(string repoPath, string mergeMethod, CancellationToken cancellationToken) => Task.FromResult(UpdateWay);
+    /// <summary>Every branch whose protection was asked, in order.</summary>
+    public List<string> ProtectionAsked { get; } = [];
+
+    public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        lock (ProtectionAsked)
+        {
+            ProtectionAsked.Add(branch);
+        }
+        return Task.FromResult(!ProtectedBranches.Contains(branch));
+    }
 
     /// <summary>
     /// The mergeStateStatus GitHub gives the PR when auto-merge is armed on it: BLOCKED (a required check pending) by default;
@@ -505,8 +522,15 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What MergeStateAsync answers for any PR; null to derive it from <see cref="Summary"/>/<see cref="Checks"/> and <see cref="Queue"/> as GitHub would say it, none with no checks.</summary>
     public MergeState? Merge { get; set; }
 
+    /// <summary>What MergeStateAsync answers for one PR, by number, over <see cref="Merge"/>.</summary>
+    public Dictionary<int, MergeState?> MergeOf { get; } = [];
+
     public Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
+        if (MergeOf.TryGetValue(number, out var own))
+        {
+            return Task.FromResult(own);
+        }
         if (Merge is not null)
         {
             return Task.FromResult<MergeState?>(Merge);
@@ -581,6 +605,31 @@ internal sealed class FakeGitHub : IGitHub
         Created.Add((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
+    }
+
+    /// <summary>Every draft PR opened (a merge batch's), as (number, branch, base, title); numbered from 901, apart from <see cref="Pr"/>.</summary>
+    public List<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
+
+    public Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
+    {
+        lock (Drafts)
+        {
+            var number = 901 + Drafts.Count;
+            Drafts.Add((number, branch, baseBranch, title));
+            return Task.FromResult(number);
+        }
+    }
+
+    /// <summary>Every PR closed unmerged, by number.</summary>
+    public List<int> ClosedPrs { get; } = [];
+
+    public Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        lock (ClosedPrs)
+        {
+            ClosedPrs.Add(number);
+        }
+        return Task.CompletedTask;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>

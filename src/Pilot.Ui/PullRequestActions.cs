@@ -32,7 +32,7 @@ internal sealed record PullRequestAction(PullRequestActionKind Kind, string Labe
 
 /// <summary>
 /// Which buttons a PR's row offers, by its state. Merge and Go around are the flight's card's own choices (the node raises the
-/// card when the PR is ready, or when it conflicts and the node has no rebase that resolves it), so they go through the
+/// card when the PR is ready, or when it conflicts and the node has no merge of the base that resolves it), so they go through the
 /// card's own path and do what its button does; a PR with no such card has no such button. Review is
 /// <c>pilot review pr</c>; Open is on every row.
 /// </summary>
