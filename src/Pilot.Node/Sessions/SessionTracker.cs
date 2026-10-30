@@ -340,7 +340,7 @@ public sealed class SessionTracker : BackgroundService
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var agent in listed)
         {
-            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent) is not { } id)
+            if (_superseded.Contains(agent.SessionId) || _options.IsHidden(agent.Cwd) || RowIdOf(agent, listed) is not { } id)
             {
                 continue;
             }
@@ -402,7 +402,7 @@ public sealed class SessionTracker : BackgroundService
     /// The row a listed session is: the row it continues when it is a resumed copy, else its own short id. Null for a
     /// copy whose resume has not finished yet, which <see cref="CompleteResume"/> is about to give its row.
     /// </summary>
-    private string? RowIdOf(ClaudeAgentRow agent)
+    private string? RowIdOf(ClaudeAgentRow agent, IReadOnlyList<ClaudeAgentRow> listed)
     {
         if (_rowOf.TryGetValue(agent.SessionId, out var row))
         {
@@ -414,7 +414,39 @@ public sealed class SessionTracker : BackgroundService
         {
             return null;
         }
+        if (!_rows.ContainsKey(id) && agent.Kind == "background" && FoldedInto(agent, listed) is { } older)
+        {
+            return older;
+        }
         return id;
+    }
+
+    /// <summary>
+    /// The row a watchtower's compaction continues: a background watchtower listed under a new session id, while a live row
+    /// of the same name and folder has no process under its own any more. The row follows the continuation (the old id goes
+    /// to <see cref="SessionRow.EarlierSessionIds"/>), so there is one row, not the old one beside a new one (DE1, 2026-10-29).
+    /// A fresh watchtower the node started beside a running one is not folded: the older one still has its process.
+    /// </summary>
+    private string? FoldedInto(ClaudeAgentRow agent, IReadOnlyList<ClaudeAgentRow> listed)
+    {
+        if (SessionRoles.Resolve(agent.Name, background: true).Role != SessionRole.Watchtower)
+        {
+            return null;
+        }
+        var older = _rows.Values.FirstOrDefault(r => r.Kind == SessionKind.Background && r.Role == SessionRole.Watchtower
+            && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+            && r.SessionId != agent.SessionId && ListedName(r) == agent.Name
+            && string.Equals(r.Cwd, agent.Cwd, StringComparison.OrdinalIgnoreCase)
+            && !_resuming.ContainsKey(r.Id) && !HasProcess(listed, r.SessionId));
+        if (older is null)
+        {
+            return null;
+        }
+        _superseded.Add(older.SessionId);
+        _transcripts.Remove(older.SessionId);
+        _rowOf[agent.SessionId] = older.Id;
+        Put(older with { EarlierSessionIds = [.. older.EarlierSessionIds ?? [], older.SessionId] });
+        return older.Id;
     }
 
     // The process of each live session, by row id, as the last listing gave it; read by the machine sampler off the poll's thread.
