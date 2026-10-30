@@ -190,8 +190,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         Palette.Use(Night);
         var shown = ShowAll ? screen.Lines : [.. screen.Lines.Where(l => l.Status.Tracked)];
+        // A clicked title's order (the screen's own order breaks ties); the repo selected before it is found again by its key,
+        // wherever the sort puts it. Its worktree sub-rows are drawn under it, so they follow.
+        var kept = Table.Sort is not null && Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Key : null;
+        shown = Table.Order(shown, _ => "", SortKeys);
         _lines = shown;
         _marked = shown.Any(l => l.Node is not null);
+        if (kept is not null && shown.ToList().FindIndex(l => l.Key == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, shown.Count);
+        }
         if (shown.Count == 0)
         {
             ListCursor.Close();
@@ -304,18 +312,38 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight),
-            ListColumn.Fixed("Checkout · diff", MainWidth, MainMin),
-            ListColumn.Optional("Open PRs · session", PullsWidth),
-            ListColumn.Optional("Worktrees · action", WorkWidth),
-            ListColumn.Optional("Flight · PR", LinkWidth),
+            Sorted(ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight)),
+            Sorted(ListColumn.Fixed("Checkout · diff", MainWidth, MainMin)),
+            Sorted(ListColumn.Optional("Open PRs · session", PullsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Worktrees · action", WorkWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Flight · PR", LinkWidth), descendingFirst: true),
         };
         if (_marked)
         {
-            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(1, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the counts as numbers, not as the words they are drawn in.
+    private static readonly IReadOnlyDictionary<string, Func<RepoLine, object?>> SortKeys = new Dictionary<string, Func<RepoLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Repo · worktree"] = l => l.Name.ToUpperInvariant(),
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Checkout · diff"] = l => l.Main,
+        ["Open PRs · session"] = l => l.Pulls.Count,
+        ["Worktrees · action"] = l => l.Worktrees.Count,
+        ["Flight · PR"] = l => l.Status.Flights,
+    };
 
     private static RGBAColor32 ChecksColor(string checks) => checks switch
     {
