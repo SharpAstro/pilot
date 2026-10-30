@@ -134,11 +134,13 @@ public static class NodeApp
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
         builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new AdmissionGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<RoleModels>, options.Machine));
         builder.Services.AddSingleton(services =>
         {
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
@@ -150,6 +152,7 @@ public static class NodeApp
         {
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
+            reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             return reviews;
         });

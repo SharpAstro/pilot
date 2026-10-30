@@ -476,6 +476,9 @@ public static class PilotMarks
 
     public const string Queued = LabelPrefix + "queued";
 
+    /// <summary>Put on a flight's issue or PR by a person: its starts bypass the Opus cap and the repo hold (still counted as Opus).</summary>
+    public const string Priority = LabelPrefix + "priority";
+
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
 

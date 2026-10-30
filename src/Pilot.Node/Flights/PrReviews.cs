@@ -33,6 +33,39 @@ public sealed class PrReviews(
     /// <summary>The card a verdict raises: the review is ready for the controller.</summary>
     public const string ReadyKind = "pr-review-ready";
 
+    /// <summary>The Handled line a review or fixer that waits for admission leaves, naming why; it closes when the start goes.</summary>
+    public const string WaitingKind = "pr-review-waiting";
+
+    /// <summary>Whether a start may go: the Opus cap and priority are asked here, as a flight's starts are (one gate, shared with the legs).</summary>
+    public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
+
+    // The reviews and fixers admission holds, by PR target: the sweep asks again and starts them in turn.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PrRef Pr, bool Fix)> _queued = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _queuedSaid = new(StringComparer.Ordinal);
+
+    // True when the start waits: said once per reason by a Handled card (no ring), kept for the sweep. False clears any earlier wait.
+    private bool WaitsForSlot(PrRef pr, bool fix, string? model, string? replacing = null)
+    {
+        var target = Verbs.PrTarget(pr.Repo, pr.Number);
+        if (Slots.Ask(fix ? AdmissionRole.Fixer : AdmissionRole.Reviewer, model, null, replacing is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { replacing }) is not AdmissionDecision.Wait wait)
+        {
+            _queued.TryRemove(target, out _);
+            if (_queuedSaid.TryRemove(target, out _))
+            {
+                state.CloseCardsAbout(target, "its start was admitted", WaitingKind);
+            }
+            return false;
+        }
+        _queued[target] = (pr, fix);
+        if (!_queuedSaid.TryGetValue(target, out var said) || said != wait.Why)
+        {
+            _queuedSaid[target] = wait.Why;
+            state.CloseCardsAbout(target, "its wait changed", WaitingKind);
+            state.RaiseCard(CardBin.Handled, WaitingKind, target, $"{pr}: the {(fix ? "fixer" : "review")} waits to start", wait.Why);
+        }
+        return true;
+    }
+
     /// <summary>The Handled line a start leaves.</summary>
     public const string StartedKind = "pr-review-started";
 
@@ -145,6 +178,12 @@ public sealed class PrReviews(
             throw new FlightException($"gh did not say {pr}'s head and base");
         }
 
+        // Admission: a review waits for a free Opus slot, and the sweep starts it; an earlier review's own reviewer does not count against it.
+        if (WaitsForSlot(pr, fix: false, Models.Model(RoleModels.Reviewer), Of(pr)?.Reviewer))
+        {
+            return;
+        }
+
         // One review of a PR at a time: an earlier one, still on or waiting on its card, ends first.
         if (Of(pr) is { State: not PrReviewState.Closed } earlier)
         {
@@ -198,6 +237,8 @@ public sealed class PrReviews(
         var brief = Briefs.ReviewPr(row, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""),
             await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine);
         string job;
+        var counting = new object();
+        Slots.Begin("review-pr:" + reviewer, counting, reviewer, null, AdmissionRole.Reviewer, Models.Model(RoleModels.Reviewer));
         try
         {
             job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer)), cancellationToken);
@@ -209,6 +250,11 @@ public sealed class PrReviews(
             throw new FlightException(ex.Message.Contains("trust", StringComparison.OrdinalIgnoreCase) && IsCached(clone)
                 ? $"{ex.Message}. Claude Code starts no background session in a folder never trusted: run claude in {CloneCache} once and accept its prompt, which covers every clone the node makes there, then review it again"
                 : ex.Message);
+        }
+        finally
+        {
+            // From here the row (put below) counts it.
+            Slots.End("review-pr:" + reviewer, counting);
         }
         state.PutPrReview(row with { ReviewerJob = job });
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
@@ -703,6 +749,33 @@ public sealed class PrReviews(
         await _one.WaitAsync(cancellationToken);
         try
         {
+            // The reviews and fixers admission holds start by themselves once a slot frees, in the order they asked.
+            foreach (var (pr, fix) in _queued.Values.ToArray())
+            {
+                try
+                {
+                    if (fix)
+                    {
+                        if (Of(pr) is { Fixer: null } waiting)
+                        {
+                            await StartFixerAsync(pr, waiting, cancellationToken);
+                        }
+                        else
+                        {
+                            _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
+                        }
+                    }
+                    else
+                    {
+                        await StartAsync(pr, cancellationToken);
+                    }
+                }
+                catch (FlightException ex)
+                {
+                    _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
+                    state.RaiseCard(CardBin.ForYou, WaitingKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: the start that waited did not go", ex.Message);
+                }
+            }
             foreach (var fixing in state.PrReviews().Where(r => r.Fixer is not null))
             {
                 await TendFixerAsync(fixing, cancellationToken);
@@ -1079,6 +1152,10 @@ public sealed class PrReviews(
         {
             throw new FlightException($"a flight owns {pr}: its own legs fix it");
         }
+        if (WaitsForSlot(pr, fix: true, Models.Model(RoleModels.Worker)))
+        {
+            return;
+        }
         var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
@@ -1108,6 +1185,8 @@ public sealed class PrReviews(
         var fixer = $"{options.Machine.ToLowerInvariant()}-fix-{name}-{pr.Number}";
         var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1 };
         string job;
+        var counting = new object();
+        Slots.Begin("fix-pr:" + fixer, counting, fixer, null, AdmissionRole.Fixer, Models.Model(RoleModels.Worker));
         try
         {
             job = await workers.StartAsync(new WorkerStart(fixer, clone, plane, Briefs.FixPr(fixing, branch, CiShape.Of(worktree)),
@@ -1117,6 +1196,10 @@ public sealed class PrReviews(
         {
             await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
             throw;
+        }
+        finally
+        {
+            Slots.End("fix-pr:" + fixer, counting);
         }
         state.PutPrReview(fixing with { FixerJob = job });
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind);

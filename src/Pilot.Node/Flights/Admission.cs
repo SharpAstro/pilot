@@ -143,6 +143,20 @@ public static class Admission
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }
 
+    /// <summary>
+    /// The flights of <paramref name="codes"/> (on <paramref name="node"/>) in the order admission would let them go: the ones the
+    /// most others wait for first, then the older, then by code. What a sweep takes its queued starts in.
+    /// </summary>
+    public static IReadOnlyList<string> Order(AdmissionInput input, string node, IEnumerable<string> codes)
+    {
+        var live = input.Flights.Where(f => f.Phase != FlightPhase.Landed).ToArray();
+        var dependents = Dependents(live, live.ToDictionary(f => f.Key, StringComparer.Ordinal));
+        var wanted = codes.ToArray();
+        var flights = wanted.Select(c => input.Flights.FirstOrDefault(f => f.Node.Equals(node, StringComparison.OrdinalIgnoreCase) && f.Code.Equals(c, StringComparison.OrdinalIgnoreCase)))
+            .OfType<FleetFlight>().OrderBy(f => f, Ranking(dependents)).Select(f => f.Code);
+        return [.. flights.Concat(wanted.Where(c => !input.Flights.Any(f => f.Code.Equals(c, StringComparison.OrdinalIgnoreCase))))];
+    }
+
     // Admit (null stands for it), a wait for the repo, or the break of a cycle.
     private static AdmissionDecision? RepoVerdict(AdmissionInput input, FleetFlight flight)
     {
