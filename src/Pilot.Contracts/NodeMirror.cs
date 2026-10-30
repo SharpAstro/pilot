@@ -46,10 +46,28 @@ public sealed class NodeMirror
     /// <summary>The jobs, by id.</summary>
     public IReadOnlyDictionary<string, JobRow> Jobs => _jobs;
 
+    private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
+
+    /// <summary>The merge queue's entries, by flight code.</summary>
+    public IReadOnlyDictionary<string, MergeRow> Merges => _merges;
+
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The PR reviews, by target (<c>pr/owner/repo#n</c>).</summary>
     public IReadOnlyDictionary<string, PrReviewRow> PrReviews => _prReviews;
+
+    private IdeaRow[] _ideas = [];
+
+    private IdeaMoveRow[] _ideaMoves = [];
+
+    /// <summary>The ideas moved to another repo: an old id finds the new one through <see cref="IdeaIds.Follow"/>.</summary>
+    public IReadOnlyList<IdeaMoveRow> IdeaMoves => _ideaMoves;
+
+    /// <summary>The ideas of every repo the node reads, newest first.</summary>
+    public IReadOnlyList<IdeaRow> Ideas => _ideas;
+
+    /// <summary>How many of <see cref="Ideas"/> are noted.</summary>
+    public int NotedIdeas => _ideas.Count(i => i.State == IdeaState.Noted);
 
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
@@ -94,11 +112,18 @@ public sealed class NodeMirror
             {
                 _jobs[job.Id] = job;
             }
+            _merges.Clear();
+            foreach (var merge in snapshot.Merges ?? [])
+            {
+                _merges[merge.Flight] = merge;
+            }
             _prReviews.Clear();
             foreach (var review in snapshot.PrReviews ?? [])
             {
                 _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
             }
+            _ideas = snapshot.Ideas;
+            _ideaMoves = snapshot.IdeaMoves;
             _summaries.Clear();
             foreach (var summary in snapshot.Summaries ?? [])
             {
@@ -159,11 +184,26 @@ public sealed class NodeMirror
             case JobChangedEvent changed:
                 _jobs[changed.Job.Id] = changed.Job;
                 break;
+            case MergeAddedEvent added:
+                _merges[added.Merge.Flight] = added.Merge;
+                break;
+            case MergeChangedEvent changed:
+                _merges[changed.Merge.Flight] = changed.Merge;
+                break;
+            case MergeRemovedEvent removed:
+                _merges.Remove(removed.Flight);
+                break;
             case PrReviewAddedEvent added:
                 _prReviews[Verbs.PrTarget(added.Review.Repo, added.Review.Number)] = added.Review;
                 break;
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
+                break;
+            case IdeasChangedEvent ideas:
+                _ideas = ideas.Ideas;
+                break;
+            case IdeaMovedEvent moved:
+                _ideaMoves = [.. _ideaMoves, moved.Move];
                 break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;

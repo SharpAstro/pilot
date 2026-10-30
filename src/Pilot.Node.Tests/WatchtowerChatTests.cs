@@ -122,6 +122,22 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public void TheBriefMakesTheChatTheFleetChatPassingWorkOnInTheBackgroundWithLimits()
+    {
+        var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", null, "DU1");
+
+        brief.ShouldContain("the Chat is the fleet chat, held here");
+        brief.ShouldContain("pilot tell --node <name>");
+        brief.ShouldContain("Say at once in the chat that you passed it on, and end your turn");
+        brief.ShouldContain("never wait on the answer");
+        brief.ShouldContain("post the outcome in the chat");
+        brief.ShouldContain("[From the watchtower of node <name>]");
+        brief.ShouldContain("A report back to a tell you sent is not a request: post it in the chat");
+        brief.ShouldContain("do not answer it, no thanks or acknowledgement tells");
+        brief.ShouldContain("Never edit or push another node's plane from here");
+    }
+
+    [Fact]
     public async Task TheNodesOwnMessagesAreNotesAndAPersonsAreNot()
     {
         await TwoWatchtowersAsync();
@@ -374,5 +390,40 @@ public sealed class WatchtowerChatTests : IDisposable
         brief.ShouldContain("<ask>");
         brief.ShouldContain("Allow card");
         brief.ShouldContain("Never go round it with gh or git directly");
+    }
+
+    [Fact]
+    public void TheBriefFitsOnACommandLineWhateverCardsAreOpenRingsFirstEachInOneShortLine()
+    {
+        // 300 open cards each with a 2,000-character detail: whole, they made a 46,000-character brief, and every watchtower
+        // started with it died on ENAMETOOLONG (DE1, 2026-10-29).
+        var at = new DateTimeOffset(2026, 10, 29, 4, 0, 0, TimeSpan.Zero);
+        var detail = new string('x', 2000);
+        CardRow Card(int i, CardBin bin) => new() { Id = $"c{i}", Bin = bin, Kind = "stop", Subject = $"flight/PIL{i}", Title = $"PIL{i} needs something " + new string('y', 300), Detail = detail, At = at, State = CardState.Open };
+        var cards = Enumerable.Range(1, 290).Select(i => Card(i, CardBin.ForYou)).Concat(Enumerable.Range(291, 10).Select(i => Card(i, CardBin.Ring))).ToList();
+
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], cards, "pilot", machine: "DE1");
+
+        brief.Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief + 200);
+        brief.ShouldNotContain(detail);
+        // The rings first, though they were opened last, and the rest named by count with where to read them.
+        brief.IndexOf("- c291 [ring]", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("- c1 [for you]", StringComparison.Ordinal));
+        brief.ShouldMatch(@"- and \d+ more: `pilot cards` lists them\.");
+        // One line a card, its title cut short.
+        brief.ReplaceLineEndings("\n").Split('\n').Where(l => l.StartsWith("- c", StringComparison.Ordinal)).ShouldAllBe(l => l.Length < 260);
+    }
+
+    [Fact]
+    public void TheBriefGivesTheWatchtowerAFixerOnAutopilotThroughItsOwnCliAndLeavesWhatTheNodeRefusesToThePerson()
+    {
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "C:/p/pilot.exe --node-socket s", machine: "DE1");
+
+        // Its own CLI, as every other command of the brief, never a bare pilot.
+        brief.ShouldContain("`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`");
+        // And the fixer is among what it may do on autopilot.
+        brief.ShouldContain("start a fixer on a PR outside a flight whose review asked for changes (`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`)");
+        brief.ShouldContain("The node refuses it past its third round, on a design question and on another author's PR");
+        // Nothing promised that the node refuses it: a design question and a capped flight stay the person's.
+        brief.ShouldContain("are the person's: say so on the card and leave it to them.");
     }
 }

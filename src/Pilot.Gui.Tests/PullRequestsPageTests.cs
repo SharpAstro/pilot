@@ -212,16 +212,16 @@ public sealed class PullRequestsPageTests
     }
 
     [Fact]
-    public void GroupsFollowTheRowsOrderEachWithItsRepoAsALinkAndItsCountAndARepoWithNoPRHasNone()
+    public void GroupsGoByNameEachWithItsRepoAsALinkAndItsCountAndARepoWithNoPRHasNone()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (_, page) = Chrome(renderer);
         var arranged = Arrange(renderer, page, Screen());
 
-        // The repo with the PR that most needs the person first: pilot (ready), DIR.Lib (changes requested), tianwen (a conflict), notes (a draft).
+        // The repos by name, whatever their PRs' states, so a group never moves on a refresh.
         var headers = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action.StartsWith("prs:group:", StringComparison.Ordinal)).Select(a => ((HitResult.ButtonHit)a.Node.Hit!).Action).ToList();
-        headers.ShouldBe(["prs:group:SharpAstro/pilot", "prs:group:SharpAstro/DIR.Lib", "prs:group:SharpAstro/tianwen", "prs:group:sebgod/notes"]);
-        Numbers(page).ShouldBe([252, 261, 258, 300, 301, 1799, 1820, 12]);
+        headers.ShouldBe(["prs:group:sebgod/notes", "prs:group:SharpAstro/DIR.Lib", "prs:group:SharpAstro/pilot", "prs:group:SharpAstro/tianwen"]);
+        Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
 
         var text = Dump(arranged);
         text.ShouldContain("SharpAstro/pilot");
@@ -430,14 +430,14 @@ public sealed class PullRequestsPageTests
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (_, page) = Chrome(renderer);
         var arranged = Arrange(renderer, page, Screen());
-        Numbers(page).ShouldBe([252, 261, 258, 300, 301, 1799, 1820, 12]);
+        Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
 
         // Anywhere: the far right of the header, clear of the name.
         var header = Button(arranged, "prs:group:SharpAstro/pilot");
         ClickAt(arranged, header.X + header.Width - 30f, header.Y + header.Height / 2f);
         page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
         arranged = Arrange(renderer, page, Screen());
-        Numbers(page).ShouldBe([300, 301, 1799, 1820, 12]);
+        Numbers(page).ShouldBe([12, 300, 301, 1799, 1820]);
         Dump(arranged).ShouldNotContain("Checks running 4/7");
         // The header stays, and says how many it holds.
         Dump(arranged).ShouldContain("SharpAstro/pilot");
@@ -455,8 +455,33 @@ public sealed class PullRequestsPageTests
         header = Button(arranged, "prs:group:SharpAstro/pilot");
         ClickAt(arranged, header.X + 4f, header.Y + header.Height / 2f);
         page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
-        Arrange(renderer, page, Screen());
-        Numbers(page).ShouldBe([252, 261, 258, 300, 301, 1799, 1820, 12]);
+        arranged = Arrange(renderer, page, Screen());
+        Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
+
+        // The link is the name and its ↗ only, not the header's width: a click just past it folds, it does not open GitHub (the owner, 2026-10-29).
+        name = Button(arranged, "prs:repo:SharpAstro/pilot");
+        header = Button(arranged, "prs:group:SharpAstro/pilot");
+        name.Width.ShouldBeLessThan(header.Width / 3f);
+        // The name is drawn whole on a wide page: its text leaf is as wide as the name measures (a plain star inside the
+        // content-capped stack was arranged 0 wide, and the bounds above could not tell).
+        var (measured, _) = renderer.MeasureText("SharpAstro/pilot", SessionsCapture.FontPath, 14f);
+        NameLeaf(arranged, "SharpAstro/pilot").Width.ShouldBeGreaterThanOrEqualTo(measured - 0.5f);
+        ClickAt(arranged, name.X + name.Width + 40f, header.Y + header.Height / 2f);
+        opened.Count.ShouldBe(1);
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+
+        // On a narrow page it gives way, but is never squeezed away or wider than its header.
+        var narrow = Arrange(renderer, page, Screen(), width: 520f);
+        var squeezed = NameLeaf(narrow, "SharpAstro/pilot").Width;
+        squeezed.ShouldBeGreaterThan(0f);
+        squeezed.ShouldBeLessThanOrEqualTo(Button(narrow, "prs:group:SharpAstro/pilot").Width);
+    }
+
+    // The arranged bounds of a repo header's name text: the leaf whose text is exactly the repo's name.
+    private static Rect<float> NameLeaf(ImmutableArray<Layout.ArrangedNode<float>> arranged, string repo)
+    {
+        var leaf = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v == repo);
+        return leaf.Bounds;
     }
 
     [Fact]
@@ -476,7 +501,7 @@ public sealed class PullRequestsPageTests
         Pick("prs:filter:mine");
         page.Filter.ShouldBe(PullRequestFilter.Mine);
         Arrange(renderer, page, screen);
-        Numbers(page).ShouldBe([252, 261, 1799, 12]);
+        Numbers(page).ShouldBe([12, 252, 261, 1799]);
         Dump(Arrange(renderer, page, screen)).ShouldContain("showing 4 of 8");
 
         Pick("prs:filter:flights");
@@ -485,7 +510,7 @@ public sealed class PullRequestsPageTests
 
         Pick("prs:filter:needs-me");
         Arrange(renderer, page, screen);
-        Numbers(page).ShouldBe([252, 300, 1799]);
+        Numbers(page).ShouldBe([300, 252, 1799]);
 
         // The lit pill is the one chosen, drawn in the tint the node pills use, and its tooltip says how to go back.
         var arranged = Arrange(renderer, page, screen);
@@ -505,7 +530,7 @@ public sealed class PullRequestsPageTests
         var unsure = Screen(Row(viewer: null));
         page.Filter = PullRequestFilter.Mine;
         Arrange(renderer, page, unsure);
-        Numbers(page).ShouldBe([300, 301, 1820, 258, 12]);
+        Numbers(page).ShouldBe([12, 300, 301, 258, 1820]);
     }
 
     [Fact]
@@ -530,7 +555,7 @@ public sealed class PullRequestsPageTests
         page.Search.Text = "sharpastro";
         page.Filter = PullRequestFilter.NeedsMe;
         Arrange(renderer, page, screen);
-        Numbers(page).ShouldBe([252, 300, 1799]);
+        Numbers(page).ShouldBe([300, 252, 1799]);
 
         // None: it says so, names the pill, and the search box stays to be cleared.
         page.Filter = null;
@@ -558,17 +583,17 @@ public sealed class PullRequestsPageTests
         var arranged = Arrange(renderer, page, screen);
         page.SelectedPr().ShouldBe(0);
 
-        // A click on the third row (#258, nobody's flight) selects it: the row, not any link in it.
-        var (x, y) = RowPoint(arranged, 2);
+        // A click on the sixth row (#258, nobody's flight) selects it: the row, not any link in it.
+        var (x, y) = RowPoint(arranged, 5);
         ClickAt(arranged, x, y);
-        page.SelectedPr().ShouldBe(2);
+        page.SelectedPr().ShouldBe(5);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
         page.FocusFlight.ShouldBeNull();
         opened.ShouldBeEmpty();
 
         // Painted, the selected row is the one in the focus colour.
         arranged = Arrange(renderer, page, screen);
-        var selected = PrRows(arranged).ElementAt(2).Node;
+        var selected = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 10 }).Node;
         selected.Background.ShouldBe(Palette.Standard.RowFocusBg);
 
         // A double-click on it opens the PR in the browser.
@@ -578,36 +603,35 @@ public sealed class PullRequestsPageTests
         // The arrows move the selection over the rows painted, and the selection follows by URL.
         page.Render(screen, new RectF32(0, 0, 1280, 900));
         page.HandleInput(new InputEvent.KeyDown(InputKey.Up, InputModifier.None)).ShouldBeTrue();
-        page.SelectedPr().ShouldBe(1);
+        page.SelectedPr().ShouldBe(4);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/261");
         page.FocusFlight.ShouldBe("PIL261");
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
-        // The next row down is DIR.Lib's header, which the arrows stop on as they do on a PR.
+        // The next row down is tianwen's header, which the arrows stop on as they do on a PR.
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
-        page.SelectedRow.ShouldBeNull();
-        page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
+        page.SelectedHeader.ShouldBe("SharpAstro/tianwen");
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
-        page.SelectedPr().ShouldBe(3);
-        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/DIR.Lib/pull/300");
+        page.SelectedPr().ShouldBe(6);
+        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/tianwen/pull/1799");
 
-        // The rows are read again with the first one gone, which puts DIR.Lib's group (now the one that most needs the person)
-        // first: the selection stays on its PR, which is now the first row.
+        // The rows are read again with #252 gone: the groups keep their order, every row after it moves up one, and the
+        // selection stays on its PR.
         var without252 = Screen(Row() with { PullRequests = [.. Row().PullRequests.Where(p => p.Number != 252)] });
         Arrange(renderer, page, without252);
-        Numbers(page).ShouldBe([300, 301, 1799, 1820, 261, 258, 12]);
-        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/DIR.Lib/pull/300");
-        page.SelectedPr().ShouldBe(0);
+        Numbers(page).ShouldBe([12, 300, 301, 261, 258, 1799, 1820]);
+        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/tianwen/pull/1799");
+        page.SelectedPr().ShouldBe(5);
         Arrange(renderer, page, screen);
 
-        // A double-click on a flight's row, and Enter on it, open the flight's page.
-        page.SelectPr(0);
-        ClickAt(arranged = Arrange(renderer, page, screen), x, PrRows(arranged).First().Bounds.Y + 20f, twice: true);
+        // A double-click on a flight's row (#252), and Enter on it, open the flight's page.
+        page.SelectPr(3);
+        ClickAt(arranged = Arrange(renderer, page, screen), x, arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 8 }).Bounds.Y + 20f, twice: true);
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.IsDetailOpen.ShouldBeTrue();
         chrome.Show(PilotPage.PullRequests);
         chrome.Flights.CloseDetail();
         Arrange(renderer, page, screen);
-        page.SelectPr(1);
+        page.SelectPr(4);
         page.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.OpenCode.ShouldBe("PIL261");
@@ -615,7 +639,7 @@ public sealed class PullRequestsPageTests
         // Enter on a PR that is no flight's opens it in the browser.
         chrome.Show(PilotPage.PullRequests);
         Arrange(renderer, page, screen);
-        page.SelectPr(2);
+        page.SelectPr(5);
         page.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
         opened.Count.ShouldBe(2);
     }
@@ -635,18 +659,19 @@ public sealed class PullRequestsPageTests
         // The page's own frame finds its first row, and the next frame lights the panel for it.
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
-        // The first row is #252, a flight's: its cards are lit.
+        // The first row is #12, no flight's: it lights none.
+        page.SelectedRow!.Number.ShouldBe(12);
+        chrome.Cards.Focus.ShouldBeNull();
+
+        // #252, a flight's: its cards are lit.
+        page.SelectPr(3);
+        chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
+        chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         page.SelectedRow!.Number.ShouldBe(252);
         chrome.Cards.Focus.ShouldBe("PIL252");
 
-        // A row that is no flight's lights none.
-        page.SelectPr(2);
-        chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
-        chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
-        chrome.Cards.Focus.ShouldBeNull();
-
         // The flight chip opens the flight's page, a move Back returns from, to the same selection.
-        page.SelectPr(1);
+        page.SelectPr(4);
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         var chip = Button(Arrange(renderer, page, screen), "pr:https://github.com/SharpAstro/pilot/pull/261:flight");
         ClickAt(Arrange(renderer, page, screen), chip.X + 2f, chip.Y + chip.Height / 2f);
@@ -936,14 +961,14 @@ public sealed class PullRequestsPageTests
         [.. arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action.StartsWith("prs:org:", StringComparison.Ordinal)).Select(a => ((HitResult.ButtonHit)a.Node.Hit!).Action["prs:org:".Length..])];
 
     [Fact]
-    public void AnOrgHeadsItsReposWithItsCountsAndTheOrgsFollowTheRowsOrder()
+    public void AnOrgHeadsItsReposWithItsCountsAndTheOrgsGoByName()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (_, page) = Chrome(renderer);
         var arranged = Arrange(renderer, page, Screen());
 
-        // The org with the PR that most needs the person first: SharpAstro (ready), then sebgod (a draft).
-        OrgHeaders(arranged).ShouldBe(["SharpAstro", "sebgod"]);
+        // The orgs by name, whatever their PRs' states.
+        OrgHeaders(arranged).ShouldBe(["sebgod", "SharpAstro"]);
         var text = Dump(arranged);
         text.ShouldContain("SharpAstro");
         text.ShouldContain("7 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
@@ -953,14 +978,14 @@ public sealed class PullRequestsPageTests
         var orgs = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action.StartsWith("prs:org:", StringComparison.Ordinal)).Select(a => a.Bounds).ToList();
         orgs.Select(o => o.Height).Distinct().ShouldBe([PullRequestsView<RgbaImage>.OrgHeight]);
         Button(arranged, "prs:org:SharpAstro").Y.ShouldBeLessThan(Button(arranged, "prs:group:SharpAstro/pilot").Y);
-        Button(arranged, "prs:group:SharpAstro/tianwen").Y.ShouldBeLessThan(Button(arranged, "prs:org:sebgod").Y);
         Button(arranged, "prs:org:sebgod").Y.ShouldBeLessThan(Button(arranged, "prs:group:sebgod/notes").Y);
+        Button(arranged, "prs:group:sebgod/notes").Y.ShouldBeLessThan(Button(arranged, "prs:org:SharpAstro").Y);
         Button(arranged, "prs:group:SharpAstro/pilot").X.ShouldBe(Button(arranged, "prs:org:SharpAstro").X);
 
         // The counts of an org are of all its PRs, whatever the pills show.
         page.Filter = PullRequestFilter.NeedsMe;
         arranged = Arrange(renderer, page, Screen());
-        Numbers(page).ShouldBe([252, 300, 1799]);
+        Numbers(page).ShouldBe([300, 252, 1799]);
         OrgHeaders(arranged).ShouldBe(["SharpAstro"]);
         Dump(arranged).ShouldContain("7 open · 1 ready");
     }
@@ -978,7 +1003,7 @@ public sealed class PullRequestsPageTests
         ClickAt(arranged, repoHeader.X + 8f, repoHeader.Y + repoHeader.Height / 2f);
         page.IsFolded("SharpAstro/DIR.Lib").ShouldBeTrue();
         arranged = Arrange(renderer, page, Screen());
-        Numbers(page).ShouldBe([252, 261, 258, 1799, 1820, 12]);
+        Numbers(page).ShouldBe([12, 252, 261, 258, 1799, 1820]);
 
         var header = Button(arranged, "prs:org:SharpAstro");
         ClickAt(arranged, header.X + header.Width - 30f, header.Y + header.Height / 2f);
@@ -1002,7 +1027,7 @@ public sealed class PullRequestsPageTests
         ClickAt(arranged, header.X + 4f, header.Y + header.Height / 2f);
         page.IsOrgFolded("SharpAstro").ShouldBeFalse();
         Arrange(renderer, page, later);
-        Numbers(page).ShouldBe([252, 261, 258, 1799, 1820, 12]);
+        Numbers(page).ShouldBe([12, 252, 261, 258, 1799, 1820]);
     }
 
     [Fact]
@@ -1010,11 +1035,14 @@ public sealed class PullRequestsPageTests
     {
         var dump = SessionsCapture.PullRequestsDump(Screen(RowWithEmptyAndFailedOrgs())).Split('\n');
 
-        dump[0].ShouldBe("SharpAstro  7 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
-        dump[1].ShouldBe("  SharpAstro/pilot  3");
-        dump[2].ShouldStartWith("    #252 Pull requests page: every open PR across the orgs | Ready | PIL252 | sebgod | review passed | updated 5m ago");
-        dump.ShouldContain("sebgod  1 open");
-        dump.ShouldContain("  sebgod/notes  1");
+        // The orgs by name, sebgod before SharpAstro, each above its repos.
+        dump[0].ShouldBe("sebgod  1 open");
+        dump[1].ShouldBe("  sebgod/notes  1");
+        var org = Array.IndexOf(dump, "SharpAstro  7 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
+        var repo = Array.IndexOf(dump, "  SharpAstro/pilot  3");
+        org.ShouldBeGreaterThan(1);
+        repo.ShouldBeGreaterThan(org);
+        dump[repo + 1].ShouldStartWith("    #252 Pull requests page: every open PR across the orgs | Ready | PIL252 | sebgod | review passed | updated 5m ago");
         // The failed org says why, not also that it has none; the empty one says it has none.
         dump[^4..].ShouldBe(["broken-org  0 open", $"  could not be read: {BrokenMessage}", "empty-org  0 open", "  no open pull requests"]);
         SessionsCapture.PullRequestsDump(new PullRequestsScreen(null, "x", Now)).ShouldBe("the node has not read the pull requests yet");
@@ -1084,8 +1112,8 @@ public sealed class PullRequestsPageTests
         var arranged = Arrange(renderer, page, screen);
 
         // Orgs with PRs first, then the empty and the failed one by name.
-        OrgHeaders(arranged).ShouldBe(["SharpAstro", "sebgod", "broken-org", "empty-org"]);
-        Numbers(page).ShouldBe([252, 261, 258, 300, 301, 1799, 1820, 12]);
+        OrgHeaders(arranged).ShouldBe(["sebgod", "SharpAstro", "broken-org", "empty-org"]);
+        Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
         var text = Dump(arranged);
         text.ShouldContain("No open pull requests.");
         text.ShouldContain("0 open");
@@ -1190,15 +1218,15 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void UpAndDownWalkEveryRowHeadersIncluded()
     {
-        var (page, screen, renderer) = Tree(onHeader: true, at: 0);
+        var (page, screen, renderer) = Tree(onHeader: true, at: 3);
         using var _ = renderer;
         page.SelectedHeader.ShouldBe("SharpAstro");
         page.SelectedRow.ShouldBeNull();
         page.FocusFlight.ShouldBeNull();
         Key(page, InputKey.Down).ShouldBeTrue();
-        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
         Key(page, InputKey.Down).ShouldBeTrue();
-        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252);
+        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(300);
         Key(page, InputKey.Up).ShouldBeTrue();
         Key(page, InputKey.Up).ShouldBeTrue();
         page.SelectedHeader.ShouldBe("SharpAstro");
@@ -1211,7 +1239,7 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void LeftGoesToTheParentAndFoldsAnOpenHeader()
     {
-        var (page, screen, renderer) = Tree(at: 2);
+        var (page, screen, renderer) = Tree(at: 5);
         using var _ = renderer;
         page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(258);
 
@@ -1239,7 +1267,7 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void RightUnfoldsAFoldedHeaderAndStepsToTheFirstChildOfAnOpenOne()
     {
-        var (page, screen, renderer) = Tree(onHeader: true, at: 0);
+        var (page, screen, renderer) = Tree(onHeader: true, at: 3);
         using var _ = renderer;
         page.ToggleOrg("SharpAstro");
         page.Toggle("sebgod/notes");
@@ -1251,9 +1279,9 @@ public sealed class PullRequestsPageTests
         Arrange(renderer, page, screen);
         // Open now: Right goes to the org's first repo, and from that open repo to its first PR.
         Key(page, InputKey.Right).ShouldBeTrue();
-        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
         Key(page, InputKey.Right).ShouldBeTrue();
-        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252);
+        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(300);
         // A PR has no children and Right leaves it.
         Key(page, InputKey.Right).ShouldBeFalse();
 
@@ -1267,7 +1295,7 @@ public sealed class PullRequestsPageTests
     [Fact]
     public void EnterTogglesAHeaderAndOpensAPR()
     {
-        var (page, screen, renderer) = Tree(onHeader: true, at: 1);
+        var (page, screen, renderer) = Tree(onHeader: true, at: 7);
         using var _ = renderer;
         var opened = new List<string>();
         page.OnOpen = opened.Add;
@@ -1303,5 +1331,58 @@ public sealed class PullRequestsPageTests
         page.VisiblePullRequests.ShouldNotContain(p => p.Repo == "SharpAstro/pilot" || p.Repo.StartsWith("sebgod/", StringComparison.Ordinal));
         page.IsFolded("SharpAstro/DIR.Lib").ShouldBeFalse();
         page.VisiblePullRequests.ShouldContain(p => p.Repo == "SharpAstro/DIR.Lib");
+    }
+
+    private static void ClickTitle(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, string title) =>
+        ClickButton(Arrange(renderer, page, screen, 1600f), "pull requests:table:" + title);
+
+    [Fact]
+    public void AClickOnATitleSortsThePRsWithinEachRepoAndTheGroupsKeepTheirOrder()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        var groups = page.VisiblePullRequests.Select(r => r.Repo).Distinct().ToList();
+        string[] Repo(string repo) => [.. page.VisiblePullRequests.Where(r => r.Repo == repo).Select(r => r.Url[(r.Url.LastIndexOf('/') + 1)..])];
+        Repo("SharpAstro/pilot").ShouldBe(["252", "261", "258"]);
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["252", "258", "261"]);
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["261", "258", "252"]);
+        Repo("SharpAstro/DIR.Lib").ShouldBe(["301", "300"]);
+
+        // The repos' groups are where they were, each repo's rows still together.
+        page.VisiblePullRequests.Select(r => r.Repo).Distinct().ShouldBe(groups);
+        page.VisiblePullRequests.Select(r => r.Repo).Where((repo, i) => i == 0 || repo != page.VisiblePullRequests.ElementAt(i - 1).Repo).Count().ShouldBe(groups.Count);
+
+        // The age sorts by time, the newest first on a first click: #252 (5 minutes) leads its group.
+        ClickTitle(renderer, page, screen, "Updated");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot")[0].ShouldBe("252");
+        page.Table.Sort.ShouldBe(new ListTable.SortState("Updated", Descending: true));
+    }
+
+    [Fact]
+    public void TheSelectedPRStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        page.Select(page.Rows.ToList().FindIndex(r => r.Item.Pr?.Number == 258));
+        var before = page.Selected;
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+
+        page.SelectedRow!.Number.ShouldBe(258);
+        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
+        page.Selected.ShouldNotBe(before);
     }
 }

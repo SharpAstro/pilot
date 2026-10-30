@@ -90,6 +90,45 @@ if (options.SayTo is { } sayTo)
     return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
 }
 
+string? capturedNodeCode = null;
+
+// A capture of several nodes: this node's flights marked with its name, then each --peer's, as the window's page merges them.
+async Task<FlightsScreen> WithPeersAsync(FlightsScreen here, SessionsScreen shown)
+{
+    var hereName = options.HereName ?? (capturedNodeCode is { Length: > 0 } code ? code : "DE1");
+    var lines = here.Lines.Select(l => l with { Node = new NodeMark(hereName.ToLowerInvariant(), hereName, hereName, Here: true) }).ToList();
+    foreach (var spec in options.Peers)
+    {
+        FlightLine[] peerLines;
+        string name;
+        if (spec.IndexOf('=') is > 0 and var eq && File.Exists(spec[(eq + 1)..]))
+        {
+            name = spec[..eq];
+            var snap = SessionsCapture.LoadSnapshot(Path.GetFullPath(spec[(eq + 1)..]));
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, snap.At, snap.Legs)];
+        }
+        else
+        {
+            var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(spec, CancellationToken.None);
+            if (unknown is not null || resolved is null || !NodeClient.IsEndpoint(resolved, out var peerEndpoint))
+            {
+                throw new InvalidDataException($"--peer {spec}: {unknown ?? "not a node on the LAN"}");
+            }
+            using var client = Pilot.Commands.NodeTargets.Connect(peerEndpoint, null);
+            name = (await client.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : peerEndpoint;
+            await using var events = await client.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
+            if (await events.ReadAsync(CancellationToken.None) is not SnapshotEvent snap)
+            {
+                throw new InvalidDataException($"--peer {spec}: no snapshot");
+            }
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, here.AsOf, snap.Legs)];
+        }
+        var mark = new NodeMark(name.ToLowerInvariant(), name, name, Here: false);
+        lines.AddRange(peerLines.Select(l => l with { Node = mark }));
+    }
+    return here with { Lines = FlightLine.Order(lines), Source = $"{shown.Source} · {options.Peers.Length + 1} nodes" };
+}
+
 SessionsScreen screen;
 SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
@@ -123,6 +162,7 @@ else if (options.Capture is not null)
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         var code = (await oneShot.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        capturedNodeCode = code;
         screen = new SessionsScreen([.. SessionLine.Build(rows, now).Select(l => l with { NodeCode = code })], $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
@@ -163,9 +203,13 @@ if (options.Capture is { } capturePath)
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
+    if (options.Peers.Length > 0 && capturedFlights is not null)
+    {
+        capturedFlights = await WithPeersAsync(capturedFlights, screen);
+    }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, fold: options.Fold);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -232,6 +276,8 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();
 chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
+// The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
+chrome.Flights.Changed = loop.RequestRedraw;
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
@@ -298,7 +344,6 @@ if (feed is not null && client is not null && clients is not null)
             view.SayStatus = FleetClients.WatchOnly(line.Node);
             return;
         }
-        view.SayStatus = $"saying to {line.Name}…";
         loop.RequestRedraw();
         var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         view.SayStatus = result;
@@ -338,7 +383,6 @@ if (feed is not null && client is not null && clients is not null)
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);
-    chrome.Flights.Changed = loop.RequestRedraw;
     // The ? card: this window and the node it talks to, asked again each time it opens.
     NodeInfo? nodeInfo = null;
     chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);
@@ -474,6 +518,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
         ? chat
         : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.CanRead = node => clients.For(node, command: false) is not null;
     chrome.Chat.OnSendOn = async (node, text) =>
     {
         if (clients.For(node) is not { } to)
@@ -502,6 +547,32 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
+    // The Ideas page: every button is an idea verb on this window's node; a question about an idea (which repo, which version) is
+    // answered through the card's own answer, as the panel's buttons are.
+    chrome.Ideas.Send = async (verb, target, args, ct) =>
+    {
+        var reply = await IdeaCommands.SendAsync(client, verb, target, args, GuiSay.Who, ct);
+        Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
+        return reply;
+    };
+    chrome.Ideas.OnAnswer = chrome.Cards.OnAnswer;
+    chrome.Ideas.OnOpen = url => OpenAway(url);
+    chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
+    chrome.Ideas.Changed = loop.RequestRedraw;
+    // An idea's images: Ctrl+V of a screenshot and a dropped image file go to this window's node, the box keeps the marker.
+    chrome.Ideas.GetClipboardImage = ClipboardImage.Read;
+    chrome.Ideas.Upload = async (bytes, ext, ct) =>
+    {
+        var envelope = await client.UploadAttachmentAsync(bytes, ext, ct);
+        return envelope is { Success: true, Response: { Length: > 0 } id } ? (id, null) : (null, envelope.Error);
+    };
+    loop.OnDropFile = path =>
+    {
+        if (chrome.Page == PilotPage.Ideas)
+        {
+            chrome.Ideas.DropFile(path);
+        }
+    };
     chrome.Chat.Changed = loop.RequestRedraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
@@ -564,6 +635,17 @@ if (feed is not null && client is not null && clients is not null)
         var envelope = await client.SendAsync(DashboardCommands.ReviewPrRequest(pr, GuiSay.Who), ct);
         var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
         Note($"pilot-gui: review {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
+    // Address review on a PR no flight owns is `pilot review fix` (fix-pr); a flight's presses its card's go-around (chrome wires it).
+    chrome.PullRequests.OnFixReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.FixPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Note($"pilot-gui: review fix {pr.Repo}#{pr.Number}: {refused ?? "started"}");
         if (refused is not null)
         {
             throw new InvalidOperationException(refused);
@@ -774,6 +856,7 @@ CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
+IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At);
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
@@ -824,7 +907,7 @@ if (feed is not null)
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
+                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) is PilotPage.Repos or PilotPage.Ideas);
                 var hereSummary = feed.Summary(now);
                 var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
@@ -884,6 +967,7 @@ void RenderFrame()
             repos = pages.Repos;
             chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
+            ideas = pages.Ideas;
             pullRequests = pages.PullRequests;
             fleet = made.Item2;
         }
@@ -891,7 +975,7 @@ void RenderFrame()
 
     view.Ui.FrameId++;
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();

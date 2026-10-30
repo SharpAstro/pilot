@@ -90,6 +90,14 @@ public sealed record CommandResult
     /// <summary>What the command made, when it made something with an id of its own: a <c>run</c>'s job (<c>j3</c>).</summary>
     public string? Made { get; init; }
 
+    /// <summary>A <c>tidy-idea</c>'s proposal; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IdeaTidyProposal? Tidy { get; init; }
+
+    /// <summary>A <c>propose-milestone</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneProposal? Milestones { get; init; }
+
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
@@ -383,6 +391,79 @@ public static class Verbs
     public const string CreateIssue = "create-issue";
 
     /// <summary>
+    /// <c>note-idea repo/&lt;path or repo name&gt; &lt;text…&gt;</c>: an issue in the repo's Ideas milestone (made on the first idea),
+    /// its first line the title and the rest its body; the result's <see cref="CommandResult.Made"/> is its id, <c>I381</c>.
+    /// </summary>
+    /// <remarks>
+    /// With <see cref="AnyRepo"/> as the repo (<c>repo/*</c>) Claude chooses it from the repos the node tracks: <see cref="CommandRequest.Args"/>
+    /// are then the text and, optionally, the context (the page or flight the person was on). One repo fits: the issue is filed there. Several
+    /// fit equally: a <see cref="CardKinds.IdeaRepo"/> card asks, and nothing is created (<see cref="CommandResult.Way"/> is <see cref="IdeaEditWays.Asked"/>,
+    /// <see cref="CommandResult.Made"/> the card's id). Filed, <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; I&lt;n&gt;</c>.
+    /// </remarks>
+    public const string NoteIdea = "note-idea";
+
+    /// <summary>The repo of a <see cref="NoteIdea"/> target (<c>repo/*</c>) that Claude chooses.</summary>
+    public const string AnyRepo = "*";
+
+    /// <summary>
+    /// <c>move-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;repo&gt;</c>: the idea's issue transferred to another repo and put in its Ideas milestone, through the same
+    /// up-to-date save as an edit. Its number changes; the old id keeps resolving to the new one. The result's <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; I&lt;n&gt;</c>.
+    /// </summary>
+    public const string MoveIdea = "move-idea";
+
+    /// <summary>
+    /// <c>fold-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;flight code&gt;</c>: the idea's text added to the flight's issue as a comment, then the idea dropped as
+    /// folded into that flight. The result's <see cref="CommandResult.Made"/> is the idea's id.
+    /// </summary>
+    public const string FoldIdea = "fold-idea";
+
+    /// <summary>
+    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; [milestone…]</c>: the idea's issue moved out of Ideas to the named open milestone, or to a new one
+    /// (args <c>--new</c>, its title, then its description, which is made on GitHub once every other refusal is checked), and a flight created on it,
+    /// which remembers it came from the idea; the result's <see cref="CommandResult.Made"/> is the flight's code. With no milestone it is refused,
+    /// naming the open ones: see <see cref="ProposeMilestone"/>.
+    /// </summary>
+    public const string PlanIdea = "plan-idea";
+
+    /// <summary>The first arg of <see cref="PlanIdea"/> that asks for a new milestone: then the title and the description follow.</summary>
+    public const string NewMilestoneArg = "--new";
+
+    /// <summary>
+    /// <c>propose-milestone idea/&lt;repo&gt;/I&lt;n&gt;</c>: the repo's open milestones and Claude's proposal for the idea (one of them, or a new one),
+    /// in <see cref="CommandResult.Milestones"/>. Nothing is written; Claude failing gives the list with no proposal.
+    /// </summary>
+    public const string ProposeMilestone = "propose-milestone";
+
+    /// <summary>
+    /// <c>drop-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;why…&gt;</c>: the idea's issue closed as not planned, with why as its comment.
+    /// </summary>
+    public const string DropIdea = "drop-idea";
+
+    /// <summary>
+    /// <c>edit-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;updated_at&gt; &lt;text…&gt;</c>: the idea's title (the text's first line) and body (the rest) saved, from the
+    /// version whose GitHub <c>updated_at</c> (ISO 8601, round-trip) the edit started from. The node reads the issue now first: unchanged
+    /// since, it saves as is; changed elsewhere, it saves Claude's merge of both; contradicting, it raises a card to choose. The result's
+    /// <see cref="CommandResult.Way"/> is <see cref="IdeaEditWays.Saved"/>, <see cref="IdeaEditWays.Merged"/> or <see cref="IdeaEditWays.Asked"/>
+    /// (then <see cref="CommandResult.Made"/> is the card's id).
+    /// </summary>
+    public const string EditIdea = "edit-idea";
+
+    /// <summary>
+    /// <c>tidy-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: Claude formats the idea as short Markdown and fills obvious gaps. Nothing is written: the result's
+    /// <see cref="CommandResult.Tidy"/> carries the proposal and the <c>updated_at</c> it was made from.
+    /// </summary>
+    public const string TidyIdea = "tidy-idea";
+
+    /// <summary>
+    /// <c>save-tidy-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;updated_at&gt; &lt;text…&gt;</c>: a tidy proposal saved, with the <c>updated_at</c> it was made from.
+    /// It goes the way <see cref="EditIdea"/> does, so a change on GitHub since the proposal is merged, or asked about. Discarding is sending nothing.
+    /// </summary>
+    public const string SaveTidyIdea = "save-tidy-idea";
+
+    /// <summary>What an idea target starts with: <c>idea/&lt;repo&gt;/I381</c> (see <see cref="IdeaIds.Target"/>).</summary>
+    public const string IdeaTargetPrefix = "idea/";
+
+    /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
     /// </summary>
@@ -501,6 +582,42 @@ public static class Verbs
     /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
+    /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
+    public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>
+        redo >= 2 && model is not null ? $"Redo leg {leg} (redo {redo}, {OnModel(model, effort)})" : RedoLeg(leg);
+
+    /// <summary>
+    /// The words of the button that sends a done leg round on its review's findings: a worker fixes them on the leg's work as it
+    /// stands, nothing is thrown away, so it is not "redo" (the owner, 2026-10-29). The verb stays <see cref="GoAround"/>; from the
+    /// second go-around on it names what that worker runs on, as <see cref="RedoLeg(string, int, string?, string?)"/> does.
+    /// </summary>
+    /// <summary>
+    /// A button that sends a done leg round on what it says (<paramref name="words"/>: the review's findings, the failing checks, the
+    /// conflict), from the second go-around on with the round and the model the next worker runs on: <c>(round 3, on Opus)</c>.
+    /// Never "redo": the work is kept and built on (the owner, 2026-10-29).
+    /// </summary>
+    public static string SendBack(string words, int round, string? model, string? effort = null) =>
+        round >= 2 && model is not null ? $"{words} (round {round}, {OnModel(model, effort)})" : words;
+
+    /// <summary>The redo (go-arounds) and the model (and effort) it runs on: <c>redo 3, on Opus</c>, or <c>on Sonnet</c> before the second redo.</summary>
+    public static string AttemptText(int redo, string? model, string? effort = null)
+    {
+        var on = model is null ? null : OnModel(model, effort);
+        return redo >= 2 ? (on is null ? $"redo {redo}" : $"redo {redo}, {on}") : on ?? "";
+    }
+
+    /// <summary>The redo (go-arounds) and the model and effort of <paramref name="leg"/>'s current worker, as recorded on the row; null when none is.</summary>
+    public static string? AttemptOf(LegRow leg) =>
+        leg.AttemptModel is null || leg.GoArounds < 1 ? null : AttemptText(leg.GoArounds, leg.AttemptModel, leg.AttemptEffort);
+
+    private static string OnModel(string model, string? effort) => $"on {ModelName(model)}{(effort is null ? "" : $" at {effort}")}";
+
+    private static string ModelName(string model) =>
+        model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? "Opus"
+        : model.Contains("sonnet", StringComparison.OrdinalIgnoreCase) ? "Sonnet"
+        : model.Contains("haiku", StringComparison.OrdinalIgnoreCase) ? "Haiku"
+        : model;
+
     /// <summary>What a PR target starts with: <c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>.</summary>
     public const string PrTargetPrefix = "pr/";
 
@@ -532,6 +649,36 @@ public static class MergeWays
     /// </summary>
     public const string Updated = "updated";
 }
+
+/// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
+public static class IdeaEditWays
+{
+    /// <summary>Saved as given: GitHub had not changed the idea since the edit started.</summary>
+    public const string Saved = "saved";
+
+    /// <summary>GitHub had changed it elsewhere: Claude's merge of both versions is saved.</summary>
+    public const string Merged = "merged";
+
+    /// <summary>The two versions contradict: nothing is written, a card asks which to keep (<see cref="CommandResult.Made"/> is its id).</summary>
+    public const string Asked = "asked";
+}
+
+/// <summary>What Claude proposes for an idea's text (<see cref="Verbs.TidyIdea"/>), beside the text it read, and the <c>updated_at</c> of the issue it read, which saving it goes from.</summary>
+public sealed record IdeaTidyProposal(string Title, string Body, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt)
+{
+    /// <summary>Where Claude proposes the idea be planned (<see cref="Verbs.ProposeMilestone"/>), beside its text; null when the proposal was not asked for.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneProposal? Milestone { get; init; }
+}
+
+/// <summary>An open milestone of a repo, as a choice for planning an idea into.</summary>
+public sealed record MilestoneChoice(string Title, string Description, DateTimeOffset? DueOn, int OpenIssues);
+
+/// <summary>
+/// The answer to <see cref="Verbs.ProposeMilestone"/>: the repo's open milestones but Ideas, and Claude's proposal, which is one of them
+/// (<see cref="Title"/>), or a new one (<see cref="NewTitle"/> with <see cref="NewDescription"/>), or nothing, with <see cref="Note"/> saying why.
+/// </summary>
+public sealed record MilestoneProposal(MilestoneChoice[] Open, string? Title = null, string? NewTitle = null, string? NewDescription = null, string? Reason = null, string? Note = null);
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>
 public static class SayWays

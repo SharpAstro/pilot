@@ -18,6 +18,12 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
     /// </summary>
     public ListColumn? Squeezed { get; init; }
 
+    /// <summary>Whether a click on the title sorts by this column; a column with no title (the action column) never does.</summary>
+    public bool Sortable { get; init; }
+
+    /// <summary>Whether the first click sorts this column descending (a spend, a time), where an ascending sort suits a name.</summary>
+    public bool DescendingFirst { get; init; }
+
     /// <summary>A column of a fixed width, which a drag on the divider beside it resizes; dropped where the page is too narrow for all of them.</summary>
     public static ListColumn Fixed(string header, float width) => new(header, Layout.Sizing.Fixed(width)) { Squeezed = Optional(header, width) };
 
@@ -58,6 +64,9 @@ internal sealed record ListColumn(string Header, Layout.Sizing Width, float? Dro
 /// </remarks>
 internal sealed class ListTable
 {
+    /// <summary>A page's sort: the title of the column it is by, and whether it runs descending.</summary>
+    public sealed record SortState(string Column, bool Descending);
+
     /// <summary>The state stripe's width, ahead of the first column.</summary>
     public const float StripeWidth = 4f;
 
@@ -90,6 +99,9 @@ internal sealed class ListTable
     private System.Collections.Immutable.ImmutableDictionary<string, float> _byTitle = System.Collections.Immutable.ImmutableDictionary.Create<string, float>(StringComparer.Ordinal);
     private string[] _titles = [];
     private bool _syncing;
+
+    // The sort, by column title (the Node column comes and goes, so an index would drift); swapped whole, as _byTitle is.
+    private SortState? _sort;
 
     /// <param name="page">The page's name, <c>sessions</c>: it prefixes the header's hits (<c>sessions:table:divider:1</c>).</param>
     public ListTable(string page)
@@ -136,6 +148,31 @@ internal sealed class ListTable
     /// <summary>The dragged widths by column title, for the settings file, as they are now; empty while nothing was dragged.</summary>
     public IReadOnlyDictionary<string, float> Saved => Volatile.Read(ref _byTitle);
 
+    /// <summary>The page's sort as it is now, for the settings file; null while the rows are in the page's own order.</summary>
+    public SortState? Sort => Volatile.Read(ref _sort);
+
+    /// <summary>Takes the sort read from the settings file; a blank column title means no sort.</summary>
+    public void RestoreSort(SortState? saved) =>
+        Volatile.Write(ref _sort, saved is { Column.Length: > 0 } ? saved : null);
+
+    /// <summary>
+    /// Orders <paramref name="rows"/> by the sort: <paramref name="group"/> first (a node's rows stay together), then the
+    /// key <paramref name="keys"/> names for the sorted column's title, the incoming order breaking ties. With no sort, or a
+    /// sort by a column that has no key (a title this page does not have now), the rows come back as they were.
+    /// </summary>
+    public IReadOnlyList<T> Order<T>(IReadOnlyList<T> rows, Func<T, string> group, IReadOnlyDictionary<string, Func<T, object?>> keys)
+    {
+        if (Sort is not { } sort || !keys.TryGetValue(sort.Column, out var key))
+        {
+            return rows;
+        }
+        var grouped = rows.OrderBy(group, StringComparer.Ordinal);
+        var compare = Comparer<object?>.Default;
+        return [.. sort.Descending
+            ? grouped.ThenByDescending(key, compare)
+            : grouped.ThenBy(key, compare)];
+    }
+
     /// <summary>Takes widths read from the settings file; they apply to the columns of that title the next time the table is built.</summary>
     public void Restore(IReadOnlyDictionary<string, float>? saved)
     {
@@ -166,7 +203,16 @@ internal sealed class ListTable
     {
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
-        var header = Dropping(Layout.Builder.TableHeader(specs, null, null, in style, Widths, scale, TitleSize, _hitPrefix), columns);
+        Layout.TableSort? sorted = null;
+        if (Sort is { } sort)
+        {
+            var at = columns.ToList().FindIndex(c => c.Sortable && c.Header == sort.Column);
+            if (at >= 0)
+            {
+                sorted = new Layout.TableSort(at, sort.Descending);
+            }
+        }
+        var header = Dropping(Layout.Builder.TableHeader(specs, sorted, OnSort(columns), in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
@@ -295,7 +341,11 @@ internal sealed class ListTable
         var titles = new string[columns.Count];
         for (var i = 0; i < specs.Length; i++)
         {
-            specs[i] = new Layout.TableColumn(columns[i].Header, columns[i].Width, TextAlign.Near);
+            specs[i] = new Layout.TableColumn(columns[i].Header, columns[i].Width, TextAlign.Near)
+            {
+                Sortable = columns[i].Sortable && columns[i].Header.Length > 0,
+                DescendingFirst = columns[i].DescendingFirst,
+            };
             titles[i] = columns[i].Header;
         }
         if (!titles.AsSpan().SequenceEqual(_titles))
@@ -314,6 +364,25 @@ internal sealed class ListTable
             }
         }
         return specs;
+    }
+
+    // A click on a title: the next sort, kept by that column's title. Null (a display header, no hover) while no column sorts.
+    private Action<Layout.TableSort>? OnSort(IReadOnlyList<ListColumn> columns)
+    {
+        if (!columns.Any(c => c.Sortable))
+        {
+            return null;
+        }
+        var titles = columns.Select(c => c.Header).ToArray();
+        return next =>
+        {
+            if (next.Column < 0 || next.Column >= titles.Length)
+            {
+                return;
+            }
+            Volatile.Write(ref _sort, new SortState(titles[next.Column], next.Descending));
+            Changed?.Invoke();
+        };
     }
 
     // A drag moved a width: read them back by title, so the next layout of other columns keeps them.

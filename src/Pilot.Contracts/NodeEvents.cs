@@ -30,8 +30,13 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
+[JsonDerivedType(typeof(MergeAddedEvent), "mergeAdded")]
+[JsonDerivedType(typeof(MergeChangedEvent), "mergeChanged")]
+[JsonDerivedType(typeof(MergeRemovedEvent), "mergeRemoved")]
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
+[JsonDerivedType(typeof(IdeasChangedEvent), "ideasChanged")]
+[JsonDerivedType(typeof(IdeaMovedEvent), "ideaMoved")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 public abstract record NodeEvent
@@ -110,6 +115,15 @@ public sealed record SnapshotEvent : NodeEvent
 
     private readonly JobRow[]? _jobs;
 
+    /// <summary>Every merge queue entry, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MergeRow[] Merges
+    {
+        get => _merges ?? [];
+        init => _merges = value;
+    }
+
+    private readonly MergeRow[]? _merges;
+
     /// <summary>Every PR review, closed ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public PrReviewRow[] PrReviews
     {
@@ -118,6 +132,24 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly PrReviewRow[]? _prReviews;
+
+    /// <summary>Every idea of every repo the node reads, as it last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IdeaRow[] Ideas
+    {
+        get => _ideas ?? [];
+        init => _ideas = value;
+    }
+
+    private readonly IdeaRow[]? _ideas;
+
+    /// <summary>Every idea moved to another repo, so an old id still finds it. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IdeaMoveRow[] IdeaMoves
+    {
+        get => _ideaMoves ?? [];
+        init => _ideaMoves = value;
+    }
+
+    private readonly IdeaMoveRow[]? _ideaMoves;
 
     /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
     public SummaryRow[] Summaries
@@ -130,6 +162,18 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before it has read any.</summary>
     public PullRequestsRow? PullRequests { get; init; }
+}
+
+/// <summary>An idea was moved to another repo: its old id now points to the new one.</summary>
+public sealed record IdeaMovedEvent : NodeEvent
+{
+    public required IdeaMoveRow Move { get; init; }
+}
+
+/// <summary>The ideas the node reads changed (one noted, planned, dropped, or seen changed on GitHub): all of them, as they are now.</summary>
+public sealed record IdeasChangedEvent : NodeEvent
+{
+    public required IdeaRow[] Ideas { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

@@ -300,6 +300,7 @@
       "told": true
     }
   ],
+  "merges": [],
   "prReviews": [
     {
       "repo": "DrawboardLtd/bullclip-backend",
@@ -339,6 +340,40 @@
       "startedAt": "2026-10-18T09:02:10+00:00",
       "finishedAt": "2026-10-18T09:31:55+00:00",
       "closedAt": null
+    }
+  ],
+  "ideas": [
+    {
+      "id": "I412",
+      "repo": "pilot",
+      "title": "Show the job queue on the Flights page",
+      "body": "A line under the flights: what runs, what waits.",
+      "state": "noted",
+      "updatedAt": "2026-10-18T08:52:10+00:00",
+      "age": "1h",
+      "origin": "ada",
+      "url": "https://github.com/example-org/pilot/issues/412",
+      "images": []
+    },
+    {
+      "id": "I398",
+      "repo": "orbit",
+      "title": "A second tokenizer for the old grammar",
+      "body": "",
+      "state": "dropped",
+      "updatedAt": "2026-10-17T16:20:00+00:00",
+      "age": "3d",
+      "origin": "ada",
+      "url": "https://github.com/example-org/orbit/issues/398",
+      "images": []
+    }
+  ],
+  "ideaMoves": [
+    {
+      "repo": "pilot",
+      "id": "I401",
+      "newRepo": "orbit",
+      "newId": "I398"
     }
   ],
   "summaries": [
