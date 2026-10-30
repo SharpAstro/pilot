@@ -109,6 +109,8 @@ public sealed class InMemoryJournal(int maxDeltas = InMemoryJournal.DefaultMaxDe
                     Cards = [.. _mirror.Cards.Values],
                     Usage = _mirror.Usage,
                     Machine = _mirror.Machine,
+                    Repos = _mirror.Repos,
+                    Node = _mirror.Node,
                     Jobs = [.. _mirror.Jobs.Values],
                     PrReviews = [.. _mirror.PrReviews.Values],
                 };
