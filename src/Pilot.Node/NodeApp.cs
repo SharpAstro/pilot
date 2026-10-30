@@ -197,7 +197,6 @@ public static class NodeApp
             var commands = services.GetRequiredService<NodeCommands>();
             return new LegWatch(services.GetRequiredService<NodeState>(), commands.RunAsync, services.GetRequiredService<TimeProvider>())
             {
-                Ledger = services.GetRequiredService<SpendLedger>(),
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
                 Error = logWriter,

@@ -1,5 +1,4 @@
 using Pilot.Contracts;
-using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -23,18 +22,6 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>The models the redo choice names for its next worker (the worker ladder, PIL402); the node sets it.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
-
-    /// <summary>The token ledger told of a session that ended without a commit or a verdict; null tells none.</summary>
-    public SpendLedger? Ledger { get; set; }
-
-    // A session seen ended or failed while its leg, review or plan still wants what it was for: what it spent bought nothing kept.
-    private void EndedWithoutResult(SessionRow? row, string how, DateTimeOffset now)
-    {
-        if (row is { State: SessionState.Ended or SessionState.Failed })
-        {
-            Ledger?.Mark(new WasteMark(WasteKinds.NoResult, row.Flight, null, null, row.SessionId, 0, how, now));
-        }
-    }
 
     public const string Stopped = "worker-stopped";
     public const string Idle = "worker-idle";
@@ -158,7 +145,6 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
             }
 
-            EndedWithoutResult(worker, "worker ended without finishing its leg", now);
             switch (worker.State)
             {
                 case SessionState.Working:
@@ -464,7 +450,6 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             state.CloseCardsAbout(subject, "reviewing again", ReviewStalled);
         }
-        EndedWithoutResult(row, "reviewer ended without a verdict", now);
         if (why is null)
         {
             return;
@@ -525,7 +510,6 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 state.CloseCardsAbout(subject, "planning again", PlanStalled);
             }
-            EndedWithoutResult(planner, "planner ended without planning any legs", now);
             if (cards.Any(c => c.State == CardState.Open && c.Subject == subject && c.Kind != PlanStalled))
             {
                 continue;

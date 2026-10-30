@@ -1014,7 +1014,22 @@ public sealed partial class LegCommander(
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"round {round + 1} has its own", SpendAlertKind);
         state.RaiseCard(CardBin.Ring, SpendAlertKind, Verbs.LegTarget(flight.Code, leg.Name),
             string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has spent {spent.Tokens:N0} tokens, {spent.Share:0.#} % of the 7-day window, before round {round + 1}"),
-            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far went past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The next round still starts; stop the flight by hand if it should not."));
+            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far went past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The share is of the weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure, so early in a window one leg is a large share. The next round still starts; stop the flight by hand if it should not."));
+    }
+
+    // A session the node gives up on while its leg, review or plan still wants what it was for: what it spent bought nothing kept.
+    // Marked where it is replaced, not where it is first seen ended, as an ended session is resumed or nudged and may yet finish.
+    private void GaveUp(string flight, SessionRow? row, string how)
+    {
+        if (Ledger is null || row is null)
+        {
+            return;
+        }
+        // A resumed session went on under a new id, and each id holds part of its spend.
+        foreach (var id in (row.EarlierSessionIds ?? []).Append(row.SessionId))
+        {
+            Ledger.Mark(new WasteMark(WasteKinds.NoResult, flight, null, null, id, 0, how, time.GetUtcNow()));
+        }
     }
 
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
@@ -1732,6 +1747,11 @@ public sealed partial class LegCommander(
 
         if (leg.WorkerJob is { } job)
         {
+            // A worker replaced while its leg flies never finished it; one whose leg is done or failed said how it ended.
+            if (leg.State == LegState.Flying)
+            {
+                GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == job), "worker given up before it finished its leg");
+            }
             await StopQuietly(job, cancellationToken);
         }
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
@@ -2470,6 +2490,15 @@ public sealed partial class LegCommander(
             // The plan of the planner before this one is thrown away.
             Ledger?.Mark(new WasteMark(WasteKinds.Replanned, flight.Code, null, null, null, 0, "replanned", time.GetUtcNow()));
         }
+        else if (state.Legs(flight.Code).Length == 0)
+        {
+            // A planner before this one that ended with no legs and no planned card since it started is given up.
+            foreach (var gone in state.Sessions().Where(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase) && s.State is SessionState.Ended or SessionState.Failed
+                && !state.Cards().Any(c => c.Kind == PlannedKind && c.Subject == subject && c.At >= s.StartedAt)))
+            {
+                GaveUp(flight.Code, gone, "planner given up without planning any legs");
+            }
+        }
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
             new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
@@ -2584,6 +2613,11 @@ public sealed partial class LegCommander(
         var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
         if (flight.Review?.ReviewerJob is { } last)
         {
+            // One still reviewing is replaced without its verdict.
+            if (flight.Review.State == ReviewState.Reviewing)
+            {
+                GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
+            }
             await StopQuietly(last, cancellationToken);
         }
         if (held)
