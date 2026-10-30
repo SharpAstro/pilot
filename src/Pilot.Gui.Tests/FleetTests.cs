@@ -620,4 +620,72 @@ public sealed class FleetTests
             (marks[i].Left - marks[i - 1].Right).ShouldBeGreaterThanOrEqualTo(FleetView<RgbaImage>.MarkGap - 0.01f, $"{marks[i - 1].Name} then {marks[i].Name}");
         }
     }
+
+    private static FleetScreen SortScreen()
+    {
+        FleetLine Node(string where, string prefix, string usage, int live, int flying, int rings)
+        {
+            var summary = Summary(where, "ada@example.org", flying: flying, rings: rings) with { LiveSessions = live, Usage = usage };
+            return FleetLine.From(where, here: where == "a.sock", canCommand: true, null, summary with { Node = summary.Node! with { MachinePrefix = prefix } });
+        }
+
+        return new FleetScreen(
+        [
+            Node("a.sock", "SE2", "5h 20%", live: 3, flying: 1, rings: 0),
+            Node("b.sock", "SE1", "5h 80%", live: 12, flying: 0, rings: 2),
+            Node("c.sock", "SE3", "5h 5%", live: 7, flying: 4, rings: 1),
+        ], Live.At);
+    }
+
+    private static void ClickTitle(FleetView<RgbaImage> fleet, FleetScreen screen, string title)
+    {
+        var bounds = new RectF32(0f, 0f, 1400f, 800f);
+        fleet.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        fleet.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "fleet:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        fleet.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnATitleSortsTheNodesByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var fleet = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath }.Fleet;
+        var screen = SortScreen();
+
+        ClickTitle(fleet, screen, "Node");
+        fleet.Shown.ShouldBe(["b.sock", "a.sock", "c.sock"]);
+        ClickTitle(fleet, screen, "Node");
+        fleet.Shown.ShouldBe(["c.sock", "a.sock", "b.sock"]);
+
+        // Sessions by number (12 above 7 above 3, where the words "12 live" would sort before "3 live"), biggest first.
+        ClickTitle(fleet, screen, "Sessions");
+        fleet.Shown.ShouldBe(["b.sock", "c.sock", "a.sock"]);
+
+        ClickTitle(fleet, screen, "Account and usage");
+        fleet.Shown.ShouldBe(["b.sock", "a.sock", "c.sock"]);
+        ClickTitle(fleet, screen, "Account and usage");
+        fleet.Shown.ShouldBe(["c.sock", "a.sock", "b.sock"]);
+
+        ClickTitle(fleet, screen, "Rings");
+        fleet.Shown.ShouldBe(["b.sock", "c.sock", "a.sock"]);
+        fleet.Table.Sort.ShouldBe(new ListTable.SortState("Rings", Descending: true));
+    }
+
+    [Fact]
+    public void TheSelectedNodeStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var fleet = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath }.Fleet;
+        var screen = SortScreen();
+        fleet.SelectNode("a.sock");
+        fleet.Render(screen, new RectF32(0f, 0f, 1400f, 800f));
+        fleet.Selected.ShouldBe(0);
+
+        ClickTitle(fleet, screen, "Node");
+
+        fleet.Shown[fleet.Selected].ShouldBe("a.sock");
+        fleet.Selected.ShouldBe(1);
+    }
 }

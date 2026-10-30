@@ -608,6 +608,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
     public IReadOnlyList<JobRow> Jobs { get; set; } = [];
 
+    /// <summary>The flights the last frame showed, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<FlightLine> Shown => _screen.Lines;
+
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -656,6 +659,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (Play is { InPlay: true })
         {
             screen = screen.InPlay(_pinned);
+        }
+        // A clicked title orders the list only, never the grid or the canvas; the flight selected before it is found again by its code.
+        if (!GridShown && !CanvasShown && Table.Sort is not null)
+        {
+            var kept = Selected >= 0 && Selected < _screen.Lines.Count ? _screen.Lines[Selected].Code : null;
+            screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
+            if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Code == kept) is >= 0 and var moved)
+            {
+                ListCursor.Open(ListId, moved, screen.Lines.Count);
+            }
         }
         if (screen.Lines.Count == 0)
         {
@@ -1047,20 +1060,42 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
-            new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
-            ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Fixed("State", StateWidth, StateMin),
-            ListColumn.Fixed("Legs", LegsWidth),
-            ListColumn.Optional("Branch", BranchWidth),
-            ListColumn.Optional("Sessions", SessionsWidth),
+            Sorted(ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin)),
+            Sorted(new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow)),
+            Sorted(ListColumn.Optional("Repo", WhereWidth)),
+            Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
+            Sorted(ListColumn.Fixed("Legs", LegsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Branch", BranchWidth)),
+            Sorted(ListColumn.Optional("Sessions", SessionsWidth), descendingFirst: true),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the flight by its code, the legs by how many are done, the state in the page's own order.
+    private static readonly IReadOnlyDictionary<string, Func<FlightLine, object?>> SortKeys = new Dictionary<string, Func<FlightLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Flight"] = l => l.Code,
+        ["What"] = l => l.Title,
+        ["Repo"] = l => l.Row.Repo,
+        ["State"] = l => (l.Row.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 }, l.State),
+        ["Legs"] = l => (l.LegRows.Count(r => r.State == LegState.Done), l.LegRows.Count),
+        ["Branch"] = l => l.Branch ?? "",
+        ["Sessions"] = l => l.Sessions.Length > 0 && char.IsDigit(l.Sessions[0]) ? int.Parse(l.Sessions.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture) : 0,
+    };
 
     private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 

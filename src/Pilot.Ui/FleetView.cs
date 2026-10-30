@@ -443,6 +443,14 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             screen = screen with { Lines = [.. screen.Lines.Where(l => nodes.Picked.Contains(l.Where))] };
         }
+        // A clicked title's order; the node selected before it is found again by where it is reached, wherever the sort puts it.
+        var kept = Table.Sort is not null && _shown.Count > 0 && Selected >= 0 && Selected < _shown.Count ? _shown[Selected] : null;
+        screen = screen with { Lines = Table.Order(screen.Lines, _ => "", SortKeys) };
+        _shown = [.. screen.Lines.Select(l => l.Where)];
+        if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Where == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, screen.Lines.Count);
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -464,6 +472,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
         return About?.Over(page) ?? page;
     }
+
+    /// <summary>Where each node the last frame showed is reached, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<string> Shown => _shown;
+
+    // Where each row of the last frame is reached, in the order it showed them: what the selection follows through a sort.
+    private IReadOnlyList<string> _shown = [];
 
     // The node whose row is to be selected the next time the page is built (the panel's held line asked for it), by where it is reached.
     private string? _wanted;
@@ -500,13 +514,40 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Fixed("Node", MachineWidth, MachineMin),
-        ListColumn.Fixed("Account and usage", AccountWidth),
-        ListColumn.Fixed("Sessions", SessionsWidth),
-        ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Fixed("Rings", RingsWidth, RingsMin),
+        Sorted(ListColumn.Fixed("Node", MachineWidth, MachineMin)),
+        Sorted(ListColumn.Fixed("Account and usage", AccountWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Sessions", SessionsWidth), descendingFirst: true),
+        Sorted(ListColumn.Optional("Flights and jobs", WorkWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Rings", RingsWidth, RingsMin), descendingFirst: true),
         ListColumn.Fixed("", ButtonsWidth, ButtonsMin),
     ];
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // The first number a count is worded with (<c>3 live · 1 waiting on you</c>); a dash or none is below every count.
+    private static int Lead(string words) =>
+        System.Text.RegularExpressions.Regex.Match(words, @"\d+") is { Success: true } m && int.TryParse(m.Value, out var n) ? n : -1;
+
+    // The biggest percentage the usage line states (the window nearest its limit); a node with no usage line sorts below the rest.
+    private static double Used(string usage) =>
+        System.Text.RegularExpressions.Regex.Matches(usage, @"(\d+(?:\.\d+)?)\s*%").Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).DefaultIfEmpty(-1d).Max();
+
+    // What each column sorts by: the figures as numbers, not as the words they are drawn in; the buttons column has none.
+    private static readonly IReadOnlyDictionary<string, Func<FleetLine, object?>> SortKeys = new Dictionary<string, Func<FleetLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Machine,
+        ["Account and usage"] = l => (Used(l.Usage), l.Account),
+        ["Sessions"] = l => (Lead(l.Sessions), l.WaitingOnYou),
+        ["Flights and jobs"] = l => (Lead(l.Flights), Lead(l.Jobs)),
+        ["Rings"] = l => l.Rings,
+    };
 
     // The columns as the page can hold them (ListTable.Fit).
     private IReadOnlyList<ListColumn> FitColumns => Table.Fit(Columns);
