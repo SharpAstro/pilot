@@ -93,16 +93,21 @@ public sealed class PullRequestsPageTests
     // The point in a PR's row clear of every link, chip and button: at its left edge, on the stripe.
     private static (float X, float Y) RowPoint(ImmutableArray<Layout.ArrangedNode<float>> arranged, int index)
     {
-        var row = arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == index).Bounds;
+        var row = PrRows(arranged).ElementAt(index).Bounds;
         return (row.X + 2f, row.Y + row.Height / 2f);
     }
+
+    // The list rows that are PRs, in order (the headers are list rows too, and are not as tall).
+    private static IEnumerable<Layout.ArrangedNode<float>> PrRows(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+        arranged.Where(a => a.Node.Hit is HitResult.ListItemHit && a.Bounds.Height == PullRequestsView<RgbaImage>.RowHeight)
+            .OrderBy(a => ((HitResult.ListItemHit)a.Node.Hit!).Index);
 
     private static string Dump(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
         string.Join("\n", arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
 
-    private static string[] Urls(PullRequestsView<RgbaImage> page) => [.. page.Rows.Select(r => r.Url)];
+    private static string[] Urls(PullRequestsView<RgbaImage> page) => [.. page.VisiblePullRequests.Select(r => r.Url)];
 
-    private static int[] Numbers(PullRequestsView<RgbaImage> page) => [.. page.Rows.Select(r => r.Number)];
+    private static int[] Numbers(PullRequestsView<RgbaImage> page) => [.. page.VisiblePullRequests.Select(r => r.Number)];
 
     // WCAG 2.x relative luminance and contrast ratio.
     private static double Luminance(RGBAColor32 c)
@@ -289,7 +294,7 @@ public sealed class PullRequestsPageTests
         var prs = screen.Row!.PullRequests;
 
         // One row height, every group's rows alike, and one height for each group's header.
-        var rows = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit).Select(a => a.Bounds).ToList();
+        var rows = PrRows(arranged).Select(a => a.Bounds).ToList();
         rows.Count.ShouldBe(8);
         rows.Select(r => r.Height).Distinct().ShouldBe([PullRequestsView<RgbaImage>.RowHeight]);
         rows.Select(r => r.X).Distinct().Count().ShouldBe(1);
@@ -531,7 +536,7 @@ public sealed class PullRequestsPageTests
         page.Filter = null;
         page.Search.Text = "zzz";
         arranged = Arrange(renderer, page, screen);
-        page.Rows.ShouldBeEmpty();
+        page.VisiblePullRequests.ShouldBeEmpty();
         Dump(arranged).ShouldContain("No pull requests match \"zzz\".");
         arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeTrue();
 
@@ -551,19 +556,19 @@ public sealed class PullRequestsPageTests
         var opened = new List<string>();
         page.OnOpen = opened.Add;
         var arranged = Arrange(renderer, page, screen);
-        page.Selected.ShouldBe(0);
+        page.SelectedPr().ShouldBe(0);
 
         // A click on the third row (#258, nobody's flight) selects it: the row, not any link in it.
         var (x, y) = RowPoint(arranged, 2);
         ClickAt(arranged, x, y);
-        page.Selected.ShouldBe(2);
+        page.SelectedPr().ShouldBe(2);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
         page.FocusFlight.ShouldBeNull();
         opened.ShouldBeEmpty();
 
         // Painted, the selected row is the one in the focus colour.
         arranged = Arrange(renderer, page, screen);
-        var selected = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 2 }).Node;
+        var selected = PrRows(arranged).ElementAt(2).Node;
         selected.Background.ShouldBe(Palette.Standard.RowFocusBg);
 
         // A double-click on it opens the PR in the browser.
@@ -573,12 +578,16 @@ public sealed class PullRequestsPageTests
         // The arrows move the selection over the rows painted, and the selection follows by URL.
         page.Render(screen, new RectF32(0, 0, 1280, 900));
         page.HandleInput(new InputEvent.KeyDown(InputKey.Up, InputModifier.None)).ShouldBeTrue();
-        page.Selected.ShouldBe(1);
+        page.SelectedPr().ShouldBe(1);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/261");
         page.FocusFlight.ShouldBe("PIL261");
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
+        // The next row down is DIR.Lib's header, which the arrows stop on as they do on a PR.
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
-        page.Selected.ShouldBe(3);
+        page.SelectedRow.ShouldBeNull();
+        page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
+        page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
+        page.SelectedPr().ShouldBe(3);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/DIR.Lib/pull/300");
 
         // The rows are read again with the first one gone, which puts DIR.Lib's group (now the one that most needs the person)
@@ -587,18 +596,18 @@ public sealed class PullRequestsPageTests
         Arrange(renderer, page, without252);
         Numbers(page).ShouldBe([300, 301, 1799, 1820, 261, 258, 12]);
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/DIR.Lib/pull/300");
-        page.Selected.ShouldBe(0);
+        page.SelectedPr().ShouldBe(0);
         Arrange(renderer, page, screen);
 
         // A double-click on a flight's row, and Enter on it, open the flight's page.
-        page.Select(0);
-        ClickAt(arranged = Arrange(renderer, page, screen), x, arranged.First(a => a.Node.Hit is HitResult.ListItemHit { Index: 0 }).Bounds.Y + 20f, twice: true);
+        page.SelectPr(0);
+        ClickAt(arranged = Arrange(renderer, page, screen), x, PrRows(arranged).First().Bounds.Y + 20f, twice: true);
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.IsDetailOpen.ShouldBeTrue();
         chrome.Show(PilotPage.PullRequests);
         chrome.Flights.CloseDetail();
         Arrange(renderer, page, screen);
-        page.Select(1);
+        page.SelectPr(1);
         page.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.OpenCode.ShouldBe("PIL261");
@@ -606,7 +615,7 @@ public sealed class PullRequestsPageTests
         // Enter on a PR that is no flight's opens it in the browser.
         chrome.Show(PilotPage.PullRequests);
         Arrange(renderer, page, screen);
-        page.Select(2);
+        page.SelectPr(2);
         page.HandleInput(new InputEvent.KeyDown(InputKey.Enter, InputModifier.None)).ShouldBeTrue();
         opened.Count.ShouldBe(2);
     }
@@ -631,13 +640,13 @@ public sealed class PullRequestsPageTests
         chrome.Cards.Focus.ShouldBe("PIL252");
 
         // A row that is no flight's lights none.
-        page.Select(2);
+        page.SelectPr(2);
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         chrome.Cards.Focus.ShouldBeNull();
 
         // The flight chip opens the flight's page, a move Back returns from, to the same selection.
-        page.Select(1);
+        page.SelectPr(1);
         chrome.Render(sessions, null, cards, null, null, null, screen, new RectF32(0, 0, 1280, 900));
         var chip = Button(Arrange(renderer, page, screen), "pr:https://github.com/SharpAstro/pilot/pull/261:flight");
         ClickAt(Arrange(renderer, page, screen), chip.X + 2f, chip.Y + chip.Height / 2f);
@@ -657,8 +666,8 @@ public sealed class PullRequestsPageTests
         // Each org of the read says so in its own group; the one line is for a read with no org to say it of.
         Dump(empty).ShouldContain("No open pull requests.");
         Dump(empty).ShouldContain("0 open");
-        page.Rows.ShouldBeEmpty();
-        page.Selected.ShouldBe(-1);
+        page.VisiblePullRequests.ShouldBeEmpty();
+        page.SelectedRow.ShouldBeNull();
         var nowhere = Arrange(renderer, page, Screen(Row() with { PullRequests = [], Orgs = [] }));
         Dump(nowhere).ShouldContain("No open pull requests in any repo pilot works in.");
         nowhere.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).ShouldBeFalse();
@@ -793,7 +802,7 @@ public sealed class PullRequestsPageTests
         buttons.ShouldContain("prs:refresh");
         buttons.ShouldContain("prs:filter:mine");
         buttons.ShouldContain("prs:group:SharpAstro/pilot");
-        regions.Select(r => r.Result).OfType<HitResult.ListItemHit>().Count(h => h.ListId == PullRequestsView<RgbaImage>.ListId).ShouldBe(8);
+        regions.Select(r => r.Result).OfType<HitResult.ListItemHit>().Count(h => h.ListId == PullRequestsView<RgbaImage>.ListId).ShouldBe(8 + 2 + 4);
 
         // And the day's again once the Night switch is off.
         chrome.Night.On = false;
@@ -861,7 +870,7 @@ public sealed class PullRequestsPageTests
                 var screen = Screen(night && width == 1280 ? Row(readAt: Now - TimeSpan.FromMinutes(9)) : Row());
                 chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
                 // A moment later: the first row selected (a flight's) lights its card.
-                page.Select(page.Rows.ToList().FindIndex(r => r.Flight == "PIL252"));
+                page.Select(page.IndexOf(page.VisiblePullRequests.First(r => r.Flight == "PIL252").Url));
                 chrome.Render(sessions, null, CardsScreen.From([card, card2]), null, null, null, screen, new RectF32(0, 0, width, height));
                 chrome.Cards.Focus.ShouldBe("PIL252");
                 if (dir is { Length: > 0 })
@@ -1033,8 +1042,8 @@ public sealed class PullRequestsPageTests
         var screen = Screen();
         page.ToggleOrg("SharpAstro");
         Arrange(renderer, page, screen);
-        page.Rows.Select(r => r.Number).ShouldBe([12]);
-        page.Selected.ShouldBe(0);
+        page.VisiblePullRequests.Select(r => r.Number).ShouldBe([12]);
+        page.SelectedPr().ShouldBe(0);
 
         // Down from the only row listed stays on it: no row of the folded org is ever selected.
         page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None));
@@ -1116,7 +1125,7 @@ public sealed class PullRequestsPageTests
 
         OrgHeaders(arranged).ShouldBe(["sebgod", "SharpAstro"]);
         Dump(arranged).Split("No open pull requests.").Length.ShouldBe(3);
-        page.Rows.ShouldBeEmpty();
+        page.VisiblePullRequests.ShouldBeEmpty();
 
         // With no org to say it of, the page is the one line.
         arranged = Arrange(renderer, page, Screen(Row() with { PullRequests = [], Orgs = [] }));
@@ -1144,5 +1153,147 @@ public sealed class PullRequestsPageTests
             await Task.Delay(10, TestContext.Current.CancellationToken);
         }
         condition().ShouldBeTrue();
+    }
+
+    private static bool Key(PullRequestsView<RgbaImage> page, InputKey key) => page.HandleInput(new InputEvent.KeyDown(key, InputModifier.None));
+
+    // The page laid out once, its cursor on the row of the given PR ordinal (or the row index when it is a header).
+    private static (PullRequestsView<RgbaImage> Page, PullRequestsScreen Screen, RgbaImageRenderer Renderer) Tree(bool onHeader = false, int at = 0)
+    {
+        var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen);
+        if (onHeader)
+        {
+            page.Select(at);
+        }
+        else
+        {
+            page.SelectPr(at);
+        }
+        Arrange(renderer, page, screen);
+        // Painted, so the arrows have the rows the last frame drew to walk.
+        page.Render(screen, new RectF32(0, 0, 1280, 900));
+        return (page, screen, renderer);
+    }
+
+    [Fact]
+    public void UpAndDownWalkEveryRowHeadersIncluded()
+    {
+        var (page, screen, renderer) = Tree(onHeader: true, at: 0);
+        using var _ = renderer;
+        page.SelectedHeader.ShouldBe("SharpAstro");
+        page.SelectedRow.ShouldBeNull();
+        page.FocusFlight.ShouldBeNull();
+        Key(page, InputKey.Down).ShouldBeTrue();
+        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        Key(page, InputKey.Down).ShouldBeTrue();
+        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252);
+        Key(page, InputKey.Up).ShouldBeTrue();
+        Key(page, InputKey.Up).ShouldBeTrue();
+        page.SelectedHeader.ShouldBe("SharpAstro");
+
+        // A header selected survives the page laying out again.
+        Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro");
+    }
+
+    [Fact]
+    public void LeftGoesToTheParentAndFoldsAnOpenHeader()
+    {
+        var (page, screen, renderer) = Tree(at: 2);
+        using var _ = renderer;
+        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(258);
+
+        // On a PR, Left goes to its repo; on the open repo it folds it; on the folded repo it goes to the org; on the open org it folds it.
+        Key(page, InputKey.Left).ShouldBeTrue();
+        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
+        Key(page, InputKey.Left).ShouldBeTrue();
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+        Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        page.VisiblePullRequests.ShouldNotContain(p => p.Repo == "SharpAstro/pilot");
+        Key(page, InputKey.Left).ShouldBeTrue();
+        page.SelectedHeader.ShouldBe("SharpAstro");
+        page.IsOrgFolded("SharpAstro").ShouldBeFalse();
+        Key(page, InputKey.Left).ShouldBeTrue();
+        page.IsOrgFolded("SharpAstro").ShouldBeTrue();
+        Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro");
+
+        // A root header open or not has no parent: Left on the folded org does nothing.
+        Key(page, InputKey.Left).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void RightUnfoldsAFoldedHeaderAndStepsToTheFirstChildOfAnOpenOne()
+    {
+        var (page, screen, renderer) = Tree(onHeader: true, at: 0);
+        using var _ = renderer;
+        page.ToggleOrg("SharpAstro");
+        page.Toggle("sebgod/notes");
+        Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro");
+
+        Key(page, InputKey.Right).ShouldBeTrue();
+        page.IsOrgFolded("SharpAstro").ShouldBeFalse();
+        Arrange(renderer, page, screen);
+        // Open now: Right goes to the org's first repo, and from that open repo to its first PR.
+        Key(page, InputKey.Right).ShouldBeTrue();
+        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+        Key(page, InputKey.Right).ShouldBeTrue();
+        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(252);
+        // A PR has no children and Right leaves it.
+        Key(page, InputKey.Right).ShouldBeFalse();
+
+        // A folded repo unfolds.
+        page.Select(page.Rows.ToList().FindIndex(r => r.Item.Repo?.Repo == "sebgod/notes"));
+        page.IsFolded("sebgod/notes").ShouldBeTrue();
+        Key(page, InputKey.Right).ShouldBeTrue();
+        page.IsFolded("sebgod/notes").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void EnterTogglesAHeaderAndOpensAPR()
+    {
+        var (page, screen, renderer) = Tree(onHeader: true, at: 1);
+        using var _ = renderer;
+        var opened = new List<string>();
+        page.OnOpen = opened.Add;
+        page.SelectedHeader.ShouldBe("SharpAstro/pilot");
+
+        Key(page, InputKey.Enter).ShouldBeTrue();
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+        opened.ShouldBeEmpty();
+        Arrange(renderer, page, screen);
+        Key(page, InputKey.Enter).ShouldBeTrue();
+        page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
+        Arrange(renderer, page, screen);
+
+        page.Select(page.IndexOf("https://github.com/SharpAstro/pilot/pull/258"));
+        Key(page, InputKey.Enter).ShouldBeTrue();
+        opened.ShouldBe(["https://github.com/SharpAstro/pilot/pull/258"]);
+    }
+
+    [Fact]
+    public void AFoldSurvivesANewReadThatRebuildsTheGroups()
+    {
+        var (page, screen, renderer) = Tree();
+        using var _ = renderer;
+        page.Toggle("SharpAstro/pilot");
+        page.ToggleOrg("sebgod");
+        Arrange(renderer, page, screen);
+
+        // A new read: every record is a new object, as the node's next answer is.
+        var again = Screen(Row() with { PullRequests = [.. Row().PullRequests.Select(p => p with { })] });
+        Arrange(renderer, page, again);
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+        page.IsOrgFolded("sebgod").ShouldBeTrue();
+        page.VisiblePullRequests.ShouldNotContain(p => p.Repo == "SharpAstro/pilot" || p.Repo.StartsWith("sebgod/", StringComparison.Ordinal));
+        page.IsFolded("SharpAstro/DIR.Lib").ShouldBeFalse();
+        page.VisiblePullRequests.ShouldContain(p => p.Repo == "SharpAstro/DIR.Lib");
     }
 }

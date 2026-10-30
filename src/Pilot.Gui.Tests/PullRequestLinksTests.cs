@@ -106,7 +106,7 @@ public sealed class PullRequestLinksTests
         var width = 1280f - 52f - (withCards ? CardsView<RgbaImage>.Width : 0f);
         var arranged = Layout.Engine.Arrange(page.Tree(screen, width), new Rect<float>(0, 0, width, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         var viewport = arranged.Single(a => a.Node.Scroll is not null).Bounds;
-        var index = page.Rows.ToList().FindIndex(r => r.Url == pr.Url);
+        var index = page.IndexOf(pr.Url);
         return (viewport, index < 0 ? null : arranged.FirstOrDefault(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == index).Bounds);
     }
 
@@ -138,7 +138,7 @@ public sealed class PullRequestLinksTests
         chrome.PullRequests.Filter = PullRequestFilter.Mine;
         chrome.PullRequests.Search.Text = "tianwen";
         Draw(chrome, null, cards, screen);
-        chrome.PullRequests.Rows.ShouldNotContain(r => r.Url == target.Url);
+        chrome.PullRequests.VisiblePullRequests.ShouldNotContain(r => r.Url == target.Url);
         chrome.Show(PilotPage.Home);
         Draw(chrome, null, cards, screen);
 
@@ -532,7 +532,7 @@ public sealed class PullRequestLinksTests
         chrome.Show(PilotPage.PullRequests);
         Draw(chrome, flights, null, screen);
         var pr = screen.Row!.PullRequests.Single(p => p.Number == 252);
-        chrome.PullRequests.Select(chrome.PullRequests.Rows.ToList().FindIndex(r => r.Url == pr.Url));
+        chrome.PullRequests.Select(chrome.PullRequests.IndexOf(pr.Url));
 
         Click(chrome.PullRequests, $"pr:{pr.Url}:flight");
         chrome.Page.ShouldBe(PilotPage.Flights);
@@ -564,8 +564,8 @@ public sealed class PullRequestLinksTests
         var page = chrome.PullRequests;
         page.Search.Text.ShouldBe("example-org/orbit");
         page.Filter.ShouldBeNull();
-        page.Rows.Select(r => r.Repo).Distinct().ShouldBe(["example-org/orbit"]);
-        page.Rows.Count.ShouldBe(2);
+        page.VisiblePullRequests.Select(r => r.Repo).Distinct().ShouldBe(["example-org/orbit"]);
+        page.VisiblePullRequests.Count().ShouldBe(2);
 
         chrome.Back().ShouldBeTrue();
         chrome.Page.ShouldBe(PilotPage.Repos);

@@ -163,7 +163,7 @@ public sealed class PullRequestActionsTests
     private static Rect<float> Button(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) => ButtonOrNull(arranged, action).ShouldNotBeNull(action);
 
     private static Rect<float> RowOf(ImmutableArray<Layout.ArrangedNode<float>> arranged, PullRequestsView<RgbaImage> page, PullRequestRow pr) =>
-        arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == page.Rows.ToList().FindIndex(r => r.Url == pr.Url)).Bounds;
+        arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == page.IndexOf(pr.Url)).Bounds;
 
     private static void Click(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) =>
         arranged.Single(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Node.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
@@ -193,7 +193,7 @@ public sealed class PullRequestActionsTests
         Has(P(12)).ShouldBe(["start-review", "open"]);
 
         // Every row is one height, with the buttons and without.
-        var rows = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit).Select(a => a.Bounds).ToList();
+        var rows = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit && a.Bounds.Height == PullRequestsView<RgbaImage>.RowHeight).Select(a => a.Bounds).ToList();
         rows.Count.ShouldBe(prs.Length);
         rows.Select(r => r.Height).Distinct().ShouldBe([PullRequestsView<RgbaImage>.RowHeight]);
 
@@ -336,7 +336,7 @@ public sealed class PullRequestActionsTests
         page.OnReview = (_, _) => throw new InvalidOperationException("SharpAstro/tianwen#1820 is merged, not open");
         var screen = Screen();
         _ = page.Tree(screen);
-        var rowsBefore = page.Rows.ToList();
+        var rowsBefore = page.VisiblePullRequests.ToList();
         var prs = screen.Row!.PullRequests;
 
         await page.ReviewAsync(prs[4]);
@@ -346,7 +346,7 @@ public sealed class PullRequestActionsTests
         said.ShouldContain(t => t.Contains("is merged, not open", StringComparison.Ordinal));
 
         // The row says what it said: the node's next answer, not the click, is what changes it.
-        page.Rows.ShouldBe(rowsBefore);
+        page.VisiblePullRequests.ShouldBe(rowsBefore);
         page.ActionsOf(prs[4]).Select(a => a.Kind).ShouldBe([PullRequestActionKind.Review, PullRequestActionKind.Open]);
         page.ActionsOf(prs[4]).Select(a => a.Kind).ShouldContain(PullRequestActionKind.Review);
 
