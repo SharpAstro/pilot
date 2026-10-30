@@ -118,7 +118,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         }
         // A session of a new flight is not polled yet, so no row: its name still says whose it is (<machine>-<flight>-plan, -review or -<leg>),
         // and one that names a flight is that flight's, not an assistant's, whatever autopilot says.
-        if (command.Agent && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
+        // A session the node has a row for is who its row says, not who its name reads as (pilot #517): a renamed watchtower is no flight's.
+        var hasRow = state.Sessions().Any(s => string.Equals(s.Name, who, StringComparison.Ordinal));
+        if (command.Agent && !hasRow && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
         {
             return new Standing(StandingKind.FlightSession, named);
         }

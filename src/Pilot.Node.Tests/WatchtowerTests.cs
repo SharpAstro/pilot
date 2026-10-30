@@ -145,17 +145,19 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task ARenamedWatchtowerIsStillTheWatchtowerAndNoSecondOneStarts()
+    public async Task ARenamedWatchtowerIsStillTheNodesSoItIsStoppedAndAFreshOneStarts()
     {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Idle);
         _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
-        Directory.CreateDirectory(_data);
-        File.WriteAllText(_tower.BriefFile, CurrentBrief());
 
         await _tower.LookAsync(Ct);
 
-        _workers.Started.ShouldBeEmpty();
-        _tower.Current()!.Id.ShouldBe("job00001");
+        _workers.Stopped.ShouldContain("job00001");
+        _workers.Started.Count.ShouldBe(2);
+        _tower.Current().ShouldBeNull();
     }
 
     [Fact]
