@@ -121,6 +121,18 @@ public sealed class NodeClient : IDisposable
         return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, bytes);
     }
 
+    /// <summary>
+    /// <c>POST /api/v1/attachments?ext=</c>: keeps <paramref name="bytes"/> as an idea's image; the id it is served by
+    /// (<see cref="NodeWire.AttachmentRoute"/>) and written as <see cref="IdeaImages.Marker"/> is the envelope's response.
+    /// </summary>
+    public async Task<ResponseEnvelope<string>> UploadAttachmentAsync(byte[] bytes, string ext, CancellationToken cancellationToken)
+    {
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await _http.PostAsync($"{NodeWire.AttachmentsRoute}?ext={Uri.EscapeDataString(ext)}", content, cancellationToken).ConfigureAwait(false);
+        return await ReadEnvelopeAsync(response, PilotJsonContext.Default.ResponseEnvelopeString, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary><c>GET /api/v1/node</c>: which node this is.</summary>
     public async Task<NodeInfo> GetNodeAsync(CancellationToken cancellationToken)
     {

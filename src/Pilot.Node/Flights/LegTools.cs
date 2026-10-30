@@ -514,6 +514,17 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Commits an idea's image to <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch (made on first use,
+    /// as an orphan commit); returns the URL an issue body shows it by. GitHub has no API for its own issue attachments.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken);
+
+    /// <summary>The bytes of <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch; null when it is not there.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>

@@ -352,7 +352,8 @@
       "updatedAt": "2026-10-18T08:52:10+00:00",
       "age": "1h",
       "origin": "ada",
-      "url": "https://github.com/example-org/pilot/issues/412"
+      "url": "https://github.com/example-org/pilot/issues/412",
+      "images": []
     },
     {
       "id": "I398",
@@ -363,7 +364,8 @@
       "updatedAt": "2026-10-17T16:20:00+00:00",
       "age": "3d",
       "origin": "ada",
-      "url": "https://github.com/example-org/orbit/issues/398"
+      "url": "https://github.com/example-org/orbit/issues/398",
+      "images": []
     }
   ],
   "ideaMoves": [
