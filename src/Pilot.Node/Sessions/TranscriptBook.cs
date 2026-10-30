@@ -42,6 +42,18 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     }
 
     /// <summary>
+    /// The latest line that fed the session's turn (<see cref="TurnPrompt"/>), whatever a person reads of it; null when there is
+    /// no such transcript or nothing has been said to it yet.
+    /// </summary>
+    public TurnPrompt? LastPrompt(string sessionId)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null)?.LastPrompt;
+        }
+    }
+
+    /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.
     /// This is how the watchtower's chat reads each of its sessions, whole, where <see cref="Read"/> pages by <c>after</c>.
@@ -89,6 +101,15 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     /// <summary>A question a reply asked in an <c>&lt;ask&gt;</c> block that nothing has answered: the question and its choices' labels.</summary>
     public sealed record PendingAsk(string Question, string[] Choices);
 
+    /// <summary>
+    /// A line that fed a session's turn, as Claude Code recorded where it came from: <paramref name="Origin"/> is its
+    /// <c>origin.kind</c> (<c>human</c> for typed or resumed text, <c>peer</c> for a cross-session message), or what the node
+    /// makes of a line without one (<c>scheduled</c> for a wake, <c>compact</c> for a summary, <c>command</c> for a slash
+    /// command, <c>agent</c> for a subagent's hand-back); <paramref name="From"/> the sender a peer message names, and
+    /// <paramref name="Text"/> its words without the envelope, the reminders or the relay's footer.
+    /// </summary>
+    public sealed record TurnPrompt(string Origin, string? From, string Text);
+
     /// <summary>What <see cref="Window"/> reads of a transcript.</summary>
     public sealed record TranscriptWindow(TranscriptEntry[] Entries, int Total, PendingAsk? Pending, string[] Queued);
 
@@ -101,6 +122,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private bool _nodeSpoke;
 
         public List<TranscriptEntry> Entries { get; } = [];
+
+        /// <summary>The latest line that fed the session's turn, read before the entries drop the meta lines.</summary>
+        public TurnPrompt? LastPrompt { get; private set; }
 
         /// <summary>The messages queued for the session that it has not taken yet, oldest first.</summary>
         public List<string> Queued { get; } = [];
@@ -123,6 +147,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     Pending = null;
                     _askedIn = null;
                     _nodeSpoke = false;
+                    LastPrompt = null;
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
                 var buffer = new byte[64 * 1024];
@@ -160,6 +185,10 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 using var doc = JsonDocument.Parse(line);
                 Queue(doc.RootElement);
                 Ask(doc.RootElement);
+                if (Fed(doc.RootElement) is { } fed)
+                {
+                    LastPrompt = fed;
+                }
                 var at = doc.RootElement.TryGetProperty("timestamp", out var t) && t.TryGetDateTimeOffset(out var when) ? when : (DateTimeOffset?)null;
                 foreach (var read in Read(doc.RootElement))
                 {
@@ -321,6 +350,79 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
 
         private static string Clip(string text) => text.Length > TranscriptPage.TextLimit ? text[..TranscriptPage.TextLimit] + "…" : text;
+    }
+
+    /// <summary>
+    /// The line as something that fed the session's turn, or null for one that did not: a tool's result, an assistant's
+    /// reply, a meta line Claude Code adds of its own (a local command's caveat), and a background task finishing mid-turn,
+    /// which is Claude Code's and leaves the turn whose it was. Meta lines that begin a turn are kept (a cross-session
+    /// message, a scheduled wake): the turn is then not the person's, though a person reading the transcript never sees them.
+    /// </summary>
+    internal static TurnPrompt? Fed(JsonElement line)
+    {
+        var type = Str(line, "type");
+        JsonElement origin;
+        string text;
+        var midTurn = false;
+        if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
+        {
+            origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+            text = PromptText(attachment);
+            midTurn = true;
+        }
+        else if (type == "user" && line.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
+            && message.TryGetProperty("content", out var content))
+        {
+            if (content.ValueKind == JsonValueKind.Array && content.EnumerateArray().Any(p => Str(p, "type") == "tool_result"))
+            {
+                return null;
+            }
+            if (line.TryGetProperty("isCompactSummary", out var summary) && summary.ValueKind == JsonValueKind.True)
+            {
+                return new TurnPrompt("compact", null, "");
+            }
+            origin = line.TryGetProperty("origin", out var o) ? o : default;
+            text = content.ValueKind switch
+            {
+                JsonValueKind.String => content.GetString() ?? "",
+                JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text")).OfType<string>()),
+                _ => "",
+            };
+        }
+        else
+        {
+            return null;
+        }
+        switch (Str(origin, "kind"))
+        {
+            case "task-notification":
+                return midTurn ? null : new TurnPrompt("task-notification", null, "");
+            case "peer":
+                var said = Str(origin, "body") ?? (Envelope().Match(text) is { Success: true } envelope ? envelope.Groups["body"].Value : text);
+                var handBack = origin.TryGetProperty("handback", out _) || origin.TryGetProperty("senderTaskId", out _);
+                return new TurnPrompt(handBack ? "agent" : "peer", Str(origin, "name"), Unrelayed(said));
+            case { } kind and not "human":
+                return new TurnPrompt(kind, null, Unrelayed(text));
+            case null when !midTurn && line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True:
+                // A wake Claude Code scheduled begins a turn of its own; any other meta line (a local command's caveat) feeds none.
+                return Str(line, "turnOrigin") == "scheduled" || Str(line, "promptSource") == "system" ? new TurnPrompt("scheduled", null, Unrelayed(text)) : null;
+        }
+        text = Unrelayed(Reminder().Replace(text, ""));
+        if (text.Length == 0)
+        {
+            return null;
+        }
+        // An agent-message without a peer origin is still a hand-back; a slash command and its output are not someone's words.
+        return AgentMessage().IsMatch(text) ? new TurnPrompt("agent", null, text)
+            : text.StartsWith("<command-", StringComparison.Ordinal) || text.StartsWith("<local-command-", StringComparison.Ordinal) ? new TurnPrompt("command", null, text)
+            : new TurnPrompt("human", null, text);
+    }
+
+    // Words without the closing line the relay adds.
+    private static string Unrelayed(string text)
+    {
+        text = text.Trim();
+        return text.EndsWith(')') && text.LastIndexOf(ClaudeCliDelivery.RelayMark, StringComparison.Ordinal) is var mark and >= 0 ? text[..mark].TrimEnd() : text;
     }
 
     /// <summary>
@@ -630,6 +732,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
     [GeneratedRegex(@"<task-notification>(?<body>.*?)(</task-notification>|$)", RegexOptions.Singleline)]
     private static partial Regex TaskNotification();
+
+    [GeneratedRegex(@"<cross-session-message\b[^>]*>(?<body>.*?)(</cross-session-message>|$)", RegexOptions.Singleline)]
+    private static partial Regex Envelope();
 
     [GeneratedRegex(@"^Permission for this action was denied by the Claude Code auto mode classifier\. Reason: (\[[^\]]+\]|[^.\n]{1,120})")]
     private static partial Regex Classifier();

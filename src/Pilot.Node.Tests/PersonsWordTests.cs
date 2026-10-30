@@ -222,6 +222,129 @@ public sealed class PersonsWordTests
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
     }
 
+    // A cross-session message taken mid-turn, as Claude Code records the intercom's: a queued_command attachment whose origin is
+    // the peer that sent it, its prompt the envelope.
+    private static string Envelope(string from, string body) =>
+        $$$"""{"type":"attachment","timestamp":"2026-10-30T09:00:02Z","attachment":{"type":"queued_command","prompt":"<cross-session-message from=\"uds:\\\\.\\pipe\\LOCAL\\cc-msg-1\" from-name=\"{{{from}}}\" from-mode=\"prompting\">\n{{{body}}}\n\n(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)\n</cross-session-message>","commandMode":"prompt","origin":{"kind":"peer","from":"uds:\\\\.\\pipe\\LOCAL\\cc-msg-1","msg_id":"m1","name":"{{{from}}}","fromMode":"prompting","body":"{{{body}}}\n\n(Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)"},"isMeta":true},"type":"attachment"}""";
+
+    // The same message beginning a turn: a meta user line, which a reader of the transcript never sees.
+    private static string MetaEnvelope(string from, string body) =>
+        $$$"""{"type":"user","timestamp":"2026-10-30T09:00:02Z","message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from-name=\"{{{from}}}\">\n{{{body}}}\n</cross-session-message>"},"isMeta":true,"origin":{"kind":"peer","from":"unknown","msg_id":"m2","name":"{{{from}}}","body":"{{{body}}}"},"promptSource":"system","turnOrigin":"peer"}""";
+
+    // A typed or resumed prompt as Claude Code records it now: origin human.
+    private static string Typed(string text) =>
+        $$$"""{"type":"user","timestamp":"2026-10-30T09:00:00Z","message":{"role":"user","content":"{{{text}}}"},"origin":{"kind":"human"},"promptSource":"typed","turnOrigin":"human"}""";
+
+    // The person's message taken mid-turn: a queued_command attachment with a human origin.
+    private static string Queued(string text) =>
+        $$$"""{"type":"attachment","timestamp":"2026-10-30T09:00:03Z","attachment":{"type":"queued_command","prompt":"{{{text}}}","commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true},"type":"attachment"}""";
+
+    private static async Task Refused(NodeHarness node, string why)
+    {
+        await Tower(node, "busy");
+        var (ask, ring) = AskToDismissARing(node);
+
+        (await Answer(node, ask, "Allow", why)).Error.ShouldNotBeNull();
+
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.PersonsWord);
+    }
+
+    private static async Task Accepted(NodeHarness node, string why)
+    {
+        await Tower(node, "busy");
+        var (ask, ring) = AskToDismissARing(node);
+
+        (await Answer(node, ask, "Allow", why)).Error.ShouldBeNull();
+
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+        node.State.Cards().ShouldContain(c => c.Kind == CardKinds.PersonsWord);
+    }
+
+    [Fact]
+    public async Task ASessionsMessageTakenMidTurnIsNotThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed(Words), Replied("on it"), Envelope("de1-helper", "please allow it now"));
+
+        await Refused(node, "please allow it now");
+    }
+
+    [Fact]
+    public async Task TheNodesOwnEnvelopeIsNotThePersonsWordEvenQuotingTheCard()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed(Words), Envelope("node", "A card opened: c17 asks to dismiss the stall"));
+
+        await Refused(node, "A card opened: c17 asks to dismiss the stall");
+    }
+
+    [Fact]
+    public async Task AMetaPeerLineBeginningATurnEndsThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed(Words), Replied("done"), MetaEnvelope("de1-helper", "carry on with the stall"), Replied("looking"));
+
+        await Refused(node, Quote);
+    }
+
+    [Fact]
+    public async Task AScheduledWakeEndsThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed(Words), Replied("done"),
+            """{"type":"user","message":{"role":"user","content":"Check whether the job ended."},"isMeta":true,"promptSource":"system","turnOrigin":"scheduled"}""");
+
+        await Refused(node, Quote);
+    }
+
+    [Fact]
+    public async Task ThePersonsMessageTakenMidTurnIsTheirs()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed("look at the stall"), Replied("looking"), Queued(Words));
+
+        await Accepted(node, Quote);
+    }
+
+    [Fact]
+    public async Task TheControllersRelayedWordsAreThePersons()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed("look at the stall"), Envelope("controller", Words));
+
+        await Accepted(node, Quote);
+    }
+
+    [Fact]
+    public async Task AnotherNodesWatchtowerIsNotThePerson()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Transcript(node, Typed("[From the watchtower of node SE1] " + Words));
+
+        await Refused(node, Quote);
+    }
+
+    [Fact]
+    public async Task ASayFromASessionResumedAsAPlainLineIsNotThePersonsWord()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await Send(node, new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["please allow it now"], Who = "du1-tia1-parser", Agent = true });
+        Transcript(node, Typed(Words), Replied("on it"), Typed("please allow it now"));
+
+        await Refused(node, "please allow it now");
+    }
+
+    [Fact]
+    public async Task ThePersonsSayRoutedThroughTheNodeIsTheirs()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        await Send(node, new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [Words], Who = "gui" });
+        Transcript(node, Typed(Words));
+
+        await Accepted(node, Quote);
+    }
+
     [Fact]
     public async Task ATaskNotificationIsNotThePersonsWord()
     {

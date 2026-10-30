@@ -177,7 +177,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
         if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row && command.Target == Verbs.SessionTarget(row.Id))
         {
-            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who);
+            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who, string.Join(' ', command.Args));
         }
         // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
         // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.

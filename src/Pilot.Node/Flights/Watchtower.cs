@@ -349,7 +349,33 @@ public sealed class Watchtower(
     /// Notes who sent the latest message to the watchtower's session: the person (from the GUI chat, a TUI or a human's
     /// <c>pilot tell</c>) or the node (a card it says, a nudge). The watchtower's turn began with that message.
     /// </summary>
-    public void NoteMessage(bool fromPerson) => _lastFromPerson = fromPerson;
+    public void NoteMessage(bool fromPerson, string? text = null)
+    {
+        _lastFromPerson = fromPerson;
+        if (Fold(text) is not { Length: > 0 } folded)
+        {
+            return;
+        }
+        lock (_routed)
+        {
+            // A say the node routes reaches the session past the node too (resumed, it is a plain line), so what a non-person
+            // said is kept to tell it from the person's; the person saying the same words again makes them theirs.
+            _routed.Remove(folded);
+            if (!fromPerson)
+            {
+                _routed.Add(folded);
+                if (_routed.Count > MaxRouted)
+                {
+                    _routed.RemoveAt(0);
+                }
+            }
+        }
+    }
+
+    /// <summary>How many of the latest non-person messages routed to the watchtower are kept.</summary>
+    private const int MaxRouted = 64;
+
+    private readonly List<string> _routed = [];
 
     /// <summary>
     /// Whether the watchtower is acting on a message the person sent it: its latest message was theirs, and its session has not
@@ -368,38 +394,47 @@ public sealed class Watchtower(
     private const int MinWordsLength = 6;
 
     /// <summary>
-    /// The person's word for what the watchtower asks of a card: the words of the latest message in its current session's
-    /// transcript, when that message is the person's (no note, no node-voice line, no task notification, no message from a
-    /// session but the controller), its turn is still running, and <paramref name="command"/>'s <c>--why</c> quotes it or is
-    /// quoted by it (whitespace and case folded). Null when there is none, and the watchtower stays fenced.
+    /// The person's word for what the watchtower asks of a card: the words of the latest line that fed its current session's
+    /// turn (<see cref="Sessions.TranscriptBook.LastPrompt"/>, meta lines included), when that line is the person's, its turn
+    /// is still running, and <paramref name="command"/>'s <c>--why</c> quotes it or is quoted by it (whitespace and case
+    /// folded). Null when there is none, and the watchtower stays fenced.
     /// </summary>
     public string? PersonsWord(CommandRequest command)
     {
         if (Transcripts is null || Fold(command.Why) is not { Length: > 0 } why
-            || Current() is not { State: SessionState.Working or SessionState.Waiting, SessionId: { Length: > 0 } sessionId })
-        {
-            return null;
-        }
-        // The latest user entry, searched back a page at a time: a long sweep puts many tool entries after the person's message.
-        const int page = 200;
-        var total = Transcripts.Window(sessionId, 0, 0)?.Total ?? 0;
-        TranscriptEntry? prompt = null;
-        for (var end = total; end > 0 && prompt is null; end -= page)
-        {
-            var start = Math.Max(0, end - page);
-            if (Transcripts.Window(sessionId, start, end - start) is not { } window)
-            {
-                return null;
-            }
-            prompt = window.Entries.LastOrDefault(e => e.Kind == TranscriptKind.User);
-        }
-        if (prompt is null
-            || prompt.Note || prompt.From is { Length: > 0 } from && !string.Equals(from, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase))
+            || Current() is not { State: SessionState.Working or SessionState.Waiting, SessionId: { Length: > 0 } sessionId }
+            || Transcripts.LastPrompt(sessionId) is not { } prompt || !IsPersons(prompt))
         {
             return null;
         }
         var said = Fold(prompt.Text);
         return said.Length > 0 && Quotes(said, why) ? command.Why!.Trim() : null;
+    }
+
+    /// <summary>
+    /// Whether a line that fed the watchtower's turn is the person's: typed or resumed text (Remote Control, the GUI, a
+    /// <c>tell</c>) or a cross-session message from the controller (the node relaying the person's words), and not the node's
+    /// voice, another node's watchtower, or a say the node routed for someone else. A message from any other session, the
+    /// node's own envelope, a task finishing, a scheduled wake, a hand-back, a compaction or a slash command is not.
+    /// </summary>
+    private bool IsPersons(Sessions.TranscriptBook.TurnPrompt prompt)
+    {
+        var persons = prompt.Origin switch
+        {
+            "human" => true,
+            "peer" => string.Equals(prompt.From, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        };
+        var text = prompt.Text.TrimStart();
+        if (!persons || text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal) || text.StartsWith(Sessions.SessionMessenger.FromWatchtowerPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var said = Fold(text);
+        lock (_routed)
+        {
+            return !_routed.Any(r => said == r || r.Length >= MinWordsLength && said.Contains(r, StringComparison.Ordinal));
+        }
     }
 
     /// <summary>
