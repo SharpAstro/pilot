@@ -65,15 +65,16 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="lanPort">Listens on the LAN too, on this port, announcing nothing, and on loopback only (no firewall prompt): a client on loopback stands in for one on another machine.</param>
     /// <param name="localOnly">Starts the node local-only, as <c>--local-only</c> does, whatever <paramref name="lanPort"/> asks for.</param>
     /// <param name="folder">A folder to start on (a disposed node's, to start its successor on the same socket path and data); default a new temp one.</param>
+    /// <param name="machine">The node's machine prefix (two harness nodes of one fleet need two); default the one this machine has.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null)
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, string? machine = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
         folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower,
-            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
+            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false, MachinePrefix: machine);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
         {
             throw new InvalidOperationException(tooLong);

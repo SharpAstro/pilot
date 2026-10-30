@@ -120,7 +120,8 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         {
             return Noted(decision, note);
         }
-        if (view.Peers.Count > 0 && input.OpusCap > 0 && Admission.IsOpus(model))
+        // Peers known but silent still count through the leases they hold here, until those expire.
+        if (view.Known > 0 && input.OpusCap > 0 && Admission.IsOpus(model))
         {
             var identity = flight is null ? "pr:" + (subject ?? role.ToString().ToLowerInvariant()) : FleetAdmission.IdentityOf(role, flight.Code);
             var label = $"{flight?.Code ?? subject ?? "pr"} {role.ToString().ToLowerInvariant()}";
@@ -165,11 +166,17 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     public async Task SweepAsync(CancellationToken cancellationToken)
     {
         var view = await Fleet.RefreshAsync(cancellationToken);
-        if (view.Peers.Count == 0 || Fleet.IsOwner(view) || Fleet.OwnerPeer(view) is not { } owner)
+        var opus = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).ToArray();
+        if (Fleet.IsOwner(view))
+        {
+            // The keeper's own slots (taken for starts that were out) are what it runs now: one whose session ended is freed.
+            Fleet.Sync(machine, opus.Select(s => (s.Identity.Length > 0 ? s.Identity : s.Label, s.Label, s.Model)));
+            return;
+        }
+        if (Fleet.OwnerPeer(view) is not { } owner)
         {
             return;
         }
-        var opus = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).ToArray();
         try
         {
             await Task.Run(() => Fleet.SendSync(owner, opus), cancellationToken);
