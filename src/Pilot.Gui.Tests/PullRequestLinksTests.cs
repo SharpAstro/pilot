@@ -100,10 +100,10 @@ public sealed class PullRequestLinksTests
 
     private static bool Has(PixelWidgetBase<RgbaImage> widget, string action) => Regions(widget).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action);
 
-    // The page's list laid out as the window gives it (the cards panel takes the right), with its viewport and its row <pr>'s place.
-    private static (Rect<float> Viewport, Rect<float>? Row) ListOf(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, PullRequestRow pr)
+    // The page's list laid out as the window gives it (the cards panel takes the right when there are cards), with its viewport and its row <pr>'s place.
+    private static (Rect<float> Viewport, Rect<float>? Row) ListOf(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, PullRequestRow pr, bool withCards = true)
     {
-        var width = 1280f - 52f - CardsView<RgbaImage>.Width;
+        var width = 1280f - 52f - (withCards ? CardsView<RgbaImage>.Width : 0f);
         var arranged = Layout.Engine.Arrange(page.Tree(screen, width), new Rect<float>(0, 0, width, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         var viewport = arranged.Single(a => a.Node.Scroll is not null).Bounds;
         var index = page.Rows.ToList().FindIndex(r => r.Url == pr.Url);
@@ -149,7 +149,7 @@ public sealed class PullRequestLinksTests
         var page = chrome.PullRequests;
         page.SelectedRow.ShouldNotBeNull().Url.ShouldBe(target.Url);
         page.IsFolded(target.Repo).ShouldBeFalse();
-        page.Filter.ShouldBe(PullRequestFilter.All);
+        page.Filter.ShouldBeNull();
         page.Search.Text.ShouldBe("");
         InView(ListOf(renderer, page, screen, target)).ShouldBeTrue("the selected row is inside the list's viewport");
     }
@@ -163,11 +163,11 @@ public sealed class PullRequestLinksTests
         var target = LastRow(screen.Row!);
         chrome.Show(PilotPage.PullRequests);
         Settle(chrome, null, null, screen);
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeFalse("a short window holds twelve rows at most");
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeFalse("a short window holds twelve rows at most");
 
         chrome.OpenPullRequest(target.Repo, target.Number);
         Settle(chrome, null, null, screen);
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeTrue();
     }
 
     [Fact]
@@ -347,7 +347,7 @@ public sealed class PullRequestLinksTests
         var selected = chrome.PullRequests.SelectedRow.ShouldNotBeNull();
         selected.Number.ShouldBe(9999);
         chrome.Cards.Focus.ShouldBe("PIL9999");
-        InView(ListOf(renderer, chrome.PullRequests, screen, selected)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, selected, withCards: false)).ShouldBeTrue();
         Says(chrome.PullRequests.Tree(screen), renderer, "has not been read").ShouldBeFalse();
         Says(chrome.PullRequests.Tree(screen), renderer, "not among the open pull requests").ShouldBeFalse();
     }
@@ -389,7 +389,7 @@ public sealed class PullRequestLinksTests
         chrome.OpenPullRequest(target.Repo, target.Number);
         Settle(chrome, null, null, screen);
         chrome.PullRequests.IsFolded(target.Repo).ShouldBeFalse();
-        InView(ListOf(renderer, chrome.PullRequests, screen, target)).ShouldBeTrue();
+        InView(ListOf(renderer, chrome.PullRequests, screen, target, withCards: false)).ShouldBeTrue();
     }
 
     [Fact]
@@ -503,7 +503,7 @@ public sealed class PullRequestLinksTests
     }
 
     [Fact]
-    public void ACanvasCardHoldsItsChipInTheCardAtTheRightOfItsCodeAndEveryCardKeepsItsSize()
+    public void ACanvasDestinationHoldsItsChipClickOnTheMapAndAFlightWithoutAListedPRHasNone()
     {
         using var renderer = new RgbaImageRenderer(1280, (uint)Height);
         var chrome = Window(renderer);
@@ -512,14 +512,11 @@ public sealed class PullRequestLinksTests
         chrome.Show(PilotPage.Flights);
         Draw(chrome, flights, null, screen);
 
-        var arranged = Layout.Engine.Arrange(chrome.Flights.Tree(flights), new Rect<float>(0, 0, 1280, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        var cards = arranged.Where(a => a.Node.Hit is HitResult.ListItemHit).Select(a => a.Bounds).ToList();
-        cards.Count.ShouldBe(2);
-        cards.ShouldAllBe(c => c.Width == FlightCanvas.CardWidth && c.Height == FlightCanvas.CardHeight);
-        var chip = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "flight:PIL252:pr-chip" }).Bounds;
-        var card = cards.Single(c => chip.X >= c.X && chip.X + chip.Width <= c.X + c.Width + 0.5f && chip.Y >= c.Y && chip.Y + chip.Height <= c.Y + c.Height);
-        chip.Y.ShouldBeLessThan(card.Y + 30f, "on the card's first line, by its code");
-        (chip.X + chip.Width).ShouldBeLessThanOrEqualTo(card.X + card.Width);
+        // The chip's click is the map's destination for that flight, inside the window; the flight with no listed PR has none.
+        var chip = Regions(chrome.Flights).Single(r => r.Result is HitResult.ButtonHit { Action: "flight:PIL252:pr-chip" });
+        chip.Width.ShouldBeGreaterThan(0f);
+        (chip.X + chip.Width).ShouldBeLessThanOrEqualTo(1280f);
+        Has(chrome.Flights, "flight:DIR9:pr-chip").ShouldBeFalse();
     }
 
     [Fact]
@@ -532,7 +529,10 @@ public sealed class PullRequestLinksTests
         chrome.Show(PilotPage.PullRequests);
         Draw(chrome, flights, null, screen);
         var pr = screen.Row!.PullRequests.Single(p => p.Number == 252);
-        chrome.PullRequests.Select(chrome.PullRequests.Rows.ToList().FindIndex(r => r.Url == pr.Url));
+        // Revealed, so the list scrolls to it: SharpAstro's repos come after sebgod's filler ones by name.
+        chrome.PullRequests.Reveal(pr.Repo, pr.Number);
+        Draw(chrome, flights, null, screen);
+        Draw(chrome, flights, null, screen);
 
         Click(chrome.PullRequests, $"pr:{pr.Url}:flight");
         chrome.Page.ShouldBe(PilotPage.Flights);
@@ -563,7 +563,7 @@ public sealed class PullRequestLinksTests
         Draw(chrome, null, null, screen, repos);
         var page = chrome.PullRequests;
         page.Search.Text.ShouldBe("example-org/orbit");
-        page.Filter.ShouldBe(PullRequestFilter.All);
+        page.Filter.ShouldBeNull();
         page.Rows.Select(r => r.Repo).Distinct().ShouldBe(["example-org/orbit"]);
         page.Rows.Count.ShouldBe(2);
 

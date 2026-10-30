@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using DIR.Lib;
 using Pilot.Commands;
 
@@ -62,7 +63,7 @@ internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string S
 /// picked stays picked. With <see cref="CanSay"/>, a bar at the foot takes text for the selected session, and Enter
 /// hands it to <see cref="OnSay"/>.
 /// </remarks>
-internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "sessions";
 
@@ -90,8 +91,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     private const float NodeWidth = 64f;
 
     // The room the Session column keeps for a role and a name ("worker · ORB204 / parser"): the optional columns drop
-    // before it gives any of it up.
+    // before it gives any of it up. On a page too narrow for the table (ListTable.Fit) it keeps less, by its weight most of what there
+    // is, and the name then ends in an ellipsis, the row's tooltip having the whole of it, led by the name (ChipBrief.Session does not carry it).
     private const float SessionMin = 200f;
+    private const float SessionSqueezedMin = 80f;
+    private const float SessionSqueezedWeight = 6f;
+    // What a page too narrow for the table leaves the State and Node columns, which cannot be dropped: their words end in an ellipsis.
+    private const float StateMin = 64f;
+    private const float NodeMin = 40f;
 
     private static RGBAColor32 Ground => TranscriptPane.Ground;
     private static RGBAColor32 HeaderBg => Palette.Current.HeaderBg;
@@ -126,6 +133,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     public ListTable Table { get; } = new("sessions");
     private IReadOnlyList<SessionLine> _lines = [];
     private Func<SessionLine, bool>? _pendingFirst;
+
+    /// <summary>The rows as the last frame showed them: filtered and in the clicked sort's order, the order <see cref="Selected"/> indexes.</summary>
+    internal IReadOnlyList<SessionLine> Shown => _lines;
 
     /// <summary>The selected row's index into <see cref="SessionsScreen.Lines"/>, or -1 with none.</summary>
     public int Selected => ListCursor.ListId == ListId ? ListCursor.Index : -1;
@@ -320,6 +330,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         Palette.Use(Night);
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
@@ -347,6 +358,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         {
             screen = screen.InPlay(_pinned);
         }
+        // A clicked title's order, before the selection is resolved: it follows its session by key, wherever the sort puts it.
+        screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
         _lines = screen.Lines;
         _marked = screen.Lines.Any(l => l.Node is not null);
         if (_pendingFirst is { } wanted)
@@ -446,7 +459,33 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
 
         SayInput.Text = "";
         SayInput.CursorPos = 0;
-        await say(line, text.Trim());
+        // Shown at once as sending, keyed to the row it went to; the host's words replace it when the send completes.
+        var pending = new PendingSay(line.Row.Id, text.Trim());
+        ImmutableInterlocked.Update(ref _pending, p => p.Add(pending));
+        try
+        {
+            await say(line, pending.Text);
+        }
+        finally
+        {
+            ImmutableInterlocked.Update(ref _pending, p => p.Remove(pending));
+        }
+    }
+
+    private sealed record PendingSay(string RowId, string Text);
+
+    private ImmutableList<PendingSay> _pending = [];
+
+    /// <summary>The says to the selected row the node has not answered yet, in the order sent.</summary>
+    public IReadOnlyList<string> Sending => Selected >= 0 && Selected < _lines.Count
+        ? [.. _pending.Where(p => p.RowId == _lines[Selected].Row.Id).Select(p => p.Text)]
+        : [];
+
+    // The status line while a say is out: each one marked, dimmed like the line; the host's words once none is.
+    private string? SayLine()
+    {
+        var sending = Sending;
+        return sending.Count == 0 ? SayStatus : string.Join(" · ", sending.Select(t => $"sending… {(t.Length > 60 ? t[..59] + "…" : t)}"));
     }
 
     public override bool HandleInput(InputEvent evt)
@@ -592,7 +631,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
                             .WStar())
                     .WithGap(12f)
                     .RowH(28f),
-                Layout.Builder.Text(SayStatus ?? "Ctrl+S to type here · Enter sends", 11f, Dim).RowH(16f))
+                Layout.Builder.Text(SayLine() ?? "Ctrl+S to type here · Enter sends", 11f, Dim).RowH(16f))
             .Pad(Gutter, 4f)
             .Bg(HeaderBg)
             .RowH(SayBarHeight);
@@ -668,7 +707,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             return Layout.Builder.Text(screen.Hidden is null ? "No sessions" : "No session in play: Everything, above, shows the ended", 16f, Dim, TextAlign.Center).Stretch();
         }
 
-        var columns = Columns();
+        var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(screen.Lines.Count);
         for (var i = 0; i < screen.Lines.Count; i++)
         {
@@ -694,20 +733,41 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Session", SessionMin),
-            ListColumn.Optional("Model", ModelWidth),
-            ListColumn.Fixed("Context", ContextWidth),
-            ListColumn.Optional("Last response", LastWidth),
-            ListColumn.Fixed(StateTitle, StateWidth),
-            ListColumn.Optional("Spend", SpendWidth),
+            Sorted(ListColumn.Star("Session", SessionMin, SessionSqueezedMin, SessionSqueezedWeight)),
+            Sorted(ListColumn.Optional("Model", ModelWidth)),
+            Sorted(ListColumn.Fixed("Context", ContextWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Last response", LastWidth), descendingFirst: true),
+            Sorted(ListColumn.Fixed(StateTitle, StateWidth, StateMin)),
+            Sorted(ListColumn.Optional("Spend", SpendWidth), descendingFirst: true),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by, under its title: the figures as numbers, not as the words they are drawn in.
+    private static readonly IReadOnlyDictionary<string, Func<SessionLine, object?>> SortKeys = new Dictionary<string, Func<SessionLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Session"] = l => l.Name,
+        ["Model"] = l => (l.Row.Model ?? "", l.Row.Effort ?? ""),
+        ["Context"] = l => l.Row.ContextTokens,
+        ["Last response"] = l => l.Row.LastResponseAt ?? DateTimeOffset.MinValue,
+        [StateTitle] = l => SessionLine.StateOrder(l.Row.State),
+        ["Spend"] = l => l.Row.SpendWeighted,
+    };
 
     private const string StateTitle = "State";
 
@@ -731,7 +791,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
         };
         if (_marked)
         {
-            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body)));
+            cells.Insert(0, Cell(Layout.Builder.Text(line.Node?.Name ?? "", 13f, body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(stateColor), cells)
             .RowH(RowHeight)
@@ -739,8 +799,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pixe
             .BgFocus(RowFocusBg)
             .Clickable(new HitResult.ListItemHit(ListId, index), _ => Select(index))
             .WithContextMenu(at => OpenMenu(line, index, at))
-            // The same brief as the Home chip (#258).
-            .WithTooltip(ChipBrief.Text(ChipBrief.Session(line)))
+            // The same brief as the Home chip (#258), under the session's whole name: the Session column may cut it with an ellipsis.
+            .WithTooltip(ChipBrief.SessionRow(line))
             .DoubleClickable(_ =>
             {
                 Select(index);

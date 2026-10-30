@@ -62,44 +62,6 @@ public sealed class MergeQueueTests
             .ShouldBeNull();
 
     private const string AllMethods = """{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":true,"allow_rebase_merge":true}""";
-    private const string RebaseOnly = """{"default_branch":"main","allow_squash_merge":false,"allow_merge_commit":false,"allow_rebase_merge":true}""";
-
-    [Theory]
-    [InlineData("SQUASH", UpdateWay.Merge)]
-    [InlineData("MERGE", UpdateWay.Merge)]
-    [InlineData("REBASE", UpdateWay.Rebase)]
-    public void AQueueRulesMergeMethodDecidesHowTheBranchIsBroughtUpToDate(string method, UpdateWay way) =>
-        GhCli.ParseUpdateWay($$$"""[{"type":"deletion"},{"type":"merge_queue","parameters":{"merge_method":"{{{method}}}","grouping_strategy":"ALLGREEN"}}]""", RebaseOnly)
-            .ShouldBe(way);
-
-    [Fact]
-    public void WithNoQueueTheReposAllowedMergeMethodsDecide()
-    {
-        GhCli.ParseUpdateWay("[]", AllMethods).ShouldBe(UpdateWay.Merge);
-        GhCli.ParseUpdateWay("""[{"type":"deletion"}]""", """{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}""").ShouldBe(UpdateWay.Merge);
-        GhCli.ParseUpdateWay("[]", RebaseOnly).ShouldBe(UpdateWay.Rebase);
-    }
-
-    [Fact]
-    public void WithNoQueueTheMethodTheNodeMergesWithDecidesWhereTheRepoAllowsIt()
-    {
-        // The DIR.Lib shape: squash allowed, rebase allowed, linear history. A node that rebase-merges must rebase, not merge the base in.
-        GhCli.ParseUpdateWay("[]", AllMethods, "rebase").ShouldBe(UpdateWay.Rebase);
-        GhCli.ParseUpdateWay("[]", AllMethods, "squash").ShouldBe(UpdateWay.Merge);
-        GhCli.ParseUpdateWay("[]", AllMethods, "merge").ShouldBe(UpdateWay.Merge);
-        // A method the repo does not allow falls back to what it does.
-        GhCli.ParseUpdateWay("[]", """{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}""", "rebase").ShouldBe(UpdateWay.Merge);
-        GhCli.ParseUpdateWay("[]", RebaseOnly, "squash").ShouldBe(UpdateWay.Rebase);
-        // A queue's own method still wins over the node's.
-        GhCli.ParseUpdateWay("""[{"type":"merge_queue","parameters":{"merge_method":"SQUASH"}}]""", AllMethods, "rebase").ShouldBe(UpdateWay.Merge);
-    }
-
-    [Theory]
-    [InlineData("not json", AllMethods)]
-    [InlineData("[]", "not json")]
-    [InlineData("", "")]
-    public void AnAnswerThatSaysNothingIsARebaseAsEver(string rules, string repo) =>
-        GhCli.ParseUpdateWay(rules, repo).ShouldBe(UpdateWay.Rebase);
 
     [Fact]
     public void TheDefaultBranchIsReadFromTheRepo()

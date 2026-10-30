@@ -4,7 +4,7 @@ using Pilot.Contracts;
 namespace Pilot.Commands;
 
 /// <summary>
-/// <c>pilot prs</c>: every open PR of the clones' orgs, grouped by repo in <see cref="PullRequestsRow.Groups"/>' order, each with
+/// <c>pilot prs</c>: every open PR of the repos pilot works in, grouped by org, then by repo, in <see cref="PullRequestsRow.OrgGroups"/>' order, each with
 /// the label the node's merge-state reader gave it. As plain text for the terminal and as Markdown (tables) for
 /// <c>--output-format markdown</c> and <c>rich</c>, the two carrying the same facts.
 /// </summary>
@@ -17,7 +17,7 @@ internal static class PullRequestsMarkdown
         {
             return "The node has not read the pull requests yet; pilot prs --refresh asks it to.\n";
         }
-        var orgs = row.Orgs.Length > 0 ? string.Join(", ", row.Orgs) : "any org the clones come from";
+        var orgs = row.Orgs.Length > 0 ? string.Join(", ", row.Orgs) : "any repo pilot works in";
         return needsMe ? $"No pull requests need you in {orgs}.\n" : $"No open pull requests in {orgs}.\n";
     }
 
@@ -27,63 +27,111 @@ internal static class PullRequestsMarkdown
     /// <summary>How long ago, in the unit that reads shortest: <c>just now</c>, <c>5m ago</c>, <c>3h ago</c>, <c>2d ago</c>.</summary>
     internal static string Age(DateTimeOffset? then, DateTimeOffset now) => PullRequestsRow.Age(then, now);
 
+    /// <summary>
+    /// What a row whose review asks for changes offers: a flight's PR, its open review-changes card's Fix the review's findings (the row
+    /// does not know the card's id, so it names the flight); any other PR, <c>pilot review fix</c>. Null for a row whose review passed or is not there.
+    /// </summary>
+    internal static string? Hint(PullRequestRow pr) =>
+        pr.Review != PullRequestReview.Changes ? null
+        : pr.Flight is { } code ? $"review asks for changes: answer {code}'s review-changes card with Fix the review's findings (pilot cards lists it)"
+        : $"review asks for changes: pilot review fix {pr.Repo}#{pr.Number}";
+
     private static string Review(PullRequestRow pr) => pr.Review is { } review ? $"review {review}" : "";
 
+    // The row's note (the read is rate-limited), then a line for each org that could not be read.
     private static string Errors(PullRequestsRow row, Func<string, string> text) =>
-        string.Concat(row.Errors.Select(e => $"! {text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
+        (row.Note is { } note ? $"! {text(note)}\n" : "")
+        + string.Concat(row.Errors.Select(e => $"! {text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
 
-    /// <summary>The plain list: a line a repo (its name and count), its PRs indented under it with the label, flight, author, review and age.</summary>
+    private static string Bullets(PullRequestsRow row) =>
+        (row.Note is { } note ? $"- {Markdown.Text(note)}\n" : "")
+        + string.Concat(row.Errors.Select(e => $"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n"));
+
+    // The row's note alone: the org's own errors are printed under the org.
+    private static string NoteLine(PullRequestsRow row, Func<string, string> text, string bullet) => row.Note is { } note ? $"{bullet}{text(note)}\n" : "";
+
+    /// <summary>
+    /// The plain list: a line an org (its name and counts, its read error under it), a line a repo of it (its name and count)
+    /// indented, and each repo's PRs indented under that with the label, flight, author, review and age.
+    /// </summary>
     internal static string Plain(PullRequestsRow? row, bool needsMe, DateTimeOffset now)
     {
-        var groups = row?.Groups(needsMe) ?? [];
-        if (row is null || groups.Length == 0)
+        var orgs = row?.OrgGroups(needsMe) ?? [];
+        if (row is null || orgs.All(o => o.Repos.Length == 0))
         {
             return Empty(row, needsMe) + (row is null ? "" : Errors(row, s => s));
         }
         var text = new StringBuilder();
         text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}");
-        foreach (var group in groups)
+        foreach (var org in orgs)
         {
-            text.AppendLine($"{group.Repo}  {group.PullRequests.Length}");
-            foreach (var pr in group.PullRequests)
+            text.AppendLine($"{org.Org}  {org.Counts}");
+            if (org.Error is { } error)
             {
-                var more = new[] { pr.Flight, pr.Author, Review(pr), $"updated {Age(pr.UpdatedAt, now)}" }.Where(s => !string.IsNullOrEmpty(s));
-                text.AppendLine($"    #{pr.Number} {pr.Title}  {pr.Label}  {string.Join("  ", more)}");
+                text.AppendLine($"  ! {error}");
+            }
+            foreach (var group in org.Repos)
+            {
+                text.AppendLine($"  {group.Repo}  {group.PullRequests.Length}");
+                foreach (var pr in group.PullRequests)
+                {
+                    var more = new[] { pr.Flight, pr.Author, Review(pr), $"updated {Age(pr.UpdatedAt, now)}" }.Where(s => !string.IsNullOrEmpty(s));
+                    text.AppendLine($"      #{pr.Number} {pr.Title}  {pr.Label}  {string.Join("  ", more)}");
+                    if (Hint(pr) is { } hint)
+                    {
+                        text.AppendLine($"          -> {hint}");
+                    }
+                }
             }
         }
-        text.Append(Errors(row, s => s));
+        text.Append(NoteLine(row, s => s, "! "));
         return text.ToString();
     }
 
-    /// <summary>The Markdown list: a heading a repo, linked, and a table of its PRs, the PR's title the link.</summary>
+    /// <summary>The Markdown list: a heading an org with its counts (its error under it), a sub-heading a repo, linked, and a table of its PRs, the PR's title the link.</summary>
     internal static string Build(PullRequestsRow? row, bool needsMe, DateTimeOffset now)
     {
-        var groups = row?.Groups(needsMe) ?? [];
-        if (row is null || groups.Length == 0)
+        var orgs = row?.OrgGroups(needsMe) ?? [];
+        if (row is null || orgs.All(o => o.Repos.Length == 0))
         {
-            return Empty(row, needsMe) + (row is null ? "" : string.Concat(row.Errors.Select(e => $"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}\n")));
+            return Empty(row, needsMe) + (row is null ? "" : Bullets(row));
         }
         var text = new StringBuilder();
         text.AppendLine("# pilot prs").AppendLine();
         text.AppendLine($"{Summary(row)} · read {Age(row.ReadAt, now)}").AppendLine();
-        foreach (var group in groups)
+        foreach (var org in orgs)
         {
-            text.AppendLine($"## [{Markdown.Text(group.Repo)}](https://github.com/{group.Repo}) ({group.PullRequests.Length})").AppendLine();
-            text.AppendLine("| State | PR | Flight | Author | Review | Updated |");
-            text.AppendLine("| --- | --- | --- | --- | --- | --- |");
-            foreach (var pr in group.PullRequests)
+            text.AppendLine($"## [{Markdown.Text(org.Org)}](https://github.com/{org.Org}) · {org.Counts}").AppendLine();
+            if (org.Error is { } error)
             {
-                var label = Markdown.Text($"#{pr.Number} {pr.Title}");
-                var link = $"[{label}]({(pr.Url.Contains(' ') ? $"<{pr.Url}>" : pr.Url)})";
-                var review = pr.Review is null ? "" : pr.ReviewUrl is { } url ? $"[{pr.Review}]({url})" : pr.Review;
-                text.AppendLine($"| {Markdown.Text(pr.Label)} | {link} | {Markdown.Text(pr.Flight ?? "")} | {Markdown.Text(pr.Author ?? "")} | {review} | {Age(pr.UpdatedAt, now)} |");
+                text.AppendLine($"- {Markdown.Text(error)}").AppendLine();
             }
-            text.AppendLine();
+            foreach (var group in org.Repos)
+            {
+                text.AppendLine($"### [{Markdown.Text(group.Repo)}](https://github.com/{group.Repo}) ({group.PullRequests.Length})").AppendLine();
+                text.AppendLine("| State | PR | Flight | Author | Review | Updated |");
+                text.AppendLine("| --- | --- | --- | --- | --- | --- |");
+                foreach (var pr in group.PullRequests)
+                {
+                    var label = Markdown.Text($"#{pr.Number} {pr.Title}");
+                    var link = $"[{label}]({(pr.Url.Contains(' ') ? $"<{pr.Url}>" : pr.Url)})";
+                    var review = pr.Review is null ? "" : pr.ReviewUrl is { } url ? $"[{pr.Review}]({url})" : pr.Review;
+                    text.AppendLine($"| {Markdown.Text(pr.Label)} | {link} | {Markdown.Text(pr.Flight ?? "")} | {Markdown.Text(pr.Author ?? "")} | {review} | {Age(pr.UpdatedAt, now)} |");
+                }
+                text.AppendLine();
+                // Under the table, a bullet a PR: a line between rows would end it.
+                var hinted = group.PullRequests.Where(pr => Hint(pr) is not null).ToArray();
+                foreach (var pr in hinted)
+                {
+                    text.AppendLine($"- #{pr.Number}: {Markdown.Text(Hint(pr)!)}");
+                }
+                if (hinted.Length > 0)
+                {
+                    text.AppendLine();
+                }
+            }
         }
-        foreach (var e in row.Errors)
-        {
-            text.AppendLine($"- {Markdown.Text($"{e.Org}: {e.Message.ReplaceLineEndings(" ")}")}");
-        }
+        text.Append(NoteLine(row, Markdown.Text, "- "));
         return text.ToString();
     }
 }

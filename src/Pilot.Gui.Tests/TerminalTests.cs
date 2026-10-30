@@ -174,13 +174,13 @@ public sealed class TerminalTests
         }
 
         sessions.Transcript.IsOpen.ShouldBeTrue();
-        var described = Described();
+        var described = TestText.Flat(Described());
         described.ShouldContain("Fix the flaky clock test");
         described.ShouldContain("Bash");
         described.ShouldContain("dotnet test --filter Clock");
         described.ShouldContain("ClockTests.Ticks");
         // What the assistant wrote is Markdown, a leaf a word.
-        described.ShouldContain("\"Fixed ");
+        described.ShouldContain("Fixed it.");
         described.ShouldNotContain("Last response");
         // The first read asked for the last entries; the next only for what came after them.
         lock (asked)

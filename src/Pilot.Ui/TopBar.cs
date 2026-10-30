@@ -13,7 +13,7 @@ internal sealed record PageHeader(string Title)
     /// <summary>The page's counts line (<c>12 flights · 8 flying</c>); null or empty says none.</summary>
     public string? Counts { get; init; }
 
-    /// <summary>Whether the counts may be longer than the bar has room for: they then shrink to fit with an ellipsis and carry the whole line on hover, rather than push the buttons out of the window.</summary>
+    /// <summary>Whether the counts may be longer than the bar has room for: they then stand on a line of their own under the bar, ending in an ellipsis where the page is narrower and carrying the whole line on hover, rather than push the buttons out of the window.</summary>
     public bool CountsFit { get; init; }
 
     /// <summary>What In play leaves out (<c>29 landed hidden</c>), after the counts, as a click that shows everything; null says nothing is hidden.</summary>
@@ -45,7 +45,8 @@ internal sealed record PageHeader(string Title)
 /// <param name="Autopilot">The Autopilot switch.</param>
 /// <param name="About">The ? card, and the update light before it.</param>
 /// <param name="Night">The Night switch, whose state paints the bar on every page.</param>
-internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null);
+/// <param name="NodePills">Pills that stand in place of <paramref name="Nodes"/>' multi-select ones: the Chat page's single choice of watchtower.</param>
+internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null, IReadOnlyList<Layout.Node>? NodePills = null);
 
 /// <summary>
 /// The one top bar every page shows, Home included (#231): <b>pilot v2</b> and the page's name, then the node pills and the In
@@ -55,17 +56,29 @@ internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, Autopilo
 /// </summary>
 internal static class TopBar
 {
+    /// <summary>The name of this window's node, for a page that shows only that node's rows.</summary>
+    public static string ThisNodeName(NodeFilter? nodes) => nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>The title of a page whose rows are this window's node's only, e.g. "DE1's ideas (this machine)".</summary>
+    public static string ThisNodeTitle(NodeFilter? nodes, string page) => $"{ThisNodeName(nodes)}'s {page} (this machine)";
+
     /// <summary>The row of the bar itself, design units.</summary>
     public const float RowHeight = 32f;
 
     /// <summary>The source line's row.</summary>
     public const float SourceHeight = 20f;
 
+    /// <summary>The line a long counts line stands on (<see cref="PageHeader.CountsFit"/>).</summary>
+    public const float CountsHeight = 20f;
+
     /// <summary>The padding above and below the bar's rows.</summary>
     public const float PadY = 6f;
 
     /// <summary>The padding either side of the bar.</summary>
     public const float PadX = 16f;
+
+    /// <summary>What the first line of the bar leaves for what every page shares at its right: Autopilot, the update light and ?, with their gaps.</summary>
+    public const float SharedReserve = 290f;
 
     /// <summary>The bottom of the bar's row of buttons: what the ? card hangs under.</summary>
     public const float ButtonsBottom = PadY + RowHeight;
@@ -83,37 +96,41 @@ internal static class TopBar
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
             Layout.Builder.Text(page.Title, 20f, palette.Dim, TextAlign.Near, TextAlign.Far).WAuto(),
         };
-        items.AddRange(parts.Nodes?.Pills(night) ?? []);
+        items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
-        if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
+        if (!page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {
-            // The counts take the room the spacer would, cut with an ellipsis and carried whole on hover when the bar is
-            // narrow, so the buttons after them never leave the window. Bottom-aligned as Summary is.
-            items.Add(Layout.Builder.Text(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WStar().WithTooltip(page.Counts));
-        }
-        else
-        {
-            items.Add(Layout.Builder.Spacer().WStar());
-            if (!string.IsNullOrEmpty(page.Counts))
-            {
-                items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
-            }
+            items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
-        if (parts.Autopilot is { } autopilot)
-        {
-            items.Add(autopilot.Button(night));
-        }
+        // Night flows with the page's own buttons: the corner is as wide as the narrowest page leaves it room for, and no wider.
         if (parts.Night is { } nightSwitch)
         {
             items.Add(nightSwitch.Button());
         }
+        var shared = new List<Layout.Node>();
+        if (parts.Autopilot is { } autopilot)
+        {
+            shared.Add(autopilot.Button(night));
+        }
         if (parts.About is { } about)
         {
-            items.Add(about.Button(night));
+            shared.Add(about.Button(night));
         }
 
-        var rows = new List<Layout.Node> { Layout.Builder.HStack([.. items]).WithGap(12f).RowH(RowHeight) };
+        // The bar flows: what does not fit beside the rest starts a line under it, each item in a cell of the bar's row height so
+        // buttons and words of any size share one middle. A row of one HStack ran past a narrow page, drawing Autopilot and ? out
+        // of it (PIL380). What every page shares stands at the bar's right corner, the same place on every page, and the flow
+        // leaves it room on its first line.
+        var flow = FlowRow.Of(RowHeight, 12f, shared.Count > 0 ? SharedReserve : 0f, items);
+        var corner = Layout.Builder.HStack([.. shared.Select(item => FlowRow.Cell(item, RowHeight))]).WithGap(12f).WAuto().HFixed(RowHeight);
+        var rows = new List<Layout.Node> { shared.Count > 0 ? Layout.Builder.Overlay(flow, Layout.Builder.Anchored(corner, Layout.DockSide.Right).WStar().HStar()).WStar().HAuto() : flow };
+        if (page.CountsFit && !string.IsNullOrEmpty(page.Counts))
+        {
+            // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
+            // the page is narrow, so they never push a button out of the window or past the page's edge. Bottom-aligned as Summary is.
+            rows.Add(Layout.Builder.Text(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WithTooltip(page.Counts).RowH(CountsHeight));
+        }
         if (page.Source is { } source)
         {
             rows.Add(Layout.Builder.Text(source, 12f, page.SourceColor ?? palette.Dim).RowH(SourceHeight));

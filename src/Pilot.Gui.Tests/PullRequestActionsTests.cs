@@ -92,7 +92,8 @@ public sealed class PullRequestActionsTests
         {
             Kinds(conflicts with { Kind = kind, Label = kind.ToString() }, cards).ShouldNotContain(PullRequestActionKind.GoAround, kind.ToString());
         }
-        Kinds(conflicts with { Flight = null }, cards).ShouldBe([PullRequestActionKind.Open]);
+        // Not a flight's: no card to press, and no Go around (its review says changes, so a plain PR gets Address review instead).
+        Kinds(conflicts with { Flight = null }, cards).ShouldNotContain(PullRequestActionKind.GoAround);
         Kinds(conflicts).ShouldBe([PullRequestActionKind.Open]);
     }
 
@@ -103,11 +104,114 @@ public sealed class PullRequestActionsTests
         {
             var unreviewed = Pr("SharpAstro/pilot", 9, kind, kind.ToString());
             Kinds(unreviewed).ShouldBe([PullRequestActionKind.Review, PullRequestActionKind.Open], kind.ToString());
-            foreach (var review in new[] { PullRequestReview.Passed, PullRequestReview.Changes, PullRequestReview.Reviewing })
+            foreach (var review in new[] { PullRequestReview.Passed, PullRequestReview.Reviewing })
             {
                 Kinds(unreviewed with { Review = review }).ShouldBe([PullRequestActionKind.Open], $"{kind} {review}");
             }
+            // Changes: not Review again, but the findings fixed.
+            Kinds(unreviewed with { Review = PullRequestReview.Changes }).ShouldBe([PullRequestActionKind.AddressReview, PullRequestActionKind.Open], kind.ToString());
         }
+    }
+
+    private static CardRow FindingsCard(string flight, string id = "c4", string words = "Fix the review's findings", string kind = "review-changes") => new()
+    {
+        Id = id, Bin = CardBin.Ring, Kind = kind, Subject = Verbs.FlightTarget(flight), Title = $"{flight}'s review asks for changes", At = Now, State = CardState.Open,
+        Choices =
+        [
+            new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight), Args = ["pass", "ready anyway"] },
+            new CardChoice { Label = words, Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight, "parser"), Args = ["the review asked for changes: x"] },
+        ],
+    };
+
+    [Fact]
+    public void AddressReviewOnAFlightsPRPressesItsReviewChangesCardsGoAroundNotAConflictCards()
+    {
+        var pr = Pr("SharpAstro/tianwen", 1799, PullRequestKind.ChecksFailed, "Checks failed", "TIA1799", PullRequestReview.Changes);
+        var offered = PullRequestActions.Offered(pr, [AroundCard("TIA1799"), FindingsCard("TIA1799")]);
+        offered.Select(a => a.Kind).ShouldBe([PullRequestActionKind.AddressReview, PullRequestActionKind.Open]);
+        (offered[0].Card?.Id, offered[0].Choice).ShouldBe(("c4", 2));
+        offered[0].Tooltip.ShouldBe("Send TIA1799's last leg round on the review's findings, as its card's Fix the review's findings does");
+
+        // A card that only resolves a conflict, or no card at all: no button, and never fix-pr for a flight's PR.
+        Kinds(pr, AroundCard("TIA1799")).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(pr).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(pr, FindingsCard("TIA1799") with { State = CardState.Closed }).ShouldBe([PullRequestActionKind.Open]);
+        Kinds(pr with { Review = PullRequestReview.Passed }, FindingsCard("TIA1799")).ShouldBe([PullRequestActionKind.Open]);
+    }
+
+    [Fact]
+    public async Task AddressReviewOnAFlightsPRAnswersTheCardAndOnAPlainPRSendsFixPr()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var answered = new List<string>();
+        page.OnAnswer = (card, number) => answered.Add($"{card.Id}:{number}");
+        var sent = new List<string>();
+        page.OnFixReview = (pr, _) =>
+        {
+            var request = DashboardCommands.FixPrRequest(pr, "gui");
+            sent.Add($"{request.Verb} {request.Target} {request.Who}");
+            return Task.CompletedTask;
+        };
+        var flight = Pr("SharpAstro/pilot", 460, PullRequestKind.Behind, "Behind", "PIL460", PullRequestReview.Changes);
+        var plain = Pr("SharpAstro/DIR.Lib", 301, PullRequestKind.Behind, "Behind", review: PullRequestReview.Changes);
+        _ = page.Tree(Screen(Row() with { PullRequests = [flight, plain] }, [FindingsCard("PIL460")]));
+
+        page.Press(flight, page.ActionsOf(flight).Single(a => a.Kind == PullRequestActionKind.AddressReview));
+        answered.ShouldBe(["c4:2"]);
+        sent.ShouldBeEmpty();
+
+        var action = page.ActionsOf(plain).Single(a => a.Kind == PullRequestActionKind.AddressReview);
+        action.Card.ShouldBeNull();
+        action.Tooltip.ShouldBe("Start a fixer on SharpAstro/DIR.Lib#301's branch with the review's findings (pilot review fix)");
+        await page.FixReviewAsync(plain);
+        sent.ShouldBe(["fix-pr pr/SharpAstro/DIR.Lib#301 gui"]);
+        Verbs.FixPr.ShouldBe("fix-pr");
+    }
+
+    [Fact]
+    public async Task AddressReviewSaysStartingThenFixingUntilAReadShowsAnotherReviewWordAndARefusalIsSaidInTheNodesWords()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var answer = new TaskCompletionSource();
+        page.OnFixReview = (_, _) => answer.Task;
+        var plain = Pr("SharpAstro/DIR.Lib", 301, PullRequestKind.Behind, "Behind", review: PullRequestReview.Changes);
+        var screen = Screen(Row() with { PullRequests = [plain] });
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+        Words(Arrange(renderer, page, screen)).ShouldContain("Address review");
+
+        var press = page.FixReviewAsync(plain);
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("Starting…");
+        ButtonOrNull(arranged, Id(plain, "address-review")).ShouldBeNull();
+
+        answer.SetResult();
+        await press;
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("fixing");
+        Words(arranged).ShouldNotContain("Starting…");
+        ButtonOrNull(arranged, Id(plain, "address-review")).ShouldBeNull();
+
+        // A read that shows another review word takes over, and the row is no longer waiting on the fixer.
+        var read = Screen(screen.Row! with { PullRequests = [plain with { Review = PullRequestReview.Reviewing }] });
+        Words(Arrange(renderer, page, read)).ShouldNotContain("fixing");
+
+        // The node's refusal, in its words.
+        page.OnFixReview = (_, _) => throw new InvalidOperationException("a flight owns SharpAstro/DIR.Lib#301");
+        var again = Screen(Row() with { PullRequests = [plain] });
+        await page.FixReviewAsync(plain);
+        page.FixRefused.ShouldBe("review fix SharpAstro/DIR.Lib#301 refused: a flight owns SharpAstro/DIR.Lib#301");
+        page.Refusal().ShouldBe(page.FixRefused);
+        Words(Arrange(renderer, page, again)).ShouldContain(t => t.Contains("a flight owns", StringComparison.Ordinal));
+
+        // Without a read, a taken press lapses after StartedFor and the button is back.
+        page.OnFixReview = (_, _) => Task.CompletedTask;
+        await page.FixReviewAsync(plain);
+        page.FixRefused.ShouldBeNull();
+        page.StartedFor = TimeSpan.Zero;
+        ButtonOrNull(Arrange(renderer, page, again), Id(plain, "address-review")).ShouldNotBeNull();
     }
 
     [Fact]
@@ -326,6 +430,65 @@ public sealed class PullRequestActionsTests
         Click(arranged, Id(prs[4], "open"));
         Click(arranged, Id(prs[0], "open"));
         opened.ShouldBe([prs[4].Url, prs[0].Url]);
+    }
+
+    [Fact]
+    public async Task AReviewPressSaysStartingAtOnceThenReviewingUntilTheNextReadShowsIt()
+    {
+        // The owner (2026-10-29): "clicking the review button had no visual feedback. all buttons should always have a feedback".
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        var answer = new TaskCompletionSource();
+        page.OnReview = (_, _) => answer.Task;
+        var screen = Screen();
+        var pr = screen.Row!.PullRequests[4];
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+        Arrange(renderer, page, screen);
+
+        var press = page.ReviewAsync(pr);
+        // Pressed: the button says so and is no button to press again.
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("Starting…");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldBeNull();
+
+        answer.SetResult();
+        await press;
+        // Taken: the row says it is being reviewed at once, and offers no second Review.
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldNotContain("Starting…");
+        Words(arranged).ShouldContain("reviewing");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldBeNull();
+
+        // The next read that shows the review takes over from there.
+        var read = Screen(screen.Row with { PullRequests = [.. screen.Row.PullRequests.Select(p => p.Url == pr.Url ? p with { Review = PullRequestReview.Passed } : p)] });
+        Words(Arrange(renderer, page, read)).ShouldContain("passed");
+    }
+
+    [Fact]
+    public async Task AReviewTheNodeTookButNothingShowsLapsesSoTheRowIsNotStuckOnReviewing()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (_, page) = Window(renderer);
+        page.OnReview = (_, _) => Task.CompletedTask;
+        var changed = 0;
+        page.Changed = () => changed++;
+        var screen = Screen();
+        var pr = screen.Row!.PullRequests[4];
+        static string[] Words(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
+
+        await page.ReviewAsync(pr);
+        // The press said "Starting…" and then the taking: two redraws asked.
+        changed.ShouldBe(2);
+        var arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldContain("reviewing");
+
+        // No read ever shows the review (it never ran): after its time the row is as before and the Review button is back.
+        page.StartedFor = TimeSpan.Zero;
+        arranged = Arrange(renderer, page, screen);
+        Words(arranged).ShouldNotContain("reviewing");
+        ButtonOrNull(arranged, Id(pr, "start-review")).ShouldNotBeNull();
     }
 
     [Fact]

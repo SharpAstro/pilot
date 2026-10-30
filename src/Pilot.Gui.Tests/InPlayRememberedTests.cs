@@ -18,6 +18,8 @@ public sealed partial class InPlayTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer), file) { FontPath = SessionsCapture.FontPath };
         chrome.LinkCardTranscripts(() => Sessions(), () => Flights(), jobs: () => Jobs());
         chrome.LinkRepos();
+        // These tests are about the table's rows and keys; the map has its own (FlightsCanvasTests).
+        chrome.Flights.Mode = FlightsViewMode.List;
         return chrome;
     }
 

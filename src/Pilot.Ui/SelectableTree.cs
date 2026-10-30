@@ -11,25 +11,26 @@ internal static class SelectableTree
     /// its paragraphs, list items and code blocks from plain text leaves and has no switch for it, so the page marks them after.
     /// <paramref name="breakLongWords"/> also cuts a long word of a paragraph (a path, a check's name, a code span) after its
     /// separators, as <see cref="WrappedProse"/> does: Markdown wraps at white space only, so such a word would run past the box.
+    /// <paramref name="selectable"/> false leaves the text as it was marked, for a page whose selection is its own and wants only the cut.
     /// </summary>
-    public static Layout.Node Of(Layout.Node node, bool breakLongWords = false) => node switch
+    public static Layout.Node Of(Layout.Node node, bool breakLongWords = false, bool selectable = true) => node switch
     {
-        Layout.Node.Leaf { Content: Layout.Content.Text } leaf => leaf.Selectable(),
-        Layout.Node.Stack stack => stack with { Children = Each(stack.Children, breakLongWords) },
-        Layout.Node.Wrap wrap => wrap with { Children = breakLongWords ? BreakLong(Each(wrap.Children, breakLongWords)) : Each(wrap.Children, breakLongWords) },
-        Layout.Node.Grid grid => grid with { Cells = Each(grid.Cells, breakLongWords) },
+        Layout.Node.Leaf { Content: Layout.Content.Text } leaf => selectable ? leaf.Selectable() : leaf,
+        Layout.Node.Stack stack => stack with { Children = Each(stack.Children, breakLongWords, selectable) },
+        Layout.Node.Wrap wrap => wrap with { Children = breakLongWords ? BreakLong(Each(wrap.Children, breakLongWords, selectable)) : Each(wrap.Children, breakLongWords, selectable) },
+        Layout.Node.Grid grid => grid with { Cells = Each(grid.Cells, breakLongWords, selectable) },
         Layout.Node.Dock dock => dock with
         {
-            Docked = [.. dock.Docked.Select(d => d with { Child = Of(d.Child, breakLongWords) })],
-            Fill = Of(dock.Fill, breakLongWords),
+            Docked = [.. dock.Docked.Select(d => d with { Child = Of(d.Child, breakLongWords, selectable) })],
+            Fill = Of(dock.Fill, breakLongWords, selectable),
         },
-        Layout.Node.Overlay overlay => overlay with { Base = Of(overlay.Base, breakLongWords), Top = Of(overlay.Top, breakLongWords) },
-        Layout.Node.Split split => split with { First = Of(split.First, breakLongWords), Second = Of(split.Second, breakLongWords) },
-        Layout.Node.Anchored anchored => anchored with { Child = Of(anchored.Child, breakLongWords) },
+        Layout.Node.Overlay overlay => overlay with { Base = Of(overlay.Base, breakLongWords, selectable), Top = Of(overlay.Top, breakLongWords, selectable) },
+        Layout.Node.Split split => split with { First = Of(split.First, breakLongWords, selectable), Second = Of(split.Second, breakLongWords, selectable) },
+        Layout.Node.Anchored anchored => anchored with { Child = Of(anchored.Child, breakLongWords, selectable) },
         _ => node,
     };
 
-    private static ImmutableArray<Layout.Node> Each(ImmutableArray<Layout.Node> nodes, bool breakLongWords) => [.. nodes.Select(n => Of(n, breakLongWords))];
+    private static ImmutableArray<Layout.Node> Each(ImmutableArray<Layout.Node> nodes, bool breakLongWords, bool selectable) => [.. nodes.Select(n => Of(n, breakLongWords, selectable))];
 
     /// <summary>
     /// The words of a paragraph's line, a long one (<see cref="WrappedProse.LongWord"/> characters or more, its styled parts

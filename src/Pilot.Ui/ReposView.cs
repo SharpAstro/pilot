@@ -9,15 +9,22 @@ namespace Pilot.Ui;
 /// its branch, diff stat, flight, session and what waits on the controller. Links open a flight on the Flights page, a
 /// session's transcript, and a PR in the browser. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "repos";
 
-    private const float RowHeight = 54f;
+    // Three lines of 18 (two PRs and their count) and the table's 6 above and below.
+    private const float RowHeight = 66f;
     private const float WorktreeRowHeight = 46f;
     private const float Gutter = 16f;
     private const float IndentWidth = 16f;
+    // The Repo column keeps 190 units while the page has the room; on a page too narrow for the table (ListTable.Fit) it keeps what
+    // is left, by its weight most of it, and its words end in an ellipsis; the Checkout and Node columns have their floors too.
     private const float NameMin = 190f;
+    private const float NameSqueezedMin = 80f;
+    private const float NameSqueezedWeight = 6f;
+    private const float MainMin = 70f;
+    private const float NodeMin = 40f;
 
     // Column widths, as they are before a reader drags a divider.
     private const float NodeWidth = 64f;
@@ -65,6 +72,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>Opens a URL (a PR) or a folder.</summary>
     public Action<string>? OnOpen { get; set; }
+
+    /// <summary>Opens a flight's page on the Flights page, by code: where a PR of a flight goes. Null where the host has no such page.</summary>
+    public Action<string>? OnFlightCode { get; set; }
+
+    /// <summary>Opens the Pull requests page on a PR's row (<c>owner/name</c>, number). Null where the host has no such page.</summary>
+    public Action<string, int>? OnPullRequest { get; set; }
+
+    /// <summary>The node's open PRs, which the Pull requests page has rows for: a PR it does not list goes to the browser.</summary>
+    public PullRequestsRow? PullRequests { get; set; }
 
     // The right-click menu of the PR links, which leave the app: Copy URL.
     private readonly LinkMenu _links = new();
@@ -174,6 +190,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         Palette.Use(Night);
         BeginFrame();
+        Table.PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -182,8 +199,16 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         Palette.Use(Night);
         var shown = ShowAll ? screen.Lines : [.. screen.Lines.Where(l => l.Status.Tracked)];
+        // A clicked title's order (the screen's own order breaks ties); the repo selected before it is found again by its key,
+        // wherever the sort puts it. Its worktree sub-rows are drawn under it, so they follow.
+        var kept = Table.Sort is not null && Selected >= 0 && Selected < _lines.Count ? _lines[Selected].Key : null;
+        shown = Table.Order(shown, _ => "", SortKeys);
         _lines = shown;
         _marked = shown.Any(l => l.Node is not null);
+        if (kept is not null && shown.ToList().FindIndex(l => l.Key == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, shown.Count);
+        }
         if (shown.Count == 0)
         {
             ListCursor.Close();
@@ -271,7 +296,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             return Layout.Builder.Text(ShowAll ? "No repos under the node's roots" : "No tracked repos yet: a repo with a flight, a worktree or a flight's PR shows here; All repos lists the rest",
                 16f, Dim, TextAlign.Center).Stretch();
         }
-        var columns = Columns();
+        var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(lines.Count);
         for (var i = 0; i < lines.Count; i++)
         {
@@ -296,18 +321,38 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Star("Repo · worktree", NameMin),
-            ListColumn.Fixed("Checkout · diff", MainWidth),
-            ListColumn.Optional("Open PRs · session", PullsWidth),
-            ListColumn.Optional("Worktrees · action", WorkWidth),
-            ListColumn.Optional("Flight · PR", LinkWidth),
+            Sorted(ListColumn.Star("Repo · worktree", NameMin, NameSqueezedMin, NameSqueezedWeight)),
+            Sorted(ListColumn.Fixed("Checkout · diff", MainWidth, MainMin)),
+            Sorted(ListColumn.Optional("Open PRs · session", PullsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Worktrees · action", WorkWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Flight · PR", LinkWidth), descendingFirst: true),
         };
         if (_marked)
         {
-            columns.Insert(1, ListColumn.Fixed("Node", NodeWidth));
+            columns.Insert(1, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the counts as numbers, not as the words they are drawn in.
+    private static readonly IReadOnlyDictionary<string, Func<RepoLine, object?>> SortKeys = new Dictionary<string, Func<RepoLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Repo · worktree"] = l => l.Name.ToUpperInvariant(),
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Checkout · diff"] = l => l.Main,
+        ["Open PRs · session"] = l => l.Pulls.Count,
+        ["Worktrees · action"] = l => l.Worktrees.Count,
+        ["Flight · PR"] = l => l.Status.Flights,
+    };
 
     private static RGBAColor32 ChecksColor(string checks) => checks switch
     {
@@ -321,13 +366,13 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     {
         var tracked = line.Status.Tracked;
         var toggle = line.Worktrees.Count == 0
-            ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim)
+            ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).Whole(line.Name)
             : Layout.Builder.HStack(
                     CardsView<TSurface>.IconPill(IsOpen(line) ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, IsOpen(line) ? "Hide worktrees" : "Show worktrees",
                         $"repo:{line.Key}:worktrees", () => Toggle(line), bare: true, color: Link, hover: RowHoverBg),
-                    Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar())
+                    Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar().Whole(line.Name))
                 .WithGap(6f);
-        var pulls = line.Pulls.Take(2).Select(PullText).ToList();
+        var pulls = line.Pulls.Take(2).Select(p => PullText(line, p)).ToList();
         if (line.Pulls.Count > 0 && line.Status.GitHub is { } github && OnPullRequests is { } show)
         {
             // The count is a link to the Pull requests page, filtered to this repo: it says the "+N more" this line used to, and where to see them.
@@ -350,7 +395,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             Layout.Builder.VStack(
                 toggle.RowH(22f),
                 Layout.Builder.HStack(
-                        Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar(),
+                        Layout.Builder.Text(line.Status.GitHub ?? line.Status.Path, 11f, Dim).WStar().Whole(line.Status.GitHub ?? line.Status.Path),
                         // The wizard flies this window's own node, so a row of another node offers no New flight.
                         OnNewFlight is null || line.Node is { Here: false } ? Layout.Builder.Spacer().WFixed(0f)
                             : Layout.Builder.Text("New flight", 11f, Link, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(RowHoverBg)
@@ -358,15 +403,15 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                                 .WithTooltip("Start a flight on one of this repo's issues"))
                     .WithGap(6f).RowH(18f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).RowH(22f),
-                Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).RowH(18f)),
+                Layout.Builder.Text(line.Main, 13f, line.Status.Dirty ? Waiting : Body).Whole(line.Main).RowH(22f),
+                Layout.Builder.Text(line.Status.Errors.FirstOrDefault() ?? "", 11f, Failing).Whole(line.Status.Errors.FirstOrDefault()).RowH(18f)),
             Layout.Builder.VStack([.. pulls]),
             ListTable.Top(Layout.Builder.Text(line.WorktreesText, 13f, Body)),
             ListTable.Top(Layout.Builder.Text(line.Status.Flights == 0 ? "" : $"{line.Status.Flights} {(line.Status.Flights == 1 ? "flight" : "flights")}", 12f, Dim)),
         };
         if (_marked)
         {
-            cells.Insert(1, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body)));
+            cells.Insert(1, ListTable.Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, Body).Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(line.Status.Dirty ? Waiting : tracked ? Link : Faint), cells)
             .RowH(RowHeight)
@@ -386,13 +431,17 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         return index == Selected ? row.Bg(RowFocusBg) : (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    // An open PR: its number and title (a click opens it), then draft or ready and where its checks stand.
-    private Layout.Node PullText(PullLine pull)
+    // An open PR: its number and title (a click opens its flight's page, else its row on the Pull requests page, else GitHub), then draft or ready and where its checks stand.
+    private Layout.Node PullText(RepoLine repo, PullLine pull)
     {
+        var github = repo.Status.GitHub;
+        var route = pull.Pr.Flight is { } code && OnFlightCode is { } flight
+            ? (Action?)(() => flight(code))
+            : RowRoute(github, pull);
         var cells = new List<Layout.Node>
         {
-            LinkOf(Layout.Builder.Text(pull.Text + Followable.Away, 12f, Link).WStar().BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"pr:{pull.Pr.Number}"), _ => OpenUrl(pull)), pull),
+            PullRequestLink.Of(_links, $"pr:{pull.Pr.Number}", pull.Text, $"{github}#{pull.Pr.Number}", pull.Pr.Url, OnOpen, route,
+                pull.Pr.Flight is { } c ? $"flight {c}'s page" : "the Pull requests page", Link, RowHoverBg, pull.Text.Length > TextFits, fill: true),
         };
         // Labels as the wizard shows an issue's: dim, after the title; a fixed share so a long list cannot push the checks off.
         if (pull.Pr.Labels.Length > 0)
@@ -404,16 +453,14 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         return Layout.Builder.HStack([.. cells]).WithGap(8f).RowH(18f);
     }
 
-    // A PR link with the shared right-click menu, Copy URL; a PR the node gave no URL for has no link to copy.
-    private Layout.Node LinkOf(Layout.Node link, PullLine pull) => pull.Pr.Url is { } url ? _links.OnLink(link, url) : link;
+    // The PR's row on the Pull requests page, when the host has that page and the node lists the PR; else null: the browser's.
+    private Action? RowRoute(string? github, PullLine pull) =>
+        github is not null && OnPullRequest is { } open && PullRequestLinks.Lists(PullRequests, github, pull.Pr.Number)
+            ? () => open(github, pull.Pr.Number)
+            : null;
 
-    private void OpenUrl(PullLine pull)
-    {
-        if (pull.Pr.Url is { } url)
-        {
-            OnOpen?.Invoke(url);
-        }
-    }
+    // Chars of a PR line's text that fit its column without a cut at the usual width: longer ones carry the whole text as a tooltip.
+    private const int TextFits = 28;
 
     // One worktree of a repo, under it: its branch with its flight, the diff against the default branch, its session and what
     // it last said, what waits on the controller, and its PR. Not a row the arrows step through, but every link is a click.
@@ -433,8 +480,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                 .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
             : Layout.Builder.Text("no flight", 12f, Dim);
         var pull = worktree.Pull is { } pr
-            ? LinkOf(Layout.Builder.Text($"PR #{pr.Pr.Number}{Followable.Away}", 12f, Link).BgHover(RowHoverBg)
-                .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:pr:{pr.Pr.Number}"), _ => OpenUrl(pr)), pr)
+            ? PullRequestLink.Of(_links, $"repo:{repo.Key}:pr:{pr.Pr.Number}", $"PR #{pr.Pr.Number}", $"{repo.Status.GitHub}#{pr.Pr.Number}", pr.Pr.Url, OnOpen,
+                RowRoute(repo.Status.GitHub, pr), "the Pull requests page", Link, RowHoverBg, mayBeCut: false, fill: false)
             : Layout.Builder.Text("no PR", 12f, Dim);
         var cells = new List<Layout.Node>
         {

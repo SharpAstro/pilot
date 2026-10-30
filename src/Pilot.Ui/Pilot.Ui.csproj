@@ -30,7 +30,8 @@
     <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
-    <PackageReference Include="DIR.Lib" />
+    <PackageReference Include="DIR.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="DIR.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <ItemGroup>

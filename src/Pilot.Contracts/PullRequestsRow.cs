@@ -72,7 +72,7 @@ public static class PullRequestReview
     public const string Reviewing = "reviewing";
 }
 
-/// <summary>An open PR of one of the clones' orgs, with GitHub's merge state read by the node's one reader, the flight card's.</summary>
+/// <summary>An open PR of one of the repos pilot works in, with GitHub's merge state read by the node's one reader, the flight card's.</summary>
 public sealed record PullRequestRow
 {
     /// <summary>The repo, <c>owner/name</c>, as GitHub spells it.</summary>
@@ -142,20 +142,39 @@ public sealed record PullRequestsError
 public sealed record PullRequestGroup(string Repo, PullRequestRow[] PullRequests);
 
 /// <summary>
-/// Every open PR of every org the node's clones come from, as the node last read them with one GitHub search per org: a
-/// node row on the stream, so every client shows the same thing. A node on the LAN has its own, and
-/// <see cref="Merge"/> makes one of several.
+/// An org's part of the page: its <paramref name="Counts"/> line (the words of <see cref="PullRequestsRow.Summary"/>, over the
+/// org's PRs), why its PRs could not be read if they could not (<paramref name="Error"/>), and its repos in
+/// <see cref="PullRequestsRow.Groups"/>' order. An org with no PR to show, or whose read failed, is still one, so a page can say so.
+/// </summary>
+public sealed record PullRequestOrgGroup(string Org, string Counts, string? Error, PullRequestGroup[] Repos);
+
+/// <summary>
+/// Every open PR of the repos pilot works in (the clones with a GitHub origin, and any repo a flight or PR review of the node has
+/// been in), as the node last read them with a few batched GitHub searches: a node row on the stream, so every client shows the
+/// same thing. A node on the LAN has its own, and <see cref="Merge"/> makes one of several.
 /// </summary>
 public sealed record PullRequestsRow
 {
-    /// <summary>The orgs it searched: the distinct owners of the clones' origins.</summary>
+    /// <summary>The orgs those repos are in: their distinct owners.</summary>
     public string[] Orgs { get; init => field = value ?? []; } = [];
 
     /// <summary>The PRs, in no particular order: see <see cref="Groups"/>.</summary>
     public PullRequestRow[] PullRequests { get; init => field = value ?? []; } = [];
 
-    /// <summary>The orgs it could not read, a note each; their PRs are missing above.</summary>
+    /// <summary>The orgs it could not read, a note each (the orgs of a batch that failed); what was read of them before stands above.</summary>
     public PullRequestsError[] Errors { get; init => field = value ?? []; } = [];
+
+    /// <summary>What this read cost in GitHub GraphQL points, over all its batches and pages; 0 when it asked nothing.</summary>
+    public int Cost { get; init; }
+
+    /// <summary>The GraphQL points GitHub says are left of the hour's after this read; null when it did not say.</summary>
+    public int? RateRemaining { get; init; }
+
+    /// <summary>
+    /// A word about the whole read: <c>Rate-limited by GitHub until 14:05; reading again then</c> when GitHub's limit stopped it,
+    /// the PRs shown being those last read. Null when there is nothing to say.
+    /// </summary>
+    public string? Note { get; init; }
 
     /// <summary>When the node read it: how stale it is.</summary>
     public required DateTimeOffset ReadAt { get; init; }
@@ -164,12 +183,15 @@ public sealed record PullRequestsRow
     public string? Viewer { get; init; }
 
     /// <summary>The counts above the list: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>, a state with none left out.</summary>
-    public string Summary()
+    public string Summary() => Counts(PullRequests);
+
+    /// <summary>The counts line of <paramref name="prs"/>: the words of <see cref="Summary"/>, which is this over every PR, and of each org's line.</summary>
+    public static string Counts(IReadOnlyCollection<PullRequestRow> prs)
     {
-        var parts = new List<string> { $"{PullRequests.Length} open" };
+        var parts = new List<string> { $"{prs.Count} open" };
         void Count(PullRequestKind kind, string words)
         {
-            if (PullRequests.Count(p => p.Kind == kind) is > 0 and var n)
+            if (prs.Count(p => p.Kind == kind) is > 0 and var n)
             {
                 parts.Add($"{n} {words}");
             }
@@ -200,9 +222,10 @@ public sealed record PullRequestsRow
     public bool IsMine(PullRequestRow pr) => Viewer is { Length: > 0 } viewer ? string.Equals(pr.Author, viewer, StringComparison.OrdinalIgnoreCase) : pr.Flight is null;
 
     /// <summary>
-    /// The PRs grouped by repo (or only those that need the person, with <paramref name="needsMeOnly"/>), the repo with the PR that
-    /// most needs the person first (ties: the most recently updated, then by name), each repo's PRs by the same rule, so the order
-    /// is the same in every client. A repo with no PR to show is not listed.
+    /// The PRs grouped by repo (or only those that need the person, with <paramref name="needsMeOnly"/>), the repos by name so a
+    /// group never moves when a PR's state changes or a refresh comes in (the owner, 2026-10-29), each repo's PRs the one that most
+    /// needs the person first (ties: the most recently updated, then by number), so the order is the same in every client. A repo
+    /// with no PR to show is not listed.
     /// </summary>
     public PullRequestGroup[] Groups(bool needsMeOnly = false) =>
     [
@@ -210,10 +233,44 @@ public sealed record PullRequestsRow
             .Where(p => !needsMeOnly || p.NeedsMe)
             .GroupBy(p => p.Repo, StringComparer.OrdinalIgnoreCase)
             .Select(g => new PullRequestGroup(g.First().Repo, [.. g.OrderBy(p => PullRequestStates.Rank(p.Kind)).ThenByDescending(p => p.UpdatedAt).ThenBy(p => p.Number)]))
-            .OrderBy(g => g.PullRequests.Min(p => PullRequestStates.Rank(p.Kind)))
-            .ThenByDescending(g => g.PullRequests.Max(p => p.UpdatedAt))
-            .ThenBy(g => g.Repo, StringComparer.OrdinalIgnoreCase),
+            .OrderBy(g => g.Repo, StringComparer.OrdinalIgnoreCase),
     ];
+
+    private static string OwnerOf(string repo) => repo.IndexOf('/') is >= 0 and var slash ? repo[..slash] : repo;
+
+    /// <summary>
+    /// <see cref="Groups"/> grouped once more by org (the repo's owner, however GitHub cases it), the orgs by name, so an org
+    /// never moves when a PR's state changes, its repos in <see cref="Groups"/>' order. The counts
+    /// are of all the org's PRs, as <see cref="Summary"/>'s are of all of them, whatever <paramref name="needsMeOnly"/> shows
+    /// below. An org of <see cref="Orgs"/> with no PR (any, or with <paramref name="needsMeOnly"/> none that needs the person) is
+    /// listed after those with PRs, by name, unless <paramref name="needsMeOnly"/> asks only for what needs the person: then only
+    /// an org whose read failed is kept, since the error is the one thing there to see.
+    /// </summary>
+    public PullRequestOrgGroup[] OrgGroups(bool needsMeOnly = false)
+    {
+        var shown = Groups(needsMeOnly).GroupBy(g => OwnerOf(g.Repo), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.OrdinalIgnoreCase);
+        var errors = Errors.GroupBy(e => e.Org, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => string.Join(" ", g.Select(e => e.Message.ReplaceLineEndings(" ")).Distinct()), StringComparer.OrdinalIgnoreCase);
+        var all = PullRequests.GroupBy(p => OwnerOf(p.Repo), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.OrdinalIgnoreCase);
+
+        // The org as the repos spell it, else as Orgs and the errors do.
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in PullRequests.Select(p => OwnerOf(p.Repo)).Concat(Orgs).Concat(Errors.Select(e => e.Org)))
+        {
+            names.TryAdd(name, name);
+        }
+
+        PullRequestOrgGroup Make(string key) => new(
+            names[key],
+            Counts(all.TryGetValue(key, out var prs) ? prs : []),
+            errors.TryGetValue(key, out var error) ? error : null,
+            shown.TryGetValue(key, out var repos) ? repos : []);
+
+        var withPrs = shown.Keys.OrderBy(k => names[k], StringComparer.OrdinalIgnoreCase);
+        var without = names.Keys
+            .Where(k => !shown.ContainsKey(k) && (!needsMeOnly || errors.ContainsKey(k)))
+            .OrderBy(k => names[k], StringComparer.OrdinalIgnoreCase);
+        return [.. withPrs.Concat(without).Select(Make)];
+    }
 
     /// <summary>
     /// One row of the rows several nodes read. A PR two nodes read is one: the one read last, with the flight and review the
@@ -245,7 +302,11 @@ public sealed record PullRequestsRow
         {
             Orgs = [.. read.SelectMany(r => r.Orgs).Distinct(StringComparer.OrdinalIgnoreCase)],
             PullRequests = [.. prs.Values],
-            Errors = [.. read.SelectMany(r => r.Errors).Distinct()],
+            // An org's error stands as long as a node that read it says so, once however the org is cased.
+            Errors = [.. read.SelectMany(r => r.Errors).DistinctBy(e => (e.Org.ToUpperInvariant(), e.Message))],
+            Cost = read.Sum(r => r.Cost),
+            RateRemaining = read.Select(r => r.RateRemaining).OfType<int>().Cast<int?>().Min(),
+            Note = string.Join(" ", read.Select(r => r.Note).OfType<string>().Distinct()) is { Length: > 0 } notes ? notes : null,
             ReadAt = read[^1].ReadAt,
             Viewer = read.Select(r => r.Viewer).FirstOrDefault(v => v is not null),
         };

@@ -134,14 +134,14 @@ public sealed class JobsTests
         CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
         cancelled.ShouldBeEmpty();
         arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
-        CellLayout.Describe(arranged).ShouldContain("Cancel j14?");
+        TestText.Flat(CellLayout.Describe(arranged)).ShouldContain("Cancel j14?");
 
         // Keep running takes the question back; asked again, Cancel job sends it.
         var keep = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel-no" });
         CellLayout.HitTest(arranged, keep.Bounds.X + 1, keep.Bounds.Y);
         cancelled.ShouldBeEmpty();
         arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
-        CellLayout.Describe(arranged).ShouldNotContain("Cancel j14?");
+        TestText.Flat(CellLayout.Describe(arranged)).ShouldNotContain("Cancel j14?");
         cancel = arranged.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "job:j14:cancel" });
         CellLayout.HitTest(arranged, cancel.Bounds.X + 1, cancel.Bounds.Y);
         arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
@@ -270,26 +270,26 @@ public sealed class JobsTests
 
         Click("job:j14:force");
         forced.ShouldBeEmpty();
-        Cells(jobs, screen).ShouldContain("Force cancel j14?");
+        TestText.Flat(Cells(jobs, screen)).ShouldContain("Force cancel j14?");
         // The question replaces the buttons: neither a plain Cancel nor another Force cancel… is there to slip onto.
         Cells(jobs, screen).ShouldNotContain("Cancel…");
 
         // Keep running takes it back; asked again, Force cancel job sends force and nothing else.
         Click("job:j14:force-no");
-        Cells(jobs, screen).ShouldNotContain("Force cancel j14?");
+        TestText.Flat(Cells(jobs, screen)).ShouldNotContain("Force cancel j14?");
         forced.ShouldBeEmpty();
         Click("job:j14:force");
         Click("job:j14:force-yes");
         forced.ShouldBe(["j14"]);
         plain.ShouldBeEmpty();
-        Cells(jobs, screen).ShouldNotContain("Force cancel j14?");
+        TestText.Flat(Cells(jobs, screen)).ShouldNotContain("Force cancel j14?");
 
         // The row's menu asks the same question, and sends nothing by itself.
         jobs.OpenMenu(running, 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
         jobs.MenuItems.Select(i => i.Label).Take(2).ShouldBe(["Cancel…", "Force cancel…"]);
         jobs.MenuItems[1].OnChoose!();
         forced.ShouldBe(["j14"]);
-        Cells(jobs, screen).ShouldContain("Force cancel j14?");
+        TestText.Flat(Cells(jobs, screen)).ShouldContain("Force cancel j14?");
 
         // A job that is only queued has no tree to force.
         var (_, fresh) = Chrome(vessel);
@@ -461,7 +461,7 @@ public sealed class JobsTests
         jobs.OpenMenu(screen.Lines[0], 0, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
         jobs.MenuItems[0].OnChoose!();
         cancelled.ShouldBeEmpty();
-        Cells(jobs, screen).ShouldContain("Cancel j14?");
+        TestText.Flat(Cells(jobs, screen)).ShouldContain("Cancel j14?");
 
         // A job handed over from a terminal wakes nobody, and an ended one is past cancelling.
         jobs.OpenMenu(screen.Lines[3], 3, new PointerPress(10f, 10f, MouseButton.Right, InputModifier.None, 1));
@@ -638,5 +638,60 @@ public sealed class JobsTests
         var noQueue = new JobsScreen(JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At), "live", Live.At);
         noQueue.Holder.ShouldBeNull();
         Cells(jobs, noQueue).ShouldNotContain("holds the queue");
+    }
+
+    private static void ClickTitle(JobsView<RgbaImage> jobs, JobsScreen screen, string title)
+    {
+        var bounds = new RectF32(0f, 0f, 1280f, 800f);
+        jobs.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        jobs.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "jobs:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        jobs.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnATitleSortsTheJobsByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+
+        // Started by time, newest first at the first click: the queued job is the newest handed over.
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+
+        // Took by how long: the running job has run longest, the queued one not at all.
+        ClickTitle(jobs, screen, "Took");
+        jobs.Shown.ShouldBe(["j14", "j13", "j12", "j15"]);
+        jobs.Table.Sort.ShouldBe(new ListTable.SortState("Took", Descending: true));
+
+        ClickTitle(jobs, screen, "State");
+        jobs.Shown.Take(2).ShouldBe(["j14", "j15"]);
+    }
+
+    [Fact]
+    public void TheSelectedJobStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+        jobs.Render(screen, new RectF32(0f, 0f, 1280f, 800f));
+        jobs.Select(screen, screen.Lines.Single(l => l.Id == "j14"));
+        var before = jobs.Selected;
+
+        ClickTitle(jobs, screen, "Started");
+
+        jobs.Shown[jobs.Selected].ShouldBe("j14");
+        jobs.Selected.ShouldNotBe(before, "the sort moved the row, and the selection went with it");
     }
 }

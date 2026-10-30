@@ -46,8 +46,13 @@ internal sealed class TranscriptEntryView
     // The label column: wide enough for a tool's name.
     private const float LabelWidth = 96f;
 
-    // The time column down the right of every entry and tool line: hh:mm:ss, wide enough for any.
+    // The time column down the right of every entry and tool line: hh:mm:ss, wide enough for any. A page too narrow to give it its
+    // seconds (TimeMin) drops it; the stamp stays on the entry's hover. The columns of a row share the width by these weights, the
+    // body taking most, so a narrow page narrows the label and the time before the words and never runs a column past the page (PIL380).
     private const float TimeWidth = 74f;
+    private const float TimeMin = 64f;
+    private const float LabelWeight = 2f;
+    private const float BodyWeight = 8f;
 
     // Kept clear right of the time: a feed's scrollbar is drawn over the rows' right edge, and took the seconds' last digit
     // ("20:40:3"). The bar's width with a pixel either side; gone once DIR.Lib reserves the bar's column: SharpAstro/DIR.Lib#161.
@@ -143,11 +148,11 @@ internal sealed class TranscriptEntryView
     /// <summary>A message handed to the session that it has not read yet: last, dim, and saying so.</summary>
     internal static Layout.Node Waiting(string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text("queued", 12f, Faint).WFixed(LabelWidth),
+                Layout.Builder.Text("queued", 12f, Faint).WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
                 Layout.Builder.VStack([
                     Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint),
                     .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim)),
-                ]).WStar())
+                ]).WStar(BodyWeight))
             .WithGap(10f);
 
     /// <summary>
@@ -194,7 +199,7 @@ internal sealed class TranscriptEntryView
         var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
         return Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).WAuto(),
+                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).WStarUpToContent(BodyWeight).WithTooltip(said),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);
@@ -211,9 +216,9 @@ internal sealed class TranscriptEntryView
         var said = call.Description is { Length: > 0 } description ? description : call.Text;
         var line = Layout.Builder.HStack(
                 Layout.Builder.Text(mark, 12f, markColor).WAuto(),
-                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WFixed(ToolWidth),
-                Layout.Builder.Text(said, 13f, Dim).WStar(),
-                Stamp(call.At))
+                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar(LabelWeight, 0f, ToolWidth).Whole(call.Tool ?? "tool"),
+                Layout.Builder.Text(said, 13f, Dim).WStar(BodyWeight),
+                Stamp(call.At).CollapseBelow(TimeMin))
             .WithGap(6f)
             .BgHover(ButtonHover)
             .Follows(new HitResult.ButtonHit($"transcript:call:{call.Index}"), _ => Toggle(call.Index));
@@ -282,8 +287,8 @@ internal sealed class TranscriptEntryView
                     Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).WStar()
                         .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
                     Layout.Builder.Spacer().WFixed(ScrollGutter))
-                .WFixed(TimeWidth)
-            : Layout.Builder.Spacer().WFixed(TimeWidth);
+                .WStar(1f, 0f, TimeWidth)
+            : Layout.Builder.Spacer().WStar(1f, 0f, TimeWidth);
 
     // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:
     // DIR.Lib has none yet (SharpAstro/DIR.Lib#152). An empty line keeps its height as a space.
@@ -292,6 +297,21 @@ internal sealed class TranscriptEntryView
 
     private Layout.Node Row(TranscriptEntry entry)
     {
+        // A message relayed from another session (or from the person, through the node) is said as from its sender, without its envelope.
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false })
+        {
+            // Another node's watchtower passing work on: said as that node's, dim, not as the person's.
+            var words = CrossSessionMessage.Parse(entry.Text)?.Body ?? entry.Text.Trim();
+            if (CrossSessionMessage.TryParseWatchtower(words) is { } tower)
+            {
+                return Said(entry, $"{tower.Node}'s watchtower", Tool, Dim, tower.Body);
+            }
+        }
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && CrossSessionMessage.Parse(entry.Text) is { } relayed)
+        {
+            var mine = relayed.From == CrossSessionMessage.Controller;
+            return Said(entry, mine ? PromptLabel : relayed.From, mine ? Prompt : Tool, mine ? Bright : Body, relayed.Body);
+        }
         var (label, labelColor, textColor, lines) = entry switch
         {
             { Kind: TranscriptKind.User, From: { } from } => (from, Tool, Body, 12),
@@ -319,13 +339,22 @@ internal sealed class TranscriptEntryView
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
             : Folded(entry, entry.Text, textColor, lines, ""));
         var row = Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, labelColor).WFixed(LabelWidth),
-                Layout.Builder.VStack([.. body]).WStar(),
-                ListTable.Top(Stamp(entry.At)).WFixed(TimeWidth))
+                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.VStack([.. body]).WStar(BodyWeight),
+                ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
             .WithGap(10f);
         // Claude's words, its thinking and a prompt stand apart from the tool lines around them.
         return entry.Kind is TranscriptKind.Assistant or TranscriptKind.Thinking or TranscriptKind.User ? row.Pad(0f, ProseSpace) : row;
     }
+
+    // A prompt row with its own label and words: a relayed message's sender and body.
+    private Layout.Node Said(TranscriptEntry entry, string label, RGBAColor32 labelColor, RGBAColor32 textColor, string text) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.VStack([.. Folded(entry, text, textColor, 12, "")]).WStar(BodyWeight),
+                ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
+            .WithGap(10f)
+            .Pad(0f, ProseSpace);
 
     // An entry's text, its first lines only until it is opened: the line saying how many more is what opens it, and
     // closes it again.
@@ -355,7 +384,8 @@ internal sealed class TranscriptEntryView
         if (!_markdown.TryGetValue((entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night)), out var document))
         {
             var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
-            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow });
+            // A long word of it (a path, a check's name) is cut after its separators: Markdown wraps at white space only (PIL380).
+            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = SelectableTree.Of(Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true, selectable: false);
         }
         yield return document;
         if (Fold(entry, all.Length, lines) is { } fold)

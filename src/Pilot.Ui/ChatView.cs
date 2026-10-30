@@ -14,7 +14,7 @@ namespace Pilot.Ui;
 /// has its choices as buttons, a click on one saying it. A box at the foot sends through <see cref="OnSend"/>
 /// (the node's tell): Enter sends, Shift+Enter starts a new line. A refusal is said in the chat itself.
 /// </summary>
-internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>How often an open page asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
@@ -67,6 +67,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
+    // What the person sent that the feed may not show yet: dimmed and marked sending until the node answers, then kept until the feed carries it.
+    private ImmutableList<Own> _own = [];
+    private sealed record Own(Guid Id, string Text, bool Sending);
     private int _sending;
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -122,6 +125,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         Volatile.Write(ref _node, node);
         Volatile.Write(ref _held, Held.Empty);
         Volatile.Write(ref _notices, []);
+        Volatile.Write(ref _own, []);
         Volatile.Write(ref _about, null);
         _confirmRestart = false;
         if (open)
@@ -129,6 +133,44 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             Open();
         }
         Changed?.Invoke();
+    }
+
+    /// <summary>The name of the node whose watchtower the page talks to: the chosen node's, else this window's own (its mark, else its machine).</summary>
+    internal string WatchtowerOwner => Node?.Name ?? Nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>The page's name: the fleet chat, held by this node's watchtower, else the chosen node's watchtower.</summary>
+    internal string Title => Node is { } on ? $"watchtower · {on.Name}" : "fleet chat";
+
+    /// <summary>Whether another node's chat can be read from here; null asks <see cref="LoadOn"/>. A node that cannot says so on its pill.</summary>
+    public Func<NodeMark, bool>? CanRead { get; set; }
+
+    private bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
+
+    // The top bar's node pills on this page: one choice of watchtower, the current one lit; none while there is one node.
+    private List<Layout.Node> NodePills()
+    {
+        var pills = new List<Layout.Node>();
+        if (Nodes is not { Choices.Count: > 1 } nodes)
+        {
+            return pills;
+        }
+        var night = Night?.Palette;
+        var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        var current = Node?.Where;
+        foreach (var choice in nodes.Choices)
+        {
+            var chosen = choice.Here ? current is null : choice.Where == current;
+            var down = nodes.Down.TryGetValue(choice.Key, out var since);
+            var label = NodeFilter.Label(choice, since, down);
+            if (!Readable(choice))
+            {
+                label += " · chat not readable";
+            }
+            var picked = choice;
+            pills.Add(CardsView<TSurface>.HeaderPill(label, $"chat:node:{choice.Key}", () => SwitchTo(picked), chosen ? lit : plain, down || !Readable(choice) ? night?.Dim ?? Palette.Current.Dim : night?.Bright));
+        }
+        return pills;
     }
 
     // What the page reads and sends through now: this node's, or the chosen node's.
@@ -213,10 +255,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public NodeFilter? Nodes { get; set; }
 
     /// <summary>The box the message is typed in: the host focuses it to give the page the keyboard.</summary>
-    public TextInputState Input => _composer.Input;
-
-    /// <summary>The lines typed before the one in the box, as shown above it.</summary>
-    internal IReadOnlyList<string> Before => _composer.Before;
+    public TextEditorState Input => _composer.Input;
 
     /// <summary>Whether the page is open and following the feed.</summary>
     public bool IsOpen => _following is not null;
@@ -240,8 +279,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     public void Prefill(string text)
     {
         _composer.Clear();
-        Input.Text = text;
-        Input.CursorPos = text.Length;
+        Input.InsertText(text);
         Ui.Focus.Focus(Input);
     }
 
@@ -330,10 +368,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         // A message about a card goes through the card's tell, and the card is dropped with it, as the box is emptied.
         if (!string.IsNullOrWhiteSpace(message) && OnSendAboutCard is { } aboutCard && Interlocked.Exchange(ref _about, null) is { } quoted)
         {
+            // Another node's card goes to this node's watchtower as plain words naming the card and its node: it passes the work
+            // on with tell --node. Only this node's card has a tell card/<id> here.
+            if (quoted.Node is { Here: false } other && CurrentSend() is { } send)
+            {
+                return SendAsync(message, words => send(AboutOtherNodesCard(quoted.Card, other, words)));
+            }
             return SendAsync(message, words => aboutCard(quoted.Card, quoted.Node, words));
         }
         return SendAsync(message);
     }
+
+    /// <summary>What is told this node's watchtower about a card of another node: the card, its node and its title, and then the words.</summary>
+    internal static string AboutOtherNodesCard(CardRow card, NodeMark node, string words) =>
+        $"About card {card.Id} of node {node.Name} ({card.Title.ReplaceLineEndings(" ")}): {words}";
 
     /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
     public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
@@ -345,6 +393,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
             return;
         }
         Interlocked.Increment(ref _sending);
+        var own = new Own(Guid.NewGuid(), message, true);
+        ImmutableInterlocked.Update(ref _own, o => o.Add(own));
         _scroll.ScrollToEnd();
         Changed?.Invoke();
         string? refused;
@@ -360,6 +410,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         {
             Interlocked.Decrement(ref _sending);
         }
+        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Replace(own, own with { Sending = false }) : o.Remove(own));
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · {Clip(message)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -416,7 +467,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the watchtower";
+        _composer.Input.Placeholder = Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
         var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
@@ -429,7 +480,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
         }
         if (Node is not null)
         {
-            buttons.Add(CardsView<TSurface>.HeaderPill("This node's watchtower", "chat:back", () => SwitchTo(null)));
+            buttons.Add(CardsView<TSurface>.HeaderPill("Fleet chat", "chat:back", () => SwitchTo(null)));
         }
         else if (OnRestart is not null && Load is not null)
         {
@@ -456,15 +507,22 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
                 }));
             }
         }
-        var top = TopBar.Build(new PageHeader(Node is { } on ? $"watchtower · {on.Name}" : "chat")
+        var top = TopBar.Build(new PageHeader(Title)
         {
             Buttons = buttons,
-            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : "the conversation with the node's watchtower"),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+            Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
+        }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
         rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
+        // What the person sent that the feed does not carry yet; once it does (an entry or a queued line with the same words) only the feed's copy shows.
+        var shown = held.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.Text).Concat(held.Queued).ToList();
+        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => !m.Sending && shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))));
+        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))))
+        {
+            rows.Add(Sent(mine.Text, mine.Sending).WStar());
+        }
         foreach (var notice in Notices)
         {
             rows.Add(Notice(notice));
@@ -524,6 +582,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     }
 
     // A message that did not go.
+    private static Layout.Node Sent(string text, bool sending) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).WFixed(96f),
+                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim))]).WStar())
+            .WithGap(10f);
+
     private static Layout.Node Notice(string text) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text("pilot", 12f, Failed).WFixed(96f),
@@ -612,23 +676,17 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PixelWid
     /// <summary>How many lines the quoted card takes above the box.</summary>
     internal const int QuoteLines = 2;
 
-    // The box: the lines typed above the one being edited, read-only, and the field under them.
+    // The box: DIR.Lib's multi-line editor, and a line saying how it sends.
     private Layout.Node Foot()
     {
-        var before = _composer.Before;
+        var lines = _composer.Input.LineCount;
         var rows = new List<Layout.Node>();
-        var skipped = Math.Max(0, before.Count - ChatComposer.ShownLines);
-        if (skipped > 0)
-        {
-            rows.Add(Layout.Builder.Text($"… {skipped} earlier {(skipped == 1 ? "line" : "lines")}", 11f, Dim).RowH(16f));
-        }
-        rows.AddRange(before.Skip(skipped).Select(line => Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, Body).RowH(18f)));
         if (OnSendAboutCard is not null && Volatile.Read(ref _about) is { } quoted)
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
         }
-        rows.Add(Layout.Builder.TextInput(_composer.Input, 14f, Palette.Input, focusOnOpen: true).RowH(30f));
-        rows.Add(Layout.Builder.Text(before.Count > 0 ? $"{before.Count + 1} lines · Enter sends · Backspace on an empty line goes back" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
+        rows.Add(Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
+        rows.Add(Layout.Builder.Text(lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line", 10f, Dim).RowH(16f));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
     }
 

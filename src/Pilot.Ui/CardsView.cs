@@ -211,10 +211,16 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
 /// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
 /// button runs through <see cref="OnAnswer"/> or <see cref="OnDismiss"/>; the node closes the card and the stream says so.
 /// </summary>
-internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWidgetBase<TSurface>(renderer)
+internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>Design units, scaled by DpiScale.</summary>
     public const float Width = 300f;
+
+    /// <summary>
+    /// The share of the room beside the rail the panel takes at most, so a narrow window keeps room for its page: the chrome gives the
+    /// panel this share of it, up to <see cref="Width"/>, and the page the rest (PIL380).
+    /// </summary>
+    public const float Share = 0.4f;
 
     private const float Gutter = 14f;
 
@@ -306,6 +312,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
+    /// <summary>The ideas and flights a text names by id (<c>I381</c>), as links; null finds none.</summary>
+    public Func<string, IReadOnlyList<IdeaLink>>? IdeaLinks { get; set; }
+
+    /// <summary>Follows an idea link: a planned idea's goes to its flight, the others open the idea's issue.</summary>
+    public Action<IdeaLink>? OnIdeaLink { get; set; }
+
+    /// <summary>The links in <paramref name="text"/> as a row of small links, or null when it names no idea; <paramref name="key"/> keeps their hits apart.</summary>
+    private Layout.Node? IdeaLinkRow(string text, string key)
+    {
+        if (IdeaLinks?.Invoke(text) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. found.Select(link => Layout.Builder.Text(link.FlightCode is { } code ? $"{link.Text} → {code}" : link.Text + Followable.Away, 11f, Link)
+                .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
+    }
+
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
@@ -336,6 +359,25 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
 
     /// <summary>The node a card shown was raised on, whom its buttons command; null is this window's.</summary>
     public NodeMark? NodeOf(CardRow card) => _shown.NodeOf(card);
+
+    /// <summary>The least the panel is given: a window that would give it less shows the page alone (the panel is dropped, as an optional column is).</summary>
+    public const float MinWidth = 240f;
+
+    // How many characters of a button's words show before an ellipsis: a card's button is no wider than the panel, and its tooltip has
+    // the whole of them.
+    private const int ButtonFits = 28;
+
+    // A button of a card with its words cut to what the panel holds, ending in an ellipsis with the whole of them on hover.
+    private static Layout.Node Fit(Layout.Node button)
+    {
+        // Only a button: a state chip (an armed merge) says what it is in words that stay whole, with its tooltip.
+        if (button is not Layout.Node.Leaf { Content: Layout.Content.Text text, Hit: HitResult.ButtonHit } leaf)
+        {
+            return button;
+        }
+        var cut = Ellipsize(text.Value, ButtonFits);
+        return cut == text.Value ? button : leaf with { Content = text with { Value = cut }, Tooltip = leaf.Tooltip ?? text.Value };
+    }
 
     public void Render(CardsScreen screen, RectF32 bounds)
     {
@@ -419,7 +461,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         Layout.Builder.HStack(
                 Layout.Builder.Text("Watchtower", 18f, Dim).WAuto(),
                 Layout.Builder.Spacer().WStar(),
-                Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WAuto())
+                Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WStarUpToContent().Whole("not running"))
             .RowH(30f),
         Layout.Builder.Spacer().RowH(18f),
         Layout.Builder.Spacer().RowH(20f),
@@ -470,7 +512,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).RowH(16f));
         }
         rows.Add(Layout.Builder.HStack(
-                Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()),
+                Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()).WStarUpToContent().WithTooltip("Chat with the watchtower"),
                 Layout.Builder.Spacer().WStar())
             .RowH(30f));
         rows.Add(Layout.Builder.Spacer().RowH(6f));
@@ -528,7 +570,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
             }
             foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
+                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f);
+                blocks.Add(line);
+                if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
+                {
+                    blocks.Add(handledLinks);
+                }
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
@@ -716,6 +763,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
         }
+        if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
+        {
+            lines.Add(ideaLinks);
+        }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
         if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
@@ -785,7 +836,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
-        lines.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
+        lines.Add(Layout.Builder.WrapH([.. buttons.Select(Fit)]).WithGap(8f).WithLineGap(4f).WStar());
 
         // A grid, not a stack with the accent bar beside the content and the content padded: a stack measures each child against its
         // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
@@ -814,22 +865,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PixelWi
         {
             return null;
         }
-        var title = Whole(Layout.Builder.Text(Titled(card), 14f, Link)
-                .BgHover(CardHover)
-                .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => route(card, pr))
-                .WStar().HStar(), card.Title, card.Title.Length > TitleFits);
-        if (card.Title.Length <= TitleFits)
-        {
-            title = title.WithTooltip($"Show {pr} on the Pull requests page");
-        }
-        // The browser's own, small: a mark, not a word, so it reads as the way out and the title as the way in.
-        var away = _links.OnLink(Layout.Builder.Text("↗", 11f, Link, TextAlign.Center, TextAlign.Center)
-            .Pad(6f, 0f)
-            .WAuto().HStar()
-            .BgHover(CardHover)
-            .Follows(new HitResult.ButtonHit($"card:{card.Id}:browser"), _ => OnOpen?.Invoke(PullRequestLinks.Url(pr)))
-            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left), PullRequestLinks.Url(pr));
-        return Layout.Builder.HStack(title, away).RowH(22f);
+        return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left, tall: true,
+                browserAction: $"card:{card.Id}:browser")
+            .HFixed(22f);
     }
 
     // A closed card's button as it was, the same size, answering nothing.
