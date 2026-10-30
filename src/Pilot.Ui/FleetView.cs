@@ -271,8 +271,8 @@ internal sealed class FleetWatch : IAsyncDisposable
     }
 
     /// <summary>Every page's screen for the fleet: each node's rows merged and marked, filtered by <paramref name="filter"/>.</summary>
-    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now, bool reposWanted = false) =>
-        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now, reposWanted);
+    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now) =>
+        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now);
 
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
