@@ -21,7 +21,7 @@ namespace Pilot.Node.Sessions;
 /// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's log: who, the target, the way and the
 /// outcome, with how long it took.
 /// </remarks>
-public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log)
+public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null)
 {
     // One say at a time per row: a second resume of a session mid-resume would continue the old id twice.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
@@ -222,7 +222,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             {
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
-            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, tracker.ListedName(row), row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
+            var listedName = tracker.ListedName(row);
+            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file.
+            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id);
+            // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
+            // earlier ids) and else by its name, which a compaction keeps too.
+            var recorded = onFile ? null : starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
+                StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

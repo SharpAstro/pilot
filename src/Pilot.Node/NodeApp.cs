@@ -144,6 +144,7 @@ public static class NodeApp
             return ideas;
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
+        builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
@@ -336,6 +337,8 @@ public static class NodeApp
         {
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
+            Starts = services.GetRequiredService<StartOptionsBook>(),
+            Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
@@ -345,7 +348,8 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
-            logWriter));
+            logWriter,
+            services.GetRequiredService<StartOptionsBook>()));
         configure?.Invoke(builder);
 
         var app = builder.Build();
