@@ -21,8 +21,12 @@ public sealed class ConnectTests : OverlapTestsBase
         // The checkout's remote is GitHub's, as a peer's checkout of the repo is told apart by it.
         Git(Repo, "remote", "add", "origin", $"https://github.com/{GitHub}.git");
         // The node's fetch of that remote must not reach the real GitHub (it hangs for minutes where there is no route or login): git
-        // rewrites the URL for its own calls, while RepoCatalog reads the configured one, so the flight's repo is still told apart by it.
-        Git(Repo, "config", "url.file:///p2-no-such-remote/.insteadOf", "https://github.com/");
+        // rewrites the URL for its own calls to a local bare copy, while RepoCatalog reads the configured one, so the flight's repo is
+        // still told apart by it.
+        var copy = Path.Combine(_root, "github", "SharpAstro", "tianwen.git");
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        Git(Repo, "clone", "-q", "--bare", Repo, copy);
+        Git(Repo, "config", "url." + Path.Combine(_root, "github").Replace('\\', '/') + "/.insteadOf", "https://github.com/");
         _flights.Fleet = _fleet;
     }
 
