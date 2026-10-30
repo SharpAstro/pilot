@@ -30,6 +30,7 @@ public sealed class IdeasPaneTests
         Age = age,
         Origin = origin,
         Url = $"https://github.com/SharpAstro/{repo}/issues/{number}",
+        Images = IdeaImages.In(body),
     };
 
     private static IdeasScreen Screen(IEnumerable<IdeaRow> ideas, IEnumerable<CardRow>? asks = null, params string[] repos) =>
@@ -744,5 +745,231 @@ public sealed class IdeasPaneTests
                 }
             }
         }
+    }
+
+    private const string Marked = "Show it.\n\n![shot](pilot-attachment:abc123.png)\n\n![out](https://example.com/x.jpg)";
+
+    // Ctrl+V and a drop need a node to keep the image: a fake one answers with this id, or refuses.
+    private static List<(int Length, string Ext)> Imaging(PilotChrome<RgbaImage> chrome, bool image = true, string? refuse = null)
+    {
+        var uploaded = new List<(int, string)>();
+        chrome.Ideas.GetClipboardImage = () => image ? (new byte[] { 1, 2, 3 }, "png") : null;
+        chrome.Ideas.Upload = (bytes, ext, _) =>
+        {
+            uploaded.Add((bytes.Length, ext));
+            return Task.FromResult(refuse is null ? ((string?)"abc123", (string?)null) : (null, refuse));
+        };
+        return uploaded;
+    }
+
+    private static bool Paste(PilotChrome<RgbaImage> chrome, TextEditorState box) => box.OnKeyOverride!.Invoke(TextInputKey.Paste);
+
+    [Fact]
+    public async Task CtrlVOfAnImagePutsItsMarkerAtTheCaretOfTheNoteBox()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome);
+        Draw(chrome, Sample());
+        chrome.Ideas.NoteInput.InsertText("see  now");
+        chrome.Ideas.NoteInput.CursorPos = 4;
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+        // The upload ends on the pool; the marker goes into the box when the render thread draws the next frame.
+        chrome.Ideas.NoteInput.Text.ShouldBe("see  now");
+        Draw(chrome, Sample());
+
+        uploaded.ShouldBe([(3, "png")]);
+        chrome.Ideas.NoteInput.Text.ShouldBe("see ![screenshot](pilot-attachment:abc123.png) now");
+    }
+
+    [Fact]
+    public async Task CtrlVOfAnImageInAnEditPutsItsMarkerAtTheCaretOfTheEditBox()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        Imaging(chrome);
+        var screen = Sample();
+        Draw(chrome, screen);
+        chrome.Ideas.OpenOn(screen.Ideas[0], IdeasView<RgbaImage>.Mode.Edit);
+        Draw(chrome, screen);
+        chrome.Ideas.EditInput.CursorPos = "Ideas pane".Length;
+
+        Paste(chrome, chrome.Ideas.EditInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+        Draw(chrome, screen);
+
+        chrome.Ideas.EditInput.Text.ShouldStartWith("Ideas pane![screenshot](pilot-attachment:abc123.png)\n");
+        chrome.Ideas.NoteInput.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void ACtrlVOfTextOnlyIsLeftToThePaste()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome, image: false);
+        Draw(chrome, Sample());
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeFalse();
+
+        tasks.ShouldBeEmpty();
+        uploaded.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusedUploadIsSaidUnderTheBoxItWasPastedIn()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        Imaging(chrome, refuse: "the image is over 10 MB");
+        var screen = Sample();
+        Draw(chrome, screen);
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        await Task.WhenAll(tasks);
+
+        chrome.Ideas.NoteInput.Text.ShouldBe("");
+        Spoken(renderer, chrome, screen).ShouldContain("image not uploaded: the image is over 10 MB");
+    }
+
+    [Fact]
+    public async Task WhileAnImageGoesUpTheBoxSaysSo()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var gate = new TaskCompletionSource<(string?, string?)>();
+        chrome.Ideas.GetClipboardImage = () => (new byte[] { 1 }, "png");
+        chrome.Ideas.Upload = (_, _, _) => gate.Task;
+        var screen = Sample();
+        Draw(chrome, screen);
+
+        Paste(chrome, chrome.Ideas.NoteInput).ShouldBeTrue();
+        Spoken(renderer, chrome, screen).ShouldContain("uploading image");
+        gate.SetResult(("abc123", null));
+        await Task.WhenAll(tasks);
+
+        Spoken(renderer, chrome, screen).ShouldNotContain("uploading image");
+        Draw(chrome, screen);
+        chrome.Ideas.NoteInput.Text.ShouldContain("abc123");
+    }
+
+    [Fact]
+    public async Task ADroppedImageFileGoesInTheNoteBoxOrTheOpenEditAndAnythingElseIsIgnored()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, tasks) = Chrome(renderer);
+        var uploaded = Imaging(chrome);
+        var screen = Sample();
+        Draw(chrome, screen);
+        var dir = Directory.CreateTempSubdirectory("pilot-drop-");
+        try
+        {
+            var png = Path.Combine(dir.FullName, "shot.PNG");
+            var text = Path.Combine(dir.FullName, "notes.txt");
+            File.WriteAllBytes(png, [9, 9, 9, 9]);
+            File.WriteAllText(text, "not an image");
+
+            chrome.Ideas.DropFile(text).ShouldBeFalse();
+            tasks.ShouldBeEmpty();
+
+            chrome.Ideas.DropFile(png).ShouldBeTrue();
+            await Task.WhenAll(tasks);
+            Draw(chrome, screen);
+            uploaded.ShouldBe([(4, "png")]);
+            chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
+
+            chrome.Ideas.OpenOn(screen.Ideas[0], IdeasView<RgbaImage>.Mode.Edit);
+            Draw(chrome, screen);
+            chrome.Ideas.DropFile(png).ShouldBeTrue();
+            await Task.WhenAll(tasks);
+            Draw(chrome, screen);
+            chrome.Ideas.EditInput.Text.ShouldEndWith("![screenshot](pilot-attachment:abc123.png)");
+            chrome.Ideas.NoteInput.Text.ShouldBe("![screenshot](pilot-attachment:abc123.png)");
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    private static IdeasScreen WithImages() => Screen([Idea(381, "Ideas pane", Marked), Idea(380, "Rail count", "")]);
+
+    private static List<RectF32> WirePictures(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer)
+    {
+        var painted = new List<RectF32>();
+        var rgba = new byte[20 * 10 * 4];
+        Array.Fill(rgba, (byte)200);
+        var picture = new AttachmentPicture(20, 10, rgba);
+        chrome.Gallery.Lookup = _ => picture;
+        var blit = AttachmentPictures.PaintOn(renderer.Surface);
+        chrome.Gallery.Draw = (p, rect) =>
+        {
+            painted.Add(rect);
+            blit(p, rect);
+        };
+        return painted;
+    }
+
+    [Fact]
+    public void AnIdeaWithImagesShowsThumbnailsAndALinkedOutImageShowsItsExtension()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        var painted = WirePictures(chrome, renderer);
+        var screen = WithImages();
+
+        var regions = Regions(chrome, screen);
+
+        painted.Count.ShouldBe(1);
+        Actions(regions).ShouldContain("attachment:idea:pilot I381:abc123");
+        Actions(regions).ShouldContain(a => a.StartsWith("attachment:idea:pilot I381:#"));
+        var spoken = Spoken(renderer, chrome, screen);
+        spoken.ShouldContain("JPG");
+        spoken.ShouldContain("Show it.");
+        // The Markdown of an image is not shown as text beside its thumbnail.
+        spoken.ShouldNotContain("pilot-attachment");
+    }
+
+    [Fact]
+    public void AClickOnAThumbnailOpensTheViewerAndEscapeShutsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        var painted = WirePictures(chrome, renderer);
+        var screen = WithImages();
+        Click(Regions(chrome, screen), "attachment:idea:pilot I381:abc123");
+
+        chrome.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("abc123");
+        painted.Clear();
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("attachment:close");
+        painted.ShouldNotBeEmpty();
+
+        chrome.Ideas.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
+        chrome.Gallery.Viewing.ShouldBeNull();
+
+        Click(Regions(chrome, screen), "attachment:idea:pilot I381:abc123");
+        Click(Regions(chrome, screen), "attachment:close");
+        chrome.Gallery.Viewing.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(480)]
+    [InlineData(1280)]
+    public void ThePageWithImagesHasNoTextOverTextAtNarrowAndWideSizes(int width)
+    {
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        WirePictures(chrome, renderer);
+        chrome.Ideas.GetClipboardImage = () => null;
+        chrome.Ideas.Upload = (_, _, _) => Task.FromResult(((string?)"abc123", (string?)null));
+        var screen = WithImages();
+        Draw(chrome, screen, width, 900);
+
+        var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+
+        TextOverlap.Faults(arranged).ShouldBeEmpty($"at {width} wide");
     }
 }

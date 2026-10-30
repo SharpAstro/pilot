@@ -514,6 +514,20 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Ideas.OnOpen = url => OpenAway(url);
     chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
     chrome.Ideas.Changed = loop.RequestRedraw;
+    // An idea's images: Ctrl+V of a screenshot and a dropped image file go to this window's node, the box keeps the marker.
+    chrome.Ideas.GetClipboardImage = ClipboardImage.Read;
+    chrome.Ideas.Upload = async (bytes, ext, ct) =>
+    {
+        var envelope = await client.UploadAttachmentAsync(bytes, ext, ct);
+        return envelope is { Success: true, Response: { Length: > 0 } id } ? (id, null) : (null, envelope.Error);
+    };
+    loop.OnDropFile = path =>
+    {
+        if (chrome.Page == PilotPage.Ideas)
+        {
+            chrome.Ideas.DropFile(path);
+        }
+    };
     chrome.Chat.Changed = loop.RequestRedraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
