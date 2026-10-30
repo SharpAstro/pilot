@@ -205,15 +205,14 @@ internal sealed class ListTable
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
         // A caller's own sort (the Ideas board) wins; otherwise the table's own, saved per page.
         Layout.TableSort? sorted = sort;
-        var handler = onSort;
-        if (sorted is null && onSort is null && Sort is { } own)
+        var handler = onSort ?? OnSort(columns);
+        if (sorted is null && sort is null && onSort is null && Sort is { } own)
         {
             var at = columns.ToList().FindIndex(c => c.Sortable && c.Header == own.Column);
             if (at >= 0)
             {
                 sorted = new Layout.TableSort(at, own.Descending);
             }
-            handler = OnSort(columns);
         }
         var header = Dropping(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())

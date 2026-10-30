@@ -286,14 +286,18 @@ internal sealed partial class IdeasView<TSurface>
     private IEnumerable<Layout.Node> Buttons(BoardItem item)
     {
         var idea = item.Idea;
-        var ready = ReadinessOf(item) is { Ready: true };
+        var flown = item.Flight is not null;
+        var ready = !flown && ReadinessOf(item) is { Ready: true };
         if (OnChatAbout is { } chat)
         {
             yield return CardsView<TSurface>.Pill(CardsView<TSurface>.ChatAboutLabel, $"ideas:chat:{item.Key}", () => chat(ChatAboutText(item)), Tint, P.Bright);
         }
         if (idea is not null)
         {
-            yield return ActionPill(ready ? "Plan flight" : "Plan", idea, Mode.Plan);
+            if (!flown)
+            {
+                yield return ActionPill(ready ? "Plan flight" : "Plan", idea, Mode.Plan);
+            }
             yield return ActionPill("Drop", idea, Mode.Drop);
             yield return ActionPill("Edit", idea, Mode.Edit);
             yield return ActionPill("Tidy", idea, Mode.Tidy);
@@ -308,9 +312,12 @@ internal sealed partial class IdeasView<TSurface>
             yield return IsBusy("suggest:" + item.Key)
                 ? CardsView<TSurface>.Dead("Suggesting…")
                 : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
-            yield return IsBusy("ready:" + item.Key)
-                ? CardsView<TSurface>.Dead("Checking…")
-                : CardsView<TSurface>.Pill(ReadyLabel, $"ideas:ready:{item.Key}", () => Run(() => CheckReadyAsync(item), $"check {Label(item)}"), Tint, P.Bright);
+            if (!flown)
+            {
+                yield return IsBusy("ready:" + item.Key)
+                    ? CardsView<TSurface>.Dead("Checking…")
+                    : CardsView<TSurface>.Pill(ReadyLabel, $"ideas:ready:{item.Key}", () => Run(() => CheckReadyAsync(item), $"check {Label(item)}"), Tint, P.Bright);
+            }
         }
         if (idea is not null)
         {

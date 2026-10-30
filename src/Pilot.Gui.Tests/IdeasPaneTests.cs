@@ -1338,14 +1338,36 @@ public sealed class IdeasPaneTests
         headerAfter.ShouldBeLessThan(headerBefore + 110f);
     }
 
+    [Fact]
+    public async Task AnIssueThatAlreadyFliesShowsItsFlightAndOffersNeitherReadyNorPlanFlight()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        var ready = new IssueReadiness(true, ["one goal"], Live.At);
+        var screen = BoardScreen() with { Issues = [.. BoardScreen().Issues.Select(i => i.Number == 13 ? i with { Readiness = ready } : i)] };
+        chrome.Ideas.OnChatAbout = _ => { };
+        chrome.Ideas.SplitExtent = 200f;
+        var actions = Actions(Regions(chrome, screen));
+        actions.ShouldContain("ideas:flight:pilot#13");
+        actions.ShouldNotContain("ideas:ready:pilot#13");
+        actions.ShouldNotContain("ideas:plan-flight:pilot#13");
+        await Task.CompletedTask;
+    }
+
     [Theory]
     [InlineData(480f)]
     [InlineData(1280f)]
-    public void TheBoardDrawsNoTextOverTextAtNarrowAndWideWidthsWithLongTitlesAndEverySuggestionOpen(float width)
+    public async Task TheBoardDrawsNoTextOverTextAtNarrowAndWideWidthsWithLongTitlesAndEverySuggestionOpen(float width)
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
-        var (chrome, _, _) = Chrome(renderer);
+        var (chrome, _, tasks) = Chrome(renderer, new IdeaReply(true, Suggestions: new MilestoneSuggestions("pilot",
+        [
+            new ItemSuggestion(20, "Loose issue", "v2.3", null, "it touches the split", Updated.AddMinutes(20)),
+            new ItemSuggestion(21, "Another loose one", null, "Observatory", "dome work", Updated.AddMinutes(21)),
+        ], [new NewMilestoneSuggestion("Observatory", "Dome and roof control", [21])])));
         var screen = BoardScreen() with { Issues = [.. BoardScreen().Issues.Select(i => i.Number == 381 ? i with { Title = LongTitle } : i)] };
+        Click(Regions(chrome, screen), "ideas:suggest-section:none");
+        await Task.WhenAll(tasks);
         // Both panes shown whole, so every row is held against its neighbours.
         chrome.Ideas.SplitExtent = 2600f;
         chrome.Ideas.ShowFolded = true;
