@@ -316,8 +316,12 @@ public static class FlightWaiting
     /// <summary>Where a leg is in a line of words: its state, or what it holds for (<c>holding for Drawboard.Core 1.2.7</c>).</summary>
     public static string LegState(LegRow leg) =>
         leg.Hold is { } hold ? $"holding for {hold.Id} {hold.Wanted ?? hold.Line}"
+        : leg.Recheck is { Outcome: null } recheck && leg.State == Pilot.Contracts.LegState.Flying ? RecheckText(recheck)
         : leg.Wait is { } wait && leg.State == Pilot.Contracts.LegState.Flying ? WaitText(wait)
         : leg.State.ToString().ToLowerInvariant();
+
+    /// <summary>What a leg whose finish reruns its check says: <c>rechecking since 14:30</c>.</summary>
+    public static string RecheckText(LegRecheck recheck) => $"rechecking since {recheck.Since.ToLocalTime():HH:mm}";
 
     /// <summary>What a leg's worker waits on: <c>waiting for C:\x\done.txt</c>, or <c>waiting until 14:30</c> for a time alone.</summary>
     public static string WaitText(LegWait wait) =>
