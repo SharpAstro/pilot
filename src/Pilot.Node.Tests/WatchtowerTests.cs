@@ -627,6 +627,52 @@ public sealed class WatchtowerTests : IDisposable
         var reloaded = new Watchtower(_state, _workers, Run, _options, _time).Generations().Single();
         (reloaded.EndedBecause, reloaded.EndedAt is not null, reloaded.LastReplyAt is not null).ShouldBe(("SessionEnd: logout", true, true));
     }
+
+    [Fact]
+    public async Task AFailedSayLeavesItsCardsUntoldAndIsNotRetriedEveryLookOnlyOneDownRingIsRaised()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        _refuseSays = true;
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/lexer", "TIA9/lexer failed");
+        await _tower.LookAsync(Ct);
+        for (var i = 0; i < 5; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(10));
+            await _tower.LookAsync(Ct);
+        }
+
+        _said.Count(s => s.Verb == Verbs.Say).ShouldBe(1);
+        var down = Open().Where(c => c.Kind == Watchtower.Down).ShouldHaveSingleItem();
+        down.Detail!.ShouldContain("2 cards");
+
+        // Past the retry time it is tried once more.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _said.Count(s => s.Verb == Verbs.Say).ShouldBe(2);
+        Open().Count(c => c.Kind == Watchtower.Down).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CardsOpeningWhileTheWatchtowerIsDownStayHeldAndTheNextOneGetsThemAndTheDownRingCloses()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        _refuseSays = true;
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
+        Open().ShouldContain(c => c.Kind == Watchtower.Down);
+
+        // It is gone: the next one starts fresh with the held card in its brief, and the down ring closes.
+        Row("job00001", SessionState.Failed);
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(2);
+        _workers.Started[1].Brief.ShouldContain("TIA9/parser failed");
+        Open().ShouldNotContain(c => c.Kind == Watchtower.Down);
+        Open().Count(c => c.Bin == CardBin.Ring && c.Kind != Watchtower.RaisedKind).ShouldBe(1);
+    }
 }
 
 /// <summary>The watchtower's verbs on the node's route, and the controller's gates it cannot pass.</summary>

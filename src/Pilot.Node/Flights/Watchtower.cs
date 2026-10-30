@@ -126,6 +126,12 @@ public sealed class Watchtower(
     private string? _parkedVersion;
     private HashSet<string> _parkedOpen = [];
 
+    // A row a say did not reach (the session is gone, or "No agent named ... is reachable"): its cards are held, and it is not said to
+    // again until RetryAfter has passed, instead of failing on every look (DE1 2026-10-29 logged ~60 failed says).
+    private string? _unreachableId;
+    private DateTimeOffset _unreachableAt;
+    private const string HeldMark = " Held for it: ";
+
     // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
     private string? _resumeRefused;
     private bool _adopted;
@@ -413,6 +419,7 @@ public sealed class Watchtower(
             Generations();
             KeepChurnCard(Health());
             var watching = Watching();
+            NoteHeld();
             if (watching is not null || _watchingAt is null)
             {
                 _watchingAt = now;
@@ -495,7 +502,10 @@ public sealed class Watchtower(
                 return;
             }
 
-            state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
+            if (row.Id != _unreachableId)
+            {
+                state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
+            }
             ClearFailures();
             if (Briefed() != BriefFingerprint())
             {
@@ -814,12 +824,18 @@ public sealed class Watchtower(
         {
             return null;
         }
+        if (_unreachableId == row.Id && time.GetUtcNow() - _unreachableAt < RetryAfter)
+        {
+            // Held: not said again until the retry time, and not rung per card.
+            return false;
+        }
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
+            _unreachableId = null;
             var now = time.GetUtcNow();
             foreach (var card in fresh)
             {
@@ -829,6 +845,40 @@ public sealed class Watchtower(
                 }
             }
         }
+        else
+        {
+            // Its cards stay untold: the next watchtower that starts has them in its brief. One ring says it is down.
+            _unreachableId = row.Id;
+            _unreachableAt = time.GetUtcNow();
+            const string title = "The watchtower cannot be reached";
+            var detail = $"{result.Error ?? "a say to it failed"}; its cards are held, not rung one by one, and the node tries again in {RetryAfter.TotalMinutes:0} minutes.";
+            CardChoice[] choices = [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }];
+            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, title, detail, choices);
+            NoteHeld();
+        }
         return result.Ok;
+    }
+
+    /// <summary>Keeps the one watchtower-down ring saying how many cards are held for the watchtower.</summary>
+    private void NoteHeld()
+    {
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == Down && c.Subject == Verbs.WatchtowerTarget) is not { } card)
+        {
+            return;
+        }
+        var held = Untold().Count;
+        var detail = card.Detail ?? "";
+        if (detail.IndexOf(HeldMark, StringComparison.Ordinal) is var at and >= 0)
+        {
+            detail = detail[..at];
+        }
+        if (held > 0)
+        {
+            detail += $"{HeldMark}{held} card{(held == 1 ? "" : "s")}, told to the next watchtower that starts.";
+        }
+        if (detail != card.Detail)
+        {
+            state.UpdateCard(card.Id, card.Title, detail, card.Choices, card.Link);
+        }
     }
 }
