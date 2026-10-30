@@ -197,6 +197,7 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());

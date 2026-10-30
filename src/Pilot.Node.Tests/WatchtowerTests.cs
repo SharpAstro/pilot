@@ -21,12 +21,37 @@ public sealed class WatchtowerTests : IDisposable
     private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-watchtower-" + Guid.NewGuid().ToString("N"));
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
+    // Claude Code's state.json of each job, by job id.
+    private readonly Dictionary<string, Pilot.Node.Sessions.ClaudeJobRecord> _records = [];
+
+    /// <summary>A look, a failed record for the job it started, and the retry time: one failed start of the fake job <paramref name="job"/>.</summary>
+    private async Task FailedStart(string job, string detail = "ENAMETOOLONG")
+    {
+        await _tower.LookAsync(Ct);
+        _records[job] = new Pilot.Node.Sessions.ClaudeJobRecord("failed", detail);
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(10));
+    }
+
+    /// <summary>Two starts that fail with the same reason: parked, with its one card.</summary>
+    private async Task Park()
+    {
+        await FailedStart("job00001");
+        await FailedStart("job00002");
+        _workers.Started.Count.ShouldBe(2);
+        await _tower.LookAsync(Ct);
+    }
 
     public WatchtowerTests()
     {
         _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
-        _tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
+        _tower = new Watchtower(_state, _workers, Run, _options, _time)
+        {
+            Pilot = "pilot",
+            JobRecord = job => _records.TryGetValue(job, out var record) ? record : null,
+            Version = "2.0.1",
+        };
         // Something to watch: a flight in the air with a leg flying. Tests of a quiet node land it (Quiet).
         _state.PutFlight(new FlightRow
         {
@@ -317,6 +342,102 @@ public sealed class WatchtowerTests : IDisposable
         await _tower.LookAsync(Ct);
         _workers.Started.ShouldHaveSingleItem();
         Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TwoStartsFailingForTheSameReasonRingOnceAndAreNotTriedAgainHoweverManyLooksPass()
+    {
+        await Park();
+
+        var card = Open().Single(c => c.Kind == Watchtower.Down);
+        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "The watchtower cannot start"));
+        card.Detail.ShouldNotBeNull().ShouldContain("ENAMETOOLONG");
+        card.Detail.ShouldContain("new node release");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.RestartWatchtower);
+
+        for (var i = 0; i < 20; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(30));
+            await _tower.LookAsync(Ct);
+        }
+        _workers.Started.Count.ShouldBe(2);
+        Open().Count(c => c.Kind == Watchtower.Down).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TwoLauncherRefusalsWithTheSameReasonParkItToo()
+    {
+        _workers.Fail = new FlightException("claude refused it");
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _tower.LookAsync(Ct);
+        _workers.Fail = null;
+        for (var i = 0; i < 10; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(30));
+            await _tower.LookAsync(Ct);
+        }
+
+        _workers.Started.ShouldBeEmpty();
+        var card = Open().ShouldHaveSingleItem();
+        (card.Title, card.Detail.ShouldNotBeNull().Contains("claude refused it")).ShouldBe(("The watchtower cannot start", true));
+    }
+
+    [Fact]
+    public async Task ARestartAskedStartsAParkedWatchtowerAgain()
+    {
+        await Park();
+
+        (await _tower.RestartAsync("tried again from its card", Ct)).ShouldBeNull();
+
+        _workers.Started.Count.ShouldBe(3);
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ANewReleaseStartsAParkedWatchtowerAgain()
+    {
+        await Park();
+
+        _tower.Version = "2.0.2";
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ACardBeingClosedStartsAParkedWatchtowerAgain()
+    {
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
+        await Park();
+        _workers.Started.Count.ShouldBe(2);
+
+        _state.CloseCardsAbout("flight/TIA1/parser", "handled", "leg-failed");
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ADifferentReasonCountsAfreshAndASuccessfulStartClearsTheCount()
+    {
+        await FailedStart("job00001", "ENAMETOOLONG");
+        await FailedStart("job00002", "something else");
+        _workers.Started.Count.ShouldBe(2);
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(3);
+        Open().ShouldNotContain(c => c.Title == "The watchtower cannot start");
+
+        // job00003 comes up: the count is gone, so one more failure of the first reason is a first.
+        Row("job00003", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+        Row("job00003", SessionState.Ended);
+        _state.PutSession(_state.Sessions().Single() with { State = SessionState.Failed });
+        _tower.Version = "2.0.1";
+        await FailedStart("job00004", "ENAMETOOLONG");
+        _workers.Started.Count.ShouldBe(4);
+        await _tower.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Title == "The watchtower cannot start");
     }
 
     [Fact]
