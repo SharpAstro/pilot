@@ -255,6 +255,8 @@ public sealed class PrReviews(
                 : ex.Message);
         }
         state.PutPrReview(row with { ReviewerJob = job });
+        // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", ReviewCardKinds);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
@@ -894,6 +896,7 @@ public sealed class PrReviews(
             {
                 await TendFixerAsync(fixing, cancellationToken);
             }
+            await CloseCardsOfOvertakenReviewsAsync(cancellationToken);
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             // A review the node posted itself has no card to close: posted, it is over all the same.
             foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed } && (r.Card is { } card && closed.Contains(card) || r.PostedId is not null)))
@@ -1170,27 +1173,23 @@ public sealed class PrReviews(
         if (review.Findings.Any(IsDesign))
         {
             var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
-            state.RaiseCard(CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.", link: review.Url);
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
             return;
         }
         var rounds = review.FixRound ?? 0;
         if (rounds >= MaxFixRounds)
         {
-            state.RaiseCard(CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
-                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}",
-                link: review.Url);
+            RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
+                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
             return;
         }
         // A PR the controller already chose Fix it on goes on by itself, whoever owns it.
         var own = rounds > 0 || Own(review, await github.LoginAsync(cancellationToken));
         if (!own)
         {
-            if (!state.Cards(openOnly: true).Any(c => c.Kind == FixOfferKind && c.Subject == subject))
-            {
-                state.RaiseCard(CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
-                    $"{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them.",
-                    [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
-            }
+            RaiseOnce(pr, review, CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
+                $"{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them.",
+                [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }]);
             return;
         }
         try
@@ -1200,8 +1199,8 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
-            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
-                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+            RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
+                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
 
@@ -1380,6 +1379,67 @@ public sealed class PrReviews(
     }
 
     private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+
+    /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
+    private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, ReadyKind];
+
+    /// <summary>
+    /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a
+    /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
+    /// review raised the kind already.
+    /// </summary>
+    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
+    {
+        var current = Of(pr) ?? review;
+        if (current.Raised.Contains(kind))
+        {
+            return null;
+        }
+        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url);
+        state.PutPrReview(current with { Raised = [.. current.Raised, kind] });
+        return card;
+    }
+
+    /// <summary>
+    /// Closes the open cards of <paramref name="review"/> when the PR's head is past the commit it read, saying which: a review of a
+    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it.
+    /// </summary>
+    public bool CloseCardsPastHead(PrReviewRow review, string head)
+    {
+        if (head.Length == 0 || string.Equals(head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+        {
+            return false;
+        }
+        state.CloseCardsAbout(subject, $"the head moved past {Short(review.Head)} to {Short(head)}", ReviewCardKinds);
+        return true;
+    }
+
+    /// <summary>Reads the head only of the reviews with a card of theirs open, and closes those cards when it has moved past the reviewed commit.</summary>
+    private async Task CloseCardsOfOvertakenReviewsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
+        {
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+            {
+                continue;
+            }
+            try
+            {
+                var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+                CloseCardsPastHead(review, read.Head);
+            }
+            catch (FlightException)
+            {
+                // GitHub not answering is not a reason to close a card: the next sweep looks again.
+            }
+        }
+    }
 
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>
     private async Task EndAsync(PrReviewRow review, string why, CancellationToken cancellationToken)

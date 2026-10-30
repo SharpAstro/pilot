@@ -434,6 +434,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
+            if (review.Fixer is null)
+            {
+                reviews.CloseCardsPastHead(review, pr.Head);
+            }
             var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
             if (!started.Ok)
             {

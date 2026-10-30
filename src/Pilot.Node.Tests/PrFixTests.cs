@@ -16,7 +16,8 @@ public abstract class PrFixTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly PrReviews _reviews;
@@ -42,6 +43,7 @@ public abstract class PrFixTestsBase : IDisposable
 
     protected PrFixTestsBase()
     {
+        _state = new NodeState(_journal, TimeProvider.System);
         SeedRepo.CopyTree(Seed.Value.Root, _root);
         var (widgetHead, gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
         var gadget = Path.Combine(_root, "github", "gadget.git");
