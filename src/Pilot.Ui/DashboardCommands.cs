@@ -29,6 +29,13 @@ internal static class DashboardCommands
     /// <param name="answered">Told each envelope the node answers with, so a host can see a refused grant.</param>
     public static async Task<string> ActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null)
     {
+        // One press of a button at a time: a Retry move pressed again while the first was moving the flight was answered with a
+        // refusal ("PIL437 is landed (moved to DE1)") that stood on the page above the first press's ok (SE1, 2026-10-29).
+        var key = $"{action.Node?.Key}|{action.Verb}|{action.Target}";
+        if (!Running.TryAdd(key, true))
+        {
+            return $"already running: {action.Label}";
+        }
         try
         {
             var envelope = await client.SendAsync(new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken);
@@ -42,7 +49,14 @@ internal static class DashboardCommands
             // A button that fails says so on the page: a node that answered with no envelope (a crash) or not at all.
             return $"failed: {action.Label}: {ex.Message}";
         }
+        finally
+        {
+            Running.TryRemove(key, out _);
+        }
     }
+
+    // The buttons whose verb the node has not answered yet, by node, verb and target.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Running = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The command a card's button sends: <paramref name="verb"/> (<see cref="Verbs.Answer"/> with the choice's number, or
