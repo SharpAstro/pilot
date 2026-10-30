@@ -470,12 +470,12 @@ public sealed class MergesTests
 
         died.ShouldBeOfType<IOException>();
         legs.TurnHeld("tianwen").ShouldBeFalse();
-        // Not refused as being merged already: the merge goes through once the journal writes again.
-        node.GitHub.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
-        node.GitHub.Queues = true;
+        // Not refused as being merged already: asked again once the journal writes, the merge is taken and armed again. Its checks
+        // still run, so the node's own look (which merges an armed flight at green) does not merge it behind the test's back.
         (await Merge(node, "TIA1")).Error.ShouldBeNull();
-        Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Merging);
-        node.GitHub.Merged.ShouldHaveSingleItem();
+        Entry(node, "TIA1").State.ShouldBe(MergeEntryState.Checks);
+        legs.TurnHeld("tianwen").ShouldBeFalse();
+        node.GitHub.Merged.ShouldBeEmpty();
     }
 
     // A store that cannot write a merge entry (a full disk) while Fail is on, and keeps everything else.
