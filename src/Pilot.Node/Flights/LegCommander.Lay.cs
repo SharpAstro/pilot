@@ -116,6 +116,93 @@ public sealed partial class LegCommander
         return (laid, old);
     }
 
+    // Heads GitHub's queue dropped for a conflict, by "code head": none of them is queued again until the head moves.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _droppedHeads = new(StringComparer.Ordinal);
+
+    // The heads a drop was rung for: one ring per flight and head.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _dropRung = new(StringComparer.Ordinal);
+
+    /// <summary>The kind of card that says a PR the queue dropped for a conflict has no cause the node can act on.</summary>
+    public const string DropUnexplainedKind = "drop-unexplained";
+
+    /// <summary>Whether GitHub's merge queue dropped <paramref name="head"/> of the flight for a conflict: it is not queued again until the head moves.</summary>
+    public bool DroppedForConflict(string code, string head) => _droppedHeads.ContainsKey($"{code} {head}");
+
+    /// <summary>
+    /// A PR the merge queue dropped for a conflict, as the node first meets it: the head is marked so no path (the autopilot's merge, a
+    /// Merge card, the entry kept by a refused merge) queues it again unchanged. When the base brings nothing new (it is merged in
+    /// already, so a base merge would leave the head as it was) the cause is looked for: a PR whose merge is clean but whose rebase
+    /// is not is laid on its base and queued once; otherwise one Ring card says why and the head is not queued. Returns false when the
+    /// base has something to merge in, which the caller's update then does (it moves the head).
+    /// </summary>
+    public async Task<bool> HandleConflictDropAsync(string code, string head, CancellationToken cancellationToken)
+    {
+        _droppedHeads[$"{code} {head}"] = true;
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
+        {
+            return false;
+        }
+        var baseRef = $"origin/{BaseBranch(flight)}";
+        await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+        var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
+        if (!string.Equals(plane, head, StringComparison.OrdinalIgnoreCase)
+            || !(await git.RunAsync(["merge-base", "--is-ancestor", baseRef, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return false;
+        }
+        string laid;
+        // The lay lets the lock go for its git and GitHub asks, so it is made holding it; the merge after it takes the lock itself.
+        var call = await EnterAsync(code, "being laid on its base", cancellationToken);
+        try
+        {
+            laid = await LayIfNotRebaseableAsync(flight, head, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            // The lay rang for itself (a Ring card with why); the same head is not asked again.
+            return true;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
+        if (!string.Equals(laid, head, StringComparison.OrdinalIgnoreCase))
+        {
+            // The laid head is new, so the queue is joined once there.
+            // Asked of GitHub directly, at the head just pushed: its PR may still show the old one for a moment, which a merge command would refuse.
+            try
+            {
+                if (flight.PullRequest is { } queued)
+                {
+                    await github.MergeAsync(flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
+                }
+            }
+            catch (FlightException ex) when (_dropRung.TryAdd($"{code} {laid}", true))
+            {
+                state.RaiseCard(CardBin.Ring, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued", ex.Message);
+            }
+            return true;
+        }
+        if (_dropRung.TryAdd($"{code} {head}", true))
+        {
+            string reason;
+            try
+            {
+                var summary = flight.PullRequest is { } number ? await github.ChecksSummaryAsync(flight.RepoPath, number, cancellationToken) : null;
+                reason = summary is { Status: ChoiceStatus.Failing } ? "its checks fail"
+                    : $"its merge with {flight.Base} is clean and it holds {flight.Base} already, so the node found no merge or rebase conflict to resolve";
+            }
+            catch (FlightException ex)
+            {
+                reason = $"no cause found ({ex.Message})";
+            }
+            state.RaiseCard(CardBin.Ring, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s PR was dropped from the merge queue for a conflict",
+                $"GitHub's queue dropped {Short(head)} for a conflict: {reason}. It is not queued again at this head; push a changed head, or look at the PR page.");
+        }
+        return true;
+    }
+
     public async Task<RebaseProbe> ProbeRebaseAsync(string plane, string baseBranch, CancellationToken cancellationToken)
     {
         var folder = Path.Combine(Path.GetTempPath(), "pilot-rebase-probe-" + Guid.NewGuid().ToString("N")[..12]);

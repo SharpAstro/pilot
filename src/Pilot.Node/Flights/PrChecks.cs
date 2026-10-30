@@ -227,6 +227,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 if (_rebased.Add($"{flight.Code} {queue.Head}"))
                 {
+                    // Nothing to merge in: found out why before anything is queued again (laid on its base, or rung once).
+                    if (await legs.HandleConflictDropAsync(flight.Code, queue.Head, cancellationToken))
+                    {
+                        continue;
+                    }
                     if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
                         // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
@@ -763,6 +768,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
+            || merge.Args is [{ } droppedHead, ..] && legs.DroppedForConflict(flight.Code, droppedHead)
             || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
         {
             return;

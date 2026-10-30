@@ -1807,6 +1807,10 @@ public sealed partial class LegCommander(
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
+        if (DroppedForConflict(flight.Code, pr.Head))
+        {
+            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
+        }
         if (checks?.Status == ChoiceStatus.Failing)
         {
             throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");

@@ -103,4 +103,55 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         _state.Cards().Count(c => c.Kind == LegCommander.LayFailedKind && c.Bin == CardBin.Ring).ShouldBe(1);
     }
+
+    private PrChecks Checks() => new(_state, _github, TimeProvider.System, legs: _legs);
+
+    private void Drop(FlightRow flight, string head)
+    {
+        // The PR-ready card offers the merge itself while it is open; a dropped PR is looked at once it is closed.
+        _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
+        _github.Queue = new MergeQueueState("OPEN", head, Queued: false, RemovedAt: DateTimeOffset.UtcNow, RemovedReason: "merge conflict");
+    }
+
+    [Fact]
+    public async Task ADroppedKeepOursPrIsLaidQueuedOnceAndKeepsItsReviewAcrossLooks()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        var (flight, old) = await KeepOursFlight();
+        Drop(flight, old);
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        var laid = Git(flight.Worktree, "rev-parse", "HEAD");
+        laid.ShouldNotBe(old);
+        _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(laid);
+        _github.Queue = new MergeQueueState("OPEN", laid, Queued: true, Position: 1);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _github.Merged.ShouldHaveSingleItem();
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(laid);
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(laid);
+        F(flight.Code).Review!.State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
+    public async Task ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        var (flight, _) = await Passed("1");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        Drop(flight, head);
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _state.Cards().Count(c => c.Kind == LegCommander.DropUnexplainedKind && c.Bin == CardBin.Ring).ShouldBe(1);
+        _github.Merged.ShouldBeEmpty();
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head)).Ok.ShouldBeFalse();
+        _github.Merged.ShouldBeEmpty();
+    }
 }
