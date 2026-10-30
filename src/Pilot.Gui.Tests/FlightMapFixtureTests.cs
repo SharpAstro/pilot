@@ -61,8 +61,11 @@ public sealed class FlightMapFixtureTests
     {
         var map = Map();
 
-        map.Arcs.ShouldContain(c => c.From == "ORB10" && c.To == "NOV20" && c.Held);
+        // NOV20 on SE1 holds for ORB10 on DE1 as the node keeps it, in its peer connections: one dashed arc, from DE1 to SE1.
+        var arc = map.Arcs.ShouldHaveSingleItem();
+        (arc.FromNode, arc.From, arc.ToNode, arc.To, arc.Held).ShouldBe(("de1", "ORB10", "se1", "NOV20", true));
         map.Route("NOV20")!.Node.ShouldBe("se1");
+        Lines().Single(l => l.Code == "NOV20").Row.Connections.ShouldBeEmpty();
     }
 
     [Fact]
@@ -70,8 +73,8 @@ public sealed class FlightMapFixtureTests
     {
         var map = Map();
 
-        map.Route("ORB11")!.Gate!.WaitsFor.ShouldContain("ORB10");
-        map.Route("NOV20")!.Gate!.WaitsFor.ShouldContain("ORB10");
+        map.Route("ORB11")!.Gate!.WaitsFor.ShouldBe("ORB10");
+        map.Route("NOV20")!.Gate!.WaitsFor.ShouldBe("ORB10 on DE1");
         map.Route("ORB10")!.Gate.ShouldBeNull();
     }
 

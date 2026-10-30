@@ -7,7 +7,7 @@
     {
       "code": "NOV20", "repo": "nova", "repoPath": "/r/nova", "issue": 20, "title": "Client for the parser (held, intercontinental)",
       "branch": "flight/nov20", "worktree": "/r/nova/.claude/worktrees/nov20", "base": "origin/main",
-      "state": "held", "connections": ["ORB10"], "createdAt": "2026-10-28T06:20:00+00:00"
+      "state": "held", "peerConnections": [{ "code": "ORB10", "node": "DE1", "since": "2026-10-28T06:20:00+00:00" }], "createdAt": "2026-10-28T06:20:00+00:00"
     },
     {
       "code": "NOV21", "repo": "nova", "repoPath": "/r/nova", "issue": 21, "title": "Retry policy (flying)",

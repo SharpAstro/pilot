@@ -30,6 +30,13 @@ public sealed class FlightMapTests
     private static LegRow Leg(string flight, string name, int order, LegState state) =>
         new() { Flight = flight, Name = name, Order = order, Goal = "g", DoneWhen = "d", State = state };
 
+    /// <summary>
+    /// A flight held for <paramref name="code"/> of another node, as the node keeps such a wait: in its peer connections, the other
+    /// node by its machine prefix, never in its connections (which name its own node's flights only).
+    /// </summary>
+    private static FlightRow HeldFor(string code, string onNode, string waited) =>
+        Flight(code, FlightState.Held) with { PeerConnections = [new PeerConnection { Code = waited, Node = onNode, Since = Live.At }] };
+
     private static FlightLine Line(FlightRow row, NodeMark? node = null, string? stale = null, params LegRow[] legs) =>
         FlightLine.Build([row], [], Live.At, legs)[0] with { Node = node, Stale = stale };
 
@@ -150,7 +157,7 @@ public sealed class FlightMapTests
         var map = Map(
             Line(Flight("A"), De1),
             Line(Flight("B", FlightState.Held, "A"), De1),
-            Line(Flight("C", FlightState.Held, "A"), Se1));
+            Line(HeldFor("C", "DE1", "A"), Se1));
 
         map.Domestic.Select(c => (c.From, c.To)).ShouldBe([("A", "B")]);
         map.Arcs.Select(c => (c.From, c.To)).ShouldBe([("A", "C")]);
@@ -159,13 +166,67 @@ public sealed class FlightMapTests
     }
 
     [Fact]
-    public void AnArcIsDashedWhileItsConnectionHoldsAndSolidOnceTheFlightLanded()
+    public void AnArcIsDashedWhileItsWaitHoldsAndGoneOnceTheNodeDropsIt()
     {
-        var holding = Map(Line(Flight("A"), De1), Line(Flight("C", FlightState.Held, "A"), Se1));
-        var landed = Map(Line(Flight("A", FlightState.Landed), De1), Line(Flight("C", FlightState.Flying, "A"), Se1));
+        var holding = Map(Line(Flight("A"), De1), Line(HeldFor("C", "DE1", "A"), Se1));
+        // Once A lands, SE1's node drops C's wait and C flies: nothing joins the two continents any more.
+        var landed = Map(Line(Flight("A", FlightState.Landed), De1), Line(Flight("C"), Se1));
 
         holding.Arcs.Single().Held.ShouldBeTrue();
-        landed.Arcs.Single().Held.ShouldBeFalse();
+        landed.Connections.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AWaitForAFlightOfAnotherNodeIsOneDashedArcFromItsDestinationToTheGate()
+    {
+        var map = Map(
+            Line(Flight("ORB10"), De1, null, Leg("ORB10", "parser", 1, LegState.Flying)),
+            Line(HeldFor("NOV20", "DE1", "ORB10"), Se1, null, Leg("NOV20", "client", 1, LegState.Planned)));
+
+        var arc = map.Arcs.ShouldHaveSingleItem();
+        (arc.FromNode, arc.From, arc.ToNode, arc.To, arc.Held).ShouldBe(("de1", "ORB10", "se1", "NOV20", true));
+        map.Domestic.ShouldBeEmpty();
+        var (waited, holder) = (map.Route("ORB10", "de1")!, map.Route("NOV20", "se1")!);
+        holder.Gate!.WaitsFor.ShouldBe("ORB10 on DE1");
+        (arc.X0, arc.Y0).ShouldBe((waited.Destination.X, waited.Destination.Y));
+        (arc.X1, arc.Y1).ShouldBe((holder.Gate.X, holder.Gate.Y));
+
+        // The wait names its node by machine prefix, the name the page marks the node with, in whatever case.
+        Map(Line(Flight("ORB10"), De1), Line(HeldFor("NOV20", "de1", "ORB10"), Se1)).Arcs.ShouldHaveSingleItem().From.ShouldBe("ORB10");
+    }
+
+    [Fact]
+    public void AWaitForAFlightNotOnTheMapDrawsNoArcAndTheGateStillNamesIt()
+    {
+        // NOV20 waits for DE1's ORB10, which DE1's page does not hold; SE1's own ORB10 is another flight, and NE1 is on no page.
+        var map = Map(
+            Line(Flight("A"), De1),
+            Line(Flight("ORB10"), Se1),
+            Line(HeldFor("NOV20", "DE1", "ORB10"), Se1),
+            Line(HeldFor("NOV21", "NE1", "A"), Se1));
+
+        map.Connections.ShouldBeEmpty();
+        map.Route("NOV20")!.Gate!.WaitsFor.ShouldBe("ORB10 on DE1");
+        map.Route("NOV21")!.Gate!.WaitsFor.ShouldBe("A on NE1");
+
+        // A page of this node alone marks no node, so a wait for a peer's flight has nothing to reach either.
+        FlightMap.Build([Line(Flight("ORB10")), Line(HeldFor("NOV20", "DE1", "ORB10"))]).Connections.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnOwnNodeWaitForACodeOffItsNodeDrawsNoArcThoughAnotherNodeFliesThatCode()
+    {
+        // SE1's PIL51 waits for SE1's own PIL12 (landed, and off the page as In play leaves it), and SE1's PIL52 had SE1's PIL13
+        // folded into it; DE1 flies a PIL12 and a PIL13 of its own, which are other flights.
+        var map = Map(
+            Line(Flight("PIL12"), De1, null, Leg("PIL12", "one", 1, LegState.Flying)),
+            Line(Flight("PIL13"), De1, null, Leg("PIL13", "one", 1, LegState.Flying)),
+            Line(Flight("PIL51", FlightState.Flying, "PIL12"), Se1),
+            Line(Flight("PIL52") with { FoldedIn = [new FoldedIssue { Number = 13, From = "PIL13" }] }, Se1));
+
+        map.Connections.ShouldBeEmpty();
+        map.Chain("de1", "PIL12").ShouldBeEmpty();
+        map.Chain("se1", "PIL51").ShouldBeEmpty();
     }
 
     [Fact]
@@ -253,7 +314,7 @@ public sealed class FlightMapTests
         {
             Line(Flight("A"), De1),
             Line(Flight("PIL51"), De1),
-            Line(Flight("PIL51", FlightState.Held, "A"), Se1),
+            Line(HeldFor("PIL51", "DE1", "A"), Se1),
         };
         var map = Map(lines);
 
@@ -280,7 +341,7 @@ public sealed class FlightMapTests
         {
             Line(Flight("A"), De1, null, Leg("A", "one", 1, LegState.Flying)),
             Line(Flight("PIL51"), De1, null, Leg("PIL51", "one", 1, LegState.Flying)),
-            Line(Flight("PIL51", FlightState.Held, "A"), Se1, null, Leg("PIL51", "one", 1, LegState.Planned)),
+            Line(HeldFor("PIL51", "DE1", "A"), Se1, null, Leg("PIL51", "one", 1, LegState.Planned)),
         };
         using var renderer = new RgbaImageRenderer(1280, 800);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };

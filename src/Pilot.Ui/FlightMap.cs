@@ -304,18 +304,28 @@ internal sealed class FlightMap
         return new MapRoute(line.Code, node, gate, airports, destination, plane);
     }
 
+    /// <summary>
+    /// The connections between the flights on the map. <see cref="FlightRow.Connections"/> and <see cref="FlightRow.FoldedIn"/> name
+    /// flights of the holder's own node, so they join only there: one code on another node is another flight. A wait for a flight of
+    /// another node is a <see cref="FlightRow.PeerConnections"/> entry, which names that node by its machine prefix, the name its
+    /// <see cref="NodeMark"/> carries; it is an arc while it holds (the node drops it once that flight lands). A wait whose flight is
+    /// not on the map draws nothing; the gate's words still name it.
+    /// </summary>
     private static List<MapConnection> Connect(IReadOnlyList<FlightLine> lines, List<MapRoute> routes)
     {
-        var byCode = lines.Select((l, i) => (l, i)).ToLookup(t => t.l.Code, StringComparer.Ordinal);
+        var byNodeCode = lines.ToLookup(l => (l.Node?.Key ?? "", l.Code));
         var routeOf = routes.ToDictionary(r => (r.Flight, r.Node));
         var seen = new HashSet<(string, string, string)>();
         var result = new List<MapConnection>();
 
-        void Add(FlightLine holder, string code, bool holds)
+        FlightLine? OnItsNode(FlightLine holder, string code) => byNodeCode[(holder.Node?.Key ?? "", code)].FirstOrDefault();
+
+        FlightLine? OnPeer(PeerConnection wait) =>
+            lines.FirstOrDefault(l => l.Node is { } n && string.Equals(n.Name, wait.Node, StringComparison.OrdinalIgnoreCase) && l.Code == wait.Code);
+
+        void Add(FlightLine holder, FlightLine? from, bool holds)
         {
-            // The flight waited for on the holder's own node, else the first of that code.
             var node = holder.Node?.Key ?? "";
-            var from = byCode[code].Select(t => t.l).FirstOrDefault(l => (l.Node?.Key ?? "") == node) ?? byCode[code].Select(t => t.l).FirstOrDefault();
             if (from is null || ReferenceEquals(from, holder) || !seen.Add((from.Node?.Key ?? "", from.Code, holder.Code + "@" + node)))
             {
                 return;
@@ -343,14 +353,18 @@ internal sealed class FlightMap
         {
             foreach (var code in line.Row.Connections.Distinct())
             {
-                var waited = byCode[code].Select(t => t.l).FirstOrDefault(l => (l.Node?.Key ?? "") == (line.Node?.Key ?? "")) ?? byCode[code].Select(t => t.l).FirstOrDefault();
+                var waited = OnItsNode(line, code);
                 var holds = waited is not null && (waited.Row.State != FlightState.Landed || line.Row.PackageWaits.Any(w => w.Producer == code));
-                Add(line, code, holds);
+                Add(line, waited, holds);
+            }
+            foreach (var wait in line.Row.PeerConnections)
+            {
+                Add(line, OnPeer(wait), true);
             }
             // A flight folded into this one is a connection that has landed with it, never held.
             foreach (var folded in line.Row.FoldedIn)
             {
-                Add(line, folded.From, false);
+                Add(line, OnItsNode(line, folded.From), false);
             }
         }
         return result;

@@ -40,7 +40,8 @@ public sealed class FlightMapLayersTests
         Line(Flight("B", FlightState.Held), De1, Leg("B", "one", 1, LegState.Planned)),
         Line(Flight("L", FlightState.Landed), De1, Leg("L", "one", 1, LegState.Done)),
         Line(Flight("S", FlightState.Flying), Se1, Leg("S", "one", 1, LegState.Flying)),
-        Line(Flight("X", FlightState.Flying, "A"), Se1, Leg("X", "one", 1, LegState.Planned)),
+        // Held for DE1's A, as the node keeps a wait for another node's flight: in its peer connections.
+        Line(Flight("X", FlightState.Held) with { PeerConnections = [new PeerConnection { Code = "A", Node = "DE1", Since = Live.At }] }, Se1, Leg("X", "one", 1, LegState.Planned)),
     ];
 
     private static bool[] Flags(FlightMapLayerState s) => [s.ShowLanded, s.ShowHeld, s.ArcsOnly, s.OnlyNode is not null, s.ShowPrStates];
