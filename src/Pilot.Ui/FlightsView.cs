@@ -262,7 +262,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
                 ? new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other])
                 : new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other, Verbs.AnywayFlag])
                 {
-                    WhyPrompt = $"you answered the overlap with {other} ({overlap.Why}) with connect: Enter drops the wait anyway",
+                    WhyPrompt = $"overlap with {other}: remove anyway?",
                     Confirm = true,
                 });
         }
