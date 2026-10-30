@@ -521,6 +521,17 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
 
+    /// <summary>The repo's open issues, in a milestone or in none, newest first.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts issue <paramref name="number"/> in the milestone called <paramref name="milestone"/>, or in none when it is null, when its
+    /// <c>updated_at</c> is still <paramref name="ifUpdatedAt"/>; false (nothing written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
     /// <summary>
     /// Transfers issue <paramref name="number"/> to <paramref name="toRepo"/> (<c>owner/name</c>), when its <c>updated_at</c> is still
     /// <paramref name="ifUpdatedAt"/>; returns the issue as it is there (a new number, and no milestone: a transfer drops it), or null (nothing
