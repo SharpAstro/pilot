@@ -427,4 +427,12 @@ public sealed class WatchtowerChatTests : IDisposable
         // for it in the chat (#473).
         brief.ShouldContain("are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
     }
+
+    [Fact]
+    public void The_watchtower_brief_says_to_verify_a_failed_leg_first()
+    {
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+
+        brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified --leg <code>/<leg>` for that leg first");
+    }
 }

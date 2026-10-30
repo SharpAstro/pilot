@@ -796,6 +796,7 @@ public static class Briefs
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
         text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises,");
         text.AppendLine("and a flight's leg past its round cap, are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+        text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
         if (model is { Length: > 0 })
         {

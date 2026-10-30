@@ -613,6 +613,17 @@ internal sealed class FakeGitHub : IGitHub
             throw new FlightException(why);
         }
         DraftCalls.Add((number, draft));
+        if (Pr is { } held && held.Number == number)
+        {
+            Pr = held with { Draft = draft };
+        }
+        foreach (var (key, pr) in Prs.ToList())
+        {
+            if (pr.Number == number)
+            {
+                Prs[key] = pr with { Draft = draft };
+            }
+        }
     }
 
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];

@@ -25,6 +25,12 @@ public sealed class PrReviews(
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>
+    /// Gives a flight a PR review's approve of its PR: code, the head reviewed, the verdict, the report; null when taken, else why
+    /// not. Set where the node is built, so this needs nothing of the leg commander's.
+    /// </summary>
+    public Func<string, string, string, string, CancellationToken, Task<string?>>? TakeFlightVerdict { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
@@ -172,6 +178,10 @@ public sealed class PrReviews(
         {
             throw new FlightException($"gh did not say {pr}'s head and base");
         }
+        if (FlightOwner(pr, read.HeadRef, read.Fork) is { } owner)
+        {
+            throw new FlightException($"{pr} is {owner.Code}'s PR, which has one review, the flight's: pilot flight review {owner.Code}");
+        }
 
         // One review of a PR at a time: an earlier one, still on or waiting on its card, ends first.
         if (Of(pr) is { State: not PrReviewState.Closed } earlier)
@@ -248,7 +258,32 @@ public sealed class PrReviews(
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
+        if (read.Draft)
+        {
+            await SetDraftAsync(row, draft: false, cancellationToken);
+        }
         return $"started {reviewer} at {Short(read.Head)}";
+    }
+
+    /// <summary>
+    /// Draft follows the verdict for a PR outside a flight (PIL483): ready from the start of a review, a draft only on
+    /// changes. A flight's PR is skipped, its draft is the flight path's. GitHub refusing it is a For-you card, as a label is.
+    /// </summary>
+    private async Task SetDraftAsync(PrReviewRow review, bool draft, CancellationToken cancellationToken)
+    {
+        if (FlightOwns(review))
+        {
+            return;
+        }
+        try
+        {
+            await github.SetDraftAsync(review.ClonePath, review.Number, draft, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
+                $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}", $"{ex.Message}. The review itself stands.", link: review.Url);
+        }
     }
 
     /// <summary>
@@ -298,10 +333,21 @@ public sealed class PrReviews(
     }
 
     /// <summary>Whether the reviewed PR is a flight's: its PR, on the same repo.</summary>
-    // A landed flight's PR is no longer kept by it: a later review of that PR labels it as any PR's.
-    private bool FlightOwns(PrReviewRow review) =>
-        state.Flights().Any(f => f.State != FlightState.Landed && f.PullRequest == review.Number && f.PullRequestUrl is { } url
-            && url.Contains($"/{review.Repo}/pull/{review.Number}", StringComparison.OrdinalIgnoreCase));
+    private bool FlightOwns(PrReviewRow review) => PrRef.Parse($"{review.Repo}#{review.Number}") is { } pr && FlightOwner(pr) is not null;
+
+    /// <summary>
+    /// The flight of this node that owns <paramref name="pr"/>, or null: its PR on the same repo, or a PR whose head ref is the
+    /// flight's branch in a repo the flight flies from. A landed flight's PR is no longer kept by it: a later review labels it as
+    /// any PR's.
+    /// </summary>
+    public FlightRow? FlightOwner(PrRef pr, string headRef = "", bool fork = false) =>
+        state.Flights().FirstOrDefault(f => f.State != FlightState.Landed
+            && (f.PullRequest == pr.Number && f.PullRequestUrl is { } url && url.Contains($"/{pr.Repo}/pull/{pr.Number}", StringComparison.OrdinalIgnoreCase)
+                || headRef.Length > 0 && !fork && string.Equals(headRef, f.Branch, StringComparison.Ordinal) && FliesFrom(f, pr)));
+
+    private bool FliesFrom(FlightRow flight, PrRef pr) =>
+        repos.Repos().Any(r => string.Equals(r.GitHub, pr.Repo, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(r.Path)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(flight.RepoPath)), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
     internal static (string State, string Description) StatusOf(PrReviewRow review)
@@ -436,6 +482,12 @@ public sealed class PrReviews(
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
         await SetLabelAsync(reviewed, cancellationToken);
+        // Only changes turns it into a draft: the start made it ready, and an approve or comment leaves it as it is.
+        if (verdict == "changes")
+        {
+            await SetDraftAsync(reviewed, draft: true, cancellationToken);
+        }
+        await GiveFlightVerdictAsync(reviewed, pr, cancellationToken);
         // The node posts first and asks after. The Post card used to be raised before the node's own post, which takes some 30 s,
         // and was pressed meanwhile: the press was refused as a second post and reopened the card (DIR.Lib#168, SE1, 2026-10-28).
         var (posted, notPosted) = await PostIfOpenAsync(pr, subject, cancellationToken);
@@ -519,6 +571,34 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             return (false, ex.Message);
+        }
+    }
+
+    /// <summary>An approve of a flight's PR at the flight's current head is the flight's verdict (PIL483); what the flight refuses is said in the log, the review stands.</summary>
+    private async Task GiveFlightVerdictAsync(PrReviewRow review, PrRef pr, CancellationToken cancellationToken)
+    {
+        if (review.Verdict != "approve" || TakeFlightVerdict is not { } take)
+        {
+            return;
+        }
+        var headRef = "";
+        var fork = false;
+        try
+        {
+            var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+            (headRef, fork) = (read.HeadRef, read.Fork);
+        }
+        catch (FlightException)
+        {
+        }
+        if (FlightOwner(pr, headRef, fork) is not { } owner)
+        {
+            return;
+        }
+        var why = await take(owner.Code, review.Head, "approve", review.Report ?? "", cancellationToken);
+        if (why is not null)
+        {
+            await Error.WriteLineAsync($"pr reviews: {pr}'s approve was not taken by {owner.Code}: {why}");
         }
     }
 
@@ -1072,7 +1152,7 @@ public sealed class PrReviews(
     /// <summary>Whether a flight's PR is this one: a flight's own review and fix are the flight's.</summary>
     private bool FlightOwns(PrRef pr) =>
         state.Flights().Any(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
-            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number);
+            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) || FlightOwner(pr) is not null;
 
     /// <summary>
     /// A changes verdict on a PR now posted (#290). On the controller's own PR in a repo the node tracks, with no flight owning

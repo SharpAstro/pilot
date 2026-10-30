@@ -172,6 +172,7 @@ public static class NodeApp
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Error = logWriter;
+            reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
