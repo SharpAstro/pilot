@@ -2622,11 +2622,11 @@ public sealed partial class LegCommander(
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
-                // Only a base merge since the last review: no commit of the leg's own between the two heads.
+                // Only a base merge since the last review: no commit of the leg's own between the two heads (first parent only, or the base's commits the merge brought in count as own).
                 if (flight.Review?.ReviewedHead is { Length: > 0 } was && reviewedHead is { Length: > 0 } now && was != now
                     && (await git.RunAsync(["merge-base", "--is-ancestor", was, now], flight.Worktree, CancellationToken.None)).Ok)
                 {
-                    var own = await git.RunAsync(["rev-list", "--no-merges", "--count", $"{was}..{now}"], flight.Worktree, CancellationToken.None);
+                    var own = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{was}..{now}"], flight.Worktree, CancellationToken.None);
                     baseMergeOnly = own.Ok && own.Output.Trim() == "0";
                 }
                 // A re-review reads only what changed, on the leg's model; Opus is for the first review of a large diff (if the setting lets it).
