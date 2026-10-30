@@ -419,6 +419,15 @@ public sealed partial class LegCommander(
     /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
     public async Task AdvanceAllAsync(CancellationToken cancellationToken)
     {
+        // The peers are read and the node that keeps the Opus count is told what this one runs, so a slot freed anywhere is seen before the starts below ask.
+        try
+        {
+            await Slots.SweepAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A peer that cannot be read is no reason to hold this node's own flights: its starts say so as they ask.
+        }
         // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
         // Also a planner admission holds (queued on its flight, as a node restarted meanwhile has lost its memory of it), in the order admission gives.
         foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null } && state.Legs(f.Code).Length == 0))

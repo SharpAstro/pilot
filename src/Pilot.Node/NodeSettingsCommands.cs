@@ -10,7 +10,7 @@ namespace Pilot.Node;
 /// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them, but for <c>set node maintenance
 /// on|off</c> (<see cref="NodeApp.MaintenanceSwitch"/>).
 /// </summary>
-public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles)
+public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles, Flights.AdmissionGate? slots = null)
 {
     // The checks run netsh and gh: a page looked at every few seconds runs them at most this often.
     private static readonly TimeSpan ChecksFor = TimeSpan.FromSeconds(10);
@@ -80,6 +80,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey)
         {
             roles.Apply(updated);
+            // The cap and the repo mode are one value for the fleet, held by the node that keeps the Opus count: a set here goes there too (one sent from there is not sent back).
+            var held = key is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey && command.Grant is null ? slots?.PushSetting(key, args[1..]) : null;
+            if (held is not null)
+            {
+                return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {held}");
+            }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
@@ -247,8 +253,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => ("On the LAN", "Listen on the LAN and announce it: anyone there may watch, a command needs a grant you allow", ["on", "off"]),
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
-        NodeSettings.OpusCapKey => ("Opus cap", "The most Opus sessions (workers, planners, fixers, reviewers; a role left to Claude Code's default counts) the fleet runs at once; a start past it waits for a slot. 0 for no cap", ["0", "2", "3", "4"]),
-        NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time; the others wait, those the rest depend on first. A flight marked priority goes ahead", ["on", "off"]),
+        NodeSettings.OpusCapKey => ("Opus cap", "The most Opus sessions (workers, planners, fixers, reviewers; a role left to Claude Code's default counts) the fleet runs at once; a start past it waits for a slot. 0 for no cap. One value for the fleet: held by the node that keeps the count, the lowest-named one this fleet reaches, and a set on any node is sent there", ["0", "2", "3", "4"]),
+        NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time, on any node of the fleet; the others wait, those the rest depend on first. A flight marked priority goes ahead. One value for the fleet: held by the node that keeps the Opus count (the lowest-named one this fleet reaches), and a set on any node is sent there", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
         NodeSettings.ShortcutTokenKey => ("Shortcut token", "The Shortcut API token that reads a story's title when a flight is made on one (sc-N); the SHORTCUT_API_TOKEN variable wins over it. Only whether it is set is shown", []),

@@ -134,7 +134,17 @@ public static class NodeApp
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
         builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
-        builder.Services.AddSingleton(services => new AdmissionGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<RoleModels>, options.Machine));
+        builder.Services.AddSingleton(services =>
+        {
+            var slots = new AdmissionGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<RoleModels>, options.Machine, services.GetRequiredService<TimeProvider>());
+            // The peers this node holds grants for count in admission; a setting the keeper of the count is sent is applied as this machine's own.
+            slots.Fleet.Fleet = services.GetRequiredService<FlightCommander>().Fleet;
+            slots.SettingApplier = args => services.GetRequiredService<NodeSettingsCommands>().Set(new CommandRequest
+            {
+                Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = args, Who = "fleet", Grant = "fleet",
+            }).Error;
+            return slots;
+        });
         builder.Services.AddSingleton(services =>
         {
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
@@ -419,7 +429,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -436,6 +446,10 @@ public static class NodeApp
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 Watchtower = watchtower.Health(),
+                OpusCap = models.OpusCap,
+                OneFlightPerRepo = models.OneFlightPerRepo,
+                CountedSessions = slots.Publish().Counted,
+                Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

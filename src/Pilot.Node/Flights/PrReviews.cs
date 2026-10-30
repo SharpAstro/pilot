@@ -47,7 +47,7 @@ public sealed class PrReviews(
     private bool WaitsForSlot(PrRef pr, bool fix, string? model, string? replacing = null)
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
-        if (Slots.Ask(fix ? AdmissionRole.Fixer : AdmissionRole.Reviewer, model, null, replacing is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { replacing }) is not AdmissionDecision.Wait wait)
+        if (Slots.Ask(fix ? AdmissionRole.Fixer : AdmissionRole.Reviewer, model, null, replacing is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { replacing }, subject: target) is not AdmissionDecision.Wait wait)
         {
             _queued.TryRemove(target, out _);
             if (_queuedSaid.TryRemove(target, out _))

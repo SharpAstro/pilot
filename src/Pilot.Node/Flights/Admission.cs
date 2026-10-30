@@ -55,7 +55,13 @@ public enum AdmissionRole
 }
 
 /// <summary>A session in the air anywhere in the fleet. A meta session (the watchtower, an assistant) is not counted.</summary>
-public sealed record FleetSession(string Node, string Label, string? Model, bool Meta = false);
+public sealed record FleetSession(string Node, string Label, string? Model, bool Meta = false)
+{
+    /// <summary>What names the session across nodes and across a claim and the session that follows it (<c>worker:PIL1</c>); the label when none is given.</summary>
+    public string Identity { get; init; } = "";
+
+    internal string Key => Identity.Length > 0 ? Node.ToUpperInvariant() + "/" + Identity : Node.ToUpperInvariant() + "/" + Label;
+}
 
 /// <summary>A flight another flight waits for: the node that flies it, its code, and what the wait is.</summary>
 public sealed record FlightWait(string Node, string Code, WaitKind Kind);
@@ -91,7 +97,8 @@ public sealed record AdmissionRequest(AdmissionRole Role, string? Model, string?
 public abstract record AdmissionDecision
 {
     /// <summary>It may start now.</summary>
-    public sealed record Admit : AdmissionDecision;
+    /// <param name="Note">What is worth saying of the start though it goes (<c>peers not counted: DE1 (unreachable)</c>); null when nothing.</param>
+    public sealed record Admit(string? Note = null) : AdmissionDecision;
 
     /// <summary>It waits, for <paramref name="Why"/>, and asks again later.</summary>
     public sealed record Wait(string Why) : AdmissionDecision;
@@ -136,9 +143,9 @@ public static class Admission
             }
         }
         if (IsOpus(request.Model) && input.OpusCap > 0
-            && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).ToArray() is { } opus && opus.Length >= input.OpusCap)
+            && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
         {
-            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => s.Label))}");
+            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}"))}");
         }
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }
