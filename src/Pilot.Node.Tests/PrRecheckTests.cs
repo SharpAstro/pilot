@@ -50,7 +50,7 @@ public sealed class PrRecheckTests : IDisposable
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };
-        _recheck = new PrRecheck(_state, _github, _reviews, catalog, TimeProvider.System, _legs) { Fleet = _fleet };
+        _recheck = new PrRecheck(_state, _github, _reviews, catalog, _legs) { Fleet = _fleet };
     }
 
     private readonly FlightCommander _flights;
@@ -78,9 +78,27 @@ public sealed class PrRecheckTests : IDisposable
         PrOrigins.Delete(_root);
     }
 
+    /// <summary>What the watch's search reads of acme/widget: PR 7, with the labels the fake gives it.</summary>
+    private PullRequestRow[] WatchRead() =>
+    [
+        new PullRequestRow
+        {
+            Repo = "acme/widget",
+            Number = 7,
+            Title = "PR 7",
+            Url = "https://github.com/acme/widget/pull/7",
+            Kind = PullRequestKind.Unknown,
+            Label = "Checking merge state",
+            Labels = [.. _github.Labels.GetValueOrDefault(7) ?? []],
+        },
+    ];
+
+    /// <summary>One read of the watch that answered for acme/widget.</summary>
+    private void Look() => _recheck.Looked(["acme/widget"], WatchRead());
+
     private async Task LookAsync()
     {
-        await _recheck.LookAsync(Ct);
+        Look();
         await _recheck.WhenIdleAsync();
     }
 
@@ -583,19 +601,19 @@ public sealed class PrRecheckTests : IDisposable
         _workers.Hold = gate.Task;
 
         // The first recheck waits on its worker's start.
-        await _recheck.LookAsync(Ct);
+        Look();
         await WaitFor(() => _state.PrReviews().Length == 0 && _workers.Hold is null);
         _workers.Started.ShouldBeEmpty();
 
         // The label still there at the next looks: no second run beside it.
-        await _recheck.LookAsync(Ct);
-        await _recheck.LookAsync(Ct);
+        Look();
+        Look();
 
         // Taken off and put back while it runs.
         _github.Labels[7].Clear();
-        await _recheck.LookAsync(Ct);
+        Look();
         _github.Labels[7].Add(PilotMarks.Recheck);
-        await _recheck.LookAsync(Ct);
+        Look();
         _workers.Started.ShouldBeEmpty();
 
         gate.SetResult();
@@ -624,6 +642,72 @@ public sealed class PrRecheckTests : IDisposable
         _workers.Started.ShouldHaveSingleItem();
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Handled().Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ARepoTheWatchDidNotReadKeepsWhatTheRecheckKnewOfItsLabels()
+    {
+        // Read and labelled: PR 7's recheck keeps the label (a peer holds it), and is not tried at each look.
+        _fleet.Peers.Add(new Peer("a.local:1") { Flights = [Flight("AA1", own: false)] });
+        await LookAsync();
+        _github.Labels[7].ShouldBe([PilotMarks.Recheck]);
+        _fleet.Peers.Clear();
+
+        // A look with the repo's batch failed or rate-limited (not among the repos read): the label is not seen gone, so
+        // seeing it again after is no new ask, and no recheck starts.
+        _recheck.Looked([], []);
+        await LookAsync();
+        _workers.Started.ShouldBeEmpty();
+
+        // Read again with the label gone, and put back: now it is a new ask.
+        _github.Labels[7].Clear();
+        await LookAsync();
+        _github.Labels[7].Add(PilotMarks.Recheck);
+        await LookAsync();
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AFlightsOwnPrReadWithTheLabelStartsTheRecheckAtOnceAndWithoutTheWatch()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Pending;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs) { Recheck = _recheck };
+
+        await checks.LookAsync(Ct);
+        await _recheck.WhenIdleAsync();
+
+        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_github.Pr!.Head)}: its checks are still running"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
+    }
+
+    [Fact]
+    public async Task AnIdleHourOfTheWatchWithTheRecheckListeningMakesFourSearchesAndNoLabelListing()
+    {
+        var time = new ManualClock(DateTimeOffset.Parse("2026-10-31T12:00:00Z"));
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.AddRange(WatchRead());
+        var catalogOptions = new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
+        var catalog = new RepoCatalog(_state, catalogOptions);
+        var watch = new PullRequestWatch(_state, catalog, github, time) { Interval = TimeSpan.FromMinutes(1), Idle = () => TimeSpan.FromMinutes(15) };
+        var recheck = new PrRecheck(_state, github, _reviews, catalog, _legs, watch);
+        var log = new StringWriter();
+        recheck.Error = log;
+
+        for (var i = 0; i < 4; i++)
+        {
+            await watch.RefreshAsync(Ct);
+        }
+
+        github.Searches.Count.ShouldBe(4);
+        github.OpenPrCalls.ShouldBe(0);
+        log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Count(l => l.Contains("0 GitHub calls")).ShouldBe(4);
+        await recheck.WhenIdleAsync();
+    }
+
+    private sealed class ManualClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private FlightRow Flight(string code, bool own, int number = 7) => new()

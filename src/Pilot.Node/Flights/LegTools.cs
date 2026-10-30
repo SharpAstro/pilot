@@ -380,10 +380,6 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken);
 
-    /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
-    /// <exception cref="FlightException">gh could not list them.</exception>
-    Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
-
     /// <summary>
     /// The open PRs of <paramref name="repos"/> (<c>owner/name</c>), from one paged GraphQL search for all of them, each with its
     /// merge state read (<see cref="PullRequestSearch"/>), and what the read cost; the flights are not known to it. The repos must
@@ -1257,17 +1253,6 @@ public sealed class GhCli : IGitHub
             throw new FlightException($"gh could not list the files of PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
-    }
-
-    public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)
-    {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--label", label, "--limit", "100", "--json", "number"], repoPath, cancellationToken);
-        if (exit != 0)
-        {
-            throw new FlightException($"gh could not list the PRs labelled {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
-        using var doc = JsonDocument.Parse(output);
-        return [.. doc.RootElement.EnumerateArray().Select(p => p.GetProperty("number").GetInt32())];
     }
 
     /// <summary>

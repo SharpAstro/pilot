@@ -111,13 +111,6 @@ internal sealed class FakeGitHub : IGitHub
             ? Task.FromException<string[]>(new FlightException($"gh could not list the files of PR #{number}: offline"))
             : Task.FromResult(PrFiles.TryGetValue(number, out var files) ? files : []);
 
-    public Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken) =>
-        OpenPrsFail.Contains(repoPath)
-            ? Task.FromException<int[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs)
-                ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
-                : []);
-
     /// <summary>Every open PR GitHub holds, as the search reads them: a search answers those of the repos it names.</summary>
     public List<PullRequestRow> PullRequestsOnGitHub { get; } = [];
 

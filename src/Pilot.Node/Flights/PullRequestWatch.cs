@@ -30,6 +30,9 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>Said after each read that asked GitHub: the repos that read answered (a repo whose batch failed or was stopped is not among them) and their open PRs, labels included. Listeners must not block.</summary>
+    public event Action<string[], PullRequestRow[]>? Looked;
+
     /// <summary>How long it waits between reads while a client shows the Pull requests page.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
@@ -252,6 +255,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 }
             }
             _limitedUntil = limitedUntil;
+            var fresh = prs.ToArray();
             // Not read this time (its batch failed, or the limit stopped it): what was read of it before stands, under the error or note.
             prs.AddRange(heldPrs.Where(p => !read.Contains(p.Repo)));
 
@@ -269,6 +273,14 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             await Error.WriteLineAsync($"pull request watch: read {row.PullRequests.Length} open PRs of {tracked.Length} repos in {searches.Length} searches, "
                 + $"{cost} GraphQL points{(remaining is { } left ? $", {left} left" : "")} ({why})");
             state.PutPullRequests(row);
+            try
+            {
+                Looked?.Invoke([.. read], fresh);
+            }
+            catch (Exception ex)
+            {
+                await Error.WriteLineAsync($"pull request watch: a listener of the read failed: {ex.Message}");
+            }
             return row;
         }
         finally

@@ -128,7 +128,12 @@ public static class NodeApp
             models.Applied += watch.PaceChanged;
             return watch;
         });
-        builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
+        // The recheck listens to the watch's reads: it is built before the watch can make its first.
+        builder.Services.AddHostedService(services =>
+        {
+            services.GetRequiredService<PrRecheck>();
+            return services.GetRequiredService<PullRequestWatch>();
+        });
         builder.Services.AddSingleton(services =>
         {
             var sync = ActivatorUtilities.CreateInstance<RepoSync>(services);
@@ -286,6 +291,7 @@ public static class NodeApp
         {
             var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
             checks.RerunFirst = true;
+            checks.Recheck = services.GetRequiredService<PrRecheck>();
             checks.Error = logWriter;
             return checks;
         });

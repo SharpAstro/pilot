@@ -13,6 +13,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The recheck, told of a flight's own PR as this reads it: the read shows its labels, so the label is seen at once and at no call of its own. Null for one built without.</summary>
+    public PrRecheck? Recheck { get; set; }
+
+    // The PR as read by branch carries its labels (gh's pr view): the recheck label on it starts the recheck now.
+    private void HandOver(FlightRow flight, PullRequest? pr)
+    {
+        if (Recheck is not null && pr is { Labels: { } labels } && pr.Number == flight.PullRequest && PrMarks.RepoOf(pr.Url) is { } repo)
+        {
+            Recheck.Noticed(repo, flight.RepoPath, pr.Number, labels.Contains(PilotMarks.Recheck, StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
     // A PR head the node has tried to rebase: tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
@@ -82,6 +94,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            HandOver(flight, pr);
             if (pr is { State: "CLOSED" } && pr.Number == flight.PullRequest)
             {
                 await ClosedUnmergedAsync(flight, pr.Number, cancellationToken);
