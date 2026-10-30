@@ -923,7 +923,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         else
         {
-            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told",
+            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told: its session refused the say ({LegCommander.OneLine(result.Error ?? "no reason given")})",
                 $"{how}; the say was refused: {result.Error}");
         }
     }

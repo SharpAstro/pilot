@@ -282,7 +282,7 @@ public sealed class PrReviews(
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
-                $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}", $"{ex.Message}. The review itself stands.", link: review.Url);
+                $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
 
@@ -302,7 +302,7 @@ public sealed class PrReviews(
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             state.CloseCardsAbout(subject, "refused again", PrMarks.RefusedKind);
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}",
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -327,7 +327,7 @@ public sealed class PrReviews(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}",
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -870,13 +870,13 @@ public sealed class PrReviews(
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}",
-                    ex.Message, link: review.Url);
+                state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
+                    $"{ex.Message}. The review itself stands.", link: review.Url);
             }
         }
-        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart",
+        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart and starting it again failed: {LegCommander.OneLine(why)}",
             $"{lost}, and starting it again failed: {why}",
-            [new CardChoice { Label = "Review again", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
+            [new CardChoice { Label = $"Start the review of {pr} afresh", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
             summary: $"The review of {pr} was running when the node restarted and could not be started again. Review again starts it afresh.");
     }
 
@@ -993,8 +993,8 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {ex.Message}" });
-            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}", ex.Message,
-                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {review.Head[..Math.Min(8, review.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
@@ -1091,7 +1091,8 @@ public sealed class PrReviews(
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer pushed, but its review could not start", $"{ex.Message}\npilot review {pr} tries again.", link: review.Url);
+                state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}\nThe push stands; the review has not started on it.",
+                    [new CardChoice { Label = $"Start the review of {pr} on the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
             }
             return;
         }
@@ -1200,8 +1201,8 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
-            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
-                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
 

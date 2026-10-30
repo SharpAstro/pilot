@@ -90,8 +90,8 @@ public sealed class NodeLan(NodeState state, NodeOptions options, TimeProvider t
         state.RaiseCard(CardBin.Ring, AskedKind, Verbs.NodeTarget, $"{label} asks to fly flights on this node",
             $"from the LAN; an Allow lets it run any command here as {label}/…, until revoked (pilot grants)",
             [
-                new CardChoice { Label = "Allow", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "allow"] },
-                new CardChoice { Label = "Deny", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "deny"] },
+                new CardChoice { Label = $"Allow {label} to run commands here until revoked", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "allow"] },
+                new CardChoice { Label = $"Refuse {label}", Verb = Verbs.AnswerGrant, Target = Verbs.NodeTarget, Args = [invite.Id, "deny"] },
             ]);
         return new GrantTicket { Id = invite.Id, Outcome = "pending" };
     }

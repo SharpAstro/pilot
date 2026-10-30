@@ -2858,6 +2858,29 @@ public sealed partial class LegCommander(
     public Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken) =>
         SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken, SendBackReason.ChecksFailed);
 
+    /// <summary>One line of a reason, cut at 80 characters: what a card title carries of a longer detail.</summary>
+    public static string OneLine(string text)
+    {
+        var line = text.Split('\n')[0].Trim().TrimEnd('.', ':', ';');
+        return line.Length > 80 ? line[..77].TrimEnd() + "..." : line;
+    }
+
+    /// <summary>The title of the card for a PR whose failed checks the node could not send back: the reason is in it.</summary>
+    public static string ChecksFailedTitle(string code, int number, string? failedName, string why) =>
+        $"{code}'s PR #{number} fails {(failedName is { Length: > 0 } ? $"check {failedName}" : "its checks")} and the leg could not be sent back: {OneLine(why)}";
+
+    /// <summary>What the node tried for a PR whose failed checks it could not send back, and what each choice does.</summary>
+    public string ChecksFailedSummary(string code, int number, string why, IReadOnlyList<CardChoice> choices) =>
+        $"The PR #{number} of {code} fails its checks; the node tried to send the last leg back and could not ({OneLine(why)})." +
+        (choices.Count > 0 ? $" {choices[0].Label} starts a fresh worker told what failed." : " Fix them by hand, then dismiss this.");
+
+    /// <summary>The choice that sends the flight's last leg round on a PR's failed checks, as the card's one action.</summary>
+    public IReadOnlyList<CardChoice> ChecksFailedChoices(string code, string head, int number) =>
+        state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last
+            ? [new CardChoice { Label = Models.RedoLabel(last, "left the PR's checks failing"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
+                Args = [$"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
+            : [];
+
     /// <summary>
     /// A flight whose base merge conflicts goes to the watchtower, not to a fresh worker: a ring card names the conflict and the plane,
     /// and the watchtower merges the base in there, resolves it, reruns the check and pushes plain. Its Resolve the conflict choice is for the

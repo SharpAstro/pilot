@@ -146,7 +146,7 @@ public sealed class NodeState
             }
 
             Error.WriteLine($"store: a snapshot could not be written, the journal is kept whole: {error.GetType().Name}: {error.Message}");
-            RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, "The store could not write its snapshot",
+            RaiseCard(CardBin.ForYou, StoreCardKind, StoreCardSubject, $"The store could not write its snapshot: {error.Message.Split('\n')[0].Trim()}",
                 $"{error.GetType().Name}: {error.Message}. Every change is still journaled and a restart loses nothing; the node tries again later.");
         }
         catch (Exception e)
