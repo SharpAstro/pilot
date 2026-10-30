@@ -196,6 +196,17 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
                 state.PutIdeas(repo.Name, ideas);
             }
 
+            // Beside it, the repo's open milestones and open issues (the ones with no milestone too), each read on its own, so one that
+            // fails leaves its own rows as they were.
+            if (await Ref("milestones", async () => await github.MilestonesAsync(repo.Path, cancellationToken)) is { } openMilestones)
+            {
+                state.PutMilestones(repo.Name, IssueRows.OfMilestones(repo.Name, openMilestones));
+            }
+            if (await Ref("open issues with their milestones", async () => await github.OpenMilestoneIssuesAsync(repo.Path, cancellationToken)) is { } openIssues)
+            {
+                state.PutIssues(repo.Name, IssueRows.OfIssues(repo.Name, openIssues, allFlights, now));
+            }
+
             var listed = await Ref("open PRs", async () => await github.OpenPullRequestsAsync(repo.Path, cancellationToken));
             prs.AddRange((listed ?? []).Select(p => p with { Flight = flights.FirstOrDefault(f => f.Branch == p.Head)?.Code }));
 

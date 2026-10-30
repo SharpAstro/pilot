@@ -15,6 +15,12 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
     /// <summary>The flights, so a planned idea's id leads to its flight.</summary>
     public IReadOnlyList<FlightRow> Flights { get; init; } = [];
 
+    /// <summary>The open milestones of every repo the node reads, the Ideas milestone among them.</summary>
+    public IReadOnlyList<MilestoneRow> Milestones { get; init; } = [];
+
+    /// <summary>The open issues of every repo, in a milestone or in none; an idea's issue is one of them, and carries its readiness.</summary>
+    public IReadOnlyList<IssueRow> Issues { get; init; } = [];
+
     /// <summary>The ideas moved to another repo: an old id keeps resolving.</summary>
     public IReadOnlyList<IdeaMoveRow> Moves { get; init; } = [];
 
@@ -29,7 +35,7 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
 }
 
 /// <summary>What the node said to an idea verb, as the page needs it.</summary>
-internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null);
+internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null, ReadinessResult? Readiness = null, MilestoneSuggestions? Suggestions = null);
 
 /// <summary>
 /// The Ideas page: a box to note an idea in one line (Claude picks the repo, so there is no picker), the ideas newest first with
@@ -37,7 +43,7 @@ internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = nu
 /// folded below. A question the node asked (a repo choice, an edit that contradicts GitHub) shows inline with its choices.
 /// Every button is a verb on the node, sent through <see cref="Send"/>. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "ideas";
 
@@ -599,6 +605,8 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         Palette.Use(Night);
         BeginFrame();
+        _pageHeight = bounds.Height;
+        PageWidth = Scale.ToDesignX(bounds.Width);
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
@@ -731,7 +739,14 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
 
         var ideas = IdeaIds.Order(screen.Ideas).ToList();
-        var noted = ideas.Where(i => i.State == IdeaState.Noted).ToList();
+        var board = _board = IdeasBoard.Build(screen);
+        Prune(board);
+        // The selected row is one the board still holds: one the node's read moved away or closed is no longer selected.
+        if (_selected is { } picked && board.Find(picked) is null)
+        {
+            _selected = null;
+        }
+        var noted = board.Unsorted.Items;
         var folded = ideas.Where(i => i.State != IdeaState.Noted).ToList();
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
@@ -740,53 +755,120 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
+            Buttons = [ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            {
+                ViewMode = mode;
+                Changed?.Invoke();
+            }, P)],
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(null, null, Autopilot, About, Night));
 
-        var rows = new List<Layout.Node>();
+        // What every view starts with: the box that notes an idea, what was said, the questions the node asked.
+        var head = new List<Layout.Node>();
         if (Send is not null)
         {
-            rows.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
+            head.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
             // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
             var working = Working && _noting.IsEmpty;
             var hint = Hint(NoteInput, working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo" + (Upload is null ? "" : " · Ctrl+V pastes an image"), out var hintColor);
-            rows.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
+            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
         }
         if (_said.Length > 0)
         {
-            rows.Add(WrappedProse.Of(_said, 13f, _saidRefusal ? P.Failed : P.Body).Pad(0f, 2f));
+            head.Add(WrappedProse.Of(_said, 13f, _saidRefusal ? P.Failed : P.Body).Pad(0f, 2f));
         }
         foreach (var ask in screen.Asks.Where(IdeasScreen.IsAsk))
         {
-            rows.Add(Ask(ask));
+            head.Add(Ask(ask));
         }
         var ideating = Volatile.Read(ref _noting);
-        rows.AddRange(ideating.Reverse().Select(Ideating));
-        if (noted.Count == 0 && ideating.IsEmpty)
-        {
-            rows.Add(WrappedProse.Of(ideas.Count == 0
-                ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
-                : "Nothing is waiting: every idea is planned or dropped.", 13f, P.Dim).Pad(0f, 8f));
-        }
-        rows.AddRange(noted.Select(Row));
-        if (folded.Count > 0)
-        {
-            rows.Add(CardsView<TSurface>.Pill($"{(ShowFolded ? "▾" : "▸")} Planned and dropped ({folded.Count})", "ideas:folded", () =>
-            {
-                ShowFolded = !ShowFolded;
-                Changed?.Invoke();
-            }, Tint, P.Body));
-            if (ShowFolded)
-            {
-                rows.AddRange(folded.Select(Folded));
-            }
-        }
+        var empty = UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
+        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
 
-        var list = Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(_scroll).Stretch();
-        var body = Layout.Builder.VStack(list.HStar()).Pad(Gutter, 8f).Stretch();
+        Layout.Node body;
+        switch (ViewMode)
+        {
+            case IdeasViewMode.Canvas:
+                body = CanvasBody(head, ideating, empty, shown, folded);
+                break;
+            case IdeasViewMode.Tree:
+                body = TreeBody(head, ideating, empty, shown, folded);
+                break;
+            default:
+                body = ListBody(head, ideating, empty, shown, folded);
+                break;
+        }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
+
+    // What the pinned section says while it holds nothing, or null once it holds something.
+    private Layout.Node? UnsortedEmpty(int ideas, int noted, bool ideating) =>
+        noted > 0 || ideating
+            ? null
+            : WrappedProse.Of(ideas == 0
+                ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
+                : "Nothing is waiting: every idea is planned or dropped.", 13f, P.Dim).Pad(0f, 8f);
+
+    // The planned and dropped ideas, folded below every view: the pill that opens them, and them once it has.
+    private IEnumerable<Layout.Node> FoldedRows(List<IdeaRow> folded)
+    {
+        if (folded.Count == 0)
+        {
+            yield break;
+        }
+        yield return CardsView<TSurface>.Pill($"{(ShowFolded ? "▾" : "▸")} Planned and dropped ({folded.Count})", "ideas:folded", () =>
+        {
+            ShowFolded = !ShowFolded;
+            Changed?.Invoke();
+        }, Tint, P.Body);
+        if (ShowFolded)
+        {
+            foreach (var idea in folded)
+            {
+                yield return Folded(idea);
+            }
+        }
+    }
+
+    // The list: the pinned section over a handle, under it No milestone and every milestone, then the planned and dropped.
+    private Layout.Node ListBody(List<Layout.Node> head, System.Collections.Immutable.ImmutableList<string> ideating, Layout.Node? empty, List<BoardSection> shown, List<IdeaRow> folded)
+    {
+        var board = _board;
+        var rows = new List<Layout.Node>(head);
+        rows.AddRange(SectionHead(board.Unsorted, collapsible: false, target: false, hint: true));
+        rows.AddRange(ideating.Reverse().Select(Ideating));
+        if (empty is not null)
+        {
+            rows.Add(empty);
+        }
+        rows.AddRange(board.Unsorted.Items.Select(item => ItemRow(item, board.Unsorted)));
+
+        // Under the handle: No milestone, then every milestone, then the planned and dropped.
+        var below = new List<Layout.Node>();
+        foreach (var section in shown)
+        {
+            below.AddRange(SectionHead(section, collapsible: true, target: true, hint: true));
+            if (!_collapsed.Contains(section.Key))
+            {
+                below.AddRange(section.Items.Select(item => ItemRow(item, section)));
+            }
+        }
+        below.AddRange(FoldedRows(folded));
+
+        var first = Pane(rows, _scroll);
+        return below.Count == 0
+            ? first
+            : Layout.Builder.Split(first, Pane(below, _boardScroll), resize =>
+            {
+                _splitExtent = resize.FirstExtent;
+                Changed?.Invoke();
+            }, Layout.Axis.Vertical, _splitExtent ?? DefaultSplit, SplitThickness, SplitGrab, new HitResult.ButtonHit(SplitHit), P.Faint).Stretch();
+    }
+
+    // One of the two panes: its rows, scrolled by its own controller, inside the page's gutters.
+    private Layout.Node Pane(List<Layout.Node> rows, ListScrollController scroll) =>
+        Layout.Builder.VStack(Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(scroll).Stretch().HStar()).Pad(Gutter, 8f).Stretch();
 
     private async Task CommitRowAsync(string text)
     {
@@ -928,39 +1010,6 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             return text.ToString();
         }
-    }
-
-    private Layout.Node Row(IdeaRow idea)
-    {
-        var key = KeyOf(idea);
-        var parts = new List<Layout.Node> { Header(idea) };
-        if (Meta(idea) is { Length: > 0 } meta)
-        {
-            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).RowH(16f));
-        }
-        if (idea.Body.Trim().Length > 0)
-        {
-            parts.Add(BodyOf(idea).WStar());
-        }
-        if (idea.Images.Length > 0 && Gallery.Section($"idea:{key}", CopiesOf(idea)) is { } images)
-        {
-            parts.Add(images);
-        }
-        var buttons = new List<Layout.Node>
-        {
-            ActionPill("Plan", idea, Mode.Plan),
-            ActionPill("Drop", idea, Mode.Drop),
-            ActionPill("Edit", idea, Mode.Edit),
-            ActionPill("Tidy", idea, Mode.Tidy),
-            ActionPill("Move to repo…", idea, Mode.Move),
-            OpenPill(idea),
-        };
-        parts.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
-        if (_open is { } open && open.Key == key)
-        {
-            parts.AddRange(OpenRows(idea, open.Mode));
-        }
-        return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(10f, 8f).Bg(P.RowAltBg).WStar().HAuto();
     }
 
     private Layout.Node ActionPill(string label, IdeaRow idea, Mode mode) =>

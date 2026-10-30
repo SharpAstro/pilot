@@ -3,8 +3,8 @@ using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
-/// <summary>A milestone of a repo on GitHub: its number, its title and when it is due, when it is.</summary>
-public sealed record Milestone(int Number, string Title, DateTimeOffset? DueOn = null, string Description = "", int OpenIssues = 0);
+/// <summary>A milestone of a repo on GitHub: its number, its title and when it is due, when it is, and how many of its issues are open and closed.</summary>
+public sealed record Milestone(int Number, string Title, DateTimeOffset? DueOn = null, string Description = "", int OpenIssues = 0, int ClosedIssues = 0);
 
 /// <summary>An issue as GitHub has it: what an idea is read from, and what planning it checks first.</summary>
 /// <param name="Open">Open; false for a closed one.</param>
@@ -86,7 +86,8 @@ public static class IdeaRows
 /// (made on the first one), id <c>I&lt;issue number&gt;</c>. Each verb checks the issue as GitHub has it now, never as the node
 /// last read it, and leaves the node's rows as GitHub then has them.
 /// </summary>
-public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null)
+public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null,
+    IIssueReadinessChecker? readiness = null, IMilestoneSuggester? suggester = null)
 {
     // Two plans of one idea must not both make a flight.
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -128,16 +129,22 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         return IdeaImages.ReplaceMarkers(body, (alt, id, _) => $"![{alt}]({filed[id]})");
     }
 
-    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone;
+    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone
+        or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        // Proposing writes nothing, so it must not queue behind (or hold up) the verbs that do: it runs Claude for minutes.
-        if (command.Verb == Verbs.ProposeMilestone)
+        // Proposing, checking and suggesting write nothing to GitHub, so they must not queue behind (or hold up) the verbs that do: they run Claude for minutes.
+        if (command.Verb is Verbs.ProposeMilestone or Verbs.CheckReady or Verbs.SuggestMilestones)
         {
             try
             {
-                return await ProposeAsync(command, cancellationToken);
+                return command.Verb switch
+                {
+                    Verbs.CheckReady => await CheckReadyAsync(command, cancellationToken),
+                    Verbs.SuggestMilestones => await SuggestMilestonesAsync(command, cancellationToken),
+                    _ => await ProposeAsync(command, cancellationToken),
+                };
             }
             catch (FlightException ex)
             {
@@ -155,6 +162,8 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
                 Verbs.TidyIdea => await TidyAsync(command, cancellationToken),
                 Verbs.MoveIdea => await MoveAsync(command, cancellationToken),
                 Verbs.FoldIdea => await FoldAsync(command, cancellationToken),
+                Verbs.SetMilestone => await SetMilestoneAsync(command, cancellationToken),
+                Verbs.AcceptMilestones => await AcceptMilestonesAsync(command, cancellationToken),
                 _ => await DropAsync(command, cancellationToken),
             };
         }
@@ -602,6 +611,104 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
         }
         await RefreshAsync(name, path, cancellationToken);
         return state.Complete(command, null, way: made.Way, made: code);
+    }
+
+    /// <summary>Reads the repo's open milestones and open issues afresh into the node's rows; a read gh cannot make leaves its rows as they were.</summary>
+    private async Task RefreshBoardAsync(string name, string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            state.PutMilestones(name, IssueRows.OfMilestones(name, await github.MilestonesAsync(path, cancellationToken)));
+        }
+        catch (FlightException)
+        {
+            // What was done on GitHub stands; the next look at the repo reads the rest.
+        }
+        try
+        {
+            state.PutIssues(name, IssueRows.OfIssues(name, await github.OpenMilestoneIssuesAsync(path, cancellationToken), state.Flights(), time.GetUtcNow()));
+        }
+        catch (FlightException)
+        {
+        }
+        await RefreshAsync(name, path, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>set-milestone issue/&lt;repo&gt;/#&lt;n&gt; &lt;milestone or none&gt; [&lt;updated_at&gt;]</c>: the open issue put in an open milestone, or in none. The
+    /// milestone must be open (refused otherwise, naming the open ones); the <c>updated_at</c> the caller saw, when it gives one, must still be
+    /// GitHub's, and the write is guarded on the <c>updated_at</c> read just before it, read again when GitHub moves in between.
+    /// </summary>
+    private async Task<CommandResult> SetMilestoneAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var (given, number) = IssueIds.ReadTarget(command.Target)
+            ?? throw new FlightException($"{command.Verb} takes an issue target, {Verbs.IssueTargetPrefix}<repo>/#<issue number>, not {command.Target}");
+        var args = command.Args ?? [];
+        var wanted = args.Length > 0 ? args[0].Trim() : "";
+        if (wanted.Length == 0)
+        {
+            throw new FlightException($"set-milestone needs the milestone to put the issue in, or {Verbs.NoMilestone} to take it out of every milestone");
+        }
+        DateTimeOffset? seen = null;
+        if (args.Length > 1)
+        {
+            seen = DateTimeOffset.TryParse(args[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed
+                : throw new FlightException("set-milestone takes the updated_at the caller saw as its second argument (ISO 8601)");
+        }
+        var (name, path) = await RepoOfAsync(given, cancellationToken);
+        var open = await github.MilestonesAsync(path, cancellationToken);
+        string? target = null;
+        if (!string.Equals(wanted, Verbs.NoMilestone, StringComparison.OrdinalIgnoreCase))
+        {
+            target = open.FirstOrDefault(m => string.Equals(m.Title, wanted, StringComparison.OrdinalIgnoreCase))?.Title
+                ?? throw new FlightException($"{name} has no open milestone {wanted} ({(open.Length > 0 ? $"it has {string.Join(", ", open.Select(m => m.Title))}" : "it has no open milestone")})");
+        }
+        await MoveToMilestoneAsync(name, path, number, target, seen, refresh: true, cancellationToken);
+        return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// The guarded move <see cref="SetMilestoneAsync"/> and <see cref="AcceptMilestonesAsync"/> share: open issue <paramref name="number"/> put in the
+    /// milestone titled <paramref name="target"/> (null: none), which must exist already. Refused when the issue is closed, when it changed since
+    /// <paramref name="seen"/>, or when it kept changing under the write. The board is read again after it unless the caller does that once for many.
+    /// </summary>
+    private async Task MoveToMilestoneAsync(string name, string path, int number, string? target, DateTimeOffset? seen, bool refresh, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < Attempts; attempt++)
+        {
+            var now = await github.IssueNowAsync(path, number, cancellationToken)
+                ?? throw new FlightException($"{name} has no issue #{number}");
+            if (!now.Open)
+            {
+                throw new FlightException($"#{number} of {name} is closed, so it is not moved to a milestone");
+            }
+            if (seen is { } was && now.UpdatedAt != was)
+            {
+                await RefreshBoardAsync(name, path, cancellationToken);
+                throw new FlightException($"#{number} of {name} changed on GitHub since you saw it ({was:O}, now {now.UpdatedAt:O}), so it is not moved: look at it again");
+            }
+            if (string.Equals(now.Milestone, target, StringComparison.OrdinalIgnoreCase))
+            {
+                // Already where it was asked to go: nothing to write.
+                if (refresh)
+                {
+                    await RefreshBoardAsync(name, path, cancellationToken);
+                }
+                return;
+            }
+            if (await github.SetIssueMilestoneAsync(path, number, target, now.UpdatedAt, cancellationToken))
+            {
+                if (refresh)
+                {
+                    await RefreshBoardAsync(name, path, cancellationToken);
+                }
+                return;
+            }
+            // GitHub moved on between the read and the write: read it again, and compare again (with what the caller saw too).
+        }
+        await RefreshBoardAsync(name, path, cancellationToken);
+        throw new FlightException($"#{number} of {name} kept changing on GitHub while it was moved: nothing is moved, try again");
     }
 
     /// <summary>

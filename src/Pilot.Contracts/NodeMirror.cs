@@ -69,6 +69,16 @@ public sealed class NodeMirror
     /// <summary>The ideas of every repo the node reads, newest first.</summary>
     public IReadOnlyList<IdeaRow> Ideas => _ideas;
 
+    private MilestoneRow[] _milestones = [];
+
+    private IssueRow[] _issues = [];
+
+    /// <summary>The open milestones of every repo the node reads ideas for.</summary>
+    public IReadOnlyList<MilestoneRow> Milestones => _milestones;
+
+    /// <summary>The open issues of those repos, in a milestone or in none.</summary>
+    public IReadOnlyList<IssueRow> Issues => _issues;
+
     /// <summary>How many of <see cref="Ideas"/> are noted.</summary>
     public int NotedIdeas => _ideas.Count(i => i.State == IdeaState.Noted);
 
@@ -128,6 +138,8 @@ public sealed class NodeMirror
             }
             _ideas = snapshot.Ideas;
             _ideaMoves = snapshot.IdeaMoves;
+            _milestones = snapshot.Milestones;
+            _issues = snapshot.Issues;
             _summaries.Clear();
             foreach (var summary in snapshot.Summaries ?? [])
             {
@@ -208,6 +220,12 @@ public sealed class NodeMirror
                 break;
             case IdeaMovedEvent moved:
                 _ideaMoves = [.. _ideaMoves, moved.Move];
+                break;
+            case MilestonesChangedEvent milestones:
+                _milestones = milestones.Milestones;
+                break;
+            case IssuesChangedEvent issues:
+                _issues = issues.Issues;
                 break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;
