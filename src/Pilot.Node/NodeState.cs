@@ -54,8 +54,15 @@ public sealed class NodeState
     private MachineRow? _machine;
     private AdmissionRow? _admission;
     private PullRequestsRow? _pullRequests;
+    private ReposRow? _repos;
+    private NodeRow? _node;
+    private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
+    private IdeaRow[] _ideas = [];
+    private IdeaMoveRow[] _ideaMoves = [];
+    private MilestoneRow[] _milestones = [];
+    private IssueRow[] _issues = [];
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
@@ -81,6 +88,13 @@ public sealed class NodeState
             ApplyToState(delta);
             _seq = delta.Seq;
             Hold(delta.Seq, Serialize(delta));
+        }
+        // A check a finish was rerunning died with the node that ran it (a bare process of that node, not a job): no leg comes
+        // back from a restart still rechecking. Turned here, in memory, into an outcome saying so, which the leg watch tells the
+        // worker (it was left waiting on the answer), so what the journal holds is never read as running.
+        foreach (var key in _legs.Where(l => l.Value.Recheck is { Outcome: null }).Select(l => l.Key).ToList())
+        {
+            _legs[key] = _legs[key] with { Recheck = _legs[key].Recheck! with { Outcome = LegRecheck.RestartedOutcome(_legs[key].Recheck!.Check) } };
         }
 
         journal.SnapshotOutcome += OnSnapshotOutcome;
@@ -516,7 +530,8 @@ public sealed class NodeState
 
     // Record equality compares the connections, peer connections, overlaps, folded-in and package-wait arrays by reference.
     private static bool Same(FlightRow a, FlightRow b) =>
-        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [] }
+        a with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [], OtherSubTasks = null } == b with { Connections = [], PeerConnections = [], Overlaps = [], FoldedIn = [], PackageWaits = [], OtherSubTasks = null }
+        && (a.OtherSubTasks ?? []).SequenceEqual(b.OtherSubTasks ?? []) && (a.OtherSubTasks is null) == (b.OtherSubTasks is null)
         && a.Connections.SequenceEqual(b.Connections, StringComparer.Ordinal) && a.PeerConnections.SequenceEqual(b.PeerConnections) && a.Overlaps.SequenceEqual(b.Overlaps) && a.FoldedIn.SequenceEqual(b.FoldedIn)
         && a.PackageWaits.SequenceEqual(b.PackageWaits);
 
@@ -557,6 +572,90 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The merge queue's entries, oldest first (the order of every repo's queue).</summary>
+    public MergeRow[] Merges()
+    {
+        lock (_gate)
+        {
+            return [.. _merges.Values.OrderBy(m => m.AddedAt).ThenBy(m => m.Flight, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>Puts a merge entry: added when new, changed when it differs, nothing when it is the same.</summary>
+    public void PutMerge(MergeRow merge)
+    {
+        lock (_gate)
+        {
+            if (_merges.TryGetValue(merge.Flight, out var held))
+            {
+                if (held != merge)
+                {
+                    Publish(new MergeChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Merge = merge });
+                }
+            }
+            else
+            {
+                Publish(new MergeAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Merge = merge });
+            }
+        }
+    }
+
+    /// <summary>Ends a flight's open merge entry (merged, or dropped with <paramref name="why"/>), and renumbers its repo's queue; nothing when it has none open.</summary>
+    public void EndMerge(string flight, MergeEntryState to, string? why)
+    {
+        lock (_gate)
+        {
+            if (_merges.TryGetValue(flight, out var held) && held.Open)
+            {
+                PutMerge(held with { State = to, Why = why, Place = null, ChangedAt = _time.GetUtcNow() });
+                Renumber(held.Repo);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ends a flight's merge entry as merged whatever state it stands in, one already dropped included: its PR merged, and a look or a
+    /// refused merge that dropped it just before is not the last word. Nothing when it has none, or it is merged already.
+    /// </summary>
+    public void EndMergeAsMerged(string flight, string? why)
+    {
+        lock (_gate)
+        {
+            if (_merges.TryGetValue(flight, out var held) && held.State != MergeEntryState.Merged)
+            {
+                PutMerge(held with { State = MergeEntryState.Merged, Why = why, Place = null, AwaitsReview = false, ChangedAt = _time.GetUtcNow() });
+                Renumber(held.Repo);
+            }
+        }
+    }
+
+    /// <summary>Sets every open entry of <paramref name="repo"/>'s place: 1 for the one that joined first.</summary>
+    public void Renumber(string repo)
+    {
+        lock (_gate)
+        {
+            var place = 0;
+            foreach (var entry in _merges.Values.Where(m => m.Repo == repo && m.Open).OrderBy(m => m.AddedAt).ThenBy(m => m.Flight, StringComparer.Ordinal).ToList())
+            {
+                place++;
+                PutMerge(entry with { Place = place });
+            }
+        }
+    }
+
+    /// <summary>Takes a flight's merge entry out of the queue; nothing happens when there is none.</summary>
+    public void RemoveMerge(string flight)
+    {
+        lock (_gate)
+        {
+            if (_merges.TryGetValue(flight, out var held))
+            {
+                Publish(new MergeRemovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight });
+                Renumber(held.Repo);
+            }
+        }
+    }
+
     /// <summary>The PR reviews, newest start first.</summary>
     public PrReviewRow[] PrReviews()
     {
@@ -585,12 +684,153 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The ideas of every repo the node reads, newest first.</summary>
+    public IdeaRow[] Ideas()
+    {
+        lock (_gate)
+        {
+            return _ideas;
+        }
+    }
+
+    /// <summary>Every idea moved to another repo, oldest first: an old id finds the new one through <see cref="IdeaIds.Follow"/>.</summary>
+    public IdeaMoveRow[] IdeaMoves()
+    {
+        lock (_gate)
+        {
+            return _ideaMoves;
+        }
+    }
+
+    /// <summary>Remembers that an idea was moved, so its old id keeps resolving; a move already remembered is no delta.</summary>
+    public void PutIdeaMove(IdeaMoveRow move)
+    {
+        lock (_gate)
+        {
+            if (!_ideaMoves.Contains(move))
+            {
+                Publish(new IdeaMovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Move = move });
+            }
+        }
+    }
+
+    /// <summary>The open milestones of every repo the node reads, the earliest due first within a repo.</summary>
+    public MilestoneRow[] Milestones()
+    {
+        lock (_gate)
+        {
+            return _milestones;
+        }
+    }
+
+    /// <summary>The open issues of every repo the node reads, in a milestone or in none, the newest change first.</summary>
+    public IssueRow[] Issues()
+    {
+        lock (_gate)
+        {
+            return _issues;
+        }
+    }
+
+    /// <summary>
+    /// Puts the open milestones of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the milestones when they differ, nothing when they are the same.
+    /// </summary>
+    public void PutMilestones(string repo, IEnumerable<MilestoneRow> read)
+    {
+        lock (_gate)
+        {
+            var next = IssueIds.OrderMilestones([.. _milestones.Where(m => !string.Equals(m.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]).ToArray();
+            if (!next.SequenceEqual(_milestones))
+            {
+                Publish(new MilestonesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Milestones = next });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts the open issues of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the issues when they differ, nothing when they are the same. A row read keeps the readiness the issue's row had
+    /// (<see cref="PutReadiness"/>): GitHub does not know it, so a read never takes it away.
+    /// </summary>
+    public void PutIssues(string repo, IEnumerable<IssueRow> read)
+    {
+        lock (_gate)
+        {
+            var kept = _issues.Where(i => i.Readiness is not null && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)).ToDictionary(i => i.Number, i => i.Readiness);
+            var next = IssueIds.OrderIssues([.. _issues.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)),
+                .. read.Select(i => i.Readiness is null && kept.TryGetValue(i.Number, out var readiness) ? i with { Readiness = readiness } : i)]).ToArray();
+            // Age moves with the clock alone: a read that changes nothing else is no delta.
+            if (next.Length != _issues.Length || next.Zip(_issues).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
+            {
+                Publish(new IssuesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Issues = next });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="readiness"/> on the row of issue <paramref name="number"/> of <paramref name="repo"/> (a delta); false when the node has
+    /// no row for it. The answer lives on the row, so it goes when the issue leaves the open ones.
+    /// </summary>
+    public bool PutReadiness(string repo, int number, IssueReadiness readiness)
+    {
+        lock (_gate)
+        {
+            var at = Array.FindIndex(_issues, i => i.Number == number && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase));
+            if (at < 0)
+            {
+                return false;
+            }
+            if (_issues[at].Readiness != readiness)
+            {
+                var next = (IssueRow[])_issues.Clone();
+                next[at] = next[at] with { Readiness = readiness };
+                Publish(new IssuesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Issues = next });
+            }
+            return true;
+        }
+    }
+
     /// <summary>The summaries made, one per scope: the fleet's first, then each flight's by code.</summary>
     public SummaryRow[] Summaries()
     {
         lock (_gate)
         {
             return [.. _summaries.Values.OrderBy(s => s.Scope != SummaryRow.FleetScope).ThenBy(s => s.Scope, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Puts the ideas of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the ideas when they differ, nothing when they are the same.
+    /// </summary>
+    public void PutIdeas(string repo, IEnumerable<IdeaRow> read)
+    {
+        lock (_gate)
+        {
+            PutIdeasLocked([.. _ideas.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]);
+        }
+    }
+
+    /// <summary>
+    /// Puts the ideas of every repo read at once: the repos named in <paramref name="repos"/> take the rows of <paramref name="read"/>
+    /// (so an idea gone from GitHub goes), every other repo's rows stay.
+    /// </summary>
+    public void PutIdeas(IReadOnlyCollection<string> repos, IEnumerable<IdeaRow> read)
+    {
+        lock (_gate)
+        {
+            PutIdeasLocked([.. _ideas.Where(i => !repos.Contains(i.Repo, StringComparer.OrdinalIgnoreCase)), .. read]);
+        }
+    }
+
+    private void PutIdeasLocked(IEnumerable<IdeaRow> all)
+    {
+        var next = IdeaIds.Order(all).ToArray();
+        // Age moves with the clock alone: a read that changes nothing else is no delta.
+        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [] } != pair.Second with { Age = "", Images = [] }))
+        {
+            Publish(new IdeasChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Ideas = next });
         }
     }
 
@@ -691,6 +931,37 @@ public sealed class NodeState
         }
     }
 
+    // Compared as written, read times aside: a status holds arrays (worktrees, PRs, ideas), which a record compares by reference.
+    private static bool SameRepos(ReposRow held, ReposRow read) =>
+        held.Repos.Length == read.Repos.Length
+        && held.Repos.Zip(read.Repos).All(pair => System.Text.Json.JsonSerializer.Serialize(pair.First with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus)
+            == System.Text.Json.JsonSerializer.Serialize(pair.Second with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus));
+
+    /// <summary>What the node last said it is (<see cref="NodeRow"/>); null before any.</summary>
+    public NodeRow? Node()
+    {
+        lock (_gate)
+        {
+            return _node;
+        }
+    }
+
+    /// <summary>
+    /// Puts what the node says it is when it differs meaningfully (<see cref="NodeRow.Differs"/>): the watchtower's clock-driven
+    /// figures alone would otherwise put a delta each tick and fill the journal.
+    /// </summary>
+    public void PutNode(NodeRow said)
+    {
+        lock (_gate)
+        {
+            if (_node is { } held && !NodeRow.Differs(held, said))
+            {
+                return;
+            }
+            Publish(new NodeChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = said });
+        }
+    }
+
     /// <summary>
     /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
     /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
@@ -706,6 +977,38 @@ public sealed class NodeState
                 return;
             }
             Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+
+    /// <summary>Where every repo the node knows stands as last read, or marked not read yet; null before any.</summary>
+    public ReposRow? Repos()
+    {
+        lock (_gate)
+        {
+            return _repos;
+        }
+    }
+
+    /// <summary>
+    /// Puts the repos read, when their statuses differ from those held (their own read times aside), or when the held read is 2
+    /// minutes old: a read every few minutes that finds nothing new would fill the journal with a row of every repo, yet a
+    /// client dates the row by its read, so the read time is renewed well within that.
+    /// </summary>
+    public void PutRepos(ReposRow read)
+    {
+        lock (_gate)
+        {
+            // A node that knows no repos and has said nothing has nothing to say.
+            if (_repos is null && read.Repos.Length == 0)
+            {
+                return;
+            }
+            if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
+                && SameRepos(held, read))
+            {
+                return;
+            }
+            Publish(new ReposChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
         }
     }
 
@@ -759,15 +1062,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
     {
         var result = new CommandResult
         {
@@ -780,6 +1083,10 @@ public sealed class NodeState
             SessionId = error is null ? sessionId : null,
             Made = error is null ? made : null,
             Setting = error is null ? setting : null,
+            Tidy = error is null ? tidy : null,
+            Milestones = error is null ? milestones : null,
+            Readiness = error is null ? readiness : null,
+            Suggestions = error is null ? suggestions : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,
@@ -900,17 +1207,44 @@ public sealed class NodeState
             case PullRequestsChangedEvent pullRequests:
                 _pullRequests = pullRequests.Row;
                 break;
+            case ReposChangedEvent repos:
+                _repos = repos.Row;
+                break;
+            case NodeChangedEvent node:
+                _node = node.Row;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
             case JobChangedEvent changed:
                 _jobs[changed.Job.Id] = changed.Job;
                 break;
+            case MergeAddedEvent added:
+                _merges[added.Merge.Flight] = added.Merge;
+                break;
+            case MergeChangedEvent changed:
+                _merges[changed.Merge.Flight] = changed.Merge;
+                break;
+            case MergeRemovedEvent removed:
+                _merges.Remove(removed.Flight);
+                break;
             case PrReviewAddedEvent added:
                 _prReviews[Verbs.PrTarget(added.Review.Repo, added.Review.Number)] = added.Review;
                 break;
             case PrReviewChangedEvent changed:
                 _prReviews[Verbs.PrTarget(changed.Review.Repo, changed.Review.Number)] = changed.Review;
+                break;
+            case IdeasChangedEvent ideas:
+                _ideas = ideas.Ideas;
+                break;
+            case IdeaMovedEvent moved:
+                _ideaMoves = [.. _ideaMoves, moved.Move];
+                break;
+            case MilestonesChangedEvent milestones:
+                _milestones = milestones.Milestones;
+                break;
+            case IssuesChangedEvent issues:
+                _issues = issues.Issues;
                 break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;
@@ -945,14 +1279,24 @@ public sealed class NodeState
         _machine = snapshot.Machine;
         _admission = snapshot.Admission;
         _pullRequests = snapshot.PullRequests;
+        _repos = snapshot.Repos;
+        _node = snapshot.Node;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
+        }
+        foreach (var merge in snapshot.Merges ?? [])
+        {
+            _merges[merge.Flight] = merge;
         }
         foreach (var review in snapshot.PrReviews ?? [])
         {
             _prReviews[Verbs.PrTarget(review.Repo, review.Number)] = review;
         }
+        _ideas = snapshot.Ideas;
+        _ideaMoves = snapshot.IdeaMoves;
+        _milestones = snapshot.Milestones;
+        _issues = snapshot.Issues;
         foreach (var summary in snapshot.Summaries ?? [])
         {
             _summaries[summary.Scope] = summary;
@@ -974,8 +1318,15 @@ public sealed class NodeState
         Machine = _machine,
         Admission = _admission,
         PullRequests = _pullRequests,
+        Repos = _repos,
+        Node = _node,
         Jobs = [.. _jobs.Values],
+        Merges = [.. _merges.Values],
         PrReviews = [.. _prReviews.Values],
+        Ideas = _ideas,
+        IdeaMoves = _ideaMoves,
+        Milestones = _milestones,
+        Issues = _issues,
         Summaries = [.. _summaries.Values],
     };
 

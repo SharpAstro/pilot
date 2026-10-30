@@ -22,6 +22,9 @@ internal enum PilotPage
     /// <summary>Last in the enum for the same reason; the rail lists it between Repos and Background tasks.</summary>
     PullRequests,
 
+    /// <summary>Last in the enum for the same reason; the rail lists it after Settings.</summary>
+    Ideas,
+
     /// <summary>
     /// Never a page shown: the rail's cue for the cards a window too narrow for the panel beside its page dropped (<c>PilotChrome.CardsOpen</c>).
     /// Last in the enum for the same reason as the others.
@@ -70,6 +73,7 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Jobs, "📋", "Background tasks", new KeyChord(InputKey.D6, InputModifier.Ctrl), null),
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
+        (PilotPage.Ideas, "\U0001F4A1", "Ideas", new KeyChord(InputKey.D0,InputModifier.Ctrl), null),
     ];
 
     /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn (the Background tasks tab adds ! for a failed job, ~ for a running one, … for a waiting one), the glyph itself where the UI face has it (the plane and the cog).</summary>
@@ -80,7 +84,7 @@ internal sealed class PilotChrome<TSurface>
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
-        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I",
     };
 
     /// <summary>
@@ -100,6 +104,17 @@ internal sealed class PilotChrome<TSurface>
             .OfType<string>().ToList();
         var glyph = failed > 0 ? "🔴" : running > 0 ? "🔄" : waiting > 0 ? "🕓" : "📋";
         return (glyph, parts.Count == 0 ? null : string.Join(", ", parts));
+    }
+
+    /// <summary>
+    /// The Ideas page's glyph on the rail, and what it says on hover: the light bulb, with the count of noted ideas after it
+    /// (the rail's cells have no badge, so the count is a digit beside the glyph). Nothing noted is the bulb alone.
+    /// </summary>
+    internal static (string Glyph, string? Said) IdeasGlyph(IdeasScreen? ideas)
+    {
+        var noted = ideas?.Noted ?? 0;
+        // The cell holds two digits; past that the glyph says 99+ and the tooltip the count.
+        return noted == 0 ? ("\U0001F4A1", null) : ($"\U0001F4A1{(noted > 99 ? "99+" : noted)}", $"{noted} noted");
     }
 
     private readonly List<TabItem<PilotPage>> _items = [];
@@ -125,11 +140,29 @@ internal sealed class PilotChrome<TSurface>
         Fleet = new FleetView<TSurface>(renderer);
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
+        Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
         Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
+        Cards.OnIdeaLink = link =>
+        {
+            if (link.FlightCode is { } code)
+            {
+                Show(PilotPage.Flights);
+                Flights.OpenDetail(code);
+            }
+            else if (link.Url is { } url)
+            {
+                Cards.OnOpen?.Invoke(url);
+            }
+        };
+        Ideas.OnFlight = code =>
+        {
+            Show(PilotPage.Flights);
+            Flights.OpenDetail(code);
+        };
         // Every page reports the nodes it arranged to the one text check, under the name of what it shows now.
         Sessions.Arranged = nodes => TextCheck.Observe(Sessions.Transcript.Line is null ? "sessions" : "transcript", nodes, DpiScale);
         Flights.Arranged = nodes => TextCheck.Observe(
@@ -142,6 +175,7 @@ internal sealed class PilotChrome<TSurface>
         PullRequests.Arranged = nodes => TextCheck.Observe("pull requests", nodes, DpiScale);
         Chat.Arranged = nodes => TextCheck.Observe("chat", nodes, DpiScale);
         Cards.Arranged = nodes => TextCheck.Observe("cards panel", nodes, DpiScale);
+        Ideas.Arranged = nodes => TextCheck.Observe("ideas", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
@@ -152,6 +186,7 @@ internal sealed class PilotChrome<TSurface>
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
+        Repos.OnPullRequest = OpenPullRequest;
         Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
@@ -165,10 +200,32 @@ internal sealed class PilotChrome<TSurface>
             var node = Cards.NodeOf(card);
             Navigate(() =>
             {
-                Chat.SwitchTo(node);
+                Chat.SwitchTo(null);
                 Switch(PilotPage.Chat, _show);
             });
             Chat.Attach(card, node);
+        };
+        // An idea's or issue's Chat about this, on the Ideas page: this node's chat with the words that start it in the box (an idea
+        // has no card to quote), for the person to finish.
+        Ideas.OnChatAbout = text =>
+        {
+            Navigate(() =>
+            {
+                Chat.SwitchTo(null);
+                Switch(PilotPage.Chat, _show);
+            });
+            Chat.Prefill(text);
+        };
+        // A reached node's own watchtower, from its row on the Fleet page; this node's row opens the fleet chat.
+        Fleet.OnChat = line =>
+        {
+            NodeMark? node = line.Here ? null : Nodes.Choices.FirstOrDefault(n => n.Key == line.Where)
+                ?? new NodeMark(line.Where, line.Where, line.Machine.Split(" · ")[0].Split(' ')[0], Here: false);
+            Navigate(() =>
+            {
+                Chat.SwitchTo(node);
+                Switch(PilotPage.Chat, _show);
+            });
         };
         Flights.OnChatAboutCard = card => Cards.OnChatAbout?.Invoke(card);
         // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.
@@ -203,6 +260,8 @@ internal sealed class PilotChrome<TSurface>
         Flights.Summary = Summaries;
         Chat.About = About;
         Chat.Nodes = Nodes;
+        Ideas.About = About;
+        Ideas.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
         sessions.Autopilot = Autopilot;
         Flights.Autopilot = Autopilot;
@@ -213,8 +272,9 @@ internal sealed class PilotChrome<TSurface>
         Settings.Autopilot = Autopilot;
         Home.Autopilot = Autopilot;
         Chat.Autopilot = Autopilot;
+        Ideas.Autopilot = Autopilot;
         // And the Night switch beside it, one state every page reads.
-        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Night;
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Night;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -279,6 +339,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Repos page: every tracked repo with its worktrees and PRs.</summary>
     public ReposView<TSurface> Repos { get; }
 
+    /// <summary>The Ideas page: the ideas of every repo, noted from a multi-line box.</summary>
+    public IdeasView<TSurface> Ideas { get; }
+
     /// <summary>The Pull requests page: every open PR of the repos pilot works in, grouped by repo.</summary>
     public PullRequestsView<TSurface> PullRequests { get; }
 
@@ -307,6 +370,7 @@ internal sealed class PilotChrome<TSurface>
     public IReadOnlyList<IPixelWidget> Widgets => Page switch
     {
         PilotPage.Chat => [Nav, Rail, Chat, Cards],
+        PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],
@@ -318,7 +382,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -365,6 +429,11 @@ internal sealed class PilotChrome<TSurface>
         // Any move on the rail leaves the cards a narrow window showed in the page's place.
         CardsOpen = false;
         show?.Invoke(page);
+        // The page the person was on is what an idea they note is about; coming back to Ideas from itself keeps it.
+        if (page == PilotPage.Ideas && Page != PilotPage.Ideas)
+        {
+            Ideas.Context = ContextOf(Page);
+        }
         if (page != Page)
         {
             // Text selected on the flight's page stays on it: leaving the page lets it go.
@@ -380,6 +449,13 @@ internal sealed class PilotChrome<TSurface>
         {
             Chat.Close();
         }
+    }
+
+    // Where the person was, in words Claude can place an idea by: the page, and the flight when its page is open.
+    private string ContextOf(PilotPage page)
+    {
+        var name = Pages.First(p => p.Page == page).Label;
+        return page == PilotPage.Flights && Flights.OpenCode is { } code ? $"the {name} page, flight {code}" : $"the {name} page";
     }
 
     /// <summary>
@@ -466,6 +542,12 @@ internal sealed class PilotChrome<TSurface>
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && Chat.HandleNewLine(evt))
         {
             return true;
+        }
+
+        // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
+        if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
+        {
+            Flights.NotePointer(move.X, move.Y);
         }
 
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
@@ -680,6 +762,11 @@ internal sealed class PilotChrome<TSurface>
                 Flights.OpenDetail(code);
             }
         });
+        Repos.OnFlightCode = code => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, show);
+            Flights.OpenDetail(code);
+        });
         Repos.OnSession = line => Navigate(() =>
         {
             Switch(PilotPage.Sessions, show);
@@ -763,6 +850,9 @@ internal sealed class PilotChrome<TSurface>
         }
         file.Attach(Night);
         Night.Changed += _ => redraw();
+        // The map's layers, kept in the same file and asking for a frame when one is toggled.
+        file.Attach(Flights.MapLayers);
+        Flights.MapLayers.Changed += redraw;
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>
@@ -786,6 +876,7 @@ internal sealed class PilotChrome<TSurface>
             Settings.DpiScale = value;
             Cards.DpiScale = value;
             Chat.DpiScale = value;
+            Ideas.DpiScale = value;
             Tooltips.DpiScale = value;
             Rail.DpiScale = value;
             Nav.DpiScale = value;
@@ -807,6 +898,7 @@ internal sealed class PilotChrome<TSurface>
             Settings.FontPath = value;
             Cards.FontPath = value;
             Chat.FontPath = value;
+            Ideas.FontPath = value;
             Tooltips.FontPath = value;
             Rail.FontPath = value;
             Nav.FontPath = value;
@@ -852,11 +944,12 @@ internal sealed class PilotChrome<TSurface>
 
     /// <param name="repos">The Repos page's screen; null shows it empty, as a snapshot file has no repos.</param>
     /// <param name="machines">Each shown node's machine, for the Home page's blocks; null shows none, as a snapshot file from an older node has none.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null) =>
-        Render(screen, flights, cards, jobs, fleet, repos, null, bounds, machines);
+    /// <param name="ideas">The Ideas page's screen, and the count on its rail entry; null shows it empty, as a snapshot file without ideas is.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null) =>
+        Render(screen, flights, cards, jobs, fleet, repos, null, bounds, machines, ideas);
 
     /// <param name="pullRequests">The Pull requests page's screen; null shows it as before the node's first read, as a snapshot file without one does.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null)
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null)
     {
         Palette.Use(Night);
         ApplyEmojiFont();
@@ -865,7 +958,7 @@ internal sealed class PilotChrome<TSurface>
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
-            var (glyph, said) = page == PilotPage.Jobs ? tasks : (icon, null);
+            var (glyph, said) = page == PilotPage.Jobs ? tasks : page == PilotPage.Ideas ? IdeasGlyph(ideas) : (icon, null);
             // Night has no colour emoji face, and the UI face has none of these: the page's initial, in the rail's ink.
             glyph = Night.On ? NightGlyph(page, glyph) : glyph;
             _items.Add(new TabItem<PilotPage>(label, page)
@@ -905,12 +998,15 @@ internal sealed class PilotChrome<TSurface>
         // (the sessions table needs the width more than an empty "nothing waits on you"). The engine places them at the
         // window's scale; each is painted into its own leaf.
         Cards.OnChatPage = Page == PilotPage.Chat;
+        // An idea's id in a card or a Handled line leads to the idea, or to its flight once planned.
+        Cards.IdeaLinks = (ideas ?? IdeasScreen.Empty).LinksIn;
         ShowsCards = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards;
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
         Cards.PullRequests = pullRequests?.Row;
+        Repos.PullRequests = pullRequests?.Row;
         Cards.Focus = Page switch
         {
             PilotPage.Flights => Flights.FocusCode,
@@ -982,6 +1078,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey when Page == PilotPage.Chat:
                     Chat.Render(rect);
+                    break;
+                case PageKey when Page == PilotPage.Ideas:
+                    Ideas.Render(ideas ?? IdeasScreen.Empty, rect);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);

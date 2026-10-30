@@ -253,7 +253,7 @@ internal sealed class PlayFilter
 /// Every page's screen for the nodes a window shows: each node's rows merged, marked with their node when there is more
 /// than one, and filtered by the window's <see cref="NodeFilter"/>.
 /// </summary>
-internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null, PullRequestsScreen? PullRequests = null)
+internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights, JobsScreen Jobs, IReadOnlyList<JobRow> JobRows, CardsScreen Cards, ReposScreen? Repos = null, SummaryShelf? Summaries = null, IReadOnlyList<MachineLine>? Machines = null, PullRequestsScreen? PullRequests = null, IdeasScreen? Ideas = null)
 {
     /// <summary>Whether a feed's <see cref="NodeFeed.Reach"/> says its node cannot be reached: down since a first failed try or a drop. The one test the panel's held lines and the flights' stale marks share.</summary>
     private static bool Unreachable((bool Connected, DateTimeOffset? DownSince) reach) => !reach.Connected && reach.DownSince is not null;
@@ -263,7 +263,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
     /// rows stay unmarked while it is the only node to choose, as they were before there was a fleet; another node's rows are
     /// marked always. The header's source is this window's node's.
     /// </summary>
-    public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now, bool reposWanted = false)
+    public static FleetPages Merge(IReadOnlyList<(NodeMark Mark, NodeFeed Feed)> feeds, NodeFilter filter, DateTimeOffset now)
     {
         // A node that was heard and cannot be reached keeps its pill (dimmed, labelled last heard), as its row keeps its last
         // known state; one never heard stays out. Its rows keep their stale marks, and its commands stay refused.
@@ -294,7 +294,11 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             reach.Where(f => f.Reach.Connected).Select(f => (Mark(f.Mark), f.Feed.Cards())),
             feeds[0].Feed.Cards().Watchtower,
             reach.Where(f => Unreachable(f.Reach)).Select(f => HeldNode.Of(f.Mark, f.Reach.DownSince!.Value, f.Feed.Cards(), now)));
-        var repos = RepoLine.Order(shown.SelectMany(f => f.Feed.Repos(now, reposWanted).Lines.Select(l => l.Marked(Mark(f.Mark)))));
+        var repoScreens = shown.Select(f => (f.Mark, Screen: f.Feed.Repos(now))).ToList();
+        var repos = RepoLine.Order(repoScreens.SelectMany(f => f.Screen.Lines.Select(l => l.Marked(Mark(f.Mark)))));
+        // Unread while every shown node still waits for its first read; the page is as old as the oldest read.
+        var reposUnread = repoScreens.Count == 0 || repoScreens.All(f => f.Screen.Unread);
+        var reposRead = repoScreens.Select(f => f.Screen.ReadAt).ToList();
         // A node's machine as it last sampled it; none from a node that sends no row (an older one), and none from one the window
         // cannot reach, whose last figures may be long out of date.
         var machines = reach.Where(f => !Unreachable(f.Reach)).Select(f => (f.Mark, Row: f.Feed.Machine)).Where(f => f.Row is not null).Select(f => new MachineLine(Mark(f.Mark), f.Row!)).ToList();
@@ -305,13 +309,20 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
             new JobsScreen(jobs, several ? source : here.JobsPage(now).Source, now),
             [.. shown.SelectMany(f => f.Feed.Jobs())],
             cards,
-            new ReposScreen(repos, several ? source : hereSessions.Source, now),
+            new ReposScreen(repos, several ? source : hereSessions.Source, now)
+            {
+                Unread = reposUnread,
+                ReadAt = reposUnread || reposRead.Any(r => r is null) ? null : reposRead.Min(),
+                Since = repoScreens.Select(f => f.Screen.Since).Where(t => t is not null).Min(),
+            },
             // Every node's summaries, shown or not: the card picks the node it asks about, from the window's node selection.
             new SummaryShelf(filter.Choices, feeds.SelectMany(f => f.Feed.Summaries().Select(s => (Key: (f.Mark.Key, s.Scope), Row: s)))
                 .ToDictionary(x => x.Key, x => x.Row)),
             machines,
             // Every shown node reads the same GitHub: a PR two of them read is one row, and the page is as old as the oldest read.
-            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now));
+            new PullRequestsScreen(PullRequestsRow.Merge(shown.Select(f => f.Feed.PullRequests())), several ? source : hereSessions.Source, now),
+            // Ideas are GitHub's, the same whichever node reads them: this window's node's.
+            here.Ideas(now));
     }
 }
 

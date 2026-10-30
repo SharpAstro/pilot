@@ -110,7 +110,13 @@ internal sealed record FleetLine
     /// <summary>The mark's words, which stay text beside the wrench.</summary>
     public const string MaintenanceWord = "maintenance";
 
-    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>); <c>—</c> for a node not reached, null for one that keeps none.</summary>
+    /// <summary>The node's own network use in its last full hour (<see cref="TrafficWords"/>); null for a node that does not say, or one never reached.</summary>
+    public string? Traffic { get; init; }
+
+    /// <summary><see cref="Traffic"/> as the two lines the machine cell draws (the node's HTTP, then its git and gh children), each short enough for the column; empty without traffic.</summary>
+    public string[] TrafficLines => Traffic?.Split(" · ") ?? [];
+
+    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>);<c>—</c> for a node not reached, null for one that keeps none.</summary>
     public string? Watchtower { get; init; }
 
     /// <summary>Whether the node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>); false for a node not reached.</summary>
@@ -155,7 +161,16 @@ internal sealed record FleetLine
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
-        + (WatchtowerSummary is { } summary ? " | " + summary : "");
+        + (WatchtowerSummary is { } summary ? " | " + summary : "")
+        + (Traffic is { } traffic ? " | " + traffic : "");
+
+    /// <summary>The traffic row in words: the node's HTTP is exact, what its git and gh children moved is an upper estimate (unknown off Windows).</summary>
+    public static string TrafficWords(NodeTrafficRow row)
+    {
+        static string Mb(long bytes) => (bytes / 1_000_000d).ToString(bytes < 10_000_000 ? "0.0" : "0", System.Globalization.CultureInfo.InvariantCulture);
+        var children = row.ChildBytes is { } moved ? $"up to {Mb(moved)} MB/h (est.)" : "unknown";
+        return $"node http {Mb(row.HttpIn)}/{Mb(row.HttpOut)} MB/h (in/out) · git+gh {children}";
+    }
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary, DateTimeOffset? now = null)
     {
@@ -183,6 +198,7 @@ internal sealed record FleetLine
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
+            Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
@@ -255,8 +271,8 @@ internal sealed class FleetWatch : IAsyncDisposable
     }
 
     /// <summary>Every page's screen for the fleet: each node's rows merged and marked, filtered by <paramref name="filter"/>.</summary>
-    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now, bool reposWanted = false) =>
-        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now, reposWanted);
+    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now) =>
+        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now);
 
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
@@ -390,6 +406,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
     public Action<FleetLine>? OnConnect { get; set; }
 
+    /// <summary>Opens the Chat page on a reached node's own watchtower (this node's row: the fleet chat). Null leaves the row without the button.</summary>
+    public Action<FleetLine>? OnChat { get; set; }
+
     /// <summary>
     /// Takes a row's "N waiting on you" to those sessions (the Sessions page, filtered to that node); null (the default)
     /// leaves the count as plain text.
@@ -443,6 +462,14 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             screen = screen with { Lines = [.. screen.Lines.Where(l => nodes.Picked.Contains(l.Where))] };
         }
+        // A clicked title's order; the node selected before it is found again by where it is reached, wherever the sort puts it.
+        var kept = Table.Sort is not null && _shown.Count > 0 && Selected >= 0 && Selected < _shown.Count ? _shown[Selected] : null;
+        screen = screen with { Lines = Table.Order(screen.Lines, _ => "", SortKeys) };
+        _shown = [.. screen.Lines.Select(l => l.Where)];
+        if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Where == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, screen.Lines.Count);
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -464,6 +491,12 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
         return About?.Over(page) ?? page;
     }
+
+    /// <summary>Where each node the last frame showed is reached, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<string> Shown => _shown;
+
+    // Where each row of the last frame is reached, in the order it showed them: what the selection follows through a sort.
+    private IReadOnlyList<string> _shown = [];
 
     // The node whose row is to be selected the next time the page is built (the panel's held line asked for it), by where it is reached.
     private string? _wanted;
@@ -500,13 +533,40 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Fixed("Node", MachineWidth, MachineMin),
-        ListColumn.Fixed("Account and usage", AccountWidth),
-        ListColumn.Fixed("Sessions", SessionsWidth),
-        ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Fixed("Rings", RingsWidth, RingsMin),
+        Sorted(ListColumn.Fixed("Node", MachineWidth, MachineMin)),
+        Sorted(ListColumn.Fixed("Account and usage", AccountWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Sessions", SessionsWidth), descendingFirst: true),
+        Sorted(ListColumn.Optional("Flights and jobs", WorkWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Rings", RingsWidth, RingsMin), descendingFirst: true),
         ListColumn.Fixed("", ButtonsWidth, ButtonsMin),
     ];
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // The first number a count is worded with (<c>3 live · 1 waiting on you</c>); a dash or none is below every count.
+    private static int Lead(string words) =>
+        System.Text.RegularExpressions.Regex.Match(words, @"\d+") is { Success: true } m && int.TryParse(m.Value, out var n) ? n : -1;
+
+    // The biggest percentage the usage line states (the window nearest its limit); a node with no usage line sorts below the rest.
+    private static double Used(string usage) =>
+        System.Text.RegularExpressions.Regex.Matches(usage, @"(\d+(?:\.\d+)?)\s*%").Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).DefaultIfEmpty(-1d).Max();
+
+    // What each column sorts by: the figures as numbers, not as the words they are drawn in; the buttons column has none.
+    private static readonly IReadOnlyDictionary<string, Func<FleetLine, object?>> SortKeys = new Dictionary<string, Func<FleetLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Machine,
+        ["Account and usage"] = l => (Used(l.Usage), l.Account),
+        ["Sessions"] = l => (Lead(l.Sessions), l.WaitingOnYou),
+        ["Flights and jobs"] = l => (Lead(l.Flights), Lead(l.Jobs)),
+        ["Rings"] = l => l.Rings,
+    };
 
     // The columns as the page can hold them (ListTable.Fit).
     private IReadOnlyList<ListColumn> FitColumns => Table.Fit(Columns);
@@ -517,6 +577,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         (line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
         + (line.Connected ? 0f : 16f)
         + (line.StateLines.Length > 1 ? 16f : 0f)
+        + line.TrafficLines.Length * 16f
         + LastKnownUsageHeight(line);
 
     private Layout.Node Row(FleetLine line, int index)
@@ -527,6 +588,10 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Off unless the host sets it: the merged lists steer every node from this window.
             // Open in its own window stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Open in its own window", $"fleet:{line.Where}:open", () => open(line)));
+        }
+        if (line.Connected && line.Watchtower is { } tower && tower != "—" && OnChat is { } chat)
+        {
+            buttons.Add(Pill("Watchtower", $"fleet:{line.Where}:chat", () => chat(line)));
         }
         if (!line.CanCommand && OnConnect is { } connect)
         {
@@ -548,7 +613,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Whole(line.Machine).RowH(22f),
-                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f)),
+                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f),
+                Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
+                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null

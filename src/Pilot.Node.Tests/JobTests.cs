@@ -391,7 +391,8 @@ public sealed class JobTests : IDisposable
         var command = OperatingSystem.IsWindows()
             ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
-        var id = Run(command, timeoutSeconds: 5).Made!;
+        // The budget outlasts two pwsh starts on a loaded machine, so the pid file exists before the timeout can fire.
+        var id = Run(command, timeoutSeconds: 20).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
         for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
@@ -401,8 +402,8 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
-        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(30));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
+        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(60));
         for (var i = 0; i < 100 && (IsAlive(childPid) || IsAlive(running.Pid!.Value)); i++)
         {
             await Task.Delay(50, Ct);
@@ -940,6 +941,7 @@ public sealed class JobTests : IDisposable
         var restarter = new NodeRestarter(lifetime, Microsoft.Extensions.Logging.Abstractions.NullLogger<NodeRestarter>.Instance)
         {
             NodePath = "/opt/pilot/pilot-node",
+            RestartedBySystemd = _ => false,
             StartSuccessor = path =>
             {
                 successors.Add(path);
@@ -1233,7 +1235,7 @@ public sealed class JobTests : IDisposable
         await Task.Delay(700, Ct);
         var cpu = Cpu(tree);
         await Task.Delay(1000, Ct);
-        (Cpu(tree) - cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+        CpuSince(tree, cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
 
         using var second = await Node.StartAsync(_root);
         var found = second.Job(id);
@@ -1242,7 +1244,7 @@ public sealed class JobTests : IDisposable
         second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
         await Task.Delay(1000, Ct);
-        (Cpu(tree) - cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+        CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
 
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         second.Cancel(id).Ok.ShouldBeTrue();
@@ -1374,22 +1376,29 @@ public sealed class JobTests : IDisposable
 
     private static CommandRequest Verb(string verb, string id, string who = "controller") => new() { Verb = verb, Target = Verbs.JobTarget(id), Who = who };
 
-    private static TimeSpan Cpu(IEnumerable<int> pids)
+    // CPU time per process of the tree, by pid: a sum over the tree went down when a child exited between two samples (its time left
+    // the sum), which read as a paused tree using negative CPU on a busy CI runner (#434). CpuSince compares like with like.
+    private static Dictionary<int, TimeSpan> Cpu(IEnumerable<int> pids)
     {
-        var total = TimeSpan.Zero;
+        var sample = new Dictionary<int, TimeSpan>();
         foreach (var pid in pids)
         {
             try
             {
                 using var p = System.Diagnostics.Process.GetProcessById(pid);
-                total += p.TotalProcessorTime;
+                sample[pid] = p.TotalProcessorTime;
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
             }
         }
-        return total;
+        return sample;
     }
+
+    // The CPU the tree used since <paramref name="before"/>: over the processes alive in both samples only, each at least zero
+    // (a pid reused by a new process reads as less, never as negative time).
+    private static TimeSpan CpuSince(IEnumerable<int> pids, Dictionary<int, TimeSpan> before) =>
+        Cpu(pids).Where(now => before.ContainsKey(now.Key)).Aggregate(TimeSpan.Zero, (sum, now) => sum + TimeSpan.FromTicks(Math.Max(0, (now.Value - before[now.Key]).Ticks)));
 
     private static bool Alive(int pid)
     {
@@ -1430,14 +1439,14 @@ public sealed class JobTests : IDisposable
         await Task.Delay(700, Ct);
         var (cpu, length) = (Cpu(tree), LogLength(log));
         await Task.Delay(1500, Ct);
-        (Cpu(tree) - cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+        CpuSince(tree, cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
         LogLength(log).ShouldBe(length);
 
         _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         var resumed = _state.Jobs().Single(j => j.Id == id);
         (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
         await Task.Delay(1000, Ct);
-        (Cpu(tree) - cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+        CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
         LogLength(log).ShouldBeGreaterThan(length);
 
         File.WriteAllText(flag, "");
@@ -1449,12 +1458,12 @@ public sealed class JobTests : IDisposable
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
-        var id = Run(Busy(flag), timeoutSeconds: 8).Made!;
+        var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
         await Running(id);
 
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         // Past the deadline it would have had without the pause.
-        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(9))
+        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
         {
             await Task.Delay(100, Ct);
         }
@@ -1471,7 +1480,7 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
     {
-        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 5).Made!;
+        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 20).Made!;
         await Running(id);
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         await Task.Delay(500, Ct);
@@ -1479,7 +1488,7 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
     }
 
     [Fact]

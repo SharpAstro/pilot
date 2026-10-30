@@ -343,6 +343,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Usage = _mirror.Usage,
             Machine = _mirror.Machine,
             Admission = _mirror.Admission,
+            Repos = _mirror.Repos,
+            Node = _mirror.Node,
             Jobs = [.. _mirror.Jobs.Values],
             PrReviews = [.. _mirror.PrReviews.Values],
         };

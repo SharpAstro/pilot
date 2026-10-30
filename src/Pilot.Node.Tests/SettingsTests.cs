@@ -51,6 +51,29 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void TheWorkerLadderKeysRoundTripAndTakeTheirValues()
+    {
+        var file = Path.Combine(_root, NodeSettings.FileName);
+        var settings = new NodeSettings();
+        foreach (var (key, value) in new[] { ("worker-model-max", "sonnet"), ("worker-effort-max", "xhigh"), ("worker-ladder", "off") })
+        {
+            settings = NodeSettings.With(settings, key, [value]).Settings.ShouldNotBeNull();
+        }
+        settings.Write(file);
+
+        var read = NodeSettings.Read(file);
+        (string.Join(' ', read.Get("worker-model-max")!), string.Join(' ', read.Get("worker-effort-max")!), string.Join(' ', read.Get("worker-ladder")!)).ShouldBe(("sonnet", "xhigh", "off"));
+        read.WorkerLadder.ShouldBe(false);
+        var roles = new RoleModels(read);
+        (roles.WorkerModelMax, roles.WorkerEffortMax, roles.WorkerLadder).ShouldBe(("sonnet", "xhigh", false));
+        var defaults = new RoleModels(null);
+        (defaults.WorkerModelMax, defaults.WorkerEffortMax, defaults.WorkerLadder).ShouldBe(("opus", "max", true));
+        NodeSettings.With(read, "worker-ladder", ["default"]).Settings!.WorkerLadder.ShouldBeNull();
+        NodeSettings.With(read, "worker-effort-max", ["loud"]).Error.ShouldBe("worker-effort-max takes low, medium, high, xhigh, max or none");
+        NodeSettings.With(read, "worker-ladder", ["maybe"]).Error.ShouldBe("worker-ladder takes on or off");
+    }
+
+    [Fact]
     public void AValueTheFileCannotReadIsPassedOverNotFatal()
     {
         var file = Path.Combine(_root, NodeSettings.FileName);
@@ -69,7 +92,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, merge-method, maintenance, accept-fleet-flights, autopilot, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort, worker-model-max, worker-effort-max, worker-ladder")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
@@ -425,7 +448,7 @@ public sealed class SettingsTests : IDisposable
         var clone = Directory.CreateDirectory(Path.Combine(_root, "my-clone")).FullName;
         var missing = Path.Combine(_root, "missing");
 
-        foreach (var key in new[] { "priority-repos", "no-auto-merge-repos" })
+        foreach (var key in new[] { "priority-repos", "no-auto-merge-repos", "sub-task-repos" })
         {
             NodeSettings.With(new NodeSettings(), key, ["tianwen", missing]).ShouldBe((null, $"{missing} is not a folder on this machine"));
         }
@@ -445,13 +468,38 @@ public sealed class SettingsTests : IDisposable
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "no-auto-merge-repos").Saved.ShouldBeNull();
     }
 
+    /// <summary>sub-task-repos opts repos in to their legs being kept as sub-tasks of the work item: set, shown as a list, and in force at once.</summary>
+    [Fact]
+    public async Task SubTaskReposIsSetShownAsAListAndInForceAtOnce()
+    {
+        NodeSettings.With(new NodeSettings(), "sub-task-repos", ["tianwen", "TIANWEN", "bullclip"]).Settings!.SubTaskRepos.ShouldBe(["tianwen", "bullclip"]);
+        NodeSettings.With(new NodeSettings { SubTaskRepos = ["tianwen"] }, "sub-task-repos", ["default"]).Settings!.SubTaskRepos.ShouldBeNull();
+
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var models = node.App.Services.GetRequiredService<RoleModels>();
+        models.SubTasks("tianwen").ShouldBeFalse();
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "sub-task-repos").Many.ShouldBeTrue();
+
+        var saved = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["sub-task-repos", "tianwen", "bullclip"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        saved.Ok.ShouldBeTrue();
+        models.SubTasks("tianwen").ShouldBeTrue();
+        models.SubTasks("BULLCLIP").ShouldBeTrue();
+        models.SubTasks("pilot").ShouldBeFalse();
+        var row = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "sub-task-repos");
+        row.Saved.ShouldBe("tianwen\nbullclip");
+        row.Value.ShouldBe("tianwen\nbullclip");
+
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["sub-task-repos", "default"], Who = "tests" }, Ct)).Response.ShouldNotBeNull().Ok.ShouldBeTrue();
+        models.SubTasks("tianwen").ShouldBeFalse();
+    }
+
     /// <summary>A role's model and effort rows say "default leaves the choice to Claude Code" where the wire value is still none.</summary>
     [Fact]
     public async Task ARoleRowsHelpSaysDefaultLeavesTheChoiceToClaudeCode()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
 
-        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key)).ToArray();
+        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key) && !s.Key.EndsWith("-max", StringComparison.Ordinal)).ToArray();
 
         rows.ShouldNotBeEmpty();
         rows.ShouldAllBe(r => r.Choices.Contains("none"));

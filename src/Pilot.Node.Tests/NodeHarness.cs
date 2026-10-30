@@ -57,6 +57,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
+    /// <summary>The idea milestone proposal: what it answers is the test's; Claude is never run.</summary>
+    public FakeIdeaMilestoner Milestoner { get; private init; } = new();
+
     /// <summary>nuget.org: what it lists is the test's.</summary>
     public FakeNuGetFeed NuGet { get; private init; } = new();
 
@@ -67,14 +70,15 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="folder">A folder to start on (a disposed node's, to start its successor on the same socket path and data); default a new temp one.</param>
     /// <param name="machine">The node's machine prefix (two harness nodes of one fleet need two); default the one this machine has.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, string? machine = null)
+    /// <param name="journal">The node's store in place of its files in the data folder: one the test can make fail.</param>
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
         folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
-        var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, Watchtower: watchtower,
-            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false, MachinePrefix: machine);
+        var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
+            Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
         {
             throw new InvalidOperationException(tooLong);
@@ -91,6 +95,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var github = new FakeGitHub();
         var nuget = new FakeNuGetFeed();
         var summary = new FakeSummaryModel();
+        var milestoner = new FakeIdeaMilestoner();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -107,6 +112,15 @@ internal sealed class NodeHarness : IAsyncDisposable
                 builder.Services.AddSingleton<Pilot.Node.Flights.IGitHub>(github);
                 builder.Services.AddSingleton<Pilot.Node.Flights.INuGetFeed>(nuget);
                 builder.Services.AddSingleton<Pilot.Node.Flights.ISummaryModel>(summary);
+                if (traffic is not null)
+                {
+                    builder.Services.AddSingleton(traffic);
+                }
+                if (journal is not null)
+                {
+                    builder.Services.AddSingleton(journal);
+                }
+                builder.Services.AddSingleton<Pilot.Node.Flights.IIdeaMilestoner>(milestoner);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -114,7 +128,9 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary };
+            // The PR loop's first look happens at start; a test's state is put only after it, so it never lands a half-made flight.
+            await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner };
         }
         catch
         {

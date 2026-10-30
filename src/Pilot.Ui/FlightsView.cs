@@ -126,7 +126,7 @@ internal sealed record FlightLine
         }
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
-            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Recheck is { Outcome: null } ? FlightWaiting.LegState(flying) : flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
             : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
@@ -216,6 +216,15 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
     /// <summary>What the why field under its button asks (<c>why go around parser?</c>); null when the verb needs no words.</summary>
     public string? WhyPrompt { get; init; }
 
+    /// <summary>
+    /// True when <see cref="WhyPrompt"/> asks to be confirmed rather than answered: Enter sends the action's own <see cref="Args"/>
+    /// whatever was typed (a disconnect of an answered overlap sends the other's code and --anyway, never words).
+    /// </summary>
+    public bool Confirm { get; init; }
+
+    /// <summary>What names the action's button: its verb, and the other flight where several share a verb (one Remove wait for each connection).</summary>
+    public string Key => Verb == Verbs.Disconnect && Args.Length > 0 ? $"{Verb}:{Args[0]}" : Verb;
+
     /// <summary>The start of the message it puts in the chat's box, for the person to finish; null when it is not said in the chat.</summary>
     public string? ChatMessage { get; init; }
 
@@ -266,6 +275,18 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         if (allDone && flight.Review is { State: ReviewState.Changes or ReviewState.Reviewing })
         {
             actions.Add(new FlightAction("Review again", Verbs.StartReview, target, []));
+        }
+        // Each wait it holds for, here or on a peer, can be dropped. One the controller answered an overlap with asks once first.
+        foreach (var other in flight.Connections.Concat(flight.PeerConnections.Select(c => c.Code)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var overlap = flight.Overlaps.FirstOrDefault(o => string.Equals(o.Other, other, StringComparison.OrdinalIgnoreCase) && o.Answer == OverlapAnswer.Connect);
+            actions.Add(overlap is null
+                ? new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other])
+                : new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other, Verbs.AnywayFlag])
+                {
+                    WhyPrompt = $"overlap with {other}: remove anyway?",
+                    Confirm = true,
+                });
         }
         // The next planned leg only: a button is named by its verb, so one a flight. It needs words (why), so it asks for them
         // under its button rather than taking a leg out on one click.
@@ -428,25 +449,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Layout.Node PullRequestLink(FlightLine line, string url, string action)
     {
         var flight = line.Row;
+        var pr = PullRequestLinks.Of(flight);
         // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
-        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
-        {
-            return Link($"PR #{flight.PullRequest}", url, action).WAuto();
-        }
-        // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
-        return Layout.Builder.HStack(
-                _links.OnLink(Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
-                    .WithTooltip($"Show {pr} on the Pull requests page")
-                    .WAuto(), url),
-                _links.OnLink(Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
-                    .Pad(6f, 0f)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
-                    .WithTooltip($"Open {pr} on GitHub")
-                    .WAuto(), url))
-            .WAuto()
+        var route = OnPullRequest is { } open && pr is not null && PullRequestLinks.Lists(PullRequests, pr)
+            ? (Action?)(() => open(pr.Repo, pr.Number))
+            : null;
+        // Qualified: this method is named PullRequestLink too.
+        return Pilot.Ui.PullRequestLink.Of(_links, action, $"PR #{flight.PullRequest}", pr?.ToString() ?? url, url, OnOpen, route, "the Pull requests page",
+                Landed, RowHoverBg, mayBeCut: false, fill: false)
             // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
             .HFixed(20f);
     }
@@ -630,16 +640,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
     public IReadOnlyList<JobRow> Jobs { get; set; } = [];
 
+    /// <summary>The flights the last frame showed, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<FlightLine> Shown => _screen.Lines;
+
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
-    /// <summary>
-    /// The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the
-    /// tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width, as pilot-tui does. The
-    /// canvas is wider than a narrow page and cannot scroll across, so a page narrower than it shows the grid, and a card is never
-    /// wider than the page.
-    /// </summary>
-    internal float? PageWidth { get; set; }
+    /// <summary>The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width.</summary>
+    internal float? PageWidth { get => _viewWidth > 0f ? _viewWidth : null; set => _viewWidth = value ?? 0f; }
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
@@ -653,6 +661,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             DrawSelection(fill);
         });
         _arranged = arranged;
+        NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
         if (RevealLeg(arranged))
         {
@@ -678,6 +687,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (Play is { InPlay: true })
         {
             screen = screen.InPlay(_pinned);
+        }
+        // A clicked title orders the list only, never the grid or the canvas; the flight selected before it is found again by its code.
+        if (!GridShown && !CanvasShown && Table.Sort is not null)
+        {
+            var kept = Selected >= 0 && Selected < _screen.Lines.Count ? _screen.Lines[Selected].Code : null;
+            screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
+            if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Code == kept) is >= 0 and var moved)
+            {
+                ListCursor.Open(ListId, moved, screen.Lines.Count);
+            }
         }
         if (screen.Lines.Count == 0)
         {
@@ -742,12 +761,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Task SendWhy(string text)
     {
         var why = text.Trim();
-        if (why.Length == 0 || _asking is not { } asking)
+        if (_asking is not { } asking || (why.Length == 0 && !asking.Action.Confirm))
         {
             return Task.CompletedTask;
         }
         CloseWhy();
-        OnAction?.Invoke(asking.Action with { Args = [why] });
+        OnAction?.Invoke(asking.Action.Confirm ? asking.Action : asking.Action with { Args = [why] });
         return Task.CompletedTask;
     }
 
@@ -756,7 +775,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private IEnumerable<Layout.Node> WhyRow(FlightLine line)
     {
         if (_asking is not { } asking || asking.Code != line.Code || line.Stale is not null
-            || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target))
+            || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target && a.Args.SequenceEqual(asking.Action.Args)))
         {
             yield break;
         }
@@ -869,7 +888,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             var steps = leg.Checklist.Length == 0 ? "" : $" · {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";
             var color = leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying) ? Held : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
-            var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}";
+            var legState = $"{FlightWaiting.LegState(leg)}{steps}{(leg.GoArounds > 0 ? $" · go-around {leg.GoArounds}" : "")}{(LegDetail.AttemptOf(leg) is { } attempt ? $" · {attempt}" : "")}";
             legs.Add(Layout.Builder.HStack(
                     Whole(Layout.Builder.Text($"{leg.Order}. {leg.Name}", 13f, Body).WStar(1f, 0f, 150f), $"{leg.Order}. {leg.Name}", 0),
                     Whole(Layout.Builder.Text(legState, 12f, color).WStar(), legState, 0))
@@ -940,7 +959,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             // Retry move is in the flight's red band, not said twice.
             foreach (var action in FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight))
             {
-                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
+                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Key}"));
             }
         }
 
@@ -1036,7 +1055,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown && !CanvasTooWide(screen))
+        if (CanvasShown && MapFits(screen))
         {
             return CanvasBody(screen);
         }
@@ -1069,20 +1088,42 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
-            new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
-            ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Fixed("State", StateWidth, StateMin),
-            ListColumn.Fixed("Legs", LegsWidth),
-            ListColumn.Optional("Branch", BranchWidth),
-            ListColumn.Optional("Sessions", SessionsWidth),
+            Sorted(ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin)),
+            Sorted(new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow)),
+            Sorted(ListColumn.Optional("Repo", WhereWidth)),
+            Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
+            Sorted(ListColumn.Fixed("Legs", LegsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Branch", BranchWidth)),
+            Sorted(ListColumn.Optional("Sessions", SessionsWidth), descendingFirst: true),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the flight by its code, the legs by how many are done, the state in the page's own order.
+    private static readonly IReadOnlyDictionary<string, Func<FlightLine, object?>> SortKeys = new Dictionary<string, Func<FlightLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Flight"] = l => l.Code,
+        ["What"] = l => l.Title,
+        ["Repo"] = l => l.Row.Repo,
+        ["State"] = l => (l.Row.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 }, l.State),
+        ["Legs"] = l => (l.LegRows.Count(r => r.State == LegState.Done), l.LegRows.Count),
+        ["Branch"] = l => l.Branch ?? "",
+        ["Sessions"] = l => l.Sessions.Length > 0 && char.IsDigit(l.Sessions[0]) ? int.Parse(l.Sessions.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture) : 0,
+    };
 
     private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 

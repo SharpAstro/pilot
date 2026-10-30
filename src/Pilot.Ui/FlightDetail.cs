@@ -11,6 +11,19 @@ internal sealed record StepLine(string Text, bool Done);
 /// </summary>
 internal sealed record ArtifactLine(string Title, string Location, string Leg, string When, bool IsUrl, string? Folder, string? Attachment = null, string? AttachmentExt = null);
 
+/// <summary>
+/// One line of the flight's checklist, a leg at a glance: ticked when done, its state in words otherwise, its steps count, and
+/// where its sub-task is in the tracker when it has one. <see cref="Leg"/> is the leg's name, which the block below it is found by.
+/// </summary>
+internal sealed record ChecklistLine(int Order, string Leg, bool Done, bool Failed, string State, string? StepsText, string? SubTaskUrl)
+{
+    /// <summary>The line's tick, a word of its own beside the state so a colour never says it alone: <c>[x]</c> done, <c>[!]</c> failed, <c>[ ]</c> otherwise.</summary>
+    public string Mark => Done ? "[x]" : Failed ? "[!]" : "[ ]";
+
+    /// <summary>The leg as the line names it (<c>2. render</c>).</summary>
+    public string Title => $"{Order}. {Leg}";
+}
+
 /// <summary>One leg as the flight's page shows it, every field already in words.</summary>
 internal sealed record LegDetail
 {
@@ -25,6 +38,9 @@ internal sealed record LegDetail
 
     /// <summary>Its go-arounds when it had any (<c>go-around 2</c>); null otherwise.</summary>
     public string? GoArounds { get; init; }
+
+    /// <summary>The attempt and the model and effort its current worker started on, from the leg row (<c>redo 3, on Opus</c>); null before a worker starts.</summary>
+    public string? Attempt { get; init; }
 
     public required string Goal { get; init; }
 
@@ -44,13 +60,18 @@ internal sealed record LegDetail
     /// <summary>Each artifact at its latest, newest first.</summary>
     public required IReadOnlyList<ArtifactLine> Artifacts { get; init; }
 
+    /// <summary>The redo (go-arounds) its current worker is on, and the model and effort of the current worker, as recorded on the row; null when none is.</summary>
+    public static string? AttemptOf(LegRow leg) =>
+        Verbs.AttemptOf(leg);
+
     public static LegDetail From(LegRow leg, DateTimeOffset now) => new()
     {
         Row = leg,
         Name = leg.Name,
         Order = leg.Order,
-        State = leg.Hold is not null ? "holding" : leg.Wait is { } wait && leg.State == LegState.Flying ? FlightWaiting.WaitText(wait) : leg.State.ToString().ToLowerInvariant(),
+        State = leg.Hold is not null ? "holding" : leg.Recheck is { Outcome: null } && leg.State == LegState.Flying ? FlightWaiting.LegState(leg) : leg.Wait is { } wait && leg.State == LegState.Flying ? FlightWaiting.WaitText(wait) : leg.State.ToString().ToLowerInvariant(),
         GoArounds = leg.GoArounds > 0 ? $"go-around {leg.GoArounds}" : null,
+        Attempt = AttemptOf(leg),
         Goal = leg.Goal,
         DoneWhen = leg.DoneWhen,
         Check = string.IsNullOrWhiteSpace(leg.Check) ? null : leg.Check,
@@ -97,6 +118,16 @@ internal sealed record FlightDetail
 
     public required IReadOnlyList<LegDetail> Legs { get; init; }
 
+    /// <summary>The checklist the page leads with: one line per leg, in the flight's order, read from the legs so the two cannot disagree.</summary>
+    public IReadOnlyList<ChecklistLine> Checklist =>
+    [
+        .. Legs.Select(l => new ChecklistLine(l.Order, l.Name, l.Row.State == LegState.Done, l.Row.State == LegState.Failed, l.State, l.StepsText,
+            l.Row.SubTask is { Url: { Length: > 0 } url } ? url : null)),
+    ];
+
+    /// <summary>The work item's sub-tasks that are no leg's (a person added them in the tracker), as the node last read them; listed read-only.</summary>
+    public IReadOnlyList<SubTaskItem> OtherSubTasks => Line.Row.OtherSubTasks ?? [];
+
     /// <summary>The node's copy of every image the legs recorded, each leg's in the leg's order; empty when there is none.</summary>
     public IReadOnlyList<AttachmentRef> Attachments =>
     [
@@ -115,9 +146,19 @@ internal sealed record FlightDetail
     public string ToDump()
     {
         var lines = new List<string> { Line.ToDumpLine() };
+        if (Checklist.Count > 0)
+        {
+            lines.Add($"checklist: {Checklist.Count(c => c.Done)}/{Checklist.Count} legs done");
+            lines.AddRange(Checklist.Select(c => $"  {c.Mark} {c.Title} | {string.Join(" · ", new[] { c.State, c.StepsText }.OfType<string>())}{(c.SubTaskUrl is { } url ? $" | {url}" : "")}"));
+        }
+        if (OtherSubTasks.Count > 0)
+        {
+            lines.Add("other sub-tasks:");
+            lines.AddRange(OtherSubTasks.Select(s => $"  [{(s.Done ? "x" : " ")}] {s.Title}{(s.Url.Length > 0 ? $" | {s.Url}" : "")}"));
+        }
         foreach (var leg in Legs)
         {
-            lines.Add($"{leg.Order}. {leg.Name} | {string.Join(" · ", new[] { leg.State, leg.StepsText, leg.GoArounds }.OfType<string>())}");
+            lines.Add($"{leg.Order}. {leg.Name} | {string.Join(" · ", new[] { leg.State, leg.StepsText, leg.GoArounds, leg.Attempt }.OfType<string>())}");
             lines.Add($"   goal: {leg.Goal}");
             lines.Add($"   done when: {leg.DoneWhen}");
             lines.AddRange(leg.Steps.Select(s => $"   [{(s.Done ? "x" : " ")}] {s.Text}"));

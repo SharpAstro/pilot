@@ -118,6 +118,28 @@ public sealed partial class RoleModels
     public string? ReviewerModel(ReviewDepth depth) =>
         depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
 
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
+    public bool ReviewDeepFirst
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewDeepFirst ?? true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The model a reviewer starts on in <paramref name="round"/> (1 for the first review of a flight): a re-review runs on the leg
+    /// model <paramref name="legModel"/> (the worker's, Sonnet by default), as it only reads what changed; the first review is
+    /// <see cref="ReviewerModel"/>, its deep model only when the diff is deep-sized and <see cref="ReviewDeepFirst"/> is on.
+    /// </summary>
+    public string? ReviewerModelFor(ReviewDepth depth, int round, string? legModel) =>
+        round > 1 ? legModel ?? Model(Worker)
+        : depth == ReviewDepth.Deep && !ReviewDeepFirst ? Model(Reviewer)
+        : ReviewerModel(depth);
+
     /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
     /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
     /// A deep setting of <c>none</c> passes no flag, as it does for any role.</summary>
@@ -130,6 +152,82 @@ public sealed partial class RoleModels
             ReviewDepth.Deep => Raw(EffortKey(ReviewerDeep)) is { } deep ? Named(deep) : Step(own, 1, "high"),
             _ => own,
         };
+    }
+
+    public const string DefaultWorkerModelMax = "opus";
+    public const string DefaultWorkerEffortMax = "max";
+
+    /// <summary>The strongest model the worker ladder steps up to (<see cref="NodeSettings.WorkerModelMaxKey"/>).</summary>
+    public string WorkerModelMax => Raw(NodeSettings.WorkerModelMaxKey) is { } v && Named(v) is { } model ? model : DefaultWorkerModelMax;
+
+    /// <summary>The highest effort the worker ladder steps up to (<see cref="NodeSettings.WorkerEffortMaxKey"/>).</summary>
+    public string WorkerEffortMax => Raw(NodeSettings.WorkerEffortMaxKey) is { } v && Named(v) is { } effort ? effort : DefaultWorkerEffortMax;
+
+    /// <summary>Whether a leg's fresh worker steps up the ladder by attempt (<see cref="NodeSettings.WorkerLadderKey"/>); on unless set off.</summary>
+    public bool WorkerLadder
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WorkerLadder ?? true;
+            }
+        }
+    }
+
+    /// <summary>The rank of a model by its alias or a full id containing the name (haiku 0, sonnet 1, opus 2); -1 for any other.</summary>
+    public static int ModelRank(string? model) =>
+        model is null ? -1
+        : model.Contains("opus", StringComparison.OrdinalIgnoreCase) ? 2
+        : model.Contains("sonnet", StringComparison.OrdinalIgnoreCase) ? 1
+        : model.Contains("haiku", StringComparison.OrdinalIgnoreCase) ? 0
+        : -1;
+
+    /// <summary>
+    /// The model and effort a leg's fresh worker of <paramref name="attempt"/> (go-arounds + 1) starts on: attempts 1 and 2 on the
+    /// leg's own (<paramref name="plannedModel"/>, <paramref name="plannedEffort"/>) or the worker role's, attempt 3 on opus at the
+    /// same effort, attempt 4 and on opus at xhigh. Never past <see cref="WorkerModelMax"/> and <see cref="WorkerEffortMax"/>, and
+    /// never below what the leg's plan names. A resumed or nudged session does not come here: it keeps the model it started with.
+    /// </summary>
+    public (string? Model, string? Effort) WorkerFor(string? plannedModel, string? plannedEffort, int attempt)
+    {
+        var model = plannedModel ?? Model(Worker);
+        var effort = plannedEffort ?? Effort(Worker);
+        if (!WorkerLadder || attempt < 3)
+        {
+            return (model, effort);
+        }
+        var max = WorkerModelMax;
+        var step = ModelRank(max) < 0 || ModelRank(max) >= 2 ? "opus" : max;
+        if (model is null || (ModelRank(model) >= 0 && ModelRank(step) > ModelRank(model)))
+        {
+            model = step;
+        }
+        if (attempt >= 4)
+        {
+            var efforts = Efforts.ToArray();
+            var maxAt = Array.IndexOf(efforts, WorkerEffortMax);
+            var target = Math.Min(Array.IndexOf(efforts, "xhigh"), maxAt < 0 ? efforts.Length - 1 : maxAt);
+            if (Array.IndexOf(efforts, effort) < target)
+            {
+                effort = efforts[target];
+            }
+        }
+        return (model, effort);
+    }
+
+    /// <summary>The redo choice for <paramref name="leg"/> (its next fresh worker is attempt go-arounds + 2), numbered as the redo it orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.</summary>
+    public string RedoLabel(LegRow leg)
+    {
+        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
+        return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
+    }
+
+    /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
+    public string SendBackLabel(LegRow leg, string words)
+    {
+        var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
+        return Verbs.SendBack(words, leg.GoArounds + 1, model, effort);
     }
 
     private static string Step(string? effort, int by, string whenUnset) =>
@@ -166,6 +264,15 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether <paramref name="repo"/>'s flights keep their legs as sub-tasks of the work item (<see cref="NodeSettings.SubTaskReposKey"/>), in force at once.</summary>
+    public bool SubTasks(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.SubTaskRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true;
+        }
+    }
+
     /// <summary>Whether the node takes no new flight (<see cref="NodeSettings.MaintenanceKey"/>): on while the setting says so, at once.</summary>
     public bool Maintenance
     {
@@ -186,6 +293,18 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.ShortcutToken;
+            }
+        }
+    }
+
+    /// <summary>Whether ready merge queue entries are batched (<see cref="NodeSettings.MergeBatchKey"/>): in force at once, and off unless the person saved it on.</summary>
+    public bool MergeBatch
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MergeBatch ?? false;
             }
         }
     }

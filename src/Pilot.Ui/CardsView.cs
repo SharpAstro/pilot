@@ -312,6 +312,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
 
+    /// <summary>The ideas and flights a text names by id (<c>I381</c>), as links; null finds none.</summary>
+    public Func<string, IReadOnlyList<IdeaLink>>? IdeaLinks { get; set; }
+
+    /// <summary>Follows an idea link: a planned idea's goes to its flight, the others open the idea's issue.</summary>
+    public Action<IdeaLink>? OnIdeaLink { get; set; }
+
+    /// <summary>The links in <paramref name="text"/> as a row of small links, or null when it names no idea; <paramref name="key"/> keeps their hits apart.</summary>
+    private Layout.Node? IdeaLinkRow(string text, string key)
+    {
+        if (IdeaLinks?.Invoke(text) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. found.Select(link => Layout.Builder.Text(link.FlightCode is { } code ? $"{link.Text} → {code}" : link.Text + Followable.Away, 11f, Link)
+                .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
+    }
+
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
@@ -553,7 +570,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
+                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f);
+                blocks.Add(line);
+                if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
+                {
+                    blocks.Add(handledLinks);
+                }
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
@@ -607,6 +629,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // the rest (TIA1818's ring, SE1 2026-10-25).
     private const int TitleFits = 34;
     private const int DetailFits = 120;
+
+    /// <summary>
+    /// What a line of a card's text is judged to hold when its words are made: generous for the panel (about sixty characters at
+    /// 11pt, 340 wide), so a capped text is cut only well past what its lines could show, and a frame fits a bounded few leaves.
+    /// </summary>
+    internal const int LineChars = 75;
+
+    /// <summary>The longest summary made into leaves (it has no line cap); its whole text is on hover past this.</summary>
+    internal const int SummaryChars = 240;
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
@@ -704,7 +735,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
+            lines.Add(Whole(WrappedProse.Of(WrappedProse.Bound(summary, SummaryChars), 12f, Body, SummaryLines, linker(12f), lineChars: LineChars), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -728,15 +759,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
                 // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
                 // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
+        }
+        if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
+        {
+            lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
         if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
         {
-            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines));
+            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines, LineChars));
         }
 
         var buttons = new List<Layout.Node>();
@@ -830,22 +865,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             return null;
         }
-        var title = Whole(Layout.Builder.Text(Titled(card), 14f, Link)
-                .BgHover(CardHover)
-                .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => route(card, pr))
-                .WStar().HStar(), card.Title, card.Title.Length > TitleFits);
-        if (card.Title.Length <= TitleFits)
-        {
-            title = title.WithTooltip($"Show {pr} on the Pull requests page");
-        }
-        // The browser's own, small: a mark, not a word, so it reads as the way out and the title as the way in.
-        var away = _links.OnLink(Layout.Builder.Text("↗", 11f, Link, TextAlign.Center, TextAlign.Center)
-            .Pad(6f, 0f)
-            .WAuto().HStar()
-            .BgHover(CardHover)
-            .Follows(new HitResult.ButtonHit($"card:{card.Id}:browser"), _ => OnOpen?.Invoke(PullRequestLinks.Url(pr)))
-            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left), PullRequestLinks.Url(pr));
-        return Layout.Builder.HStack(title, away).RowH(22f);
+        return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left, tall: true,
+                browserAction: $"card:{card.Id}:browser")
+            .HFixed(22f);
     }
 
     // A closed card's button as it was, the same size, answering nothing.

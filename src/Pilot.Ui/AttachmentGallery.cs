@@ -51,6 +51,9 @@ internal sealed class AttachmentGallery
             .Select(a => new AttachmentRef(a.Attachment!, prefix is null ? a.Title : $"{prefix}: {a.Title}", a.AttachmentExt!, node)),
     ];
 
+    // A copy with no id is an image the node holds nothing of (a link out): it has no picture to fetch.
+    private bool IsFailed(AttachmentRef copy) => copy.Id.Length == 0 || Failed?.Invoke(copy) == true;
+
     public void Open(AttachmentRef copy) => Viewing = copy;
 
     public void Close() => Viewing = null;
@@ -74,15 +77,19 @@ internal sealed class AttachmentGallery
             return null;
         }
         var thumbs = new List<Layout.Node>();
-        foreach (var copy in copies)
+        for (var i = 0; i < copies.Count; i++)
         {
-            _known[copy.Id] = copy;
+            var copy = copies[i];
+            if (copy.Id.Length > 0)
+            {
+                _known[copy.Id] = copy;
+            }
             var picked = copy;
             var thumb = Layout.Builder.VStack(
-                    (Failed?.Invoke(copy) == true
+                    (IsFailed(copy)
                         ? Layout.Builder.Text(copy.Ext.ToUpperInvariant(), 14f, Dim, trim: TextTrim.End)
                         : Layout.Builder.Fill(ThumbWidth, ThumbHeight, ThumbKey + copy.Id)).WFixed(ThumbWidth).HFixed(ThumbHeight).Bg(Well).BgHover(WellHover)
-                        .Follows(new HitResult.ButtonHit($"attachment:{owner}:{copy.Id}"), _ => Open(picked)),
+                        .Follows(new HitResult.ButtonHit($"attachment:{owner}:{(copy.Id.Length > 0 ? copy.Id : $"#{i}")}"), _ => Open(picked)),
                     Layout.Builder.Text(copy.Title, 11f, Dim, trim: TextTrim.End).RowH(16f))
                 .WithGap(2f)
                 .WFixed(ThumbWidth)
@@ -104,10 +111,13 @@ internal sealed class AttachmentGallery
         {
             return page;
         }
-        _known[copy.Id] = copy;
+        if (copy.Id.Length > 0)
+        {
+            _known[copy.Id] = copy;
+        }
         var viewer = Layout.Builder.VStack(
                 Layout.Builder.Text($"{copy.Title} · click or Escape to close", 12f, Bright).RowH(22f),
-                (Failed?.Invoke(copy) == true
+                (IsFailed(copy)
                     ? Layout.Builder.Text($"No preview of a .{copy.Ext} here", 12f, Dim)
                     : Layout.Builder.Fill(32f, 32f, FullKey + copy.Id)).Stretch())
             .WithGap(8f)

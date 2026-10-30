@@ -74,6 +74,9 @@ public sealed record NodeInfo
 
     /// <summary>How the node's watchtower is doing; null when it keeps none (<c>--no-watchtower</c>) or an older node did not say.</summary>
     public WatchtowerHealth? Watchtower { get; init; }
+
+    /// <summary>The node's own network use in the last full clock hour; null when an older node did not say.</summary>
+    public NodeTrafficRow? Traffic { get; init; }
 }
 
 /// <summary>A slot of the fleet's Opus count: <paramref name="Node"/> runs <paramref name="Label"/> and holds it until <paramref name="ExpiresAt"/>, unless it renews it.</summary>

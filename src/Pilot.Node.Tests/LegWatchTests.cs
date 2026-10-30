@@ -111,6 +111,82 @@ public sealed class LegWatchTests
         card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Resume", Verbs.Say), ("Redo leg parser", Verbs.GoAround)]);
     }
 
+    private void Recheck(string? outcome) =>
+        _state.PutLeg(_state.Legs("TIA1").Single() with { Recheck = new LegRecheck { Check = "dotnet test", Since = Start, Outcome = outcome } });
+
+    [Fact]
+    public async Task AnIdleWorkerWhoseFinishIsRerunningItsCheckIsNeitherNudgedNorRung()
+    {
+        // Four workers went idle on a finish the node answered queued, were nudged twice and rung (pilot #487, 2026-10-30).
+        Worker(SessionState.Idle);
+        Recheck(null);
+
+        foreach (var _ in Enumerable.Range(0, 5))
+        {
+            _time.Advance(TimeSpan.FromMinutes(4));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+        Handled().ShouldBeEmpty();
+        _state.Legs("TIA1").Single().Recheck.ShouldNotBeNull().Outcome.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AFailedRerunsOutcomeIsSaidToItsWorkerOnceAndClearedWithNoNudgeAfterIt()
+    {
+        Worker(SessionState.Idle);
+        var outcome = LegRecheck.FailedOutcome("dotnet test", 1, "Failed: 2, Passed: 40");
+        Recheck(outcome);
+
+        await _watch.LookAsync(Ct);
+
+        var say = _said.ShouldHaveSingleItem();
+        (say.Verb, say.Target, say.Who).ShouldBe((Verbs.Say, "session/a1b2c3d4", "node"));
+        say.Args[0].ShouldBe(outcome);
+        say.Args[0].ShouldContain("(1)");
+        say.Args[0].ShouldContain("Failed: 2, Passed: 40");
+        say.Args[0].ShouldContain("again");
+        _state.Legs("TIA1").Single().Recheck.ShouldBeNull();
+        Open().ShouldBeEmpty();
+
+        // Said once: a later look says nothing more of it, and the worker, woken by it, is given its grace before a nudge.
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARerunThatEndedByTheLegChangingOrTheNodeRestartingTellsItsWorkerToFinishAgain(bool restarted)
+    {
+        Worker(SessionState.Idle);
+        Recheck(restarted ? LegRecheck.RestartedOutcome("dotnet test") : LegRecheck.ChangedOutcome("dotnet test"));
+
+        await _watch.LookAsync(Ct);
+
+        var say = _said.ShouldHaveSingleItem();
+        say.Args[0].ShouldContain(restarted ? "node restarted" : "leg changed");
+        say.Args[0].ShouldContain("`leg finish done` again");
+        _state.Legs("TIA1").Single().Recheck.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARerunOutcomeThatCannotBeSaidRingsIdleAndIsStillClearedSoItIsNotSaidTwice()
+    {
+        Worker(SessionState.Idle);
+        Recheck(LegRecheck.ChangedOutcome("dotnet test"));
+        _refuse = "no such session";
+
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
+        card.Title.ShouldContain("check rerun ended but its worker could not be told");
+        _state.Legs("TIA1").Single().Recheck.ShouldBeNull();
+    }
+
     [Fact]
     public async Task AWorkerThatAnswersEachNudgeAndIdlesAgainIsRungAsAnsweringNotAsDeaf()
     {

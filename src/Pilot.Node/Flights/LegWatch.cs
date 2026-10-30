@@ -20,6 +20,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The kinds of card the watch raises, all about a leg; the watch closes them when its worker works again.</summary>
     public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing];
 
+    /// <summary>The models the redo choice names for its next worker (the worker ladder, PIL402); the node sets it.</summary>
+    public RoleModels Models { get; set; } = RoleModels.Unset;
+
     public const string Stopped = "worker-stopped";
     public const string Idle = "worker-idle";
     public const string Waiting = "worker-waiting";
@@ -113,6 +116,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         LookAtValidators(sessions, now);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
+        await LookAtLegRechecksAsync(now, cancellationToken);
         await LookAtPlannersAsync(sessions, now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
@@ -136,7 +140,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     string.Create(inv, $"{worker.SpendWeighted:N0} of {budget:N0} weighted tokens; it keeps working until you choose"),
                     [
                         new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
-                        new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
+                        new CardChoice { Label = Models.RedoLabel(leg), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
                     ],
                     summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
             }
@@ -202,6 +206,29 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
+    /// <summary>
+    /// A flying leg whose finish's check rerun ended with an outcome its worker may not have heard (<see cref="LegRecheck.Outcome"/>: the
+    /// finish was answered queued, or a retry was refused, or the node restarted): the recheck is cleared first, so it is said once, and the
+    /// worker is told what came of it. Rings when it cannot be told, as a wait that cannot be woken does.
+    /// </summary>
+    private async Task LookAtLegRechecksAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Recheck.Outcome: not null }))
+        {
+            state.PutLeg(leg with { Recheck = null });
+            if (leg.WorkerJob is not { } job)
+            {
+                continue;
+            }
+            _wokenAt[job] = now;
+            var result = await SayAsync(job, leg.Recheck!.Outcome!, cancellationToken);
+            if (!result.Ok)
+            {
+                Ring(leg, Idle, $"{Name(leg)}'s check rerun ended but its worker could not be told", result.Error);
+            }
+        }
+    }
+
     private async Task StoppedAsync(LegRow leg, SessionRow worker, string error, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var job = leg.WorkerJob!;
@@ -244,6 +271,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         // A worker that ended its turn on a wait it recorded (pilot leg wait) is waiting, as it was told to: the wait wakes it.
         if (leg.Wait is not null)
+        {
+            return;
+        }
+        // Likewise one that ended its turn on a finish whose check is being rerun (the node tells it the outcome, pilot #487).
+        if (leg.Recheck is { Outcome: null })
         {
             return;
         }
@@ -592,7 +624,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var goAround = new CardChoice
         {
-            Label = Verbs.RedoLeg(leg.Name),
+            Label = Models.RedoLabel(leg),
             Verb = Verbs.GoAround,
             Target = Subject(leg),
             Args = [$"the last worker stalled ({worker?.ApiError ?? worker?.State.ToString().ToLowerInvariant() ?? "never showed up"})"],

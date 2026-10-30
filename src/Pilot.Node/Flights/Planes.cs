@@ -17,18 +17,130 @@ public sealed record GitRun(int ExitCode, string Output, string Error)
 public interface IGit
 {
     Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="RunAsync"/> with LFS content smudged, for the one checkout a person builds and runs from (the owner's main
+    /// checkout, updated by <see cref="RepoSync"/>): a pointer there would break their next build with nothing to warn.
+    /// </summary>
+    Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunAsync(args, cwd, cancellationToken);
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli : IGit
+public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null) : IGit
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(2);
+
+    private readonly TimeSpan _budget = budget ?? DefaultBudget;
+
+    /// <summary>A git CLI whose runs get <paramref name="budget"/> before they are killed (a test's seam; the node uses the default).</summary>
+    public GitCli(TimeSpan budget) : this(null, budget)
+    {
+    }
+
+    // A command line over 32767 characters fails to start on Windows; stay well under it.
+    private const int MaxPathChars = 24000;
+
+    private readonly NodeTraffic _traffic = traffic ?? NodeTraffic.Shared;
+
+    /// <summary>Whether a git run can use the network, by its verb (options such as <c>-c k=v</c> and <c>-C dir</c> skipped).</summary>
+    public static bool UsesNetwork(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (a is "-c" or "-C" or "--git-dir" or "--work-tree" or "--namespace")
+            {
+                i++;
+                continue;
+            }
+            if (a.StartsWith('-'))
+            {
+                continue;
+            }
+            return a switch
+            {
+                "fetch" or "pull" or "push" or "clone" or "ls-remote" or "lfs" => true,
+                "remote" => args.Skip(i + 1).Contains("update"),
+                _ => false,
+            };
+        }
+        return false;
+    }
 
     public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var skipPushCheck = args.Count > 0 && args[0] == "push" && await PushChangesNoLfsAsync(args, cwd, cancellationToken);
+        return await RunCoreAsync(args, cwd, skipPushCheck, cancellationToken);
+    }
+
+    public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        RunCoreAsync(args, cwd, false, cancellationToken, smudge: true);
+
+    /// <summary>
+    /// True when the commits a plain <c>git push [remote [refspec]]</c> would send change no path git says is
+    /// <c>filter=lfs</c>, so git-lfs's pre-push upload check has nothing to find. Anything not understood (several
+    /// refspecs, a failing or slow git, a command line too long to start) answers false and the check stays.
+    /// </summary>
+    private async Task<bool> PushChangesNoLfsAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+    {
+        var positional = args.Skip(1).Where(a => !a.StartsWith('-')).ToList();
+        if (positional.Count is 0 or > 2)
+        {
+            return false;
+        }
+        var remote = positional[0];
+        var source = positional.Count == 2 ? positional[1].TrimStart('+').Split(':')[0] : "HEAD";
+        if (source.Length == 0)
+        {
+            return false;
+        }
+        try
+        {
+            // --cc lists what a merge commit changed against all its parents (plain --name-only prints nothing for a
+            // merge), so an LFS path a conflict resolution added still keeps the check. --relative drops paths outside
+            // cwd; every caller pushes from the plane's root, where that is none.
+            var log = await RunCoreAsync(["log", "-z", "--cc", "--name-only", "--format=", "--relative", source, "--not", $"--remotes={remote}"], cwd, false, cancellationToken);
+            if (!log.Ok)
+            {
+                return false;
+            }
+            var chunk = new List<string>();
+            var chars = 0;
+            foreach (var path in log.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct().Append(null))
+            {
+                if ((path is null || chars + path.Length + 3 > MaxPathChars) && chunk.Count > 0)
+                {
+                    List<string> attr = ["check-attr", "filter", "--", .. chunk];
+                    var run = await RunCoreAsync(attr, cwd, false, cancellationToken);
+                    if (!run.Ok || run.Output.Contains(": filter: lfs", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    chunk.Clear();
+                    chars = 0;
+                }
+                if (path is not null)
+                {
+                    chunk.Add(path);
+                    chars += path.Length + 3;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return false;
+        }
+    }
+
+    private async Task<GitRun> RunCoreAsync(IReadOnlyList<string> args, string cwd, bool skipPushCheck, CancellationToken cancellationToken, bool smudge = false)
     {
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = cwd,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -42,22 +154,78 @@ public sealed class GitCli : IGit
         }
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
+        // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need. The update of
+        // the owner's main checkout (RunSmudgingAsync) is the exception, and leaves whatever the environment says.
+        if (!smudge)
+        {
+            start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+        }
+        // git-lfs's pre-push hook honours GIT_LFS_SKIP_PUSH (unlike --no-verify, it leaves a repo's own hooks running).
+        if (skipPushCheck)
+        {
+            start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
+        }
 
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+        var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
+        using var _ = process;
+        using var __ = counted;
+        // Git never waits on a handle it inherited: its stdin is closed at once.
+        process.StandardInput.Close();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(budget.Token);
-        var error = process.StandardError.ReadToEndAsync(budget.Token);
+        budget.CancelAfter(_budget);
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        // Read by line into builders, so what git said survives a cancel.
+        var reads = Task.WhenAll(Pump(process.StandardOutput, output), Pump(process.StandardError, error));
+        var exited = false;
         try
         {
             await process.WaitForExitAsync(budget.Token);
+            exited = true;
+            // Git gone does not close its pipes when a child it left keeps them: that read is on the budget too.
+            await reads.WaitAsync(budget.Token);
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
-            throw;
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Git had already exited; only a descendant holds its pipes.
+            }
+            await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            var why = cancellationToken.IsCancellationRequested ? "was cancelled" : $"ran past its budget of {_budget.TotalSeconds:0.###}s";
+            var state = exited ? "git had exited but its output never closed" : "git had not exited";
+            throw new OperationCanceledException(
+                $"git {string.Join(' ', args)} in {cwd} {why} ({state}) and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
+                null,
+                cancellationToken.IsCancellationRequested ? cancellationToken : budget.Token);
         }
-        return new GitRun(process.ExitCode, await output, await error);
+        return new GitRun(process.ExitCode, output.ToString(), error.ToString());
+    }
+
+    private static async Task Pump(StreamReader reader, StringBuilder into)
+    {
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer, CancellationToken.None)) > 0)
+        {
+            lock (into)
+            {
+                into.Append(buffer, 0, read);
+            }
+        }
+    }
+
+    private static string Snapshot(StringBuilder text)
+    {
+        lock (text)
+        {
+            return text.ToString().Trim();
+        }
     }
 }
 
@@ -494,6 +662,13 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var tries = 0;
         while (!(remove = await git.RunAsync(force ? ["worktree", "remove", "--force", worktree] : ["worktree", "remove", worktree], repoPath, cancellationToken)).Ok)
         {
+            // git removes a worktree with submodules only with --force, clean or not; this one was found clean above
+            // (PDF439's plane kept the flight from landing, SE1 2026-10-29).
+            if (!force && remove.Why.Contains("containing submodules", StringComparison.OrdinalIgnoreCase))
+            {
+                force = true;
+                continue;
+            }
             // Torn down under us between the look and the remove: as gone as it gets.
             if (remove.Why.Contains("is not a working tree", StringComparison.OrdinalIgnoreCase))
             {

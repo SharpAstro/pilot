@@ -159,13 +159,18 @@ internal sealed partial class FlightsView<TSurface>
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         // Retry move is in the red band under the head, not said twice.
         var buttons = CanCommand
-            ? FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Verb}")).ToList()
+            ? FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Key}")).ToList()
             : [];
 
         var facts = new List<Layout.Node>
         {
             WrappedProse.Of($"{line.Where} · {line.Branch} · {line.Legs}", 12f, Dim, selectable: true).WAuto(),
         };
+        if (flight.FromIdea is { Length: > 0 } fromIdea)
+        {
+            // The idea it was promoted from: the same issue, so its id is the flight's issue number.
+            facts.Add(Layout.Builder.Text($"from {fromIdea}", 12f, Dim).WAuto());
+        }
         if (flight.Review is { } review)
         {
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
@@ -230,11 +235,20 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(ready);
         }
+        if (AddressReview(line) is { } address)
+        {
+            page.Add(address);
+        }
         page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
         // above the scroll they pushed the page's foot past the window's.
         List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        // The checklist leads the legs' detail: one line a leg, each opening its block below, then what a person added in the tracker.
+        if (Checklist(line.Code, detail) is { } checklist)
+        {
+            scrolled.Add(checklist);
+        }
         if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
         {
             scrolled.Add(attachments);
@@ -312,6 +326,29 @@ internal sealed partial class FlightsView<TSurface>
     }
 
     /// <summary>
+    /// Address review for a flight whose PR's review asks for changes and whose review-changes card is open: the card's own go-around
+    /// (Fix the review's findings), as the Pull requests page's button presses it, with the same tooltip. While the card's press is with
+    /// the node it says Starting… and takes no second press. Past the leg's go-around cap the card still decides, so it is offered too:
+    /// the capped note below says the round is the person's. Null when there is nothing to press.
+    /// </summary>
+    internal Layout.Node? AddressReview(FlightLine line)
+    {
+        if (Cards is not { } cards || OnAnswerCard is not { } answer || !CanCommand || line.Row.PullRequestUrl is null
+            || line.Row.Review is not { State: ReviewState.Changes }
+            || PullRequestActions.AddressReviewOf(cards.Open, line.Code) is not { Card: { } card } action)
+        {
+            return null;
+        }
+        var button = line.Stale is not null
+            ? CardsView<TSurface>.Dead(action.Label).WithTooltip(StaleWhy(line))
+            : CardWorking?.Invoke(card.Id) is not null
+            ? Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center)
+                .Bg(P.Button).WithTooltip($"Asking the node to fix {line.Code}'s review findings").WFixed(104f).HStar()
+            : Pill(action.Label, $"flight:{line.Code}:address-review", () => answer(card, action.Choice)).WithTooltip(action.Tooltip);
+        return Layout.Builder.HStack(button, Layout.Builder.Spacer().WStar()).RowH(32f);
+    }
+
+    /// <summary>
     /// Who is working on the flight now, each with its transcript a click away, or why nothing is: "flying" said only that
     /// the flight was open, so a flight with no planner and no legs looked busy while nothing ran (PIL208, 2026-10-24).
     /// </summary>
@@ -362,9 +399,109 @@ internal sealed partial class FlightsView<TSurface>
 
     private const string ValidatorSuffix = "-validator";
 
+    // One height for every line of the checklist, and the widths of the cells that keep their own: the tick, the steps count and the
+    // sub-task link line up down the page, so the lines read as a column. The name and the state share what is left.
+    private const float ChecklistRowH = 24f;
+    private const float ChecklistGap = 10f;
+    private const float ChecklistMarkWidth = 26f;
+    private const float ChecklistStepsWidth = 76f;
+    private const float ChecklistLinkWidth = 96f;
+    private const float ChecklistNameMax = 360f;
+    private const float ChecklistStateMax = 300f;
+    private const float ChecklistTitleMax = 640f;
+
+    // A leg's colour on its lines: amber while it holds or waits, green once done, the flying green while it flies, red failed, dim planned.
+    private RGBAColor32 LegColor(LegRow leg) =>
+        leg.Hold is not null || (leg.Wait is not null && leg.State == LegState.Flying)
+            ? Held
+            : leg.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+
+    /// <summary>
+    /// The page's lead: the flight's legs as a checklist, one line each in the flight's order (a tick, the leg, its state in words,
+    /// its steps count, and a link to its sub-task in the tracker when it has one), each line opening its block below through
+    /// <see cref="RevealLeg"/>; under it, the tracker's sub-tasks that are no leg's, read-only. Null while there is nothing to list.
+    /// </summary>
+    private Layout.Node? Checklist(string code, FlightDetail detail)
+    {
+        var lines = detail.Checklist;
+        if (lines.Count == 0 && detail.OtherSubTasks.Count == 0)
+        {
+            return null;
+        }
+        // The link's column is held only where a leg has one, so a flight with no sub-tasks shows no empty column.
+        var links = lines.Any(l => l.SubTaskUrl is not null);
+        var rows = new List<Layout.Node>();
+        if (lines.Count > 0)
+        {
+            rows.Add(Layout.Builder.Text($"Checklist · {lines.Count(l => l.Done)}/{lines.Count} legs done", 12f, Dim).RowH(ChecklistRowH).Selectable());
+            rows.AddRange(lines.Select(l => ChecklistRow(code, l, detail.Legs.First(d => d.Name == l.Leg).Row, links)));
+        }
+        if (detail.OtherSubTasks.Count > 0)
+        {
+            rows.Add(Layout.Builder.Text("Sub-tasks added in the tracker, not legs", 12f, Dim).RowH(ChecklistRowH).Selectable());
+            rows.AddRange(detail.OtherSubTasks.Select(s => OtherSubTaskRow(code, s)));
+        }
+        return Layout.Builder.VStack([.. rows])
+            .WithGap(2f)
+            .Pad(12f, 8f)
+            .Bg(PanelBg)
+            .WStar()
+            .HAuto();
+    }
+
+    private Layout.Node ChecklistRow(string code, ChecklistLine line, LegRow leg, bool links)
+    {
+        var color = LegColor(leg);
+        var cells = new List<Layout.Node>
+        {
+            Layout.Builder.Text(line.Mark, 12f, color).WFixed(ChecklistMarkWidth),
+            Layout.Builder.Text(line.Title, 13f, Bright).WStar(2f, 0f, ChecklistNameMax).Whole(line.Title),
+            Layout.Builder.Text(line.State, 12f, color).WStar(3f, 0f, ChecklistStateMax).Whole(line.State),
+            Layout.Builder.Text(line.StepsText ?? "", 12f, Dim).WFixed(ChecklistStepsWidth),
+        };
+        if (links)
+        {
+            cells.Add(line.SubTaskUrl is { } url ? SubTaskLink(code, line.Leg, url) : Layout.Builder.Spacer().WFixed(ChecklistLinkWidth));
+        }
+        // The columns stop at their caps on a wide page and the spare room is left at the line's end, so the state and the count stay by the name.
+        cells.Add(Layout.Builder.Spacer().WStar());
+        // The whole line is the target (ui-changes.md section 9): it scrolls to the leg's block, where the leg's own detail is.
+        var target = line.Leg;
+        return Layout.Builder.HStack([.. cells])
+            .WithGap(ChecklistGap)
+            .BgHover(RowHoverBg)
+            .Follows(new HitResult.ButtonHit($"flight:{code}:checklist:{target}"), _ => _revealLeg = target)
+            .RowH(ChecklistRowH);
+    }
+
+    // The leg's sub-task in the tracker: a link that leaves the app, so it ends in the arrow, with a right-click's Copy URL.
+    private Layout.Node SubTaskLink(string code, string leg, string url) =>
+        _links.OnLink(Layout.Builder.Text("sub-task" + Followable.Away, 12f, Landed)
+            .BgHover(RowHoverBg)
+            .Follows(new HitResult.ButtonHit($"subtask:{code}:{leg}"), _ => OnOpen?.Invoke(url))
+            .WithTooltip(url)
+            .WFixed(ChecklistLinkWidth), url);
+
+    // A sub-task a person added in the tracker: read-only (the sync is one way), so its line is no control, only its link opens it.
+    private Layout.Node OtherSubTaskRow(string code, SubTaskItem item)
+    {
+        var cells = new List<Layout.Node>
+        {
+            Layout.Builder.Text(item.Done ? "[x]" : "[ ]", 12f, item.Done ? Landed : Dim).WFixed(ChecklistMarkWidth),
+            Layout.Builder.Text(item.Title, 13f, Body).WStar(1f, 0f, ChecklistTitleMax).Whole(item.Title),
+            Layout.Builder.Text(item.Done ? "done" : "open", 12f, item.Done ? Landed : Dim).WFixed(ChecklistStepsWidth),
+        };
+        if (item.Url.Length > 0)
+        {
+            cells.Add(SubTaskLink(code, $"other:{item.Id}", item.Url));
+        }
+        cells.Add(Layout.Builder.Spacer().WStar());
+        return Layout.Builder.HStack([.. cells]).WithGap(ChecklistGap).RowH(ChecklistRowH);
+    }
+
     private Layout.Node LegBlock(string code, LegDetail leg)
     {
-        var color = leg.Row.Hold is not null || (leg.Row.Wait is not null && leg.Row.State == LegState.Flying) ? Held : leg.Row.State switch { LegState.Done => Landed, LegState.Flying => Flying, LegState.Failed => Failed, _ => Dim };
+        var color = LegColor(leg.Row);
         var head = new List<Layout.Node>
         {
             WrappedProse.Of($"{leg.Order}. {leg.Name}", 15f, Bright, selectable: true).WAuto(),
@@ -377,6 +514,10 @@ internal sealed partial class FlightsView<TSurface>
         if (leg.GoArounds is { } goArounds)
         {
             head.Add(Layout.Builder.Text(goArounds, 12f, Held).WAuto().Selectable());
+        }
+        if (leg.Attempt is { } attempt)
+        {
+            head.Add(Layout.Builder.Text(attempt, 12f, Dim).WAuto().Selectable());
         }
 
         var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
@@ -542,8 +683,9 @@ internal sealed partial class FlightsView<TSurface>
         // Only the flight's last leg, as the node (LegCommander) decides it: an earlier capped leg with a later one planned is not the person's yet.
         if (detail.Legs.LastOrDefault() is { } capped && capped.Row.ReviewGoArounds >= ReviewRedoCap)
         {
-            yield return Prose($"{capped.Name} has been redone {capped.Row.ReviewGoArounds} times on the review's findings, so the next round is yours: "
-                + $"Redo leg {capped.Name} on the review's card once more, or Ready anyway if the findings should not hold it up.", 12f, Held);
+            // The page cannot tell why it was sent back (findings, checks, a conflict), so it names no button: the card has the right one.
+            yield return Prose($"{capped.Name} has been sent back {capped.Row.ReviewGoArounds} times, so the next round is yours: "
+                + "send it back once more from its card, or Ready anyway if what was found should not hold it up.", 12f, Held);
         }
     }
 
