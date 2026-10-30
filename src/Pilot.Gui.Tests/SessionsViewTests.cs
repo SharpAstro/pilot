@@ -125,7 +125,7 @@ public sealed class SessionsViewTests
 
     private static void Click(SessionsView<RgbaImage> view, SessionsScreen screen, string action)
     {
-        var bounds = new RectF32(0f, 0f, 1280f, 800f);
+        var bounds = new RectF32(0f, 0f, 1500f, 800f);
         view.Render(screen, bounds);
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
@@ -154,7 +154,7 @@ public sealed class SessionsViewTests
     {
         var screen = SampleScreen();
         screen = screen with { Lines = [.. screen.Lines.Select((l, i) => l with { Node = new NodeMark(i % 2 == 0 ? "s" : "s9", "node.sock", i % 2 == 0 ? "SE1" : "LE1", Here: i % 2 == 0) })] };
-        using var renderer = new RgbaImageRenderer(1280, 800);
+        using var renderer = new RgbaImageRenderer(1500, 800);
         var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
 
         Click(view, screen, "sessions:table:Spend");
