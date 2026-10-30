@@ -2819,7 +2819,9 @@ public sealed partial class LegCommander(
     private void AllowRound(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
-        if (!IsWatchtower(command.Who) && !IsPerson(command.Who))
+        if (!IsWatchtower(command.Who) && !IsPerson(command.Who)
+            || string.Equals(command.Who, ReviewerName(flight), StringComparison.Ordinal)
+            || state.Legs(flight.Code).Any(l => string.Equals(command.Who, WorkerName(flight, l), StringComparison.Ordinal)))
         {
             throw new FlightException("only the watchtower or the person may allow another review round");
         }
