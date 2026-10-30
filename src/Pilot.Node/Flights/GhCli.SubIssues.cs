@@ -33,7 +33,7 @@ public sealed partial class GhCli
             var why = (linkError.Trim().Length > 0 ? linkError : linkOutput).Trim();
             try
             {
-                await CloseIssueNotPlannedAsync(repoPath, number, "Not linked to #" + Text(parent) + ": " + why, cancellationToken);
+                await CloseSubIssueAsync(repoPath, number, "Not linked to #" + Text(parent) + ": " + why, cancellationToken);
             }
             catch (FlightException)
             {
@@ -43,7 +43,7 @@ public sealed partial class GhCli
         return new SubTask { Id = Text(number), Url = url };
     }
 
-    public async Task CloseIssueNotPlannedAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    public async Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["issue", "close", Text(number), "--reason", "not planned", "--comment", comment], repoPath, cancellationToken);
         if (exit != 0)

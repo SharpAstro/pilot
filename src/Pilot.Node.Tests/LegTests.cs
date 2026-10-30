@@ -697,9 +697,6 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Every sub-issue made, as (parent, title, body), in order.</summary>
     public List<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
 
-    /// <summary>Each sub-issue closed as not planned, with its comment, in order.</summary>
-    public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
-
     /// <summary>When set, the sub-issue calls fail with it, as a GitHub that refused them.</summary>
     public string? SubIssueFails { get; set; }
 
@@ -729,7 +726,7 @@ internal sealed class FakeGitHub : IGitHub
         }
     }
 
-    public Task CloseIssueNotPlannedAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    public Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
     {
         if (SubIssueFails is { } why)
         {

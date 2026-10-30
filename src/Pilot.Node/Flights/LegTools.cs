@@ -467,7 +467,7 @@ public interface IGitHub
 
     /// <summary>Closes issue <paramref name="number"/> as not planned with <paramref name="comment"/>: a sub-issue whose leg was removed.</summary>
     /// <exception cref="FlightException">gh could not close it.</exception>
-    Task CloseIssueNotPlannedAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+    Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
     /// <summary>The sub-issues of issue <paramref name="parent"/>, open and closed; empty when gh cannot say.</summary>
     Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken);

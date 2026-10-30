@@ -136,7 +136,7 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
         github.CloseIssueAsync(repoPath, SubIssueNumber(subTask), $"Done: the leg is done in the flight working on #{id}.", cancellationToken);
 
     public Task RemoveSubTaskAsync(string repoPath, int id, SubTask subTask, CancellationToken cancellationToken) =>
-        github.CloseIssueNotPlannedAsync(repoPath, SubIssueNumber(subTask), $"The leg was removed from the flight working on #{id}.", cancellationToken);
+        github.CloseSubIssueAsync(repoPath, SubIssueNumber(subTask), $"The leg was removed from the flight working on #{id}.", cancellationToken);
 
     public Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken) => github.SubIssuesAsync(repoPath, id, cancellationToken);
 
