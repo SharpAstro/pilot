@@ -63,7 +63,7 @@ public sealed class DisconnectPageTests
     }
 
     [Fact]
-    public void ARemoveOfAnOverlapAnsweredConnectAsksOnceAndSendsAnyway()
+    public async Task ARemoveOfAnOverlapAnsweredConnectAsksOnceAndSendsAnyway()
     {
         var flight = Flight(FlightState.Held, ["TIA1", "TIA2"], overlaps: [Answered("TIA1"), Answered("TIA2", OverlapAnswer.Separate)]);
         var removes = Removes(flight);
@@ -87,7 +87,7 @@ public sealed class DisconnectPageTests
         view.Choose(asks, "TIA1611");
         sent.ShouldBeEmpty();
         view.WhyInput.Text = "because";
-        view.WhyInput.OnCommit!(view.WhyInput.Text).Wait();
+        await view.WhyInput.OnCommit!(view.WhyInput.Text);
         sent.Single().Verb.ShouldBe(Verbs.Disconnect);
         sent.Single().Args.ShouldBe(["TIA1", Verbs.AnywayFlag]);
     }
