@@ -1322,12 +1322,84 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         // The check holds no lock: the worker's retry is answered at once, refused, and runs no second check (DE1, 2026-10-28:
         // a ten-minute check held every flight's commands, and each retry queued another).
         var retry = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in").WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
-        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check already");
+        retry.Error.ShouldNotBeNull().ShouldContain("rerunning parser's check since ");
         _checks.Runs.Count.ShouldBe(1);
+
+        // The rerun is on the leg while it runs, so pilot status and the windows show it; the refusal says since when, where, and
+        // that the worker ends its turn (pilot #487). The refused retry leaves the recording as the running finish made it.
+        var recheck = L("parser").Recheck.ShouldNotBeNull();
+        (recheck.Check, recheck.Outcome).ShouldBe(("dotnet test", null));
+        var since = $"{recheck.Since.ToLocalTime():HH:mm}";
+        FlightWaiting.LegState(L("parser")).ShouldBe($"rechecking since {since}");
+        retry.Error.ShouldContain($"since {since} already");
+        retry.Error.ShouldContain("pilot status shows it");
+        retry.Error.ShouldContain("end your turn: the node tells you the outcome");
 
         gate.SetResult();
         (await finishing).Ok.ShouldBeTrue();
         L("parser").State.ShouldBe(LegState.Done);
+        L("parser").Recheck.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ALegsRecheckIsClearedWhenItsCheckFailsTheLegChangesOrTheCheckThrows()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        async Task<Task<CommandResult>> FinishWhileRunning(TaskCompletionSource gate)
+        {
+            var runs = _checks.Runs.Count;
+            _checks.OnRun = () => gate.Task;
+            var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+            for (var i = 0; i < 100 && _checks.Runs.Count == runs; i++)
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+            L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldBeNull();
+            return finishing;
+        }
+
+        // The check fails: the leg stays flying and no longer rechecks.
+        var failing = new TaskCompletionSource();
+        _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
+        var failed = await FinishWhileRunning(failing);
+        failing.SetResult();
+        (await failed).Error.ShouldNotBeNull().ShouldContain("check `dotnet test` failed (1)");
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
+
+        // The leg changes meanwhile (sent round): the finish records nothing, and the recheck does not outlive it.
+        var changing = new TaskCompletionSource();
+        var changed = await FinishWhileRunning(changing);
+        _state.PutLeg(L("parser") with { GoArounds = 1 });
+        changing.SetResult();
+        (await changed).Error.ShouldNotBeNull().ShouldContain("changed while its check ran");
+        (L("parser").State, L("parser").Recheck).ShouldBe((LegState.Flying, null));
+
+        // The check throws: the same, and the flight is free for the next finish.
+        _checks.OnRun = () => Task.FromException(new InvalidOperationException("no shell"));
+        await Should.ThrowAsync<InvalidOperationException>(Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in"));
+        L("parser").Recheck.ShouldBeNull();
+
+        _checks.OnRun = null;
+        _checks.Next = new CheckRun(0, "Passed: 42");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ARecheckStillRunningInTheJournalIsNotRunningWhenTheNodeComesBack()
+    {
+        var journal = new InMemoryJournal();
+        var first = new NodeState(journal, TimeProvider.System);
+        first.PutLeg(new LegRow
+        {
+            Flight = "TIA1", Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying,
+            Recheck = new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UtcNow },
+        });
+
+        new NodeState(journal, TimeProvider.System).Legs("TIA1").Single().Recheck.ShouldBeNull();
     }
 
     [Fact]

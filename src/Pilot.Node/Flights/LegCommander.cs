@@ -1160,11 +1160,27 @@ public sealed partial class LegCommander(
                     // lock: a check is a build and a test suite, and held under it every other flight's command queued behind it for its ten
                     // minutes, timed out, and its worker went idle and rang (DE1, 2026-10-28). The flight is this finish's meanwhile, so a
                     // worker's retry after a timeout is refused rather than running the same check again.
-                    var seen = leg;
+                    // Recorded on the leg while it runs, so pilot status, the GUI and the TUI show it (the check is a bare process, not a
+                    // job), and cleared whichever way it ends. Unchanged() does not compare it, so setting and clearing it is no change.
+                    // A retry is refused at Calling, before it touches the recheck the running finish recorded; its words say since when,
+                    // where it shows, and that the worker ends its turn, as the node tells it the outcome (pilot #487).
+                    var since = time.GetUtcNow();
                     CheckRun run;
-                    using (Calling(flight.Code, $"rerunning {leg.Name}'s check"))
+                    LegRow seen;
+                    using (Calling(flight.Code, $"rerunning {leg.Name}'s check since {since.ToLocalTime():HH:mm}",
+                        "pilot status shows it; end your turn: the node tells you the outcome"))
                     {
-                        run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                        leg = leg with { Recheck = new LegRecheck { Check = check, Since = since } };
+                        state.PutLeg(leg);
+                        seen = leg;
+                        try
+                        {
+                            run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                        }
+                        finally
+                        {
+                            ClearRecheck(flight.Code, seen.Name);
+                        }
                     }
                     leg = Unchanged(flight.Code, seen) is { } still
                         ? still
@@ -1242,6 +1258,15 @@ public sealed partial class LegCommander(
             {
                 await StopQuietly(job, cancellationToken);
             }
+        }
+    }
+
+    /// <summary>Takes the running recheck off a leg, as the leg is now: its check ended, one way or another (or the leg is gone and there is nothing to clear).</summary>
+    private void ClearRecheck(string code, string name)
+    {
+        if (state.Legs(code).FirstOrDefault(l => l.Name == name) is { Recheck: not null } now)
+        {
+            state.PutLeg(now with { Recheck = null });
         }
     }
 

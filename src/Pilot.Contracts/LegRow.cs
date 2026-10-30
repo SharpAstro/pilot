@@ -101,9 +101,27 @@ public sealed record LegRow
     /// </summary>
     public LegWait? Wait { get; init; }
 
+    /// <summary>
+    /// The check <c>pilot leg finish done</c> reruns, while it runs (it is a bare process of the node, not a job, so nothing else
+    /// shows it): which check, since when, and later its outcome. Null when no rerun is on the leg.
+    /// </summary>
+    public LegRecheck? Recheck { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }
+}
+
+/// <summary>A leg's check being rerun by its finish: which, since when, and how it ended once it has.</summary>
+public sealed record LegRecheck
+{
+    /// <summary>The check command being run.</summary>
+    public required string Check { get; init; }
+
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>How the rerun ended; null while it runs.</summary>
+    public string? Outcome { get; init; }
 }
 
 /// <summary>A leg's worker waiting on a file or a time, with no job: what it waits for, why, and since when.</summary>

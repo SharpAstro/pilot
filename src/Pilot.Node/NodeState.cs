@@ -83,6 +83,12 @@ public sealed class NodeState
             _seq = delta.Seq;
             Hold(delta.Seq, Serialize(delta));
         }
+        // A check a finish was rerunning died with the node that ran it (a bare process of that node, not a job): no leg comes
+        // back from a restart still rechecking. Dropped here, in memory, so what the journal holds is never read as running.
+        foreach (var key in _legs.Where(l => l.Value.Recheck is { Outcome: null }).Select(l => l.Key).ToList())
+        {
+            _legs[key] = _legs[key] with { Recheck = null };
+        }
 
         journal.SnapshotOutcome += OnSnapshotOutcome;
         if (history.Stream is null)
