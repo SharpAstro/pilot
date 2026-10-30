@@ -810,4 +810,103 @@ public sealed class ChatTests
             card.Height.ShouldBeGreaterThanOrEqualTo(40f);
         }
     }
+
+    [Fact]
+    public async Task ATypedMessageIsWorkingAtOnceKeepsItsTextTakesNoSecondSendAndClearsWhenTheNodeTakesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var node = new TaskCompletionSource<string?>();
+        var sent = 0;
+        var chat = NewChat(renderer, send: _ => { sent++; return node.Task; });
+        await Read(chat, 6);
+        chat.Input.InsertText("hello");
+
+        var first = chat.SendAsync();
+        Described(chat).ShouldContain("sending…");
+        chat.Input.Text.ShouldBe("hello");
+        await chat.SendAsync();
+        sent.ShouldBe(1);
+
+        node.SetResult(null);
+        await first;
+        chat.Input.Text.ShouldBe("");
+        Described(chat).ShouldNotContain("sending…");
+    }
+
+    [Fact]
+    public async Task ARefusedMessageStaysInTheBoxAndIsSaidInTheNodesWords()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, send: _ => Task.FromResult<string?>("the watchtower is down"));
+        await Read(chat, 6);
+        chat.Input.InsertText("hello");
+
+        await chat.SendAsync();
+
+        chat.Input.Text.ShouldBe("hello");
+        Described(chat).ShouldContain("the watchtower is down");
+    }
+
+    [Fact]
+    public async Task AChoiceIsWorkingAtOnceWithNoHitThenTakenOrRefusedInTheNodesWords()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var node = new TaskCompletionSource<string?>();
+        var chat = NewChat(renderer, Page(question: "Which?", choices: ["a", "b"]), send: _ => node.Task);
+        await Read(chat, 6);
+
+        Click(chat, "chat:choice:1");
+        Described(chat).ShouldContain("a …");
+        chat.Render(new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        chat.CollectPaintedRegions(regions);
+        regions.Any(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("chat:choice:", StringComparison.Ordinal)).ShouldBeFalse("no second press while the node has it");
+
+        node.SetResult("no such watchtower");
+        for (var i = 0; i < 100 && chat.Presses.PendingOf("chat:choice") is not null; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        Described(chat).ShouldContain("no such watchtower");
+        Described(chat).ShouldNotContain("a …");
+    }
+
+    [Fact]
+    public async Task RestartIsWorkingAtOnceThenSaysTheNodesRefusal()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var node = new TaskCompletionSource<string?>();
+        var chat = NewChat(renderer);
+        chat.OnRestart = () => node.Task;
+        await Read(chat, 6);
+        Click(chat, "chat:restart");
+        Click(chat, "chat:restart-yes");
+
+        Described(chat).ShouldContain("Restarting…");
+        node.SetResult("a restart is already running");
+        for (var i = 0; i < 100 && chat.Presses.PendingOf("chat:restart") is not null; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        Described(chat).ShouldContain("a restart is already running");
+    }
+
+    [Fact]
+    public async Task AMessageAboutACardKeepsItsQuoteUntilTheNodeTakesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var node = new TaskCompletionSource<string?>();
+        var chat = NewChat(renderer);
+        chat.OnSendAboutCard = (_, _, _) => node.Task;
+        await Read(chat, 6);
+        chat.Attach(new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "k", Subject = "flight/X", Title = "t", At = At, State = CardState.Open }, null);
+        chat.Input.InsertText("why?");
+
+        var send = chat.SendAsync();
+        chat.QuotedCard.ShouldNotBeNull();
+        node.SetResult(null);
+        await send;
+        chat.QuotedCard.ShouldBeNull();
+        chat.Input.Text.ShouldBe("");
+    }
 }

@@ -67,7 +67,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
     // are on their way. Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
-    private int _sending;
+
+    /// <summary>The chat's node-bound buttons and sends: working at once, no second press, a refusal said in the chat (<see cref="Presses"/>).</summary>
+    internal Presses Presses { get; } = new();
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -183,7 +185,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public Action? Changed
     {
         get => _entries.Changed;
-        set => _entries.Changed = value;
+        set
+        {
+            _entries.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
     /// <summary>Opens a link in a reply. Null leaves links as coloured text.</summary>
@@ -312,49 +318,60 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     /// <summary>
-    /// Sends what is in the box, as Enter does: the box is emptied at once, the message goes through <see cref="OnSend"/>, and
-    /// a refusal is said in the chat. Does nothing with nothing typed or no host to send.
+    /// Sends what is in the box, as Enter does: the message goes through <see cref="OnSend"/> (<see cref="OnSendAboutCard"/> with a card
+    /// quoted), and the box and the quote are kept until the node takes it, so a refusal, said in the chat, leaves it to send again.
+    /// Does nothing with nothing typed, no host to send, or a send still with the node.
     /// </summary>
     public Task SendAsync()
     {
-        if (_composer.IsEmpty || CurrentSend() is null)
+        if (_composer.IsEmpty || CurrentSend() is null || Presses.PendingOf(SendKey) is not null)
         {
             return Task.CompletedTask;
         }
         var message = _composer.Message;
-        _composer.Clear();
-        // A message about a card goes through the card's tell, and the card is dropped with it, as the box is emptied.
-        if (!string.IsNullOrWhiteSpace(message) && OnSendAboutCard is { } aboutCard && Interlocked.Exchange(ref _about, null) is { } quoted)
+        var quoted = Volatile.Read(ref _about);
+        Func<string, Task<string?>>? send = null;
+        // A message about a card goes through the card's tell.
+        if (quoted is not null && OnSendAboutCard is { } aboutCard)
         {
-            return SendAsync(message, words => aboutCard(quoted.Card, quoted.Node, words));
+            send = words => aboutCard(quoted.Card, quoted.Node, words);
         }
-        return SendAsync(message);
+        else
+        {
+            quoted = null;
+        }
+        return SendAsync(message, send ?? CurrentSend()!, SendKey, SendKey, () =>
+        {
+            if (_composer.Message == message)
+            {
+                _composer.Clear();
+            }
+            if (quoted is not null)
+            {
+                Interlocked.CompareExchange(ref _about, null, quoted);
+            }
+        });
     }
 
-    /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
-    public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
+    private const string SendKey = "chat:send";
+    private const string ChoiceKey = "chat:choice";
+    private const string RestartKey = "chat:restart";
 
-    private async Task SendAsync(string message, Func<string, Task<string?>> send)
+    /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
+    public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send, SendKey, SendKey, null) : Task.CompletedTask;
+
+    private async Task SendAsync(string message, Func<string, Task<string?>> send, string key, string hit, Action? taken)
     {
-        if (string.IsNullOrWhiteSpace(message))
+        // A send of this key still with the node takes no second.
+        if (string.IsNullOrWhiteSpace(message) || Presses.PendingOf(key) is not null)
         {
             return;
         }
-        Interlocked.Increment(ref _sending);
         _scroll.ScrollToEnd();
-        Changed?.Invoke();
-        string? refused;
-        try
+        var refused = await Presses.PressAsync(key, hit, _ => send(message));
+        if (refused is null)
         {
-            refused = await send(message);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
-        {
-            refused = $"refused: {ex.Message}";
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _sending);
+            taken?.Invoke();
         }
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
@@ -370,21 +387,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             return;
         }
-        Interlocked.Increment(ref _sending);
-        Changed?.Invoke();
-        string? refused;
-        try
+        if (Presses.PendingOf(RestartKey) is not null)
         {
-            refused = await restart();
+            return;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
-        {
-            refused = $"refused: {ex.Message}";
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _sending);
-        }
+        var refused = await Presses.PressAsync(RestartKey, "chat:restart-yes", _ => restart());
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · a new watchtower") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -431,12 +438,14 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             if (_confirmRestart)
             {
-                buttons.Add(CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
-                {
-                    _confirmRestart = false;
-                    var restart = RestartAsync();
-                    Track?.Invoke(() => restart, "restart the watchtower");
-                }));
+                buttons.Add(Presses.Button(RestartKey, "chat:restart-yes",
+                    () => CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
+                    {
+                        _confirmRestart = false;
+                        var restart = RestartAsync();
+                        Track?.Invoke(() => restart, "restart the watchtower");
+                    }),
+                    pressed => CardsView<TSurface>.DeadHeaderPill(pressed ? "Restarting…" : "Stop it and start fresh")));
                 buttons.Add(CardsView<TSurface>.HeaderPill("Keep it", "chat:restart-no", () =>
                 {
                     _confirmRestart = false;
@@ -484,7 +493,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
             asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
-        var sending = Volatile.Read(ref _sending) > 0;
+        var sending = Presses.AnyPending;
         if (held.Working || sending)
         {
             rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Pad(0f, 4f).WStar());
@@ -556,7 +565,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         if (choices.Length > 0)
         {
             // The choices stay under the text, outside its scroll, so they are always in view and reachable.
-            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(question, choice)))])
+            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => Presses.Button(ChoiceKey, $"chat:choice:{i + 1}",
+                    () => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(question, choice, $"chat:choice:{i + 1}")),
+                    pressed => CardsView<TSurface>.Dead(pressed ? $"{choice} …" : choice)))])
                 .WithGap(ChoiceGap).WithLineGap(ChoiceLineGap).WStar());
         }
         var scrolling = Layout.Builder.VStack([.. parts]).WithGap(ChoiceGap).WStar().HStar();
@@ -571,16 +582,17 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
-    private void Choose(string question, string choice)
+    private void Choose(string question, string choice, string hit)
     {
+        if (CurrentSend() is not { } send || Presses.PendingOf(ChoiceKey) is not null)
+        {
+            return;
+        }
         var answer = Answer(question, choice);
+        var run = SendAsync(answer, send, ChoiceKey, hit, null);
         if (Track is { } track)
         {
-            track(() => SendAsync(answer), $"chat choice {choice}");
-        }
-        else
-        {
-            _ = SendAsync(answer);
+            track(() => run, $"chat choice {choice}");
         }
     }
 

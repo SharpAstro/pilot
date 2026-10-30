@@ -154,6 +154,7 @@ public sealed class ButtonFeedbackTests
         (@"^fleet:.+:(open|waiting)$", "opens a window of its own on that node, or takes a row's waiting count to those sessions"),
         (@"^card:[^:]+:(chat|leg)$", "opens the chat about the card, or the leg's page"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
+        (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 
     [Fact]
