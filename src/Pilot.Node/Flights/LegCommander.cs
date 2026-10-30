@@ -1438,7 +1438,7 @@ public sealed partial class LegCommander(
             seen = leg;
             try
             {
-                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
             }
             catch (Exception ex)
             {

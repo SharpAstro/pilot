@@ -726,6 +726,96 @@ public sealed class JobTests : IDisposable
     private CardRow[] IdleCards(bool openOnly = true) => [.. _state.Cards(openOnly).Where(c => c.Kind == JobRunner.IdleKind)];
 
     [Fact]
+    public async Task TwoChecksAndFourJobsAtMaxJobsFourNeverRunMoreThanFourAtOnceAndAllFinish()
+    {
+        _jobs.MaxRunning = 4;
+        var ids = Enumerable.Range(0, 4).Select(_ => Run(Sleep(1)).Made!).ToList();
+        var checks = new[] { "one", "two" }.Select(leg => _jobs.RunCheckAsync("TIA1", leg, Sleep(1), _root, TimeSpan.FromMinutes(30), Ct)).ToList();
+
+        var most = 0;
+        for (var i = 0; i < 600 && (checks.Any(c => !c.IsCompleted) || ids.Any(id => _state.Jobs().Single(j => j.Id == id).EndedAt is null)); i++)
+        {
+            most = Math.Max(most, _state.Jobs().Count(j => j.State == JobState.Running));
+            await Task.Delay(20, Ct);
+        }
+
+        most.ShouldBeInRange(1, 4);
+        (await Task.WhenAll(checks)).ShouldAllBe(c => c.Passed);
+        var rows = _state.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
+        rows.Count.ShouldBe(2);
+        rows.ShouldAllBe(j => j.State == JobState.Succeeded && j.Owner == null && j.Flight == "TIA1");
+        foreach (var id in ids)
+        {
+            (await Ended(id)).State.ShouldBe(JobState.Succeeded);
+        }
+        // Only the four jobs have an owner to wake: a check says nothing to a session.
+        _said.Count.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task ACheckQueuedBehindARunningJobIsNotStoppedForTheTimeItWaitedAndCarriesItsExitAndLastLines()
+    {
+        var (jobs, clock, _, gone) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        var budget = TimeSpan.FromMinutes(30);
+
+        var check = jobs.RunCheckAsync("TIA1", "parser", "echo 'built'; echo 'all green'; exit 0", _root, budget, Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+        row.State.ShouldBe(JobState.Queued);
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+        (row.Flight, row.Leg, row.Owner, row.Timeout).ShouldBe(("TIA1", "parser", null, budget));
+
+        // It waits longer than its whole budget, then gets the slot: the budget counts from here.
+        clock.Advance(TimeSpan.FromMinutes(40));
+        await gone(first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        run.Passed.ShouldBeTrue();
+        run.Tail.ShouldContain("all green");
+        var ended = _state.Jobs().Single(j => j.Id == row.Id);
+        (ended.State, ended.ExitCode, ended.StartedAt).ShouldBe((JobState.Succeeded, 0, clock.GetUtcNow()));
+        _said.ShouldBeEmpty();
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ACheckIsStoppedOnlyOnceItHasRunForItsBudget()
+    {
+        var (jobs, clock, _, _) = Idle();
+        var check = jobs.RunCheckAsync("TIA1", "parser", Sleep(60), _root, TimeSpan.FromMinutes(30), Ct);
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
+
+        check.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromMinutes(31));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes and was stopped"));
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task CancellingACheckWithdrawsItWhileItWaits()
+    {
+        var (jobs, _, _, gone) = Idle();
+        var first = Hand(jobs, Sleep(60));
+        using var cancel = new CancellationTokenSource();
+        var check = jobs.RunCheckAsync("TIA1", "parser", Echo("never"), _root, TimeSpan.FromMinutes(30), cancel.Token);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+
+        cancel.Cancel();
+        // The withdraw is a signal on the dispatcher, which here is the test.
+        jobs.Dispatch(new JobRunner.Withdrawn(row.Id, "the check's caller"));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        run.ExitCode.ShouldBe(-1);
+        _state.Jobs().Single(j => j.Id == row.Id).State.ShouldBe(JobState.Cancelled);
+        await gone(first);
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter()
     {
         var (jobs, clock, cpu, gone) = Idle();

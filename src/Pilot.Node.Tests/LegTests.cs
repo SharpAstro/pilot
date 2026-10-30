@@ -54,7 +54,7 @@ internal sealed class FakeChecks : ICheckRunner
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
         if (OnRun is { } wait)

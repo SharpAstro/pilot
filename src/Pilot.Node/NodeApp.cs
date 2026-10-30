@@ -146,7 +146,7 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
-        builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
+        builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
         builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));

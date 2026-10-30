@@ -100,6 +100,21 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public void ALegsCheckReadsAsTheLegsCheckAndWakesNobody()
+    {
+        var check = Job("j20", JobState.Running, Live.At.AddMinutes(-2), owner: null) with { Kind = JobKind.Check, Flight = "ORB204", Leg = "parser" };
+        var line = JobLine.From(check, Live.At);
+
+        line.For.ShouldBe("ORB204/parser's check");
+
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        var cells = Cells(jobs, new JobsScreen(JobLine.Build([check], Live.At), "live", Live.At));
+        cells.ShouldContain("the node's check of ORB204/parser");
+        cells.ShouldNotContain("a terminal");
+    }
+
+    [Fact]
     public void TheRailOpensTheBackgroundTasksPage()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);

@@ -122,7 +122,20 @@ public sealed record CheckRun(int ExitCode, string Tail)
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>
 public interface ICheckRunner
 {
-    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken);
+    /// <param name="flight">The flight whose leg's check this is, for the job that runs it; null for a check that is no leg's.</param>
+    /// <param name="leg">The leg whose check it is.</param>
+    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null);
+}
+
+/// <summary>
+/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.RunCheckAsync"/>): it
+/// waits its turn with the other jobs, counts against max-jobs and the job-memory floor, and its
+/// <see cref="ShellCheckRunner.Timeout"/> counts from when it starts running.
+/// </summary>
+public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
+{
+    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, ShellCheckRunner.Timeout, cancellationToken);
 }
 
 /// <summary>
@@ -136,7 +149,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     private const int TailLines = 30;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         using var shell = ShellScript.For(command, cwd);
         var start = shell.Start;
