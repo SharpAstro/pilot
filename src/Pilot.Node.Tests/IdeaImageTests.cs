@@ -51,6 +51,63 @@ public sealed class IdeaImageParseTests
     }
 }
 
+/// <summary>
+/// What gh's answers say while an image is put on the pilot-attachments branch: the sha of each git data object made for the
+/// branch's first image, and whether the branch, or the image under its id, is there already.
+/// </summary>
+public sealed class IdeaImageGitHubAnswerTests
+{
+    private const string Blob = """{"url":"https://api.github.com/repos/SharpAstro/pilot/git/blobs/3a0f86fb8db8eea7ccbb9a95f325ddbedfb25e15","sha":"3a0f86fb8db8eea7ccbb9a95f325ddbedfb25e15"}""";
+
+    private const string Tree = """
+        {"sha":"cd8274d15fa3ae2ab983129fb037999f264ba9a7","url":"https://api.github.com/repos/SharpAstro/pilot/git/trees/cd8274d15fa3ae2ab983129fb037999f264ba9a7",
+         "tree":[{"path":"ideas/abc123def456.png","mode":"100644","type":"blob","size":12,"sha":"3a0f86fb8db8eea7ccbb9a95f325ddbedfb25e15","url":"https://api.github.com/repos/SharpAstro/pilot/git/blobs/3a0f86fb8db8eea7ccbb9a95f325ddbedfb25e15"}],
+         "truncated":false}
+        """;
+
+    private const string Commit = """
+        {"sha":"7638417db6d59f3c431d3e1f261cc637155684cd","node_id":"C_kwDOabc","url":"https://api.github.com/repos/SharpAstro/pilot/git/commits/7638417db6d59f3c431d3e1f261cc637155684cd",
+         "html_url":"https://github.com/SharpAstro/pilot/commit/7638417db6d59f3c431d3e1f261cc637155684cd",
+         "author":{"name":"sebgod","email":"s@example.com","date":"2026-10-30T09:00:00Z"},"committer":{"name":"sebgod","email":"s@example.com","date":"2026-10-30T09:00:00Z"},
+         "tree":{"sha":"cd8274d15fa3ae2ab983129fb037999f264ba9a7","url":"https://api.github.com/repos/SharpAstro/pilot/git/trees/cd8274d15fa3ae2ab983129fb037999f264ba9a7"},
+         "message":"Idea image abc123def456","parents":[],"verification":{"verified":false,"reason":"unsigned","signature":null,"payload":null}}
+        """;
+
+    private const string Ref = """
+        {"ref":"refs/heads/pilot-attachments","node_id":"REF_kwDOabc","url":"https://api.github.com/repos/SharpAstro/pilot/git/refs/heads/pilot-attachments",
+         "object":{"sha":"7638417db6d59f3c431d3e1f261cc637155684cd","type":"commit","url":"https://api.github.com/repos/SharpAstro/pilot/git/commits/7638417db6d59f3c431d3e1f261cc637155684cd"}}
+        """;
+
+    [Fact]
+    public void ABlobTreeOrCommitSaysItsOwnShaAndARefTheCommitItPointsAt()
+    {
+        GhCli.ParseGitSha("git/blobs", Blob).ShouldBe("3a0f86fb8db8eea7ccbb9a95f325ddbedfb25e15");
+        GhCli.ParseGitSha("git/trees", Tree).ShouldBe("cd8274d15fa3ae2ab983129fb037999f264ba9a7");
+        GhCli.ParseGitSha("git/commits", Commit).ShouldBe("7638417db6d59f3c431d3e1f261cc637155684cd");
+        GhCli.ParseGitSha("git/refs", Ref).ShouldBe("7638417db6d59f3c431d3e1f261cc637155684cd");
+    }
+
+    [Fact]
+    public void AnAnswerWithoutTheShaWhereItBelongsSaysNone()
+    {
+        // A ref answer has no sha of its own at the top, which is what made the branch's first image fail.
+        GhCli.ParseGitSha("git/commits", Ref).ShouldBeNull();
+        GhCli.ParseGitSha("git/refs", Commit).ShouldBeNull();
+        GhCli.ParseGitSha("git/blobs", """{"message":"Not Found","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"404"}""").ShouldBeNull();
+        GhCli.ParseGitSha("git/refs", "[]").ShouldBeNull();
+        GhCli.ParseGitSha("git/blobs", "").ShouldBeNull();
+    }
+
+    [Fact]
+    public void AGetThatAnsweredFoundItA404FoundNoneAndAnyOtherRefusalSaysNothing()
+    {
+        GhCli.ParseFound(0, "").ShouldBe(true);
+        GhCli.ParseFound(1, "gh: Not Found (HTTP 404)\n").ShouldBe(false);
+        GhCli.ParseFound(1, "gh: Bad credentials (HTTP 401)\n").ShouldBeNull();
+        GhCli.ParseFound(1, "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com\n").ShouldBeNull();
+    }
+}
+
 /// <summary>An image pasted into an idea: uploaded to the node, served by id, and filed on GitHub with the idea.</summary>
 public sealed class IdeaImageTests : IDisposable
 {
