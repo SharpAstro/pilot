@@ -744,9 +744,13 @@ if (feed is not null && client is not null && clients is not null)
 
 var announced = (string?)null;
 var frameWatch = new FrameWatch(logger);
-// The pages as the builder last made them, and as the render thread last drew them; what the render thread wants built.
+// The pages as the builder last made them worth a frame (built), and its newest build either way (latest), which any frame
+// picks up, so a frame a hover asks reads a chip's brief as it is now; what the render thread last drew, and the last
+// built it saw; what the render thread wants built.
 Tuple<FleetPages, FleetScreen>? built = null;
+Tuple<FleetPages, FleetScreen>? latest = null;
 Tuple<FleetPages, FleetScreen>? drawnBuilt = null;
+Tuple<FleetPages, FleetScreen>? seenBuilt = null;
 (PilotPage, int) drawnWanted = default;
 var pagesWanted = (int)chrome.Page;
 var pagesAsked = 0;
@@ -822,13 +826,17 @@ if (feed is not null)
                 chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
                 // And its autopilot, in every header's switch.
                 chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
-                // The once-a-second look finds nothing new on an idle page: what was built reads as what is drawn, so no
-                // pages are published and no frame is asked. A row's own "ago" turning over shows as different text.
-                if (!frameWatch.WorthAFrame(version, ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted))))
+                // The once-a-second look finds nothing new on an idle page, and a node event often changes nothing on the shown
+                // one: what was built reads as what is drawn, so no frame is asked. A row's own "ago" turning over shows as
+                // different text.
+                var made = Tuple.Create(pages, fleetScreen);
+                Volatile.Write(ref latest, made);
+                var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes);
+                if (!frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header)))
                 {
                     continue;
                 }
-                Volatile.Write(ref built, Tuple.Create(pages, fleetScreen));
+                Volatile.Write(ref built, made);
                 loop.RequestRedraw();
             }
             catch (OperationCanceledException) when (building.IsCancellationRequested)
@@ -882,7 +890,9 @@ void RenderFrame()
             Volatile.Write(ref pagesWanted, (int)wanted.Page);
             Interlocked.Increment(ref pagesAsked);
         }
-        if (Volatile.Read(ref built) is { } made && !ReferenceEquals(made, drawnBuilt))
+        // The newest build, worth a frame or not: the one that asked for this frame, or a newer one.
+        seenBuilt = Volatile.Read(ref built);
+        if (Volatile.Read(ref latest) is { } made && !ReferenceEquals(made, drawnBuilt))
         {
             drawnBuilt = made;
             var pages = made.Item1;
@@ -922,8 +932,8 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    // New pages from the builder (it also asks for the frame itself).
-    if (feed is not null && !ReferenceEquals(Volatile.Read(ref built), drawnBuilt))
+    // New pages from the builder worth a frame (it also asks for the frame itself).
+    if (feed is not null && !ReferenceEquals(Volatile.Read(ref built), seenBuilt))
     {
         return true;
     }

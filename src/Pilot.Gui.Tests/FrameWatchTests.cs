@@ -28,22 +28,21 @@ public class FrameWatchTests
     {
         var watch = new FrameWatch(new Capture());
 
-        watch.WorthAFrame(5, 1, 7).ShouldBeTrue();
-        watch.WorthAFrame(5, 1, 7).ShouldBeFalse("the once-a-second look found the same text");
-        watch.WorthAFrame(5, 1, 7).ShouldBeFalse();
+        watch.WorthAFrame(1, 7).ShouldBeTrue();
+        watch.WorthAFrame(1, 7).ShouldBeFalse("the once-a-second look found the same text");
+        watch.WorthAFrame(1, 7).ShouldBeFalse();
     }
 
     [Fact]
     public void Changed_build_asks_a_frame()
     {
         var watch = new FrameWatch(new Capture());
-        watch.WorthAFrame(5, 1, 7);
+        watch.WorthAFrame(1, 7);
 
-        watch.WorthAFrame(6, 1, 7).ShouldBeTrue("a node event moved the version");
-        watch.WorthAFrame(6, 2, 7).ShouldBeTrue("a page switch asked for a build");
-        watch.WorthAFrame(6, 2, 8).ShouldBeTrue("the text changed");
+        watch.WorthAFrame(2, 7).ShouldBeTrue("a page switch asked for a build");
+        watch.WorthAFrame(2, 8).ShouldBeTrue("the text changed");
         watch.Forget();
-        watch.WorthAFrame(6, 2, 8).ShouldBeTrue("a failed build is tried again");
+        watch.WorthAFrame(2, 8).ShouldBeTrue("a failed build is tried again");
     }
 
     private static long Text(DateTimeOffset at, DateTimeOffset now)
@@ -65,7 +64,7 @@ public class FrameWatchTests
         // An event at :30 past the minute: "1m ago" shows from 12:01:30, "2m ago" from 12:02:30, not at :00.
         var at = T0.AddSeconds(30);
         var watch = new FrameWatch(new Capture());
-        bool Frame(int secondsAfter) => watch.WorthAFrame(5, 1, Text(at, at.AddSeconds(secondsAfter)));
+        bool Frame(int secondsAfter) => watch.WorthAFrame(1, Text(at, at.AddSeconds(secondsAfter)));
 
         Frame(61).ShouldBeTrue();
         Frame(100).ShouldBeFalse("still 1m ago");
@@ -119,11 +118,11 @@ public class FrameWatchTests
         var fleet = new FleetScreen([], T0);
         var at = (TimeSpan span) => FrameWatch.Fingerprint(PagesWith(since, T0 + span), fleet, T0 + span, PilotPage.Sessions);
 
-        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeTrue();
+        watch.WorthAFrame(0, at(TimeSpan.FromSeconds(61))).ShouldBeTrue();
         // The rest of that minute (and its seconds of ago) is the same banner: no frame.
-        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(61))).ShouldBeFalse();
+        watch.WorthAFrame(0, at(TimeSpan.FromSeconds(61))).ShouldBeFalse();
         // The banner reads "since 2 m" now: a frame.
-        watch.WorthAFrame(1, 0, at(TimeSpan.FromSeconds(121))).ShouldBeTrue();
+        watch.WorthAFrame(0, at(TimeSpan.FromSeconds(121))).ShouldBeTrue();
     }
 
     [Fact]
@@ -143,5 +142,53 @@ public class FrameWatchTests
 
         At(PilotPage.Home, 0).ShouldBe(At(PilotPage.Home, 1));
         At(PilotPage.Sessions, 0).ShouldNotBe(At(PilotPage.Sessions, 1));
+    }
+
+    private static FleetPages Busy(DateTimeOffset lastResponse, params CardRow[] cards)
+    {
+        var row = new SessionRow
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "push-it", Kind = SessionKind.Background, Cwd = "/r/pilot",
+            Role = SessionRole.Worker, State = SessionState.Working, StartedAt = T0 - TimeSpan.FromHours(1), LastResponseAt = lastResponse, ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0,
+        };
+        return new FleetPages(new SessionsScreen(SessionLine.Build([row], T0), "test", T0), new FlightsScreen([], "test", T0), new JobsScreen([], "test", T0), [], CardsScreen.From(cards));
+    }
+
+    [Fact]
+    public void A_node_event_that_changes_nothing_Home_draws_asks_no_frame_on_Home()
+    {
+        // A busy node: each response of a worker moves the feeds' version, and Home draws none of it (DE1, 2026-10-30: 588
+        // sessions, Home redrawn 1.3 times a second while nothing on it changed).
+        var watch = new FrameWatch(new Capture());
+        var fleet = new FleetScreen([], T0);
+        long Home(long version, FleetPages pages) => FrameWatch.Fingerprint(pages, fleet, T0, PilotPage.Home, version);
+        var card = new CardRow { Id = "c1", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight:PIL1", Title = "PIL1 landed", At = T0, State = CardState.Open };
+
+        watch.WorthAFrame(0, Home(1, Busy(T0 - TimeSpan.FromSeconds(5)))).ShouldBeTrue();
+        watch.WorthAFrame(0, Home(2, Busy(T0 - TimeSpan.FromSeconds(1)))).ShouldBeFalse("the version moved for a last response Home does not show");
+        watch.WorthAFrame(0, Home(3, Busy(T0))).ShouldBeFalse();
+        watch.WorthAFrame(0, Home(4, Busy(T0, card))).ShouldBeTrue("a card was raised, and the panel shows it");
+        watch.WorthAFrame(0, Home(5, Busy(T0, card with { Detail = "the PR merged" }))).ShouldBeTrue("the card's words changed");
+
+        // The Sessions page's fingerprint is not whole, so the version is part of it: the same event redraws it.
+        var same = Busy(T0);
+        FrameWatch.Fingerprint(same, fleet, T0, PilotPage.Sessions, 1).ShouldNotBe(FrameWatch.Fingerprint(same, fleet, T0, PilotPage.Sessions, 2));
+    }
+
+    [Fact]
+    public void The_header_switches_and_node_pills_move_the_fingerprint()
+    {
+        var nodes = new NodeFilter();
+        var off = FrameWatch.Header(false, false, null, nodes);
+
+        FrameWatch.Header(false, false, null, nodes).ShouldBe(off);
+        FrameWatch.Header(false, true, null, nodes).ShouldNotBe(off, "the autopilot switched on");
+        FrameWatch.Header(true, false, null, nodes).ShouldNotBe(off, "the node went into maintenance");
+        FrameWatch.Header(false, false, "2.4.1", nodes).ShouldNotBe(off, "the update light came on");
+        nodes.Choices = [new NodeMark("here", "here", "DE1", true), new NodeMark("se1:7313", "se1:7313", "SE1", false)];
+        var two = FrameWatch.Header(false, false, null, nodes);
+        two.ShouldNotBe(off, "a second node's pill");
+        nodes.Down = new Dictionary<string, DateTimeOffset?> { ["se1:7313"] = T0 };
+        FrameWatch.Header(false, false, null, nodes).ShouldNotBe(two, "SE1 went down: its pill says when it was last heard");
     }
 }
