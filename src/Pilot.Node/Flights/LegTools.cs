@@ -159,6 +159,8 @@ public sealed class ShellCheckRunner : ICheckRunner
         start.CreateNoWindow = true;
 
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
+        // Held in a job that ends with the node, so a restart or crash mid-check leaves no test host holding the plane.
+        using var hold = KillOnCloseJob.Hold(process);
         var lines = new Queue<string>();
         void Keep(string? line)
         {
@@ -186,14 +188,32 @@ public sealed class ShellCheckRunner : ICheckRunner
         {
             await process.WaitForExitAsync(budget.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            // A check given up for any reason ends with its whole tree: only the time budget's was killed before, and a
+            // cancelled one went on running its tests behind the node.
+            Stop(process);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             return new CheckRun(-1, $"the check ran past {Timeout.TotalMinutes:0} minutes and was stopped");
         }
         lock (lines)
         {
             return new CheckRun(process.ExitCode, string.Join('\n', lines));
+        }
+    }
+
+    private static void Stop(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // It ended on its own between the cancel and the kill.
         }
     }
 }

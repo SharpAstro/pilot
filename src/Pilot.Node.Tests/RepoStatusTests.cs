@@ -263,7 +263,7 @@ public sealed class RepoStatusTests : IDisposable
     }
 
     [Fact]
-    public async Task TheCacheRefreshesItselfOnItsTimerOnceSomethingHasAsked()
+    public async Task TheCacheRefreshesItselfOnItsTimerFromBootWithoutAnyoneAsking()
     {
         var tianwen = Clone("tianwen");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
@@ -274,11 +274,7 @@ public sealed class RepoStatusTests : IDisposable
         await ((IHostedService)watch).StartAsync(Ct);
         try
         {
-            // Nobody has asked: nothing is read.
-            await Task.Delay(150, Ct);
-            git.Count("worktree list --porcelain").ShouldBe(0);
-
-            await watch.StatusAsync(refresh: false, Ct);
+            // Nobody asks: the timer reads from boot.
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (git.Count("worktree list --porcelain") < 3 && DateTime.UtcNow < deadline)
             {
@@ -348,10 +344,12 @@ public sealed class RepoStatusTests : IDisposable
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "planets");
 
         await using var node = await NodeHarness.StartAsync(Ct);
+        // The node reads from boot, before this flight is put: let that read end (it knows no repo, so asks gh nothing), then read afresh.
+        await node.Client.GetRepoStatusAsync(Ct);
         node.State.PutFlight(flight);
         node.GitHub.OpenPrs[repo] = [new PullRequestStatus { Number = 5, Title = "Planets", Head = flight.Branch, Checks = ChoiceStatus.Failing }];
 
-        var envelope = await node.Client.GetRepoStatusAsync(Ct);
+        var envelope = await node.Client.GetRepoStatusAsync(Ct, refresh: true);
 
         envelope.Success.ShouldBeTrue(envelope.Error);
         var status = envelope.Response!.Single();
