@@ -57,7 +57,11 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         using var clients = new FleetClients(here, where => where == _le1.Endpoint, e => NodeClient.Remote(e));
         using var vessel = new RgbaImageRenderer(1, 1);
         var view = new SessionsView<RgbaImage>(vessel) { CanSay = true, CanSteer = clients.CanSteer };
-        view.OnSay = async (line, text) => view.SayStatus = await GuiSay.SendAsync(clients.For(line.Node)!, line.Row.Id, text, Ct);
+        view.OnSay = async (line, text) =>
+        {
+            view.SayStatus = await GuiSay.SendAsync(clients.For(line.Node)!, line.Row.Id, text, Ct);
+            return null;
+        };
         var screen = Screen(Se1, Le1);
         view.Tree(screen);
         view.Select(screen.Lines.ToList().FindIndex(l => l.Node!.Name == "LE1"));
@@ -79,7 +83,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         using var vessel = new RgbaImageRenderer(1, 1);
         var asked = new List<string>();
         var said = new List<string>();
-        var view = new SessionsView<RgbaImage>(vessel) { CanSay = true, CanSteer = clients.CanSteer, OnConnect = node => asked.Add(node.Where), OnSay = (_, text) => { said.Add(text); return Task.CompletedTask; } };
+        var view = new SessionsView<RgbaImage>(vessel) { CanSay = true, CanSteer = clients.CanSteer, OnConnect = node => { asked.Add(node.Where); return Task.FromResult<string?>(null); }, OnSay = (_, text) => { said.Add(text); return Task.FromResult<string?>(null); } };
         var screen = Screen(Se1, Le1);
         view.Tree(screen);
         view.Select(screen.Lines.ToList().FindIndex(l => l.Node!.Name == "LE1"));
@@ -107,7 +111,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         using var here = NodeClient.Remote(_se1.Endpoint);
         using var clients = new FleetClients(here, _ => false, e => NodeClient.Remote(e));
         using var vessel = new RgbaImageRenderer(1, 1);
-        var view = new SessionsView<RgbaImage>(vessel) { CanSteer = clients.CanSteer, OnAction = _ => { }, OnConnect = _ => { } };
+        var view = new SessionsView<RgbaImage>(vessel) { CanSteer = clients.CanSteer, OnAction = _ => Task.FromResult<string?>(null), OnConnect = _ => Task.FromResult<string?>(null) };
         var screen = new SessionsScreen(SessionLine.Order([
             SessionLine.From(Live.Row("aaaa0002", "le1-done", SessionState.Ended), Live.At) with { Node = Le1 },
         ]), "test", Live.At);
@@ -141,7 +145,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
         chrome.Flights.CanSteer = clients.CanSteer;
-        chrome.Flights.OnConnect = node => asked.Add(node.Where);
+        chrome.Flights.OnConnect = node => { asked.Add(node.Where); return Task.FromResult<string?>(null); };
         chrome.Cards.CanSteer = clients.CanSteer;
         chrome.Cards.OnConnect = node => asked.Add(node.Where);
         var se1Flight = FlightOn("SE11", Se1);
@@ -202,7 +206,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         chrome.Flights.CanCommand = true;
         chrome.Flights.CanSteer = clients.CanSteer;
         var acted = new List<FlightAction>();
-        chrome.Flights.OnAction = acted.Add;
+        chrome.Flights.OnAction = Taken.By<FlightAction>(acted.Add);
         var le1Flight = FlightLine.Build([FlightOn("LE11", Le1).Row], [], Live.At,
             [new LegRow { Flight = "LE11", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying }]).Single() with { Node = Le1 };
         var flights = new FlightsScreen([FlightOn("SE11", Se1), le1Flight], "test", Live.At);

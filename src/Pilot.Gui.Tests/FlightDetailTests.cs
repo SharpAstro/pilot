@@ -596,7 +596,7 @@ public sealed class FlightDetailTests
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
         var opened = new List<string>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
         flights.OnSession = (row, _) => opened.Add(row.Id);
         List<ClickableRegion> Open(FlightsScreen screen)
         {

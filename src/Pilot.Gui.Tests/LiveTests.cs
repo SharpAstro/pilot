@@ -297,7 +297,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add) };
         var here = new NodeMark("s", "node.sock", "SE1", Here: true);
         var there = new NodeMark("192.168.0.79:47731", "192.168.0.79:47731", "DE1", Here: false);
         var lines = SessionLine.Build([
@@ -318,7 +318,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add) };
         var live = Live.Row("aaaa1111", "live", SessionState.Working);
         var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
         var archived = Live.Row("cccc3333", "archived", SessionState.Ended) with { Archived = true };
@@ -352,7 +352,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add, CanSay = true };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add), CanSay = true };
         var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
         var bounds = new RectF32(0, 0, 1280, 800);
         view.Render(Screen(ended), bounds);
@@ -429,7 +429,7 @@ public sealed class SayBarTests
         view.OnSay = (line, text) =>
         {
             said.Add((line.Row.Id, text));
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         };
         view.Render(Screen(Live.Row("aaaa1111", "one"), Live.Row("bbbb2222", "two")), new RectF32(0, 0, 1280, 800));
         view.Select(1);

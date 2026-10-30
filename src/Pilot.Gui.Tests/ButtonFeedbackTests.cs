@@ -130,9 +130,6 @@ public sealed class ButtonFeedbackTests
     private static readonly (string Page, string Pattern)[] ToPort =
     [
         ("*", "^autopilot:toggle$"),
-        ("flight page", @"^flight:[^:]+:(go-around|plan-leg|remove-leg)$"),
-        ("flights table", @"^flight:[^:]+:(go-around|plan-leg|remove-leg)$"),
-        ("flights canvas", @"^flight:[^:]+:(go-around|plan-leg|remove-leg)$"),
         // A Merge or a Go around of a row asks the node through the card's own press, which the row does not show.
         ("pull requests", @"^pr:.+:(merge|go-around)$"),
     ];
