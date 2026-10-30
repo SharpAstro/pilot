@@ -152,7 +152,14 @@ public sealed partial class LegCommander(
                     ExtendBudget(command);
                     break;
                 case Verbs.StartReview:
-                    await StartReviewAsync(FlightOf(command.Target), cancellationToken);
+                    if (command.Args is [UnreadHeadArg, ..])
+                    {
+                        await PushAndReviewAsync(FlightOf(command.Target), repaired: false, planeHead: null, cancellationToken);
+                    }
+                    else
+                    {
+                        await StartReviewAsync(FlightOf(command.Target), cancellationToken);
+                    }
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
@@ -474,7 +481,10 @@ public sealed partial class LegCommander(
         }
         if (due.Step is not { } step)
         {
-            _rung.TryRemove(current.Code, out _);
+            if (!await ReviewUnreadHeadAsync(current, cancellationToken))
+            {
+                _rung.TryRemove(current.Code, out _);
+            }
             return;
         }
         var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
@@ -551,6 +561,75 @@ public sealed partial class LegCommander(
     }
 
     private sealed record DueStep(CommandRequest? Step);
+
+    /// <summary>The argument of the node's own <see cref="Verbs.StartReview"/> that pushes a head the PR lacks before the review starts.</summary>
+    internal const string UnreadHeadArg = "unread-head";
+
+    /// <summary>
+    /// The invariant on every sweep and at node start: a flying flight whose legs are all done, whose PR is open and whose review is
+    /// not running has a review started when the plane's head is not the head its last review read (a review with no head read, as
+    /// one that never started leaves, counts as unread). A finish marked done by hand, a finish check rerun after a restart and a fix
+    /// pushed after a go-around reached none of the paths that start a review before (PIL395, PIL411, TIA1874, TIA1875, TIA1910).
+    /// A head the PR has not got is pushed first. Returns true when a failed step holds the flight, so its ring stays.
+    /// </summary>
+    private async Task<bool> ReviewUnreadHeadAsync(FlightRow current, CancellationToken cancellationToken)
+    {
+        if (current.PullRequest is null || current.Review is not { } review || review.State == ReviewState.Reviewing)
+        {
+            return false;
+        }
+        var key = $"failed {Verbs.FlightTarget(current.Code)} {UnreadHeadArg}";
+        if (_rung.TryGetValue(current.Code, out var failed) && failed == key)
+        {
+            return true;
+        }
+        // The sweep holds no lock, so git is asked plainly here.
+        var head = await git.RunAsync(["rev-parse", "HEAD"], current.Worktree, cancellationToken);
+        var planeHead = head.Ok && head.Output.Trim() is { Length: > 0 } sha ? sha : current.GitHubHead;
+        if (string.IsNullOrEmpty(planeHead)
+            || review.ReviewedHead is { Length: > 0 } read && string.Equals(read, planeHead, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer"))
+        {
+            return false;
+        }
+        var result = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
+        if (result.Ok)
+        {
+            return false;
+        }
+        _rung[current.Code] = key;
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head by itself", result.Error,
+            [new CardChoice { Label = "Start its reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code) }]);
+        return true;
+    }
+
+    /// <summary>
+    /// The one way to a review of a branch's new head: pushed first when the PR does not hold it (not repaired, leased, never forced, as
+    /// a go-around's), then a fresh reviewer, quiet. <paramref name="always"/> pushes without asking what the PR holds (a go-around's finish);
+    /// <paramref name="seenUpdate"/> is the update a finish check ran on, when it has one.
+    /// </summary>
+    private async Task PushAndReviewAsync(FlightRow flight, bool repaired, string? planeHead, CancellationToken cancellationToken, (UpdateWay Way, string? Pushed)? seenUpdate = null, bool always = false)
+    {
+        var needsPush = always || repaired;
+        if (!needsPush)
+        {
+            // What the PR holds: GitHub's word, asked with the lock let go; a head it lacks is the plane's to push.
+            planeHead ??= (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)) is { Ok: true } rp ? rp.Output.Trim() : flight.GitHubHead;
+            var remote = await OffLockAsync(null, async () => (await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))?.Head);
+            needsPush = remote is { Length: > 0 } && planeHead is { Length: > 0 } && !string.Equals(remote, planeHead, StringComparison.OrdinalIgnoreCase);
+        }
+        if (needsPush)
+        {
+            using (Calling(flight.Code, "being pushed"))
+            {
+                await OffLockAsync(null, () => PushAsync(flight, repaired, cancellationToken, seenUpdate));
+            }
+        }
+        await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
+    }
 
     private async Task PlanAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -1199,11 +1278,7 @@ public sealed partial class LegCommander(
                 // A go-around the review asked for, done: the fixed branch goes up and is reviewed afresh, by itself.
                 if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
                 {
-                    using (Calling(flight.Code, "being pushed"))
-                    {
-                        await OffLockAsync(null, () => PushAsync(flight, repaired: false, cancellationToken, seenUpdate));
-                    }
-                    await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
+                    await PushAndReviewAsync(flight, repaired: false, planeHead: null, cancellationToken, seenUpdate, always: true);
                 }
                 break;
             case "failed":
