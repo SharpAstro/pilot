@@ -205,6 +205,7 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException(new FlightException(why));
         }
         ClosedIssues.Add((number, comment));
+        Closed(number);
         return Task.CompletedTask;
     }
 
@@ -756,6 +757,55 @@ internal sealed class FakeGitHub : IGitHub
         IssueComments.Add((number, body));
         return Task.CompletedTask;
     }
+
+    /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
+    public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];
+
+    /// <summary>Every sub-issue made, as (parent, title, body), in order.</summary>
+    public List<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
+
+    /// <summary>When set, the sub-issue calls fail with it, as a GitHub that refused them.</summary>
+    public string? SubIssueFails { get; set; }
+
+    public Task<SubTask> CreateSubIssueAsync(string repoPath, int parent, string title, string? body, CancellationToken cancellationToken)
+    {
+        if (SubIssueFails is { } why)
+        {
+            return Task.FromException<SubTask>(new FlightException(why));
+        }
+        SubIssuesCreated.Add((parent, title, body));
+        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
+        Issues[number] = title;
+        var url = $"https://github.com/owner/repo/issues/{number}";
+        (SubIssues.TryGetValue(parent, out var list) ? list : SubIssues[parent] = []).Add(new SubTaskItem(number.ToString(), title, false, url));
+        return Task.FromResult(new SubTask { Id = number.ToString(), Url = url });
+    }
+
+    private void Closed(int number)
+    {
+        foreach (var list in SubIssues.Values)
+        {
+            var at = list.FindIndex(i => i.Id == number.ToString());
+            if (at >= 0)
+            {
+                list[at] = list[at] with { Done = true };
+            }
+        }
+    }
+
+    public Task CloseSubIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (SubIssueFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        ClosedNotPlanned.Add((number, comment));
+        Closed(number);
+        return Task.CompletedTask;
+    }
+
+    public Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken) =>
+        Task.FromResult(SubIssues.TryGetValue(parent, out var list) ? list.ToArray() : []);
 
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";

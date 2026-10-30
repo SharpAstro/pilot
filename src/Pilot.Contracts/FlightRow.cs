@@ -129,6 +129,14 @@ public sealed record FlightRow
     public string[]? MergeWhenGreen { get; init; }
 
     /// <summary>
+    /// The work item's sub-tasks that are no leg's (a sub-issue or a task a person added in the tracker), as the node read them at
+    /// its last sync of the legs, for the flight's page to list under the legs; they change no leg. Null before a sync, in a repo
+    /// that has sub-tasks off, and in a journal written before them.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SubTaskItem[]? OtherSubTasks { get; init; }
+
+    /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
     /// a recorded answer is never asked about again. Not required, and null-safe: a flight journaled before overlaps has
     /// no such property, and the generated reader leaves a missing property's initialiser out, so the getter stands in

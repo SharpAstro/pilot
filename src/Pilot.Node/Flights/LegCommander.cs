@@ -121,6 +121,7 @@ public sealed partial class LegCommander(
         string? way = null;
         var merged = false;
         FlightRow? moving = null;
+        SubTask? removedSubTask = null;
         try
         {
             if (peerRefusal is not null)
@@ -148,7 +149,7 @@ public sealed partial class LegCommander(
                     await PlanAsync(command, cancellationToken);
                     break;
                 case Verbs.RemoveLeg:
-                    Remove(command);
+                    removedSubTask = Remove(command);
                     break;
                 case Verbs.StartLeg:
                     await StartAsync(command, cancellationToken);
@@ -210,6 +211,12 @@ public sealed partial class LegCommander(
         var (started, notStarted) = await AwaitLaunchesAsync(launches);
         made ??= started;
         error ??= notStarted;
+
+        // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.
+        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted"))
+        {
+            await SyncSubTasksAsync(CodeOf(command.Target), removedSubTask, command.Verb == Verbs.FinishLeg ? LegOf(command.Target).Leg.Name : null, cancellationToken);
+        }
 
         // A flight moved by hand goes through its own calls, the lock let go: git and the other node take as long as they take.
         if (error is null && moving is not null)
@@ -722,13 +729,16 @@ public sealed partial class LegCommander(
             Budget = budget,
             Model = model,
             Effort = effort,
+            // Planned again, the leg keeps the sub-task it has: it is the same leg in the work item.
+            SubTask = known?.SubTask,
         });
     }
 
     /// <summary>The card a removed leg leaves, a line saying it went and why.</summary>
     public const string LegRemovedKind = "leg-removed";
 
-    private void Remove(CommandRequest command)
+    // Returns the removed leg's sub-task, for the work item to close it.
+    private SubTask? Remove(CommandRequest command)
     {
         var (flight, leg) = LegOf(command.Target);
         if (flight.State == FlightState.Landed)
@@ -757,6 +767,7 @@ public sealed partial class LegCommander(
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} was removed", PlannedKind);
         state.RaiseCard(CardBin.Handled, LegRemovedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}/{leg.Name} removed by {command.Who}", why.Length > 0 ? why : null);
+        return leg.SubTask;
     }
 
     /// <summary>The ring a planner or a leg refused for a flight a peer node flies raises, naming the peer.</summary>
