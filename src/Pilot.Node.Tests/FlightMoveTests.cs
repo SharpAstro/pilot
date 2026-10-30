@@ -14,32 +14,32 @@ namespace Pilot.Node.Tests;
 /// (<c>move-flight</c>): a node in maintenance moves its flight once its leg has finished, the plane made safe first, and on any failure
 /// keeps the flight, says why on the row, and offers a Retry move; the flight is flown on one node only, at every moment.
 /// </summary>
-public sealed class FlightMoveTests : IDisposable
+public abstract class FlightMoveTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private const string GitHub = "SharpAstro/tianwen";
-    private const string Code = "TIA900";
-    private const string Branch = "flight/tia900";
+    private protected const string GitHub = "SharpAstro/tianwen";
+    private protected const string Code = "TIA900";
+    private protected const string Branch = "flight/tia900";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2v-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly NodeState _sender = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly RoleModels _models = new(null);
-    private readonly FakeWorkers _workers = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
-    private readonly string _pushedHead;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2v-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly NodeState _sender = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly RoleModels _models = new(null);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
+    private protected readonly string _pushedHead;
 
     // The sending node, SE1: its own state, settings, workers and git (which a test makes refuse a push), reaching DE1 through a peer.
-    private readonly RoleModels _senderModels = new(null);
-    private readonly FakeWorkers _senderWorkers = new();
-    private readonly RefusingGit _senderGit = new(new GitCli());
-    private readonly FlightCommander _senderFlights;
-    private readonly LegCommander _senderLegs;
-    private readonly MovePeer _peer;
+    private protected readonly RoleModels _senderModels = new(null);
+    private protected readonly FakeWorkers _senderWorkers = new();
+    private protected readonly RefusingGit _senderGit = new(new GitCli());
+    private protected readonly FlightCommander _senderFlights;
+    private protected readonly LegCommander _senderLegs;
+    private protected readonly MovePeer _peer;
 
-    public FlightMoveTests()
+    protected FlightMoveTestsBase()
     {
         // Two machines' clones of one GitHub repo: both name github.com as origin, which this machine's git turns into the bare folder.
         SeedRepo.Make(Path.Combine(_root, "receiver"));
@@ -75,11 +75,11 @@ public sealed class FlightMoveTests : IDisposable
         _senderLegs = new LegCommander(_sender, _senderWorkers, new FakeChecks(), new FakeGitHub(), _senderGit, new Planes(git), _senderFlights, senderOptions, TimeProvider.System) { Models = _senderModels };
     }
 
-    private string Receiving => Path.Combine(_root, "receiver", "tianwen");
+    private protected string Receiving => Path.Combine(_root, "receiver", "tianwen");
 
-    private string Sending => Path.Combine(_root, "sender", "tianwen");
+    private protected string Sending => Path.Combine(_root, "sender", "tianwen");
 
-    private string Plane => Path.Combine(Receiving, ".claude", "worktrees", "tia900");
+    private protected string Plane => Path.Combine(Receiving, ".claude", "worktrees", "tia900");
 
     public void Dispose()
     {
@@ -97,7 +97,7 @@ public sealed class FlightMoveTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -111,14 +111,14 @@ public sealed class FlightMoveTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private void Fleet(bool willing) =>
+    private protected void Fleet(bool willing) =>
         _models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AcceptFleetFlightsKey, [willing ? "on" : "off"]).Settings!);
 
-    private void Maintenance(bool on) =>
+    private protected void Maintenance(bool on) =>
         _models.Apply(NodeSettings.With(NodeSettings.With(new NodeSettings(), NodeSettings.AcceptFleetFlightsKey, ["on"]).Settings!, NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
 
     /// <summary>The flight as SE1 holds it: a done leg with its report and a go-around, a planned one after it, a PR, a review and cards, one of them open.</summary>
-    private FlightMove Sent()
+    private protected FlightMove Sent()
     {
         var at = DateTimeOffset.UtcNow.AddHours(-3);
         _sender.PutFlight(new FlightRow
@@ -145,17 +145,17 @@ public sealed class FlightMoveTests : IDisposable
         return FlightMoves.Gather(_sender, Code, "SE1");
     }
 
-    private static CommandRequest Under(FlightMove move, string grant = "SE1") => move.Command("SE1/node") with { Grant = grant };
+    private protected static CommandRequest Under(FlightMove move, string grant = "SE1") => move.Command("SE1/node") with { Grant = grant };
 
     // The flight's advance runs after the receive-flight is answered; a test looks at what it did once it has finished.
-    private async Task<CommandResult> Receive(FlightMove move, string grant = "SE1")
+    private protected async Task<CommandResult> Receive(FlightMove move, string grant = "SE1")
     {
         var result = await _flights.RunAsync(Under(move, grant), Ct);
         await _flights.WhenAdvancedAsync();
         return result;
     }
 
-    private void NothingTaken()
+    private protected void NothingTaken()
     {
         _state.Flights().ShouldBeEmpty();
         _state.Legs().ShouldBeEmpty();
@@ -163,6 +163,194 @@ public sealed class FlightMoveTests : IDisposable
         Directory.Exists(Plane).ShouldBeFalse();
     }
 
+    private protected string SenderPlane => Path.Combine(Sending, ".claude", "worktrees", "tia900");
+
+    private protected void SenderMaintenance(bool on) =>
+        _senderModels.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
+
+    /// <summary>
+    /// The flight on SE1, whose plane is a worktree of its clone on the pushed branch: the parser leg as given, a render leg planned after it,
+    /// and a card about the flight. With <paramref name="unpushedCommit"/> the plane holds a commit of its own that origin lacks.
+    /// </summary>
+    private protected void Fly(LegState parser, bool unpushedCommit = false)
+    {
+        Git(Sending, "switch", "-q", "main");
+        Git(Sending, "worktree", "add", SenderPlane, Branch);
+        if (unpushedCommit)
+        {
+            File.WriteAllText(Path.Combine(SenderPlane, "render-prep.txt"), "prepared on SE1\n");
+            Git(SenderPlane, "add", ".");
+            Git(SenderPlane, "commit", "-q", "-m", "prepare render");
+        }
+        var at = DateTimeOffset.UtcNow.AddHours(-1);
+        _sender.PutFlight(new FlightRow
+        {
+            Code = Code, Repo = "tianwen", RepoPath = Sending, Issue = 900, Title = "Planets", Branch = Branch, Worktree = SenderPlane,
+            Base = "origin/main", State = FlightState.Flying, CreatedAt = at,
+        });
+        _sender.PutLeg(new LegRow
+        {
+            Flight = Code, Name = "parser", Order = 1, Goal = "Parse the ephemeris", DoneWhen = "Tests pass", State = parser, Report = parser == LegState.Done ? "parser in" : null,
+            Worker = "se1-tia900-parser", WorkerJob = parser == LegState.Flying ? "job-parser" : null, StartedAt = at, FinishedAt = parser == LegState.Done ? at.AddMinutes(30) : null,
+        });
+        _sender.PutLeg(new LegRow { Flight = Code, Name = "render", Order = 2, Goal = "Draw the planets", DoneWhen = "Shown", State = LegState.Planned });
+        _sender.RaiseCard(CardBin.Ring, "next-step", Verbs.FlightTarget(Code), "TIA900 waits to start render");
+    }
+
+    private protected FlightRow OnSender => _sender.Flights().Single(f => f.Code == Code);
+
+    private protected string OriginHead() => Git(Receiving, "ls-remote", "origin", $"refs/heads/{Branch}").Split('\t')[0];
+
+    /// <summary>The flight stayed on SE1: flying there, no leg started, nothing taken by DE1, and the reason on its row and on a Retry card.</summary>
+    private protected CardRow StayedWith(string failure)
+    {
+        var flight = OnSender;
+        (flight.State, flight.MovedTo).ShouldBe((FlightState.Flying, null));
+        flight.MoveFailure.ShouldBe(failure);
+        _sender.Legs(Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Planned);
+        _senderWorkers.Started.ShouldBeEmpty();
+        NothingTaken();
+        var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
+        (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Ring, "flight/TIA900", failure[..failure.IndexOf(": ", StringComparison.Ordinal)]));
+        var retry = card.Choices.ShouldHaveSingleItem();
+        (retry.Label, retry.Verb, retry.Target).ShouldBe(("Retry move", Verbs.MoveFlight, "flight/TIA900"));
+        return card;
+    }
+
+    private protected Task<CommandResult> Retry(CardRow card) =>
+        _senderLegs.RunAsync(new CommandRequest { Verb = card.Choices[0].Verb, Target = card.Choices[0].Target, Args = card.Choices[0].Args, Who = "tests" }, Ct);
+
+    /// <summary>The flight is DE1's now: landed here saying where it went, flying there, and only there.</summary>
+    private protected void MovedAway()
+    {
+        var flight = OnSender;
+        (flight.State, flight.MoveFailure).ShouldBe((FlightState.Landed, null));
+        flight.MovedTo.ShouldNotBeNull().Text.ShouldBe("moved to DE1 after leg parser");
+        _state.Flights().ShouldHaveSingleItem().State.ShouldBe(FlightState.Flying);
+    }
+
+    private protected async Task SweepSenderAsync() => await _senderLegs.AdvanceAllAsync(Ct);
+
+    /// <summary>The flight is flown by nobody on SE1 (no leg, review or PR starts) while its move is unknown, and DE1 flies it if it holds it.</summary>
+    private protected async Task SenderStartsNothingAsync()
+    {
+        await SweepSenderAsync();
+        _senderWorkers.Started.ShouldBeEmpty();
+        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error
+            .ShouldNotBeNull().ShouldContain("it is not known yet whether DE1 took the flight");
+        _senderWorkers.Started.ShouldBeEmpty();
+        OnSender.State.ShouldBe(FlightState.Flying);
+    }
+
+    /// <summary>Git for the sending node, which a test makes refuse a push, as a remote that rejects it.</summary>
+    private protected sealed class RefusingGit(IGit inner) : IGit
+    {
+        public string? RefusePush { get; set; }
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            RefusePush is { } refused && args.Count > 0 && args[0] == "push" ? Task.FromResult(new GitRun(1, "", refused)) : inner.RunAsync(args, cwd, cancellationToken);
+    }
+
+    private protected sealed class MoveFleet(params IFleetPeer[] peers) : IFleet
+    {
+        public IReadOnlyList<IFleetPeer> Peers() => peers;
+    }
+
+    /// <summary>DE1 as SE1 reaches it: its node, its repos and load as it says them, and its receive-flight as this test node's.</summary>
+    private protected sealed class MovePeer(FlightCommander receiver) : IFleetPeer
+    {
+        public string Endpoint => "de1.local:47731";
+
+        public bool HasGrant => true;
+
+        public bool Maintenance { get; set; }
+
+        public string? Checkout { get; init; }
+
+        public Func<Task>? BeforeReceive { get; set; }
+
+        public Action? AfterReceive { get; set; }
+
+        public List<CommandRequest> Sent { get; } = [];
+
+        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => Task.FromResult(new NodeInfo
+        {
+            WireVersion = NodeWire.Version, Version = "0", MachineName = "DE1", MachinePrefix = "DE1", ProcessId = 1, StartedAt = DateTimeOffset.UtcNow,
+            DataFolder = "/data", SocketPath = "/sock", Stream = "s", Maintenance = Maintenance, AcceptsFleetFlights = true,
+        });
+
+        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<RepoInfo[]?>([new RepoInfo { Name = "tianwen", Path = Checkout!, GitHub = GitHub }]);
+
+        /// <summary>The flights DE1 says it has: its node's state, as the stream's snapshot carries them.</summary>
+        public NodeState? State { get; init; }
+
+        /// <summary>How the answer to the receive-flight goes wrong, when it does: the flight is taken or not, and the sender hears nothing, or only "still running".</summary>
+        public Lost Reply { get; set; }
+
+        /// <summary>Whether the peer can be asked what it holds.</summary>
+        public bool Reachable { get; set; } = true;
+
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
+            Reachable ? Task.FromResult(new FleetLoad(null, State?.Flights() ?? [], null)) : throw new TimeoutException("de1.local:47731 did not answer within 8 s");
+
+        public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
+        {
+            Sent.Add(command);
+            if (BeforeReceive is { } before)
+            {
+                await before();
+            }
+            if (Reply == Lost.BeforeTaking)
+            {
+                throw new TimeoutException("de1.local:47731 did not answer within 100 s");
+            }
+            if (Reply == Lost.StillRunningUntaken)
+            {
+                return new CommandResult
+                {
+                    Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Seq = 0,
+                    Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status",
+                };
+            }
+            var result = await receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
+            // Over the wire the receiver goes on after it has answered; what it did then is what a test looks at.
+            await receiver.WhenAdvancedAsync();
+            AfterReceive?.Invoke();
+            return Reply switch
+            {
+                Lost.AfterTaking => throw new TimeoutException("de1.local:47731 did not answer within 100 s"),
+                Lost.StillRunning => result with { Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status" },
+                _ => result,
+            };
+        }
+    }
+
+    // The reply of a receive-flight that goes wrong: never taken and no answer; taken and no answer; taken and answered "still running"; and answered "still running" without being taken.
+    private protected enum Lost { None, BeforeTaking, AfterTaking, StillRunning, StillRunningUntaken }
+
+    /// <summary>A peer whose receive-flight is this node's: what the sender's node reaches over the LAN, under its grant.</summary>
+    private protected sealed class HandingPeer(FlightCommander receiver) : IFleetPeer
+    {
+        public string Endpoint => "de1.local:47731";
+
+        public bool HasGrant => true;
+
+        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) =>
+            receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
+    }
+
+}
+
+/// <summary>Part 1 of FlightMoveTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class FlightMoveTests1 : FlightMoveTestsBase
+{
     [Fact]
     public async Task AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead()
     {
@@ -347,72 +535,6 @@ public sealed class FlightMoveTests : IDisposable
         NothingTaken();
     }
 
-    private string SenderPlane => Path.Combine(Sending, ".claude", "worktrees", "tia900");
-
-    private void SenderMaintenance(bool on) =>
-        _senderModels.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.MaintenanceKey, [on ? "on" : "off"]).Settings!);
-
-    /// <summary>
-    /// The flight on SE1, whose plane is a worktree of its clone on the pushed branch: the parser leg as given, a render leg planned after it,
-    /// and a card about the flight. With <paramref name="unpushedCommit"/> the plane holds a commit of its own that origin lacks.
-    /// </summary>
-    private void Fly(LegState parser, bool unpushedCommit = false)
-    {
-        Git(Sending, "switch", "-q", "main");
-        Git(Sending, "worktree", "add", SenderPlane, Branch);
-        if (unpushedCommit)
-        {
-            File.WriteAllText(Path.Combine(SenderPlane, "render-prep.txt"), "prepared on SE1\n");
-            Git(SenderPlane, "add", ".");
-            Git(SenderPlane, "commit", "-q", "-m", "prepare render");
-        }
-        var at = DateTimeOffset.UtcNow.AddHours(-1);
-        _sender.PutFlight(new FlightRow
-        {
-            Code = Code, Repo = "tianwen", RepoPath = Sending, Issue = 900, Title = "Planets", Branch = Branch, Worktree = SenderPlane,
-            Base = "origin/main", State = FlightState.Flying, CreatedAt = at,
-        });
-        _sender.PutLeg(new LegRow
-        {
-            Flight = Code, Name = "parser", Order = 1, Goal = "Parse the ephemeris", DoneWhen = "Tests pass", State = parser, Report = parser == LegState.Done ? "parser in" : null,
-            Worker = "se1-tia900-parser", WorkerJob = parser == LegState.Flying ? "job-parser" : null, StartedAt = at, FinishedAt = parser == LegState.Done ? at.AddMinutes(30) : null,
-        });
-        _sender.PutLeg(new LegRow { Flight = Code, Name = "render", Order = 2, Goal = "Draw the planets", DoneWhen = "Shown", State = LegState.Planned });
-        _sender.RaiseCard(CardBin.Ring, "next-step", Verbs.FlightTarget(Code), "TIA900 waits to start render");
-    }
-
-    private FlightRow OnSender => _sender.Flights().Single(f => f.Code == Code);
-
-    private string OriginHead() => Git(Receiving, "ls-remote", "origin", $"refs/heads/{Branch}").Split('\t')[0];
-
-    /// <summary>The flight stayed on SE1: flying there, no leg started, nothing taken by DE1, and the reason on its row and on a Retry card.</summary>
-    private CardRow StayedWith(string failure)
-    {
-        var flight = OnSender;
-        (flight.State, flight.MovedTo).ShouldBe((FlightState.Flying, null));
-        flight.MoveFailure.ShouldBe(failure);
-        _sender.Legs(Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Planned);
-        _senderWorkers.Started.ShouldBeEmpty();
-        NothingTaken();
-        var card = _sender.Cards(openOnly: true).Single(c => c.Kind == LegCommander.MoveFailedKind);
-        (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Ring, "flight/TIA900", failure[..failure.IndexOf(": ", StringComparison.Ordinal)]));
-        var retry = card.Choices.ShouldHaveSingleItem();
-        (retry.Label, retry.Verb, retry.Target).ShouldBe(("Retry move", Verbs.MoveFlight, "flight/TIA900"));
-        return card;
-    }
-
-    private Task<CommandResult> Retry(CardRow card) =>
-        _senderLegs.RunAsync(new CommandRequest { Verb = card.Choices[0].Verb, Target = card.Choices[0].Target, Args = card.Choices[0].Args, Who = "tests" }, Ct);
-
-    /// <summary>The flight is DE1's now: landed here saying where it went, flying there, and only there.</summary>
-    private void MovedAway()
-    {
-        var flight = OnSender;
-        (flight.State, flight.MoveFailure).ShouldBe((FlightState.Landed, null));
-        flight.MovedTo.ShouldNotBeNull().Text.ShouldBe("moved to DE1 after leg parser");
-        _state.Flights().ShouldHaveSingleItem().State.ShouldBe(FlightState.Flying);
-    }
-
     [Fact]
     public async Task TheLegInFlightFinishesFirstThenTheFlightMovesAndTheNextLegStartsOnlyOnTheReceiver()
     {
@@ -457,7 +579,11 @@ public sealed class FlightMoveTests : IDisposable
         _senderWorkers.Started.ShouldBeEmpty();
         _peer.Sent.Count.ShouldBe(1);
     }
+}
 
+/// <summary>Part 2 of FlightMoveTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class FlightMoveTests2 : FlightMoveTestsBase
+{
     [Fact]
     public async Task AtNoPointDoBothNodesFlyTheFlight()
     {
@@ -696,7 +822,11 @@ public sealed class FlightMoveTests : IDisposable
         // Its next leg is read against the tree first, as on any node: the flight carries on here.
         _senderWorkers.Started.ShouldHaveSingleItem().Name.ShouldBe("se1-tia900-render-validator");
     }
+}
 
+/// <summary>Part 3 of FlightMoveTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class FlightMoveTests3 : FlightMoveTestsBase
+{
     [Fact]
     public async Task AFlightThatWaitsForAMovedOneKeepsWaiting()
     {
@@ -714,19 +844,6 @@ public sealed class FlightMoveTests : IDisposable
         // TIA900 has left this node but has not landed: what waits for it is not let go.
         (await _senderFlights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA901", Args = [Code], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
         _sender.Flights().Single(f => f.Code == "TIA901").State.ShouldBe(FlightState.Held);
-    }
-
-    private async Task SweepSenderAsync() => await _senderLegs.AdvanceAllAsync(Ct);
-
-    /// <summary>The flight is flown by nobody on SE1 (no leg, review or PR starts) while its move is unknown, and DE1 flies it if it holds it.</summary>
-    private async Task SenderStartsNothingAsync()
-    {
-        await SweepSenderAsync();
-        _senderWorkers.Started.ShouldBeEmpty();
-        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(Code, "render"), Who = "tests" }, Ct)).Error
-            .ShouldNotBeNull().ShouldContain("it is not known yet whether DE1 took the flight");
-        _senderWorkers.Started.ShouldBeEmpty();
-        OnSender.State.ShouldBe(FlightState.Flying);
     }
 
     [Fact]
@@ -915,109 +1032,5 @@ public sealed class FlightMoveTests : IDisposable
         result.Ok.ShouldBeTrue(result.Error);
         _state.Flights().ShouldHaveSingleItem();
         _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind).Detail.ShouldBe("the launcher is down");
-    }
-
-    /// <summary>Git for the sending node, which a test makes refuse a push, as a remote that rejects it.</summary>
-    private sealed class RefusingGit(IGit inner) : IGit
-    {
-        public string? RefusePush { get; set; }
-
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
-            RefusePush is { } refused && args.Count > 0 && args[0] == "push" ? Task.FromResult(new GitRun(1, "", refused)) : inner.RunAsync(args, cwd, cancellationToken);
-    }
-
-    private sealed class MoveFleet(params IFleetPeer[] peers) : IFleet
-    {
-        public IReadOnlyList<IFleetPeer> Peers() => peers;
-    }
-
-    /// <summary>DE1 as SE1 reaches it: its node, its repos and load as it says them, and its receive-flight as this test node's.</summary>
-    private sealed class MovePeer(FlightCommander receiver) : IFleetPeer
-    {
-        public string Endpoint => "de1.local:47731";
-
-        public bool HasGrant => true;
-
-        public bool Maintenance { get; set; }
-
-        public string? Checkout { get; init; }
-
-        public Func<Task>? BeforeReceive { get; set; }
-
-        public Action? AfterReceive { get; set; }
-
-        public List<CommandRequest> Sent { get; } = [];
-
-        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => Task.FromResult(new NodeInfo
-        {
-            WireVersion = NodeWire.Version, Version = "0", MachineName = "DE1", MachinePrefix = "DE1", ProcessId = 1, StartedAt = DateTimeOffset.UtcNow,
-            DataFolder = "/data", SocketPath = "/sock", Stream = "s", Maintenance = Maintenance, AcceptsFleetFlights = true,
-        });
-
-        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<RepoInfo[]?>([new RepoInfo { Name = "tianwen", Path = Checkout!, GitHub = GitHub }]);
-
-        /// <summary>The flights DE1 says it has: its node's state, as the stream's snapshot carries them.</summary>
-        public NodeState? State { get; init; }
-
-        /// <summary>How the answer to the receive-flight goes wrong, when it does: the flight is taken or not, and the sender hears nothing, or only "still running".</summary>
-        public Lost Reply { get; set; }
-
-        /// <summary>Whether the peer can be asked what it holds.</summary>
-        public bool Reachable { get; set; } = true;
-
-        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
-            Reachable ? Task.FromResult(new FleetLoad(null, State?.Flights() ?? [], null)) : throw new TimeoutException("de1.local:47731 did not answer within 8 s");
-
-        public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
-        {
-            Sent.Add(command);
-            if (BeforeReceive is { } before)
-            {
-                await before();
-            }
-            if (Reply == Lost.BeforeTaking)
-            {
-                throw new TimeoutException("de1.local:47731 did not answer within 100 s");
-            }
-            if (Reply == Lost.StillRunningUntaken)
-            {
-                return new CommandResult
-                {
-                    Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Seq = 0,
-                    Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status",
-                };
-            }
-            var result = await receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
-            // Over the wire the receiver goes on after it has answered; what it did then is what a test looks at.
-            await receiver.WhenAdvancedAsync();
-            AfterReceive?.Invoke();
-            return Reply switch
-            {
-                Lost.AfterTaking => throw new TimeoutException("de1.local:47731 did not answer within 100 s"),
-                Lost.StillRunning => result with { Waiting = "still running after 90 s; its outcome follows on the stream, check pilot status" },
-                _ => result,
-            };
-        }
-    }
-
-    // The reply of a receive-flight that goes wrong: never taken and no answer; taken and no answer; taken and answered "still running"; and answered "still running" without being taken.
-    private enum Lost { None, BeforeTaking, AfterTaking, StillRunning, StillRunningUntaken }
-
-    /// <summary>A peer whose receive-flight is this node's: what the sender's node reaches over the LAN, under its grant.</summary>
-    private sealed class HandingPeer(FlightCommander receiver) : IFleetPeer
-    {
-        public string Endpoint => "de1.local:47731";
-
-        public bool HasGrant => true;
-
-        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) =>
-            receiver.RunAsync(command with { Grant = "SE1" }, cancellationToken);
     }
 }

@@ -9,20 +9,20 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>Jobs: a long run handed to the node, its owner woken with how it ended, so no worker polls.</summary>
-public sealed class JobTests : IDisposable
+public abstract class JobTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2j-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly ConcurrentQueue<CommandRequest> _said = new();
-    private readonly JobRunner _jobs;
-    private string? _refuse;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2j-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly ConcurrentQueue<CommandRequest> _said = new();
+    private protected readonly JobRunner _jobs;
+    private protected string? _refuse;
 
     // The machine's free memory as the runner reads it; null (unknown) holds nothing back.
-    private long? _free;
+    private protected long? _free;
 
-    public JobTests()
+    protected JobTestsBase()
     {
         Directory.CreateDirectory(_root);
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), TimeProvider.System)
@@ -60,24 +60,24 @@ public sealed class JobTests : IDisposable
     }
 
     // The same line in pwsh and sh: the node runs no cmd. Quoted, since pwsh's echo writes each word on a line of its own.
-    private static string Echo(string text, int exit = 0) => $"echo '{text}'; exit {exit}";
+    private protected static string Echo(string text, int exit = 0) => $"echo '{text}'; exit {exit}";
 
     // Not a bare sleep, which the node refuses (SleepOnly): the echo is what makes it a job.
-    private static string Sleep(int seconds) => $"sleep {seconds}; echo slept";
+    private protected static string Sleep(int seconds) => $"sleep {seconds}; echo slept";
 
     /// <summary>A file as it is: the job's wrapper (or the child that writes its pid) may still hold it open for writing a moment after it shows, and a plain File.ReadAllText then fails on Windows.</summary>
-    private static string ReadLog(string path)
+    private protected static string ReadLog(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
 
-    private CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
+    private protected CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
     /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
-    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
+    private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
         for (var i = 0; i < 300; i++)
         {
@@ -90,7 +90,7 @@ public sealed class JobTests : IDisposable
         throw new TimeoutException($"job {id} never came to the state awaited");
     }
 
-    private async Task<JobRow> Ended(string id)
+    private protected async Task<JobRow> Ended(string id)
     {
         for (var i = 0; i < 300; i++)
         {
@@ -103,6 +103,253 @@ public sealed class JobTests : IDisposable
         throw new TimeoutException($"job {id} did not end");
     }
 
+    private protected static bool IsAlive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private protected void Cancel(string id) =>
+        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+
+    /// <summary>A job that ended by itself some hours ago, which the node measured.</summary>
+    private protected void SeedRun(string id, string command, long median, long peak, int ended) =>
+        _state.PutJob(new JobRow
+        {
+            Id = id, Command = command, Cwd = _root, State = JobState.Succeeded, ExitCode = 0, LogPath = Path.Combine(_root, id + ".log"),
+            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddHours(-ended - 1), EndedAt = DateTimeOffset.UtcNow.AddHours(-ended), Told = true,
+            MemoryKey = JobKey.Of(command, _root).ToString(), MemoryMedian = median, MemoryPeak = peak,
+        });
+
+    /// <summary>A clock the test moves.</summary>
+    private protected sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan span) => _now += span;
+    }
+
+    // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
+    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle()
+    {
+        var clock = new Clock();
+        var cpu = new Dictionary<string, TimeSpan>();
+        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
+        {
+            FreeMemory = () => null,
+            IdleWindow = TimeSpan.FromMinutes(15),
+            IdleCpu = TimeSpan.FromSeconds(5),
+            JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
+        };
+        return (jobs, clock, cpu, async id =>
+        {
+            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+            await Until(id, j => j.EndedAt is not null);
+        });
+    }
+
+    private protected string Hand(JobRunner jobs, string command)
+    {
+        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [_root, "0", command], Who = "se1-tia1-parser" }).Made!;
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
+        return id;
+    }
+
+    private protected CardRow[] IdleCards(bool openOnly = true) => [.. _state.Cards(openOnly).Where(c => c.Kind == JobRunner.IdleKind)];
+
+    /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>
+    private protected sealed class OnJobRunning(Action<string> running) : INodeEventSink
+    {
+        public int Capacity => 10_000;
+
+        public bool TryWrite(byte[] message)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(message);
+            if (doc.RootElement.TryGetProperty("job", out var job) && job.GetProperty("state").GetString() == "running")
+            {
+                running(job.GetProperty("id").GetString()!);
+            }
+            return true;
+        }
+
+        public void Overflowed()
+        {
+        }
+    }
+
+    /// <summary>
+    /// A node on the test's data folder: its own journal, state and runner, as a restart builds them. Stopped, it leaves its
+    /// jobs running and its journal on disk for the next one, which is how a node's end looks to its successor.
+    /// </summary>
+    private protected sealed class Node : IDisposable
+    {
+        private readonly FileJournal _journal;
+
+        private Node(string root, Func<long?> freeMemory)
+        {
+            _journal = new FileJournal(Path.Combine(root, "journal"));
+            State = new NodeState(_journal, TimeProvider.System);
+            Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
+            {
+                FreeMemory = freeMemory,
+                Say = (command, _) =>
+                {
+                    Said.Enqueue(command);
+                    return Task.FromResult(State.Complete(command, null));
+                },
+            };
+        }
+
+        public NodeState State { get; }
+
+        public JobRunner Jobs { get; }
+
+        public ConcurrentQueue<CommandRequest> Said { get; } = new();
+
+        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null)
+        {
+            var node = new Node(root, freeMemory ?? (() => null));
+            if (node.State.Sessions().Length == 0)
+            {
+                node.State.PutSession(new SessionRow
+                {
+                    Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = root,
+                    Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
+                    SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+                });
+            }
+            await node.Jobs.StartAsync(CancellationToken.None);
+            await node.Jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10));
+            return node;
+        }
+
+        public CommandResult Run(string cwd, string command, long timeoutSeconds = 0) =>
+            Jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [cwd, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
+
+        public CommandResult Cancel(string id) =>
+            Jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+
+        public JobRow Job(string id) => State.Jobs().Single(j => j.Id == id);
+
+        public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
+        {
+            for (var i = 0; i < 400; i++)
+            {
+                if (Job(id) is var job && condition(job))
+                {
+                    return job;
+                }
+                await Task.Delay(50, cancellationToken);
+            }
+            throw new TimeoutException($"job {id} never came to the state awaited");
+        }
+
+        /// <summary>The job once it has ended and its owner has been told.</summary>
+        public Task<JobRow> EndedAsync(string id, CancellationToken cancellationToken) => UntilAsync(id, j => j.EndedAt is not null && j.Told, cancellationToken);
+
+        /// <summary>The node going away: its jobs run on and their rows stay as they are.</summary>
+        public async Task StopAsync()
+        {
+            await Jobs.StopAsync(CancellationToken.None);
+            _journal.Dispose();
+        }
+
+        public void Dispose() => _journal.Dispose();
+    }
+
+    private protected sealed class RestartLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
+    {
+        public bool Stopped { get; private set; }
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication() => Stopped = true;
+    }
+
+    // The pid and every descendant of it now, read the way the node reads them.
+    private protected static HashSet<int> TreeOf(int root)
+    {
+        var entries = OsProcessTable.Instance.Snapshot();
+        var tree = new HashSet<int> { root };
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            foreach (var e in entries)
+            {
+                grew |= tree.Contains(e.ParentPid) && tree.Add(e.Pid);
+            }
+        }
+        return tree;
+    }
+
+    private protected static CommandRequest Verb(string verb, string id, string who = "controller") => new() { Verb = verb, Target = Verbs.JobTarget(id), Who = who };
+
+    // CPU time per process of the tree, by pid: a sum over the tree went down when a child exited between two samples (its time left
+    // the sum), which read as a paused tree using negative CPU on a busy CI runner (#434). CpuSince compares like with like.
+    private protected static Dictionary<int, TimeSpan> Cpu(IEnumerable<int> pids)
+    {
+        var sample = new Dictionary<int, TimeSpan>();
+        foreach (var pid in pids)
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.GetProcessById(pid);
+                sample[pid] = p.TotalProcessorTime;
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+        }
+        return sample;
+    }
+
+    // The CPU the tree used since <paramref name="before"/>: over the processes alive in both samples only, each at least zero
+    // (a pid reused by a new process reads as less, never as negative time).
+    private protected static TimeSpan CpuSince(IEnumerable<int> pids, Dictionary<int, TimeSpan> before) =>
+        Cpu(pids).Where(now => before.ContainsKey(now.Key)).Aggregate(TimeSpan.Zero, (sum, now) => sum + TimeSpan.FromTicks(Math.Max(0, (now.Value - before[now.Key]).Ticks)));
+
+    private protected static bool Alive(int pid)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return !p.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private protected async Task<string> Running(string id)
+    {
+        var job = await Until(id, j => j.State == JobState.Running);
+        for (var i = 0; i < 300 && (!File.Exists(job.LogPath) || new FileInfo(job.LogPath).Length == 0); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        return job.LogPath;
+    }
+
+    private protected static long LogLength(string path) => new FileInfo(path).Length;
+}
+
+/// <summary>Part 1 of JobTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class JobTests1 : JobTestsBase
+{
     [Fact]
     public async Task AJobRunsOnTheNodeAndItsOwnerIsToldHowItEndedWithItsLastLines()
     {
@@ -370,19 +617,6 @@ public sealed class JobTests : IDisposable
         (await Ended(id)).Error.ShouldBe("cancelled by controller");
     }
 
-    private static bool IsAlive(int pid)
-    {
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
     [Fact]
     public async Task AJobPastItsTimeoutIsStoppedWithItsWholeTreeAndSaysSo()
     {
@@ -473,9 +707,6 @@ public sealed class JobTests : IDisposable
         Cancel(holder);
     }
 
-    private void Cancel(string id) =>
-        _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
-
     [Fact]
     public async Task TheHeadOfTheQueueWithNothingRunningStartsWhateverTheFreeMemory()
     {
@@ -530,7 +761,11 @@ public sealed class JobTests : IDisposable
         (await Ended(id)).State.ShouldBe(JobState.Succeeded);
         Cancel(holder);
     }
+}
 
+/// <summary>Part 2 of JobTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class JobTests2 : JobTestsBase
+{
     [Fact]
     public async Task ARunsSpikeDoesNotRaiseTheEstimateButARunWhoseMedianIsHigherDoesAtOnce()
     {
@@ -590,15 +825,6 @@ public sealed class JobTests : IDisposable
         (await Until(behind, j => j.Step is not null)).Step.ShouldBe("queued, 1 ahead of it; needs 1.0 GB (a guess, it has not run before), 0.0 GB free now");
         Cancel(holder);
     }
-
-    /// <summary>A job that ended by itself some hours ago, which the node measured.</summary>
-    private void SeedRun(string id, string command, long median, long peak, int ended) =>
-        _state.PutJob(new JobRow
-        {
-            Id = id, Command = command, Cwd = _root, State = JobState.Succeeded, ExitCode = 0, LogPath = Path.Combine(_root, id + ".log"),
-            Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddHours(-ended - 1), EndedAt = DateTimeOffset.UtcNow.AddHours(-ended), Told = true,
-            MemoryKey = JobKey.Of(command, _root).ToString(), MemoryMedian = median, MemoryPeak = peak,
-        });
 
     [Fact]
     public async Task AQueuedJobCancelledNeverRunsAndItsOwnerIsTold()
@@ -685,44 +911,6 @@ public sealed class JobTests : IDisposable
         started.Ok.ShouldBeTrue();
         (await Ended(started.Made!)).State.ShouldBe(JobState.Succeeded);
     }
-
-    /// <summary>A clock the test moves.</summary>
-    private sealed class Clock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan span) => _now += span;
-    }
-
-    // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle()
-    {
-        var clock = new Clock();
-        var cpu = new Dictionary<string, TimeSpan>();
-        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
-        {
-            FreeMemory = () => null,
-            IdleWindow = TimeSpan.FromMinutes(15),
-            IdleCpu = TimeSpan.FromSeconds(5),
-            JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
-        };
-        return (jobs, clock, cpu, async id =>
-        {
-            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
-            await Until(id, j => j.EndedAt is not null);
-        });
-    }
-
-    private string Hand(JobRunner jobs, string command)
-    {
-        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [_root, "0", command], Who = "se1-tia1-parser" }).Made!;
-        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
-        return id;
-    }
-
-    private CardRow[] IdleCards(bool openOnly = true) => [.. _state.Cards(openOnly).Where(c => c.Kind == JobRunner.IdleKind)];
 
     [Fact]
     public async Task ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter()
@@ -835,106 +1023,6 @@ public sealed class JobTests : IDisposable
         tally.Total.ShouldBe(TimeSpan.FromSeconds(7));
     }
 
-    /// <summary>Calls back, as the state publishes it, when a job's Running row is put.</summary>
-    private sealed class OnJobRunning(Action<string> running) : INodeEventSink
-    {
-        public int Capacity => 10_000;
-
-        public bool TryWrite(byte[] message)
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(message);
-            if (doc.RootElement.TryGetProperty("job", out var job) && job.GetProperty("state").GetString() == "running")
-            {
-                running(job.GetProperty("id").GetString()!);
-            }
-            return true;
-        }
-
-        public void Overflowed()
-        {
-        }
-    }
-
-    /// <summary>
-    /// A node on the test's data folder: its own journal, state and runner, as a restart builds them. Stopped, it leaves its
-    /// jobs running and its journal on disk for the next one, which is how a node's end looks to its successor.
-    /// </summary>
-    private sealed class Node : IDisposable
-    {
-        private readonly FileJournal _journal;
-
-        private Node(string root, Func<long?> freeMemory)
-        {
-            _journal = new FileJournal(Path.Combine(root, "journal"));
-            State = new NodeState(_journal, TimeProvider.System);
-            Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
-            {
-                FreeMemory = freeMemory,
-                Say = (command, _) =>
-                {
-                    Said.Enqueue(command);
-                    return Task.FromResult(State.Complete(command, null));
-                },
-            };
-        }
-
-        public NodeState State { get; }
-
-        public JobRunner Jobs { get; }
-
-        public ConcurrentQueue<CommandRequest> Said { get; } = new();
-
-        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null)
-        {
-            var node = new Node(root, freeMemory ?? (() => null));
-            if (node.State.Sessions().Length == 0)
-            {
-                node.State.PutSession(new SessionRow
-                {
-                    Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = root,
-                    Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
-                    SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
-                });
-            }
-            await node.Jobs.StartAsync(CancellationToken.None);
-            await node.Jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10));
-            return node;
-        }
-
-        public CommandResult Run(string cwd, string command, long timeoutSeconds = 0) =>
-            Jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [cwd, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
-
-        public CommandResult Cancel(string id) =>
-            Jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
-
-        public JobRow Job(string id) => State.Jobs().Single(j => j.Id == id);
-
-        public async Task<JobRow> UntilAsync(string id, Func<JobRow, bool> condition, CancellationToken cancellationToken)
-        {
-            for (var i = 0; i < 400; i++)
-            {
-                if (Job(id) is var job && condition(job))
-                {
-                    return job;
-                }
-                await Task.Delay(50, cancellationToken);
-            }
-            throw new TimeoutException($"job {id} never came to the state awaited");
-        }
-
-        /// <summary>The job once it has ended and its owner has been told.</summary>
-        public Task<JobRow> EndedAsync(string id, CancellationToken cancellationToken) => UntilAsync(id, j => j.EndedAt is not null && j.Told, cancellationToken);
-
-        /// <summary>The node going away: its jobs run on and their rows stay as they are.</summary>
-        public async Task StopAsync()
-        {
-            await Jobs.StopAsync(CancellationToken.None);
-            _journal.Dispose();
-        }
-
-        public void Dispose() => _journal.Dispose();
-    }
-
     [Fact]
     public async Task ARestartAskedForWhileAJobRunsLeavesItRunningForTheNextNodeToFollow()
     {
@@ -970,19 +1058,6 @@ public sealed class JobTests : IDisposable
         second.Jobs.IsRunning(id).ShouldBeTrue();
         var ended = await second.EndedAsync(id, Ct);
         (ended.State, ended.Step).ShouldBe((JobState.Succeeded, "ended under the successor"));
-    }
-
-    private sealed class RestartLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime
-    {
-        public bool Stopped { get; private set; }
-
-        public CancellationToken ApplicationStarted => CancellationToken.None;
-
-        public CancellationToken ApplicationStopping => CancellationToken.None;
-
-        public CancellationToken ApplicationStopped => CancellationToken.None;
-
-        public void StopApplication() => Stopped = true;
     }
 
     [Fact]
@@ -1102,7 +1177,11 @@ public sealed class JobTests : IDisposable
 
         (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
     }
+}
 
+/// <summary>Part 3 of JobTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class JobTests3 : JobTestsBase
+{
     [Fact]
     public async Task APidAnotherProcessHasTakenIsNotTakenForTheJob()
     {
@@ -1362,73 +1441,6 @@ public sealed class JobTests : IDisposable
         return $"sh '{sh}' '{flag}'";
     }
 
-    // The pid and every descendant of it now, read the way the node reads them.
-    private static HashSet<int> TreeOf(int root)
-    {
-        var entries = OsProcessTable.Instance.Snapshot();
-        var tree = new HashSet<int> { root };
-        for (var grew = true; grew;)
-        {
-            grew = false;
-            foreach (var e in entries)
-            {
-                grew |= tree.Contains(e.ParentPid) && tree.Add(e.Pid);
-            }
-        }
-        return tree;
-    }
-
-    private static CommandRequest Verb(string verb, string id, string who = "controller") => new() { Verb = verb, Target = Verbs.JobTarget(id), Who = who };
-
-    // CPU time per process of the tree, by pid: a sum over the tree went down when a child exited between two samples (its time left
-    // the sum), which read as a paused tree using negative CPU on a busy CI runner (#434). CpuSince compares like with like.
-    private static Dictionary<int, TimeSpan> Cpu(IEnumerable<int> pids)
-    {
-        var sample = new Dictionary<int, TimeSpan>();
-        foreach (var pid in pids)
-        {
-            try
-            {
-                using var p = System.Diagnostics.Process.GetProcessById(pid);
-                sample[pid] = p.TotalProcessorTime;
-            }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-            }
-        }
-        return sample;
-    }
-
-    // The CPU the tree used since <paramref name="before"/>: over the processes alive in both samples only, each at least zero
-    // (a pid reused by a new process reads as less, never as negative time).
-    private static TimeSpan CpuSince(IEnumerable<int> pids, Dictionary<int, TimeSpan> before) =>
-        Cpu(pids).Where(now => before.ContainsKey(now.Key)).Aggregate(TimeSpan.Zero, (sum, now) => sum + TimeSpan.FromTicks(Math.Max(0, (now.Value - before[now.Key]).Ticks)));
-
-    private static bool Alive(int pid)
-    {
-        try
-        {
-            using var p = System.Diagnostics.Process.GetProcessById(pid);
-            return !p.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
-    private async Task<string> Running(string id)
-    {
-        var job = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && (!File.Exists(job.LogPath) || new FileInfo(job.LogPath).Length == 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        return job.LogPath;
-    }
-
-    private static long LogLength(string path) => new FileInfo(path).Length;
-
     [Fact]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
     {
@@ -1542,6 +1554,7 @@ public sealed class JobTests : IDisposable
         _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldBe($"job {queued} is not running");
         _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not running");
     }
+
 }
 
 /// <summary>Kills a job's process from its row, for a test that must not leave one running.</summary>

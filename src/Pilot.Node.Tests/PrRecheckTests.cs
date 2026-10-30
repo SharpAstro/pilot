@@ -9,20 +9,20 @@ namespace Pilot.Node.Tests;
 /// The <c>pilot: recheck</c> label (#286): the node sees it on any open PR of a tracked repo, decides whether the PR is its
 /// own to look at, and runs one recheck of it at a time. GitHub is a fake gh over bare repos; git is real.
 /// </summary>
-public sealed class PrRecheckTests : IDisposable
+public abstract class PrRecheckTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeGitHub _github = new();
-    private readonly FakeFleet _fleet = new();
-    private readonly PrReviews _reviews;
-    private readonly PrRecheck _recheck;
-    private readonly string _head;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2r-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FakeFleet _fleet = new();
+    private protected readonly PrReviews _reviews;
+    private protected readonly PrRecheck _recheck;
+    private protected readonly string _head;
 
-    public PrRecheckTests()
+    protected PrRecheckTestsBase()
     {
         var (widget, head) = PrOrigins.Make(_root, "widget", 7);
         _head = head;
@@ -53,14 +53,14 @@ public sealed class PrRecheckTests : IDisposable
         _recheck = new PrRecheck(_state, _github, _reviews, catalog, TimeProvider.System, _legs) { Fleet = _fleet };
     }
 
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    private string Roots => Path.Combine(_root, "repos");
+    private protected string Roots => Path.Combine(_root, "repos");
 
-    private string WidgetClone => Path.Combine(Roots, "widget");
+    private protected string WidgetClone => Path.Combine(Roots, "widget");
 
-    private PullRequest Pr(string state) =>
+    private protected PullRequest Pr(string state) =>
         new(7, state, _head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "ada", Base: "main");
 
     public void Dispose()
@@ -78,16 +78,174 @@ public sealed class PrRecheckTests : IDisposable
         PrOrigins.Delete(_root);
     }
 
-    private async Task LookAsync()
+    private protected async Task LookAsync()
     {
         await _recheck.LookAsync(Ct);
         await _recheck.WhenIdleAsync();
     }
 
-    private string[] Handled() => [.. _state.Cards().Where(c => c.Kind == PrRecheck.HandledKind && c.Bin == CardBin.Handled).Select(c => c.Title)];
+    private protected string[] Handled() => [.. _state.Cards().Where(c => c.Kind == PrRecheck.HandledKind && c.Bin == CardBin.Handled).Select(c => c.Title)];
 
-    private PrReviewRow? Review() => _state.PrReviews().FirstOrDefault(r => r.Number == 7);
+    private protected PrReviewRow? Review() => _state.PrReviews().FirstOrDefault(r => r.Number == 7);
 
+    /// <summary>A PR reviewed with review-pr at its head, the verdict in (approve unless asked otherwise), the recheck label on it.</summary>
+    private protected async Task<PrReviewRow> ReviewedAsync(string verdict = "approve")
+    {
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var reviewer = Review()!.Reviewer;
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Args = [verdict, "Fine."], Who = reviewer }, Ct)).Error.ShouldBeNull();
+        _github.LabelCalls.Clear();
+        _github.Labels[7] = [PilotMarks.Recheck];
+        return Review()!;
+    }
+
+    private protected string Origin => Path.Combine(_root, "github", "widget.git");
+
+    /// <summary>
+    /// PR 7 as a branch of the base repo, <c>feature/seven</c>, one commit past main (which edits README.md when
+    /// <paramref name="touchesReadme"/>); main then moves on (with its own README.md edit when <paramref name="mainEditsReadme"/>).
+    /// The fake's PR 7 is the controller's, at that head. Returns the head and main's new tip.
+    /// </summary>
+    private protected (string Head, string Main) OwnBranch(bool touchesReadme, bool mainEditsReadme)
+    {
+        string[] who = ["-c", "user.email=t@example.com", "-c", "user.name=t"];
+        var work = Path.Combine(_root, "work-own");
+        PrOrigins.Git(_root, "clone", "-q", Origin, work);
+        PrOrigins.Git(work, "checkout", "-q", "-b", "feature/seven");
+        File.WriteAllText(Path.Combine(work, touchesReadme ? "README.md" : "seven.txt"), "seven\n");
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "seven"]);
+        var head = PrOrigins.Git(work, "rev-parse", "HEAD");
+        PrOrigins.Git(work, "push", "-q", "-f", "origin", "HEAD:refs/heads/feature/seven", "HEAD:refs/pull/7/head");
+
+        PrOrigins.Git(work, "checkout", "-q", "main");
+        File.WriteAllText(Path.Combine(work, mainEditsReadme ? "README.md" : "main.txt"), "main moved\n");
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "main moves"]);
+        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
+        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "controller", Base: "main", HeadRef: "feature/seven");
+        return (head, PrOrigins.Git(work, "rev-parse", "HEAD"));
+    }
+
+    /// <summary>A changes review the recheck would start a fixer on, the PR's own and its branch in place, then changed by <paramref name="shape"/>.</summary>
+    private protected async Task NoFixerAsync(Func<PrReviewRow, PrReviewRow> shape, string why, string login = "ada")
+    {
+        _github.Login = login;
+        await ReviewedAsync("changes");
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+        _state.PutPrReview(shape(Review()!));
+        _workers.Started.Clear();
+
+        await LookAsync();
+
+        _workers.Started.ShouldBeEmpty();
+        Review()!.Fixer.ShouldBeNull();
+        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its review asks for changes, and no fixer starts: {why}"]);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
+    }
+
+    /// <summary>A flight of this node's on PR 7 (the recheck's PR), its leg done and pushed, reviewed and passed; the recheck label on the PR.</summary>
+    private protected async Task<FlightRow> PassedFlightAsync(string? readme = null)
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(WidgetClone), Args = ["1", "Flight 1"], Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var flight = _state.Flights().Single();
+        async Task Run(string verb, string target, string who, params string[] args) =>
+            (await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)).Error.ShouldBeNull();
+        await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=It is done", "item=The step");
+        await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller");
+        var worker = _state.Legs(flight.Code).Single().Worker!;
+        File.WriteAllText(Path.Combine(flight.Worktree, readme is null ? "parser.txt" : "README.md"), readme ?? "work\n");
+        PrOrigins.Git(flight.Worktree, "add", ".");
+        PrOrigins.Git(flight.Worktree, "commit", "-q", "-m", "parser work");
+        await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
+        await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "did it");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+
+        // The fake opens a PR of its own number; this one is PR 7 of acme/widget, at the head the plane pushed.
+        var head = PrOrigins.Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Pr = Pr("OPEN") with { Head = head };
+        _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
+        _github.Prs["acme/widget#7"] = _github.Pr;
+        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
+        _github.Labels[7] = [PilotMarks.Recheck];
+        return _state.Flights().Single();
+    }
+
+    private protected static string Short(string sha) => sha[..8];
+
+    /// <summary>Main moves on after the flight was cut, as it does while a PR waits.</summary>
+    private protected void MainMoves(string file = "later.txt", string text = "later\n")
+    {
+        var work = Path.Combine(_root, "work-widget");
+        PrOrigins.Git(work, "fetch", "-q", "origin", "main");
+        PrOrigins.Git(work, "reset", "-q", "--hard", "origin/main");
+        File.WriteAllText(Path.Combine(work, file), text);
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "later on main");
+        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
+    }
+
+    private protected FlightRow Flight(string code, bool own, int number = 7) => new()
+    {
+        Code = code,
+        Repo = "widget",
+        RepoPath = own ? WidgetClone : "/elsewhere/widget",
+        Issue = 1,
+        Branch = "flight/" + code.ToLowerInvariant(),
+        Worktree = "/w",
+        Base = "main",
+        State = FlightState.Flying,
+        CreatedAt = DateTimeOffset.UtcNow,
+        PullRequest = number,
+        PullRequestUrl = $"https://github.com/acme/widget/pull/{number}",
+    };
+
+    // Up to 10 s: what a passing wait takes is unchanged, and 2 s failed on a machine busy with its flights' builds (SE1, 2026-10-27).
+    private protected static async Task WaitFor(Func<bool> condition)
+    {
+        for (var i = 0; i < 1000 && !condition(); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        condition().ShouldBeTrue();
+    }
+
+    private protected sealed class FakeFleet : IFleet
+    {
+        public List<IFleetPeer> Peers { get; } = [];
+
+        IReadOnlyList<IFleetPeer> IFleet.Peers() => [.. Peers];
+    }
+
+    private protected sealed class Peer(string endpoint) : IFleetPeer
+    {
+        public string Endpoint => endpoint;
+
+        public bool HasGrant => true;
+
+        public bool Unreachable { get; init; }
+
+        public FlightRow[] Flights { get; init; } = [];
+
+        public PrReviewRow[] PrReviews { get; init; } = [];
+
+        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
+            Unreachable ? Task.FromException<FleetLoad>(new HttpRequestException("connection refused")) : Task.FromResult(new FleetLoad(null, Flights, PrReviews));
+
+        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+}
+
+/// <summary>Part 1 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrRecheckTests1 : PrRecheckTestsBase
+{
     [Fact]
     public async Task AnUntouchedLabelledPrStartsAReviewAndItsLabelBecomesReviewing()
     {
@@ -223,17 +381,6 @@ public sealed class PrRecheckTests : IDisposable
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
 
-    /// <summary>A PR reviewed with review-pr at its head, the verdict in (approve unless asked otherwise), the recheck label on it.</summary>
-    private async Task<PrReviewRow> ReviewedAsync(string verdict = "approve")
-    {
-        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
-        var reviewer = Review()!.Reviewer;
-        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.PrVerdict, Target = "pr/acme/widget#7", Args = [verdict, "Fine."], Who = reviewer }, Ct)).Error.ShouldBeNull();
-        _github.LabelCalls.Clear();
-        _github.Labels[7] = [PilotMarks.Recheck];
-        return Review()!;
-    }
-
     [Fact]
     public async Task AReviewedPrWhoseHeadMovedSinceTheReviewIsReviewedAfresh()
     {
@@ -249,7 +396,11 @@ public sealed class PrRecheckTests : IDisposable
         Handled().ShouldBe([$"recheck of widget#7: head {Short(moved)} was not the one reviewed ({Short(_head)}), review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
+}
 
+/// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrRecheckTests2 : PrRecheckTestsBase
+{
     [Fact]
     public async Task AReviewedPrWhoseHeadIsTheOneReviewedAndPassedAndGreenIsQueued()
     {
@@ -280,34 +431,6 @@ public sealed class PrRecheckTests : IDisposable
         Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to update: a card asks you"]);
         _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
         _github.Merged.ShouldBeEmpty();
-    }
-
-    private string Origin => Path.Combine(_root, "github", "widget.git");
-
-    /// <summary>
-    /// PR 7 as a branch of the base repo, <c>feature/seven</c>, one commit past main (which edits README.md when
-    /// <paramref name="touchesReadme"/>); main then moves on (with its own README.md edit when <paramref name="mainEditsReadme"/>).
-    /// The fake's PR 7 is the controller's, at that head. Returns the head and main's new tip.
-    /// </summary>
-    private (string Head, string Main) OwnBranch(bool touchesReadme, bool mainEditsReadme)
-    {
-        string[] who = ["-c", "user.email=t@example.com", "-c", "user.name=t"];
-        var work = Path.Combine(_root, "work-own");
-        PrOrigins.Git(_root, "clone", "-q", Origin, work);
-        PrOrigins.Git(work, "checkout", "-q", "-b", "feature/seven");
-        File.WriteAllText(Path.Combine(work, touchesReadme ? "README.md" : "seven.txt"), "seven\n");
-        PrOrigins.Git(work, "add", ".");
-        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "seven"]);
-        var head = PrOrigins.Git(work, "rev-parse", "HEAD");
-        PrOrigins.Git(work, "push", "-q", "-f", "origin", "HEAD:refs/heads/feature/seven", "HEAD:refs/pull/7/head");
-
-        PrOrigins.Git(work, "checkout", "-q", "main");
-        File.WriteAllText(Path.Combine(work, mainEditsReadme ? "README.md" : "main.txt"), "main moved\n");
-        PrOrigins.Git(work, "add", ".");
-        PrOrigins.Git(work, [.. who, "commit", "-q", "-m", "main moves"]);
-        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
-        _github.Prs["acme/widget#7"] = new PullRequest(7, "OPEN", head, "https://github.com/acme/widget/pull/7", Title: "PR 7", Author: "controller", Base: "main", HeadRef: "feature/seven");
-        return (head, PrOrigins.Git(work, "rev-parse", "HEAD"));
     }
 
     [Fact]
@@ -368,25 +491,6 @@ public sealed class PrRecheckTests : IDisposable
         _github.Labels[7].ShouldBe([PilotMarks.Changes]);
     }
 
-    /// <summary>A changes review the recheck would start a fixer on, the PR's own and its branch in place, then changed by <paramref name="shape"/>.</summary>
-    private async Task NoFixerAsync(Func<PrReviewRow, PrReviewRow> shape, string why, string login = "ada")
-    {
-        _github.Login = login;
-        await ReviewedAsync("changes");
-        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
-        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
-        _state.PutPrReview(shape(Review()!));
-        _workers.Started.Clear();
-
-        await LookAsync();
-
-        _workers.Started.ShouldBeEmpty();
-        Review()!.Fixer.ShouldBeNull();
-        Handled().ShouldBe([$"recheck of widget#7: nothing to do at {Short(_head)}: its review asks for changes, and no fixer starts: {why}"]);
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
-    }
-
     [Fact]
     public async Task ARecheckStartsNoFixerOnAReviewThatAsksAQuestionOfDesign() =>
         await NoFixerAsync(r => r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] },
@@ -425,47 +529,6 @@ public sealed class PrRecheckTests : IDisposable
         _github.Labels[7].ShouldBe([PilotMarks.Passed]);
     }
 
-    /// <summary>A flight of this node's on PR 7 (the recheck's PR), its leg done and pushed, reviewed and passed; the recheck label on the PR.</summary>
-    private async Task<FlightRow> PassedFlightAsync(string? readme = null)
-    {
-        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(WidgetClone), Args = ["1", "Flight 1"], Who = "controller" }, Ct)).Error.ShouldBeNull();
-        var flight = _state.Flights().Single();
-        async Task Run(string verb, string target, string who, params string[] args) =>
-            (await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)).Error.ShouldBeNull();
-        await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=It is done", "item=The step");
-        await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller");
-        var worker = _state.Legs(flight.Code).Single().Worker!;
-        File.WriteAllText(Path.Combine(flight.Worktree, readme is null ? "parser.txt" : "README.md"), readme ?? "work\n");
-        PrOrigins.Git(flight.Worktree, "add", ".");
-        PrOrigins.Git(flight.Worktree, "commit", "-q", "-m", "parser work");
-        await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
-        await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "did it");
-        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
-
-        // The fake opens a PR of its own number; this one is PR 7 of acme/widget, at the head the plane pushed.
-        var head = PrOrigins.Git(flight.Worktree, "rev-parse", "HEAD");
-        _github.Pr = Pr("OPEN") with { Head = head };
-        _state.PutFlight(_state.Flights().Single() with { PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7" });
-        _github.Prs["acme/widget#7"] = _github.Pr;
-        await Run(Verbs.Review, "flight/" + flight.Code, _state.Flights().Single().Review!.Reviewer, "pass", "fine");
-        _github.Labels[7] = [PilotMarks.Recheck];
-        return _state.Flights().Single();
-    }
-
-    private static string Short(string sha) => sha[..8];
-
-    /// <summary>Main moves on after the flight was cut, as it does while a PR waits.</summary>
-    private void MainMoves(string file = "later.txt", string text = "later\n")
-    {
-        var work = Path.Combine(_root, "work-widget");
-        PrOrigins.Git(work, "fetch", "-q", "origin", "main");
-        PrOrigins.Git(work, "reset", "-q", "--hard", "origin/main");
-        File.WriteAllText(Path.Combine(work, file), text);
-        PrOrigins.Git(work, "add", ".");
-        PrOrigins.Git(work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "later on main");
-        PrOrigins.Git(work, "push", "-q", "origin", "HEAD:main");
-    }
-
     [Fact]
     public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
@@ -487,7 +550,11 @@ public sealed class PrRecheckTests : IDisposable
         _github.Labels[7].ShouldBe([PilotMarks.Passed]);
         _github.Merged.ShouldBeEmpty();
     }
+}
 
+/// <summary>Part 3 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrRecheckTests3 : PrRecheckTestsBase
+{
     [Fact]
     public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
     {
@@ -629,59 +696,5 @@ public sealed class PrRecheckTests : IDisposable
         _workers.Started.ShouldHaveSingleItem();
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Handled().Length.ShouldBe(2);
-    }
-
-    private FlightRow Flight(string code, bool own, int number = 7) => new()
-    {
-        Code = code,
-        Repo = "widget",
-        RepoPath = own ? WidgetClone : "/elsewhere/widget",
-        Issue = 1,
-        Branch = "flight/" + code.ToLowerInvariant(),
-        Worktree = "/w",
-        Base = "main",
-        State = FlightState.Flying,
-        CreatedAt = DateTimeOffset.UtcNow,
-        PullRequest = number,
-        PullRequestUrl = $"https://github.com/acme/widget/pull/{number}",
-    };
-
-    // Up to 10 s: what a passing wait takes is unchanged, and 2 s failed on a machine busy with its flights' builds (SE1, 2026-10-27).
-    private static async Task WaitFor(Func<bool> condition)
-    {
-        for (var i = 0; i < 1000 && !condition(); i++)
-        {
-            await Task.Delay(10, Ct);
-        }
-        condition().ShouldBeTrue();
-    }
-
-    private sealed class FakeFleet : IFleet
-    {
-        public List<IFleetPeer> Peers { get; } = [];
-
-        IReadOnlyList<IFleetPeer> IFleet.Peers() => [.. Peers];
-    }
-
-    private sealed class Peer(string endpoint) : IFleetPeer
-    {
-        public string Endpoint => endpoint;
-
-        public bool HasGrant => true;
-
-        public bool Unreachable { get; init; }
-
-        public FlightRow[] Flights { get; init; } = [];
-
-        public PrReviewRow[] PrReviews { get; init; } = [];
-
-        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
-            Unreachable ? Task.FromException<FleetLoad>(new HttpRequestException("connection refused")) : Task.FromResult(new FleetLoad(null, Flights, PrReviews));
-
-        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

@@ -95,6 +95,14 @@ public abstract class ReviewTestsBase : IDisposable
         }
     }
 
+    private protected void MainMoves()
+    {
+        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
+    }
+
     private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
 
     private protected CardRow[] Open() => _state.Cards(openOnly: true);
@@ -1395,14 +1403,11 @@ public sealed class ReviewTests3 : ReviewTestsBase
         File.Exists(Path.Combine(flight.Worktree, "elsewhere.txt")).ShouldBeTrue();
     }
 
-    private void MainMoves()
-    {
-        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "commit", "-q", "-m", "later on main");
-        Git(Repo, "push", "-q", "origin", "main");
-    }
+}
 
+/// <summary>Part 4 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests4 : ReviewTestsBase
+{
     [Fact]
     public async Task AMergeOnAPrBehindMainUpdatesItKeepsItsPassedReviewAndDoesNotCallMerge()
     {
@@ -1629,6 +1634,11 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Open().Count(c => c.Kind == LegCommander.PrConflictsKind).ShouldBe(1);
     }
 
+}
+
+/// <summary>Part 5 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests5 : ReviewTestsBase
+{
     [Fact]
     public async Task AReviewAskingForChangesOfALegGoneAroundTwiceOffersToFixItsFindingsNamingRound3AndOpus()
     {
