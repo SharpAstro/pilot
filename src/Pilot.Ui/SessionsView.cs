@@ -10,8 +10,8 @@ namespace Pilot.Ui;
 /// <param name="Lines">The rows, in drawing order (<see cref="SessionLine.Build"/>).</param>
 /// <param name="Source">Where the data comes from, as the header says it: <c>snapshot file snapshot.sample.json</c>.</param>
 /// <param name="AsOf">The moment the rows describe, which "3m ago" counts from.</param>
-/// <param name="Usage">The account's usage in a line (<see cref="UsageRow.Line"/>); null when the node has none.</param>
-/// <param name="Account">Whose usage it is, and whose sessions these are, in a line (<see cref="AccountRow.Line"/>); null when the node knows none.</param>
+/// <param name="Usage">The account's usage in a line (<see cref="Pilot.Contracts.UsageRow.Line(DateTimeOffset, TimeZoneInfo)"/>); null when the node has none.</param>
+/// <param name="Account">Whose usage it is, and whose sessions these are, in a line (<see cref="Pilot.Contracts.AccountRow.Line()"/>); null when the node knows none.</param>
 internal sealed record SessionsScreen(IReadOnlyList<SessionLine> Lines, string Source, DateTimeOffset AsOf, string? Usage = null, string? Account = null)
 {
     /// <summary>What In play left out, named (<c>5 ended hidden</c>); null while nothing is hidden.</summary>
