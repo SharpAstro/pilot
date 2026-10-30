@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -39,6 +40,9 @@ public sealed partial class LegCommander(
 
     /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
+
+    /// <summary>The token ledger the waste rules are told what the node knows (a go-around's reason, a replan, a base-merge re-review, a failed start); null keeps none.</summary>
+    public SpendLedger? Ledger { get; set; }
 
     /// <summary>Which sibling clones a plane's local build compiles against are behind their origin; a test passes its own.</summary>
     public SiblingWatch Siblings { get; init; } = new(git, time);
@@ -1503,6 +1507,8 @@ public sealed partial class LegCommander(
         }
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
+        // What the waste rules need: the new worker flies this round, for this reason.
+        Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
@@ -2226,6 +2232,11 @@ public sealed partial class LegCommander(
             return;
         }
         var subject = Verbs.FlightTarget(flight.Code);
+        if (replacing)
+        {
+            // The plan of the planner before this one is thrown away.
+            Ledger?.Mark(new WasteMark(WasteKinds.Replanned, flight.Code, null, null, null, 0, "replanned", time.GetUtcNow()));
+        }
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
             new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
@@ -2315,6 +2326,7 @@ public sealed partial class LegCommander(
         var subject = Verbs.FlightTarget(flight.Code);
         var before = flight.Review?.ReviewerJob;
         ReviewPlan? plan = null;
+        var baseMergeOnly = false;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
             new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
             async entering =>
@@ -2329,6 +2341,13 @@ public sealed partial class LegCommander(
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                // Only a base merge since the last review: no commit of the leg's own between the two heads.
+                if (flight.Review?.ReviewedHead is { Length: > 0 } was && reviewedHead is { Length: > 0 } now && was != now
+                    && (await git.RunAsync(["merge-base", "--is-ancestor", was, now], flight.Worktree, CancellationToken.None)).Ok)
+                {
+                    var own = await git.RunAsync(["rev-list", "--no-merges", "--count", $"{was}..{now}"], flight.Worktree, CancellationToken.None);
+                    baseMergeOnly = own.Ok && own.Output.Trim() == "0";
+                }
                 entering();
                 return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
             },
@@ -2350,6 +2369,10 @@ public sealed partial class LegCommander(
                     },
                 });
                 state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                if (baseMergeOnly)
+                {
+                    Ledger?.Mark(new WasteMark(WasteKinds.BaseMergeReview, flight.Code, null, null, null, 0, "head changed only by a base merge", time.GetUtcNow()));
+                }
                 return null;
             },
             after: () => _marks.ApplyAsync(flight.Code, CancellationToken.None),

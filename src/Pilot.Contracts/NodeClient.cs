@@ -156,6 +156,10 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<SpendReport>> GetSpendAsync(string window, CancellationToken cancellationToken) =>
         GetEnvelopeAsync($"{NodeWire.SpendRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendReport, cancellationToken);
 
+    /// <summary>What the token ledger says bought nothing kept over <paramref name="window"/>, worst first.</summary>
+    public Task<ResponseEnvelope<SpendWasteReport>> GetSpendWasteAsync(string window, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.SpendWasteRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, cancellationToken);
+
     /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);

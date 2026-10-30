@@ -91,6 +91,8 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<JobLog>))]
 [JsonSerializable(typeof(SpendReport))]
 [JsonSerializable(typeof(ResponseEnvelope<SpendReport>))]
+[JsonSerializable(typeof(SpendWasteReport))]
+[JsonSerializable(typeof(ResponseEnvelope<SpendWasteReport>))]
 [JsonSerializable(typeof(ResponseEnvelope<SettingsPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<SetupChecks>))]
 public sealed partial class PilotJsonContext : JsonSerializerContext;

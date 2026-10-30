@@ -788,9 +788,35 @@ public static class PilotCommand
         spendWindow.AcceptOnlyFromAmong("5h", "today", "week");
         var spendBy = new Option<string?>("--by") { Description = "flight or role; both when left out" };
         spendBy.AcceptOnlyFromAmong("flight", "role");
-        var spendCommand = Action(new Command("spend", "Tokens spent over a window, by flight and by role, from the node's ledger") { Options = { spendWindow, spendBy } }, async (p, client, ct) =>
+        var spendWaste = new Option<bool>("--waste") { Description = "Only what bought nothing kept, worst first: later rounds of a leg, base-merge re-reviews, sessions that ended without a result, replanned plans, failed starts again" };
+        var spendCommand = Action(new Command("spend", "Tokens spent over a window, by flight and by role, from the node's ledger") { Options = { spendWindow, spendBy, spendWaste } }, async (p, client, ct) =>
         {
             var window = p.GetValue(spendWindow)!;
+            if (p.GetValue(spendWaste))
+            {
+                var wasted = await client.GetSpendWasteAsync(window, ct);
+                if (wasted is not { Success: true, Response: { } waste })
+                {
+                    await output.WriteLineAsync($"refused: {wasted.Error}");
+                    return 1;
+                }
+                var culture = CultureInfo.InvariantCulture;
+                var span = $"{waste.From.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)} to {waste.To.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)}";
+                var name = window switch { "5h" => "5h window", "week" => "7-day window", _ => "today" };
+                await output.WriteLineAsync($"spend waste, {name}: {span} (local time){(waste.FromAccount ? ", the account's own window" : "")}");
+                await output.WriteLineAsync($"{waste.WasteWeighted.ToString("N0", culture)} of {waste.WindowWeighted.ToString("N0", culture)} weighted tokens spent for nothing kept ({waste.WasteShare.ToString("0.0", culture)} %), {span}");
+                if (waste.Rows.Length == 0)
+                {
+                    await output.WriteLineAsync("  no waste");
+                    return 0;
+                }
+                foreach (var row in waste.Rows)
+                {
+                    var where = string.Join('/', new[] { row.Flight, row.Leg }.Where(x => x is { Length: > 0 }));
+                    await output.WriteLineAsync($"  {row.Kind}: {row.Reason}  {(where.Length > 0 ? where : "-")}  {row.Role}  {row.Model ?? "-"}  {row.Tokens.ToString("N0", culture),14} tokens  {row.Weighted.ToString("N0", culture),14} weighted  {row.Share.ToString("0.0", culture),5} %");
+                }
+                return 0;
+            }
             var envelope = await client.GetSpendAsync(window, ct);
             if (envelope is not { Success: true, Response: { } report })
             {

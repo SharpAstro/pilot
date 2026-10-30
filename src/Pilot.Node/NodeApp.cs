@@ -158,6 +158,7 @@ public static class NodeApp
             legs.Gate = services.GetRequiredService<StartGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.Ledger = services.GetRequiredService<SpendLedger>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
@@ -195,6 +196,7 @@ public static class NodeApp
             var commands = services.GetRequiredService<NodeCommands>();
             return new LegWatch(services.GetRequiredService<NodeState>(), commands.RunAsync, services.GetRequiredService<TimeProvider>())
             {
+                Ledger = services.GetRequiredService<SpendLedger>(),
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
                 Error = logWriter,
@@ -539,6 +541,12 @@ public static class NodeApp
             ledger.Report(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } report
                 ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
                 : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
+
+        // What of that was spent for nothing kept: pilot spend --waste.
+        app.MapGet(NodeWire.SpendWasteRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Waste(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } waste
+                ? Results.Json(ResponseEnvelope<SpendWasteReport>.Ok(waste), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport)
+                : Results.Json(ResponseEnvelope<SpendWasteReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, statusCode: 400));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.

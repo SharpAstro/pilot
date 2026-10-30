@@ -88,7 +88,7 @@ public static partial class SpendRoles
 /// it survives a restart and outlives the day a session row is listed. A message whose usage grew since it was written (a
 /// streamed one) is appended again, and the later line wins on load.
 /// </summary>
-public sealed class SpendLedger
+public sealed partial class SpendLedger
 {
     public const string FileName = "spend.jsonl";
 
@@ -220,7 +220,14 @@ public sealed class SpendLedger
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
-                    if (Parse(doc.RootElement) is { } entry)
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("mark", out _))
+                    {
+                        if (ParseMark(doc.RootElement) is { } mark)
+                        {
+                            _marks.Add(mark);
+                        }
+                    }
+                    else if (Parse(doc.RootElement) is { } entry)
                     {
                         _entries[entry.Id] = entry;
                         _rounds.TryAdd(entry.Session, entry.Round);
