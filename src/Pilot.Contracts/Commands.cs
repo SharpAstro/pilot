@@ -330,6 +330,12 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
+    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// </summary>
+    public const string AllowRound = "allow-round";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -380,6 +386,14 @@ public static class Verbs
     /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
     /// </summary>
     public const string Records = "records";
+
+    /// <summary>
+    /// <c>review-cost node [--since &lt;date&gt;] [--until &lt;date&gt;] [--repo &lt;repo&gt;]</c> (#433): a read of what reviews cost, in the result's
+    /// <see cref="CommandResult.Made"/>: per landed flight, its reviewer sessions (round, model, head) and their tokens as the transcripts
+    /// hold them (input, cache creation, cache read, output, the weighted spend of <see cref="SessionRow.SpendWeighted"/>), with totals and
+    /// a per-flight average. Nothing is changed or called.
+    /// </summary>
+    public const string ReviewCost = "review-cost";
 
     /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
