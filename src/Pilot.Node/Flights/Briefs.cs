@@ -186,12 +186,24 @@ public static class Briefs
         text.AppendLine($"  Give `{run} run --` the command itself (`{run} run -- dotnet test ...`); the node runs it in its own shell, so");
         text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which is refused: several steps are a job each, one after the other. Run");
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
+        text.Append(BranchHistoryRule);
         text.AppendLine();
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// How a branch takes the base, for the worker and both reviewers: merging it in is the way, and merge commits on a
+    /// working branch are never a finding, because the merge queue rebases each PR and lands it linear. A review that called
+    /// them a defect sent TIA1874's worker to rewrite its pushed branch, which then needed a force push only the owner could
+    /// allow (DE1, 2026-10-30); TIA1910 and TIA1915 stalled the same way.
+    /// </summary>
+    internal const string BranchHistoryRule =
+        "- A branch takes its base by a merge (`git fetch origin` then `git merge origin/<base>`). Merge commits on a working branch are\n" +
+        "  fine and never a finding: the merge queue rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
+        "  pushed branch, never push with --force or --force-with-lease, and never ask for either.\n";
 
     /// <summary>
     /// What the worker and the planner (whose legs' Done-when may wait on outside work) are told about waiting: a leg waits on a
@@ -491,6 +503,7 @@ public static class Briefs
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
         text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
+        text.Append(BranchHistoryRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
@@ -589,6 +602,7 @@ public static class Briefs
         text.AppendLine("alone: open the files around a change, follow its callers, and run what proves or disproves it where you can.");
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
+        text.Append(BranchHistoryRule);
         text.Append(NamingRule(machine, $"review-{review.Number}"));
         text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
