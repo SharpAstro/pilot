@@ -613,10 +613,9 @@ if (feed is not null && client is not null && clients is not null)
     // The Repos page's Sync runs on this window's node; its New flight opens the wizard at that repo's issues.
     chrome.Repos.SyncRepos = async ct =>
     {
-        var outcomes = await RepoActions.SyncAsync(client, GuiSay.Who, ct);
-        feed?.RefreshRepos();
-        return outcomes;
+        return await RepoActions.SyncAsync(client, GuiSay.Who, ct);
     };
+    chrome.Repos.Tracker = tracker;
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
     // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
@@ -907,7 +906,7 @@ if (feed is not null)
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) is PilotPage.Repos or PilotPage.Ideas);
+                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
                 var hereSummary = feed.Summary(now);
                 var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).

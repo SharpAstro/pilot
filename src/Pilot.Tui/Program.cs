@@ -102,10 +102,9 @@ flights.Wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync
 flights.Wizard.Changed = Redraw;
 repos.SyncRepos = async ct =>
 {
-    var outcomes = await RepoActions.SyncAsync(client, Who, ct);
-    feed.RefreshRepos();
-    return outcomes;
+    return await RepoActions.SyncAsync(client, Who, ct);
 };
+repos.Tracker = tracker;
 repos.Changed = Redraw;
 // The Pull requests page's Refresh asks the node to read GitHub now; the row comes back on the event stream.
 pullRequests.OnRefresh = async ct =>
@@ -409,7 +408,7 @@ while (!stop.IsCancellationRequested)
         // Design units per cell, as CellMeasureContext.PixelAuthored counts them: the trees are the GUI's.
         var width = columns * 8f;
         // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-        var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: page == PilotPage.Repos);
+        var pages = merged = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
         // This node in maintenance: Home and Flights say so.
         home.Maintenance = flights.Maintenance = feed.Summary(now) is { Connected: true, Node.Maintenance: true };
         var pageTree = page switch
