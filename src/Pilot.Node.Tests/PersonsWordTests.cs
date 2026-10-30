@@ -62,9 +62,16 @@ public sealed class PersonsWordTests
 
     private static CardRow FailedLeg(NodeHarness node)
     {
+        // Finishing a leg looks at its plane, so the plane is a real (empty) repository.
+        var plane = Path.Combine(node.Folder, "plane");
+        Directory.CreateDirectory(plane);
+        using (var init = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", ["init", "-q", plane]) { CreateNoWindow = true })!)
+        {
+            init.WaitForExit();
+        }
         node.State.PutFlight(new FlightRow
         {
-            Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/TIA1", Base = "main",
+            Code = "TIA1", Repo = "tianwen", RepoPath = plane, Issue = 1, Branch = "flight/tia1", Worktree = plane, Base = "main",
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, Title = "Sky map",
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Failed, Worker = "du1-tia1-parser", Report = "no ephemeris" });
