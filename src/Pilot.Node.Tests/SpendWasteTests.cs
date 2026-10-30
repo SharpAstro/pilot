@@ -92,6 +92,19 @@ public sealed class SpendWasteTests
         report.WindowWeighted.ShouldBe(14_000);
     }
 
+    [Fact]
+    public void AFailureSoonAfterAnotherCountsOnlyTheSessionBegunSinceTheOneBefore()
+    {
+        var ledger = new SpendLedger();
+        // Two failures ten minutes apart: the first attempt's session began inside the second's half hour but before the first failure.
+        Spend(ledger, "try1", "du1-pil5-a", "PIL5", "a", "worker", 0, Noon.AddMinutes(-12), 1_000);
+        Spend(ledger, "try2", "du1-pil5-a", "PIL5", "a", "worker", 0, Noon.AddMinutes(-1), 100);
+        ledger.Mark(new WasteMark(WasteKinds.FailedStart, "PIL5", null, "du1-pil5-a", null, 0, "boom", Noon.AddMinutes(-10)));
+        ledger.Mark(new WasteMark(WasteKinds.FailedStart, "PIL5", null, "du1-pil5-a", null, 0, "boom", Noon));
+
+        Waste(ledger).Rows.Select(r => (r.Kind, r.Tokens)).ShouldBe([(WasteKinds.FailedStart, 100L)]);
+    }
+
     [Theory]
     [InlineData("the review asked for changes: fix the null check", WasteReasons.Findings)]
     [InlineData("the review asked for changes: nits only, two renames", WasteReasons.Nits)]

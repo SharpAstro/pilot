@@ -47,8 +47,9 @@ public sealed class SpendPageTests
 
         var texts = TextsOf(renderer, page, Screen());
 
-        // Each heading says what its figures are over.
+        // Each heading says what its figures are over, and the page says once what its shares are of.
         const string frame = "today, 2026-10-18 00:00 to 09:41 UTC";
+        texts.ShouldContain(SpendText.SharesAre);
         texts.ShouldContain($"By flight, {frame}");
         texts.ShouldContain($"By role, {frame}");
         texts.ShouldContain(t => t.StartsWith($"Waste, worst first, {frame}: 1,220,000 tokens, 16.0% of the window", StringComparison.Ordinal));

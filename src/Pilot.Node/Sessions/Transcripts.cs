@@ -207,7 +207,7 @@ internal sealed class TranscriptTail(string path)
             if (id is not null)
             {
                 _messages[id] = tokens;
-                var stamped = ClaudeAgentsJson.Text(root, "timestamp") is { } stampText && DateTimeOffset.TryParse(stampText,CultureInfo.InvariantCulture, DateTimeStyles.None, out var wrote) ? wrote : (DateTimeOffset?)null;
+                var stamped = ClaudeAgentsJson.Text(root, "timestamp") is { } stampText && DateTimeOffset.TryParse(stampText, CultureInfo.InvariantCulture, DateTimeStyles.None, out var wrote) ? wrote : (DateTimeOffset?)null;
                 _details[id] = (stamped, ClaudeAgentsJson.Text(message, "model"), ClaudeAgentsJson.Text(root, "effort"));
             }
 

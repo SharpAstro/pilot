@@ -41,6 +41,7 @@ public sealed class SpendAlertTests : LegHoldTestsBase
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Title.ShouldStartWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
         ring.Detail.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");
+        ring.Detail.ShouldContain("weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure");
 
         // Asked again in the same round (a retry of the start), it does not ring again.
         _legs.RingSpendAlert(_state.Flights().Single(), L("parser"), 1);

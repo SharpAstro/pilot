@@ -180,13 +180,14 @@ public static class SpendWaste
 
     private static (string Kind, string Reason)? Of(SpendEntry head, DateTimeOffset first, string session, IReadOnlyList<WasteMark> marks)
     {
-        // A start that failed again: the session of that name began within the half hour before the failure was noted.
+        // A start that failed again: the session of that name began within the half hour before the failure was noted, and after
+        // the failure before it, so a session of the attempt before (or of a start that went well before that) is not counted.
         if (head.Name is { Length: > 0 } name)
         {
             var failures = marks.Where(m => m.Kind == WasteKinds.FailedStart && string.Equals(m.Who, name, StringComparison.OrdinalIgnoreCase)).OrderBy(m => m.At).ToArray();
             for (var i = 1; i < failures.Length; i++)
             {
-                if (first >= failures[i].At - Lead && first <= failures[i].At + Slack)
+                if (first > failures[i - 1].At + Slack && first >= failures[i].At - Lead && first <= failures[i].At + Slack)
                 {
                     return (WasteKinds.FailedStart, $"start failed again ({i + 1})");
                 }

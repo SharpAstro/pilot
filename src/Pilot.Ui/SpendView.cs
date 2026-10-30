@@ -10,6 +10,9 @@ internal static class SpendText
     /// <summary>Tokens with thousands separators: <c>1,234,567</c>.</summary>
     public static string Tokens(long tokens) => tokens.ToString("N0", CultureInfo.InvariantCulture);
 
+    /// <summary>What every share on the page is of, said once above the figures: the rows beside the shares are raw tokens.</summary>
+    public const string SharesAre = "Every share is of the window's weighted tokens; the rows show raw tokens.";
+
     /// <summary>A share to a tenth, <c>12.5%</c>.</summary>
     public static string Share(double share) => share.ToString("0.0", CultureInfo.InvariantCulture) + "%";
 
@@ -76,6 +79,7 @@ internal sealed record SpendScreen(string Window, SpendReport? Report, SpendWast
             return "the node has not told its spend yet";
         }
         var timeframe = SpendText.Timeframe(report.Window, report.From, report.To, report.FromAccount);
+        lines.Add(SpendText.SharesAre);
         lines.Add($"By flight, {timeframe}");
         lines.AddRange(report.Flights.Select(f => $"  {f.Key} | {SpendText.Tokens(f.Tokens)} tokens | {SpendText.Share(f.Share)}"));
         lines.Add($"By role, {timeframe}");
@@ -184,6 +188,7 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var timeframe = SpendText.Timeframe(report.Window, report.From, report.To, report.FromAccount);
         List<Layout.Node> parts =
         [
+            Layout.Builder.Text(SpendText.SharesAre, 12f, Dim).RowH(RowH).Whole(SpendText.SharesAre),
             Heading($"By flight, {timeframe}"),
             .. Rows(report.Flights, "no spend in this window"),
             Heading($"By role, {timeframe}"),
