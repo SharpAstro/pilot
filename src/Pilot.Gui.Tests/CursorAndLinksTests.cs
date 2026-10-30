@@ -50,7 +50,7 @@ public sealed class CursorAndLinksTests
     };
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
-        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        new(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, Flights = { Mode = FlightsViewMode.List } };
 
     // A table's column dividers are buttons too, which the pointer marks as a resize and not as a link.
     private static bool IsLink(ClickableRegion r) => r.Result is HitResult.ButtonHit b && !b.Action.Contains(":table:divider:", StringComparison.Ordinal);
