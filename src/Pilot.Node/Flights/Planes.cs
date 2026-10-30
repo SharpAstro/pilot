@@ -27,9 +27,16 @@ public interface IGit
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli(NodeTraffic? traffic = null) : IGit
+public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null) : IGit
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(2);
+
+    private readonly TimeSpan _budget = budget ?? DefaultBudget;
+
+    /// <summary>A git CLI whose runs get <paramref name="budget"/> before they are killed (a test's seam; the node uses the default).</summary>
+    public GitCli(TimeSpan budget) : this(null, budget)
+    {
+    }
 
     // A command line over 32767 characters fails to start on Windows; stay well under it.
     private const int MaxPathChars = 24000;
@@ -133,6 +140,7 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = cwd,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -162,20 +170,62 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
         using var _ = process;
         using var __ = counted;
+        // Git never waits on a handle it inherited: its stdin is closed at once.
+        process.StandardInput.Close();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(budget.Token);
-        var error = process.StandardError.ReadToEndAsync(budget.Token);
+        budget.CancelAfter(_budget);
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        // Read by line into builders, so what git said survives a cancel.
+        var reads = Task.WhenAll(Pump(process.StandardOutput, output), Pump(process.StandardError, error));
+        var exited = false;
         try
         {
             await process.WaitForExitAsync(budget.Token);
+            exited = true;
+            // Git gone does not close its pipes when a child it left keeps them: that read is on the budget too.
+            await reads.WaitAsync(budget.Token);
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
-            throw;
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Git had already exited; only a descendant holds its pipes.
+            }
+            await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            var why = cancellationToken.IsCancellationRequested ? "was cancelled" : $"ran past its budget of {_budget.TotalSeconds:0.###}s";
+            var state = exited ? "git had exited but its output never closed" : "git had not exited";
+            throw new OperationCanceledException(
+                $"git {string.Join(' ', args)} in {cwd} {why} ({state}) and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
+                null,
+                cancellationToken.IsCancellationRequested ? cancellationToken : budget.Token);
         }
-        return new GitRun(process.ExitCode, await output, await error);
+        return new GitRun(process.ExitCode, output.ToString(), error.ToString());
+    }
+
+    private static async Task Pump(StreamReader reader, StringBuilder into)
+    {
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer, CancellationToken.None)) > 0)
+        {
+            lock (into)
+            {
+                into.Append(buffer, 0, read);
+            }
+        }
+    }
+
+    private static string Snapshot(StringBuilder text)
+    {
+        lock (text)
+        {
+            return text.ToString().Trim();
+        }
     }
 }
 

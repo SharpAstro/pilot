@@ -14,7 +14,7 @@ namespace Pilot.Node.Tests;
 /// (<c>move-flight</c>): a node in maintenance moves its flight once its leg has finished, the plane made safe first, and on any failure
 /// keeps the flight, says why on the row, and offers a Retry move; the flight is flown on one node only, at every moment.
 /// </summary>
-public sealed class FlightMoveTests : IDisposable
+public sealed class FlightMoveTests : IAsyncDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -81,8 +81,11 @@ public sealed class FlightMoveTests : IDisposable
 
     private string Plane => Path.Combine(Receiving, ".claude", "worktrees", "tia900");
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        // A receive-flight starts the flight's advance off the reply; its git still runs in the repo this deletes.
+        await _flights.WhenAdvancedAsync();
+        await _senderFlights.WhenAdvancedAsync();
         try
         {
             Git(Receiving, "worktree", "prune");
