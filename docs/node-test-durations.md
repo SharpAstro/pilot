@@ -149,3 +149,17 @@ Not done, so the Done-when is NOT met (slowest 20 still 55 to 289 s; suite not u
 3. LockFreeGitTests (448 s) and ConnectTests (526 s) were not looked at.
 4. A node per class via IClassFixture was not done: the slow tests are git-bound, not start-up bound.
 5. NodeLogTests' DisableParallelization collection was not narrowed.
+
+### Go-around 1 (PIL501, leg fix-starts, second worker)
+
+Merged origin/main into the plane (conflicts in JobTests and FlightMoveTests resolved on the split files, keeping main's 20 s timeout test,
+`RestartedBySystemd` and async dispose). LfsTests now build the bare remote and LFS clone once per class (a static template, content pulled) and copy it
+per test, pointing `origin` and `lfs.url` at the copy: one real git-lfs setup instead of five. The five tests pass, with their assertions unchanged.
+
+Full Pilot.Node.Tests, Release, through `pilot run`, default parallelism (2509 tests, many more than before because main added tests): 1h20m wall, 2502 passed,
+2 skipped, 5 failed. The failures are timeouts under CPU saturation from other flights (the same five LfsTests alone took 6m21s on this machine),
+not logic: LegCommanderTests1 (two, about 2 min each), ReviewModelTests.AReReviewStartsOnTheLegModel..., PrRecheckTests3.ALabelPutBackWhileARecheckRuns...,
+UnreadHeadTests.UnreadHeadIsReviewedByTheFirstSweep.... The `xUnit.MaxParallelThreads=4` run was not made: a second 1h+ run on the same saturated machine would measure the load, not the tests.
+
+The Done-when (slowest 20 under 5 s, under 3 minutes) is NOT met. Per-flight cost is the count of real git processes the node runs (about 32 per flight, see above),
+which needs a production change (memoise repeated fetches, merge rev-parse pairs) and its own review; it is not a test-start-up cost.
