@@ -687,6 +687,7 @@ pilot compact <session> [focus…]               # an idle background session's 
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
 pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
@@ -1417,7 +1418,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card) but at the person's word in its chat (below), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `connect-overlap`, `create-issue`, `create-flight` or `sync-repos` |
 | **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
@@ -1432,6 +1433,21 @@ The watchtower is told apart by what began its turn: the node notes who sent the
 chat, a `tell`, or the node's own card and nudge, which are not theirs), and while that was the person's and the session has
 not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "merge TIA1" said in the chat gets the Allow card
 (autopilot off) or runs at once with a Handled card (on). Any other turn it is the lookout.
+
+A third route is the person's word in its chat (#473), which on Remote Control reaches the session past the node. The
+watchtower's `answer` or `dismiss` of an open card whose `--why` quotes the person's latest message (equal, or one holding
+the other on word boundaries, at least six characters) runs **as the person**, while its turn runs, and leaves a Handled
+card of kind `persons-word` with their words. From the CLI that is `pilot answer <card> <choice> --why "<their words>"`, or
+`pilot dismiss <card> <reason> --why "<their words>"`, where the reason stays the dismissal's own; `--why` is the
+command's `Why`, as on the person's own commands. The node reads the latest line that fed the turn from its transcript, meta
+lines included: it is the person's only when Claude Code records it as typed or resumed text (`origin.kind` human) or as
+a cross-session message from `controller`, it is not the session's first prompt (the brief the node started it with, which
+Claude Code records as typed), and its text is not the node's voice (`[node] `), another node's watchtower
+(`[From the watchtower of node `), or a say the node routed to it from anyone but the person (a say names the watchtower by
+row id or by name). A message from any other session, the node's own envelope, a task finishing, a scheduled wake, a
+hand-back or a compaction leaves the watchtower fenced. The match binds the press to the person's message, not to the card or the choice: any message of theirs in the
+turn lifts every fence for whichever card's choice the watchtower answers (`update`, `answer-grant` and `post-review`
+included), so the brief tells it to press only the choice the person asked for and to say which.
 
 ### An assistant's your-only request: the autopilot rule
 

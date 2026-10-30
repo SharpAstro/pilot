@@ -235,6 +235,24 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    public async Task TheNodesOwnFirstLookIsOverBeforeStartReturnsSoItNeverLandsAStateTheTestPutsAfter()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        // The background loop looks once at start; the harness waited for that look, so none is left to come.
+        node.App.Services.GetRequiredService<PrChecks>().FirstLook.IsCompletedSuccessfully.ShouldBeTrue();
+
+        // A merged PR with every leg done, put in after start: flying until the test's own look lands it.
+        Merged(node);
+        node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
+        Directory.Exists(Plane).ShouldBeTrue();
+
+        await Look(node);
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+    }
+
+    [Fact]
     public async Task AMergeSeenWithNothingLeftStillLandsTheFlight()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

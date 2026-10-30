@@ -12,13 +12,29 @@ internal static class WrappedProse
     /// punctuation) with a node of its own, drawn in the word's place: a link in the middle of the sentence. <paramref name="selectable"/>
     /// marks each word's run selectable, for the page whose host offers a selection (a word is a region; the copy joins them as the page reads).
     /// </summary>
-    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0, Func<string, Layout.Node?>? link = null, bool selectable = false)
+    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0, Func<string, Layout.Node?>? link = null, bool selectable = false, int lineChars = 0)
     {
-        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        var words = (maxLines > 0 && lineChars > 0 ? Bound(text, maxLines * lineChars) : text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .SelectMany(word => link?.Invoke(word) is { } linked ? [linked] : Pieces(word).Select(piece => Layout.Builder.Text(piece, size, color).WAuto().Selectable(selectable)))
             .ToArray();
         var wrap = Layout.Builder.WrapH(words).WithLineGap(size * 0.2f);
         return (maxLines > 0 ? wrap.WithMaxLines(maxLines) : wrap).WStar();
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> cut after the last whole word within <paramref name="chars"/> characters: the words past what
+    /// <paramref name="chars"/> could fill the capped lines with are never made into leaves, so each frame fits a bounded few
+    /// however long the text (the whole text is on hover where the caller keeps it). A text with no whitespace within the budget
+    /// (one word longer than it: a path, a URL) is cut at the budget itself, so it too is a bounded few pieces (<see cref="Break"/>).
+    /// </summary>
+    internal static string Bound(string text, int chars)
+    {
+        if (text.Length <= chars)
+        {
+            return text;
+        }
+        var cut = text.LastIndexOfAny([' ', '\t', '\n'], chars);
+        return cut > 0 ? text[..cut] : text[..chars];
     }
 
     /// <summary>A word this long may not fit a line of its own: a check's name, a path, a URL.</summary>
@@ -94,10 +110,10 @@ internal static class WrappedProse
     /// Lines of text, each its own wrapped paragraph (an explicit newline stays a break), together at most
     /// <paramref name="maxLines"/> lines tall: the first paragraph gets what the others leave of the cap, the others one each.
     /// </summary>
-    public static Layout.Node Paragraphs(string text, float size, RGBAColor32 color, int maxLines)
+    public static Layout.Node Paragraphs(string text, float size, RGBAColor32 color, int maxLines, int lineChars = 0)
     {
-        var lines = text.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).Take(maxLines).ToArray();
-        var rows = lines.Select((l, i) => Of(l, size, color, i == 0 ? maxLines - (lines.Length - 1) : 1)).ToArray();
+        var lines = (lineChars > 0 ? Bound(text, maxLines * lineChars * 2) : text).Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).Take(maxLines).ToArray();
+        var rows = lines.Select((l, i) => Of(l, size, color, i == 0 ? maxLines - (lines.Length - 1) : 1, lineChars: lineChars)).ToArray();
         // Gap of 2 design units between paragraphs, a literal the way the views' other fixed gaps are.
         return Layout.Builder.VStack(rows).WithGap(2f).WStar().HAuto();
     }
