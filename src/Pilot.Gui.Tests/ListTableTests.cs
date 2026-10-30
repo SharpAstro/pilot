@@ -372,15 +372,17 @@ public sealed class ListTableTests : IDisposable
     [Fact]
     public void ADragOnASessionsDividerResizesTheColumnInTheHeaderAndInEveryRow()
     {
+        // Wide enough that the Age column added to the page leaves every column its room after the drag.
+        const float WideWidth = 1500f;
         var view = Sessions();
         var screen = SessionsScreenOf();
-        void Render() => view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
-        var before = Arranged(view.Tree(screen));
+        void Render() => view.Render(screen, new RectF32(0f, 0f, WideWidth, PageHeight));
+        var before = Arranged(view.Tree(screen), WideWidth);
 
         // The divider after the State column (State is fixed, Spend takes up to its width): State grows by what was dragged.
         Drag(view, Render, "sessions:table:divider:4", 40f);
 
-        var after = Arranged(view.Tree(screen));
+        var after = Arranged(view.Tree(screen), WideWidth);
         var first = screen.Lines[0];
         (after.HeaderX("Spend") - after.HeaderX("State") - ListTable.ColumnGap).ShouldBe(200f, 0.5f);
         foreach (var (title, value) in SessionColumns(first))

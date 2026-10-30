@@ -14,13 +14,13 @@ public sealed class SessionsViewTests
     /// <summary>The sample's six sessions as the view shows them, as of the snapshot's own moment (09:41:09 UTC).</summary>
     private static readonly string[] ExpectedRows =
     [
-        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k",
-        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M",
-        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58%",
-        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64%",
-        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0%",
-        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
-        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
+        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k over 20 m",
+        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M over 3 h 41 m",
+        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58% over 1 h 35 m",
+        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64% over 12 h 10 m",
+        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0% over 38 m",
+        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
+        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
     ];
 
     private static SessionsScreen SampleScreen()
