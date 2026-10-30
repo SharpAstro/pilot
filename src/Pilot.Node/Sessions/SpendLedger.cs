@@ -28,6 +28,9 @@ public sealed record SpendEntry(
     public long Tokens => Usage.Input + Usage.CacheCreation + Usage.CacheRead + Usage.Output;
 }
 
+/// <summary>A leg's spend in the 7-day window: its tokens, its share of the window's spend in percent, and its latest model and effort.</summary>
+public sealed record LegSpend(long Tokens, double Share, string? Model, string? Effort);
+
 /// <summary>The window a <see cref="SpendReport"/> covers.</summary>
 public static class SpendWindows
 {
@@ -174,6 +177,31 @@ public sealed partial class SpendLedger
             Flights = Rows(inside, e => e.Flight ?? "-"),
             Roles = Rows(inside, e => e.Role),
         };
+    }
+
+    /// <summary>
+    /// What a leg's rounds have spent inside the 7-day window, as tokens and as a share (percent) of everything the ledger holds for
+    /// that window, with the model and effort of the leg's latest message. Null when the leg has spent nothing in it.
+    /// </summary>
+    public LegSpend? LegInWeek(string flight, string leg, DateTimeOffset now, UsageRow? usage)
+    {
+        if (SpendWindows.Resolve("week", now, TimeZoneInfo.Utc, usage) is not var (from, to, _))
+        {
+            return null;
+        }
+        SpendEntry[] inside;
+        lock (_lock)
+        {
+            inside = [.. _entries.Values.Where(e => e.At >= from && e.At < to)];
+        }
+        var mine = inside.Where(e => string.Equals(e.Flight, flight, StringComparison.OrdinalIgnoreCase) && string.Equals(e.Leg, leg, StringComparison.Ordinal)).ToArray();
+        var total = inside.Sum(e => e.Usage.WeightedTwentieths);
+        if (mine.Length == 0 || total <= 0)
+        {
+            return null;
+        }
+        var last = mine.OrderBy(e => e.At).Last();
+        return new LegSpend(mine.Sum(e => e.Tokens), mine.Sum(e => e.Usage.WeightedTwentieths) * 100.0 / total, last.Model, last.Effort);
     }
 
     /// <summary>

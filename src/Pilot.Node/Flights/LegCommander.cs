@@ -564,7 +564,7 @@ public sealed partial class LegCommander(
             return;
         }
         var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
-        if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}"))
+        if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}", Models.WeekPaceFor(current.Repo)))
         {
             return;
         }
@@ -673,7 +673,7 @@ public sealed partial class LegCommander(
         {
             return false;
         }
-        if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer"))
+        if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer", Models.WeekPaceFor(current.Repo)))
         {
             return false;
         }
@@ -988,8 +988,30 @@ public sealed partial class LegCommander(
             });
     }
 
+    /// <summary>The card that says a leg's rounds have spent more than the alert share of the 7-day window.</summary>
+    public const string SpendAlertKind = "spend-alert";
+
+    // The rounds already rung for, so a worker started again in one round says it once.
+    private readonly HashSet<string> _spendRung = new(StringComparer.Ordinal);
+
+    // Before a leg's round starts: its ledger spend in the 7-day window, past the alert share, rings once with tokens, share and model.
+    // It rings and holds nothing; the round goes ahead.
+    private void RingSpendAlert(FlightRow flight, LegRow leg, int round)
+    {
+        if (Ledger?.LegInWeek(flight.Code, leg.Name, time.GetUtcNow(), state.Usage()) is not { } spent || spent.Share <= Models.SpendAlert
+            || !_spendRung.Add($"{flight.Code}/{leg.Name}#{round}"))
+        {
+            return;
+        }
+        var how = string.Join(", ", new[] { spent.Model, spent.Effort }.Where(s => !string.IsNullOrEmpty(s)));
+        state.RaiseCard(CardBin.Ring, SpendAlertKind, Verbs.LegTarget(flight.Code, leg.Name),
+            string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has spent {spent.Tokens:N0} tokens, {spent.Share:0.#} % of the 7-day window, before round {round + 1}"),
+            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far went past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The next round still starts; stop the flight by hand if it should not."));
+    }
+
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         // A leg that flew before and was held for a package is flown again from what the plane holds, as a go-around is.
@@ -1067,7 +1089,7 @@ public sealed partial class LegCommander(
         {
             // Held by a spent 5-hour window, the leg stays planned and validated: the sweep starts its worker once it resets.
             if (flight.State == FlightState.Flying
-                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}")
+                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}", Models.WeekPaceFor(flight.Repo))
                 && state.Legs(flight.Code).All(l => l.State != LegState.Flying))
             {
                 StartWorker(flight, done, state.Legs(flight.Code));
@@ -1509,6 +1531,7 @@ public sealed partial class LegCommander(
         var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
         // What the waste rules need: the new worker flies this round, for this reason.
         Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
+        RingSpendAlert(flight, leg, next.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
@@ -2226,7 +2249,7 @@ public sealed partial class LegCommander(
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
         // Asked for while the 5-hour window is spent: it waits, and the sweep starts it once the window has reset.
-        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner"))
+        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner", Models.WeekPaceFor(flight.Repo)))
         {
             _plannersWaiting[flight.Code] = true;
             return;
@@ -2307,7 +2330,7 @@ public sealed partial class LegCommander(
         }
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
-        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer");
+        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
         if (flight.Review?.ReviewerJob is { } last)
         {
             await StopQuietly(last, cancellationToken);
