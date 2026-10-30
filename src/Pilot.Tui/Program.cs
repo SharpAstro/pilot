@@ -226,6 +226,13 @@ cards.OnChatAbout = card =>
     chat.Attach(card, node);
 };
 flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
+// An idea's or issue's Chat about this opens the same chat, with the words that start it in the box.
+chrome.Ideas.OnChatAbout = text =>
+{
+    chrome.Show(PilotPage.Chat);
+    chat.SwitchTo(null);
+    chat.Prefill(text);
+};
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);

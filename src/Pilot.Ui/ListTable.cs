@@ -199,20 +199,22 @@ internal sealed class ListTable
     }
 
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
-    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null)
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null, Layout.TableSort? sort = null, Action<Layout.TableSort>? onSort = null)
     {
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
-        Layout.TableSort? sorted = null;
-        if (Sort is { } sort)
+        // A caller's own sort (the Ideas board) wins; otherwise the table's own, saved per page.
+        Layout.TableSort? sorted = sort;
+        var handler = onSort ?? OnSort(columns);
+        if (sorted is null && sort is null && onSort is null && Sort is { } own)
         {
-            var at = columns.ToList().FindIndex(c => c.Sortable && c.Header == sort.Column);
+            var at = columns.ToList().FindIndex(c => c.Sortable && c.Header == own.Column);
             if (at >= 0)
             {
-                sorted = new Layout.TableSort(at, sort.Descending);
+                sorted = new Layout.TableSort(at, own.Descending);
             }
         }
-        var header = Dropping(Layout.Builder.TableHeader(specs, sorted, OnSort(columns), in style, Widths, scale, TitleSize, _hitPrefix), columns);
+        var header = Dropping(Layout.Builder.TableHeader(specs, sorted, handler, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)
