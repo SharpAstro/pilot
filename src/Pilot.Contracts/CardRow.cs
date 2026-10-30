@@ -123,6 +123,9 @@ public static class CardKinds
 
     /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
     public const string AutopilotRan = "autopilot-ran";
+
+    /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
+    public const string PersonsWord = "persons-word";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>

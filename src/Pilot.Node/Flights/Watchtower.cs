@@ -358,6 +358,47 @@ public sealed class Watchtower(
     /// </summary>
     public bool ActingForPerson => _lastFromPerson && Current() is { State: SessionState.Working or SessionState.Waiting };
 
+    /// <summary>
+    /// The watchtower's transcripts, which are all the node has of what the person says to it on Remote Control: that goes to
+    /// the session past the node. Null (a test's watchtower) reads none, so no word of the person's is ever found.
+    /// </summary>
+    public Sessions.TranscriptBook? Transcripts { get; set; }
+
+    /// <summary>The shortest <c>--why</c> that can be matched to the person's message: a letter or two is in any message.</summary>
+    private const int MinWordsLength = 6;
+
+    /// <summary>
+    /// The person's word for what the watchtower asks of a card: the words of the latest message in its current session's
+    /// transcript, when that message is the person's (no note, no node-voice line, no task notification, no message from a
+    /// session but the controller), its turn is still running, and <paramref name="command"/>'s <c>--why</c> quotes it or is
+    /// quoted by it (whitespace and case folded). Null when there is none, and the watchtower stays fenced.
+    /// </summary>
+    public string? PersonsWord(CommandRequest command)
+    {
+        if (Transcripts is null || Fold(command.Why) is not { Length: >= MinWordsLength } why
+            || Current() is not { State: SessionState.Working or SessionState.Waiting, SessionId: { Length: > 0 } sessionId })
+        {
+            return null;
+        }
+        var total = Transcripts.Window(sessionId, 0, 0)?.Total ?? 0;
+        if (Transcripts.Window(sessionId, Math.Max(0, total - 200), 200) is not { } window
+            || window.Entries.LastOrDefault(e => e.Kind == TranscriptKind.User) is not { } prompt)
+        {
+            return null;
+        }
+        if (prompt.Note || prompt.From is { Length: > 0 } from && !string.Equals(from, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        var said = Fold(prompt.Text);
+        return said.Length > 0 && (said.Contains(why, StringComparison.Ordinal) || why.Contains(said, StringComparison.Ordinal))
+            ? command.Why!.Trim()
+            : null;
+    }
+
+    private static string Fold(string? text) =>
+        string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+
     private static bool Live(SessionRow row) => row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
     /// <summary>
