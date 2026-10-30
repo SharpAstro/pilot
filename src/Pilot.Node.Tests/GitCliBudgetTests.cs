@@ -1,5 +1,6 @@
 using Pilot.Node.Flights;
 using Shouldly;
+using Xunit;
 
 namespace Pilot.Node.Tests;
 
