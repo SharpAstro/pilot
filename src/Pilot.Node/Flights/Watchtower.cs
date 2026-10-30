@@ -375,25 +375,59 @@ public sealed class Watchtower(
     /// </summary>
     public string? PersonsWord(CommandRequest command)
     {
-        if (Transcripts is null || Fold(command.Why) is not { Length: >= MinWordsLength } why
+        if (Transcripts is null || Fold(command.Why) is not { Length: > 0 } why
             || Current() is not { State: SessionState.Working or SessionState.Waiting, SessionId: { Length: > 0 } sessionId })
         {
             return null;
         }
+        // The latest user entry, searched back a page at a time: a long sweep puts many tool entries after the person's message.
+        const int page = 200;
         var total = Transcripts.Window(sessionId, 0, 0)?.Total ?? 0;
-        if (Transcripts.Window(sessionId, Math.Max(0, total - 200), 200) is not { } window
-            || window.Entries.LastOrDefault(e => e.Kind == TranscriptKind.User) is not { } prompt)
+        TranscriptEntry? prompt = null;
+        for (var end = total; end > 0 && prompt is null; end -= page)
         {
-            return null;
+            var start = Math.Max(0, end - page);
+            if (Transcripts.Window(sessionId, start, end - start) is not { } window)
+            {
+                return null;
+            }
+            prompt = window.Entries.LastOrDefault(e => e.Kind == TranscriptKind.User);
         }
-        if (prompt.Note || prompt.From is { Length: > 0 } from && !string.Equals(from, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase))
+        if (prompt is null
+            || prompt.Note || prompt.From is { Length: > 0 } from && !string.Equals(from, Sessions.ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
         var said = Fold(prompt.Text);
-        return said.Length > 0 && (said.Contains(why, StringComparison.Ordinal) || why.Contains(said, StringComparison.Ordinal))
-            ? command.Why!.Trim()
-            : null;
+        return said.Length > 0 && Quotes(said, why) ? command.Why!.Trim() : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="why"/> is the person's message or quotes it: equal at any length (a one-word reply such as
+    /// Allow), otherwise one holds the other on word boundaries and the shorter side is at least <see cref="MinWordsLength"/>
+    /// long, so an ok or a yes never lets an unrelated reason through.
+    /// </summary>
+    private static bool Quotes(string said, string why)
+    {
+        if (said == why)
+        {
+            return true;
+        }
+        var (shorter, longer) = said.Length <= why.Length ? (said, why) : (why, said);
+        if (shorter.Length < MinWordsLength)
+        {
+            return false;
+        }
+        for (var i = longer.IndexOf(shorter, StringComparison.Ordinal); i >= 0; i = longer.IndexOf(shorter, i + 1, StringComparison.Ordinal))
+        {
+            var before = i == 0 || !char.IsLetterOrDigit(longer[i - 1]);
+            var after = i + shorter.Length == longer.Length || !char.IsLetterOrDigit(longer[i + shorter.Length]);
+            if (before && after)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static string Fold(string? text) =>
