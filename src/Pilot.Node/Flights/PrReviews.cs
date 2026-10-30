@@ -1156,12 +1156,17 @@ public sealed class PrReviews(
         return null;
     }
 
-    /// <summary>The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own.</summary>
+    /// <summary>
+    /// The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own. A PR this node holds no
+    /// review of (the Pull requests page's Review word is the pilot/review status, which another node may have set, or the review
+    /// was lost) gets pilot's review first; its findings are fixed when it asks for changes, by the way a posted verdict goes.
+    /// </summary>
     private async Task<string> FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
     {
         if (Of(pr) is not { } review)
         {
-            throw new FlightException($"{pr} has no review; review-pr starts one");
+            var started = await StartAsync(pr, cancellationToken);
+            return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
         if (review.Verdict != "changes")
         {

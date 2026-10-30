@@ -393,6 +393,40 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AFixPrOnAPrWithNoReviewHereStartsAReviewFirstAndAFixPrOnAPassedReviewIsStillRefused()
+    {
+        var log = new StringWriter();
+        _reviews.Error = log;
+        _reviews.Of(Seven).ShouldBeNull();
+
+        var made = await Run(Verbs.FixPr, "acme/widget#7", "controller");
+
+        made.Error.ShouldBeNull();
+        var row = Row;
+        (row.State, row.Fixer).ShouldBe((PrReviewState.Reviewing, null));
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+        Fixers.ShouldBeEmpty();
+        log.ToString().ShouldContain($"fix-pr pr/acme/widget#7, asked by controller: no review of acme/widget#7 here, so a review was started first (started {row.Reviewer} at {row.Head[..8]})");
+
+        // Its verdict then goes the usual way: an approve leaves nothing to fix, and a fix-pr on it is refused.
+        (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+        Fixers.ShouldBeEmpty();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("did not ask for changes");
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AFixPrOnAPrWithNoReviewHereFixesItsFindingsWhenTheNewReviewAsksForChanges()
+    {
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        var reviewer = Row.Reviewer;
+
+        (await Run(Verbs.PrVerdict, "acme/widget#7", reviewer, "changes", "Wrong.", "README.md:1 wrong")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task AFixPrWritesOneLineToTheLogStartedWhenItStartsAFixerAndRefusedWhenItDoesNot()
     {
         var log = new StringWriter();
