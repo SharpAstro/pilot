@@ -78,7 +78,7 @@ internal sealed record IdeasBoard(IReadOnlyList<BoardSection> Sections)
     /// <summary>The item named <paramref name="key"/> (<see cref="BoardItem.Key"/>), wherever it is; null for none.</summary>
     public BoardItem? Find(string key) => Sections.SelectMany(s => s.Items).FirstOrDefault(i => i.Key == key);
 
-    /// <summary>The section that lists <paramref name="item"/>.</summary>
+    /// <summary>The section that lists the item named <paramref name="itemKey"/>.</summary>
     public BoardSection? SectionOf(string itemKey) => Sections.FirstOrDefault(s => s.Items.Any(i => i.Key == itemKey));
 
     public static IdeasBoard Build(IdeasScreen screen)

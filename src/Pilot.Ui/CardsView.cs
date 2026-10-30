@@ -270,7 +270,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
     public Action<NodeMark>? OnConnect { get; set; }
 
-    /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
+    /// <summary>Opens the Fleet page on the node's row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
     /// <summary>
@@ -294,10 +294,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The session a card is about, whose transcript its <b>Its transcript</b> opens; null for a card about none.</summary>
     public Func<CardRow, SessionLine?>? TranscriptOf { get; set; }
 
-    /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
+    /// <summary>Opens the session's transcript at the moment the card was raised.</summary>
     public Action<CardRow, SessionLine>? OnTranscript { get; set; }
 
-    /// <summary>Shows <paramref name="line"/> itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
+    /// <summary>Shows the session itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
     public Action<CardRow, SessionLine>? OnOpenSession { get; set; }
 
     /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
