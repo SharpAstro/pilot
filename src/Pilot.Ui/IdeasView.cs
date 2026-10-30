@@ -104,6 +104,23 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Called when what it shows changed, from whichever thread: the host redraws.</summary>
     public Action? Changed { get; set; }
 
+    /// <summary>The image on the clipboard as PNG (or whatever it is) bytes and its extension, or null when it holds none; null leaves Ctrl+V to text.</summary>
+    public Func<(byte[] Bytes, string Ext)?>? GetClipboardImage { get; set; }
+
+    /// <summary>Keeps an image on the node: the id it is served and referred to by, or the reason it was refused. Null leaves images out of the boxes.</summary>
+    public Func<byte[], string, CancellationToken, Task<(string? Id, string? Error)>>? Upload { get; set; }
+
+    /// <summary>The thumbnails of an idea's images and the viewer that opens one; shared with the other pages, so the host wires pictures once.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
+    private int _uploading;
+    // Markers of uploaded images, put into their box by the render thread: the pool never changes an editor in place.
+    private System.Collections.Immutable.ImmutableQueue<(TextEditorState Editor, string Marker)> _markers = [];
+    private string? _pasteSaid;
+    private TextEditorState? _pasteSaidIn;
+
+    private static readonly string[] ImageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
     /// <summary>The page or flight the person was on, sent with a noted idea so Claude can tell which repo it belongs in.</summary>
     public string? Context { get; set; }
 
@@ -582,17 +599,127 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         Palette.Use(Night);
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
+    }
+
+    // The box an image goes to: the open Edit's, else the note box; none on a page that cannot send.
+    private TextEditorState? PasteTarget => Send is null || Upload is null ? null : _open is { Mode: Mode.Edit } ? EditInput : NoteInput;
+
+    /// <summary>Ctrl+V in <paramref name="editor"/>: an image on the clipboard is uploaded and its marker put at the caret. False when it holds none, and the paste is the text's.</summary>
+    internal bool PasteImage(TextEditorState editor)
+    {
+        if (Upload is null || GetClipboardImage?.Invoke() is not { } image)
+        {
+            return false;
+        }
+        Run(() => UploadAsync(editor, image.Bytes, image.Ext), "upload image");
+        return true;
+    }
+
+    /// <summary>A file dropped on the window: an image goes into the open Edit or the note box like a paste; anything else is ignored. True when it was taken.</summary>
+    public bool DropFile(string path)
+    {
+        var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+        if (PasteTarget is not { } editor || !ImageExtensions.Contains(ext))
+        {
+            return false;
+        }
+        Run(async () =>
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = await File.ReadAllBytesAsync(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                PasteSay(editor, $"image not read: {ex.Message}");
+                return;
+            }
+            await UploadAsync(editor, bytes, ext);
+        }, "upload image");
+        return true;
+    }
+
+    private async Task UploadAsync(TextEditorState editor, byte[] bytes, string ext)
+    {
+        Interlocked.Increment(ref _uploading);
+        _pasteSaid = null;
+        Changed?.Invoke();
+        (string? Id, string? Error) result;
+        try
+        {
+            result = await Upload!(bytes, ext, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            result = (null, ex.Message);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _uploading);
+        }
+        if (result.Id is { Length: > 0 } id)
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Enqueue(ref _markers, (editor, IdeaImages.Marker("screenshot", id, ext.ToLowerInvariant())));
+            Changed?.Invoke();
+        }
+        else
+        {
+            PasteSay(editor, $"image not uploaded: {result.Error ?? "the node gave no id"}");
+        }
+    }
+
+    private void PasteSay(TextEditorState editor, string text)
+    {
+        _pasteSaid = text;
+        _pasteSaidIn = editor;
+        Changed?.Invoke();
+    }
+
+    // The line under a box: while an image goes up it says so, a refused one is said under the box it was pasted in.
+    private string Hint(TextEditorState editor, string idle, out RGBAColor32 color)
+    {
+        if (Volatile.Read(ref _uploading) > 0)
+        {
+            color = P.Held;
+            return "● uploading image…";
+        }
+        if (_pasteSaid is { } said && ReferenceEquals(_pasteSaidIn, editor))
+        {
+            color = P.Failed;
+            return said;
+        }
+        color = P.Dim;
+        return idle;
     }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what a test arranges.</summary>
     internal Layout.Node Tree(IdeasScreen screen)
     {
         _screen = screen;
+        var marked = false;
+        while (System.Collections.Immutable.ImmutableInterlocked.TryDequeue(ref _markers, out var marker))
+        {
+            marker.Editor.InsertText(marker.Marker);
+            marked = true;
+        }
+        if (marked)
+        {
+            Changed?.Invoke();
+        }
         NoteInput.OnCommit = _ => NoteAsync();
         NoteInput.Placeholder = "Note an idea: the first line is its title";
         EditInput.OnCommit = text => CommitEditAsync(text);
-        EditInput.OnCancel = Close;
+        EditInput.OnCancel = () =>
+        {
+            if (!Gallery.HandleKey(InputKey.Escape))
+            {
+                Close();
+            }
+        };
+        NoteInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(NoteInput);
+        EditInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(EditInput);
         RowInput.OnCommit = text => CommitRowAsync(text);
         RowInput.OnCancel = Close;
         // A page switched away from while an action was open leaves nothing behind it, and a gone idea closes its action.
@@ -609,18 +736,21 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
-        var top = TopBar.Build(new PageHeader("ideas")
+        // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
+        var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, Autopilot, About, Night));
 
         var rows = new List<Layout.Node>();
         if (Send is not null)
         {
             rows.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
             // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
-            rows.Add(Layout.Builder.Text(Working && _noting.IsEmpty ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo", 11f, Working && _noting.IsEmpty ? P.Held : P.Dim).RowH(16f));
+            var working = Working && _noting.IsEmpty;
+            var hint = Hint(NoteInput, working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo" + (Upload is null ? "" : " · Ctrl+V pastes an image"), out var hintColor);
+            rows.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
         }
         if (_said.Length > 0)
         {
@@ -655,7 +785,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var list = Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(_scroll).Stretch();
         var body = Layout.Builder.VStack(list.HStar()).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
-        return About?.Over(whole, NightOrNull) ?? whole;
+        return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 
     private async Task CommitRowAsync(string text)
@@ -727,10 +857,41 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var key = (KeyOf(idea), idea.Body, IsNight);
         if (!_markdown.TryGetValue(key, out var document))
         {
-            _markdown[key] = document = Layout.Builder.Markdown(Soften(idea.Body), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+            _markdown[key] = document = Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
         }
         return document;
     }
+
+    // The images are shown as thumbnails under the body, so their Markdown is not shown as text as well.
+    private static string WithoutImages(string body)
+    {
+        var spans = IdeaImages.Spans(body);
+        if (spans.Length == 0)
+        {
+            return body;
+        }
+        var text = new System.Text.StringBuilder(body);
+        foreach (var span in spans.OrderByDescending(s => s.At))
+        {
+            text.Remove(span.At, span.Length);
+        }
+        return text.ToString().Trim();
+    }
+
+    // The idea's images as the gallery shows them: the copy the node serves by id, or, for a link out, only its extension.
+    private static IReadOnlyList<AttachmentRef> CopiesOf(IdeaRow idea) =>
+    [
+        .. idea.Images.Select(image =>
+        {
+            var title = image.Alt.Length > 0 ? image.Alt : "image";
+            if (IdeaImages.CopyOf(image.Url) is { } copy)
+            {
+                return new AttachmentRef(copy.Id, title, copy.Ext, null);
+            }
+            var ext = Path.GetExtension(image.Url.Split('?', '#')[0]).TrimStart('.').ToLowerInvariant();
+            return new AttachmentRef("", title, ext.Length > 0 ? ext : "img", null);
+        }),
+    ];
 
     // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
     // separators with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
@@ -780,6 +941,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (idea.Body.Trim().Length > 0)
         {
             parts.Add(BodyOf(idea).WStar());
+        }
+        if (idea.Images.Length > 0 && Gallery.Section($"idea:{key}", CopiesOf(idea)) is { } images)
+        {
+            parts.Add(images);
         }
         var buttons = new List<Layout.Node>
         {
@@ -877,10 +1042,18 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 }
                 buttons.Add(CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body));
                 yield return Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar();
+                if (mode == Mode.Edit)
+                {
+                    var editHint = Hint(EditInput, "", out var editColor);
+                    if (editHint.Length > 0)
+                    {
+                        yield return Layout.Builder.Text(editHint, 11f, editColor).RowH(16f);
+                    }
+                }
                 yield return Layout.Builder.Text(mode switch
                 {
-                    Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels",
                     Mode.Plan => "Type to filter · Enter plans the chosen milestone · Esc cancels",
+                    Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels" + (Upload is null ? "" : " · Ctrl+V pastes an image"),
                     _ => "Enter sends · Esc cancels",
                 }, 11f, P.Faint).RowH(16f);
                 break;
@@ -989,6 +1162,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     public override bool HandleInput(InputEvent evt)
     {
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
+            return true;
+        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _open is not null)
         {
             Close();

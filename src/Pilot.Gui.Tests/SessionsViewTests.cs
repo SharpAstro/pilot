@@ -123,6 +123,68 @@ public sealed class SessionsViewTests
         view.Selected.ShouldBe(2);
     }
 
+    private static void Click(SessionsView<RgbaImage> view, SessionsScreen screen, string action)
+    {
+        var bounds = new RectF32(0f, 0f, 1280f, 800f);
+        view.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnContextSortsByTokensBiggestFirstAndASecondClickFlipsIt()
+    {
+        var screen = SampleScreen();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        Click(view, screen, "sessions:table:Context");
+        view.Shown.Select(l => l.Row.ContextTokens).ShouldBe([.. screen.Lines.Select(l => l.Row.ContextTokens).OrderByDescending(t => t)]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Context", Descending: true));
+
+        Click(view, screen, "sessions:table:Context");
+        view.Shown.Select(l => l.Row.ContextTokens).ShouldBe([.. screen.Lines.Select(l => l.Row.ContextTokens).Order()]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Context", Descending: false));
+    }
+
+    [Fact]
+    public void ASortKeepsEachNodesRowsTogetherAndSortsWithinThem()
+    {
+        var screen = SampleScreen();
+        screen = screen with { Lines = [.. screen.Lines.Select((l, i) => l with { Node = new NodeMark(i % 2 == 0 ? "s" : "s9", "node.sock", i % 2 == 0 ? "SE1" : "LE1", Here: i % 2 == 0) })] };
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        Click(view, screen, "sessions:table:Spend");
+
+        var groups = view.Shown.GroupBy(l => l.Node!.Name).ToList();
+        view.Shown.Select(l => l.Node!.Name).Distinct().Count().ShouldBe(2);
+        view.Shown.Select(l => l.Node!.Name).ShouldBe([.. view.Shown.Select(l => l.Node!.Name).OrderBy(n => n, StringComparer.Ordinal)], "a node's rows are not split");
+        foreach (var group in groups)
+        {
+            group.Select(l => l.Row.SpendWeighted).ShouldBe([.. group.Select(l => l.Row.SpendWeighted).OrderByDescending(s => s)]);
+        }
+    }
+
+    [Fact]
+    public void TheSelectionFollowsItsRowThroughASort()
+    {
+        var screen = SampleScreen();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        view.Render(screen, new RectF32(0f, 0f, 1280f, 800f));
+        view.Select(4);
+        var key = view.SelectedId.ShouldNotBeNull();
+
+        Click(view, screen, "sessions:table:Spend");
+
+        view.SelectedId.ShouldBe(key);
+        view.Shown[view.Selected].Key.ShouldBe(key);
+        view.Selected.ShouldNotBe(4, "the sort moved the row, and the selection went with it");
+    }
+
     [Fact]
     public void AnEmptySnapshotSaysSo()
     {

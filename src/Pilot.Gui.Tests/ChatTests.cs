@@ -93,8 +93,9 @@ public sealed class ChatTests
         var chat = TwoNodes(renderer, nodes, read);
         await Read(chat, 6);
 
-        Described(chat).ShouldContain("DE1's watchtower");
-        chat.Input.Placeholder.ShouldBe("Message the watchtower");
+        Described(chat).ShouldContain("fleet chat");
+        Described(chat).ShouldContain("held by DE1's watchtower");
+        chat.Input.Placeholder.ShouldBe("Message the fleet chat");
 
         chat.Open();
         Click(chat, "chat:node:se1");
@@ -107,7 +108,7 @@ public sealed class ChatTests
         chat.Node.ShouldBe(Other);
         chat.Entries.Single().Text.ShouldBe("from SE1");
         read[0].ShouldBe("SE1@-1");
-        Described(chat).ShouldContain("SE1's watchtower");
+        Described(chat).ShouldContain("watchtower · SE1");
         Described(chat).ShouldNotContain("DE1's watchtower");
         chat.Tree();
         chat.Input.Placeholder.ShouldBe("Message SE1's watchtower");

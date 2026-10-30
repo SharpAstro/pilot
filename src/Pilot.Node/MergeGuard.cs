@@ -998,6 +998,8 @@ public static partial class MergeGuard
         try
         {
             var start = new ProcessStartInfo("git") { WorkingDirectory = folder, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            // The node never reads LFS content, so none is fetched (see GitCli: 59 git-lfs runs in 30 minutes on DE1, 2026-10-29).
+            start.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
             foreach (var arg in args)
             {
                 start.ArgumentList.Add(arg);

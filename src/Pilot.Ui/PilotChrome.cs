@@ -140,7 +140,7 @@ internal sealed class PilotChrome<TSurface>
         Fleet = new FleetView<TSurface>(renderer);
         Settings = new SettingsView<TSurface>(renderer);
         Repos = new ReposView<TSurface>(renderer);
-        Ideas = new IdeasView<TSurface>(renderer);
+        Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Chat = new ChatView<TSurface>(renderer);
@@ -186,6 +186,7 @@ internal sealed class PilotChrome<TSurface>
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
+        Repos.OnPullRequest = OpenPullRequest;
         Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
@@ -199,10 +200,21 @@ internal sealed class PilotChrome<TSurface>
             var node = Cards.NodeOf(card);
             Navigate(() =>
             {
-                Chat.SwitchTo(node);
+                Chat.SwitchTo(null);
                 Switch(PilotPage.Chat, _show);
             });
             Chat.Attach(card, node);
+        };
+        // A reached node's own watchtower, from its row on the Fleet page; this node's row opens the fleet chat.
+        Fleet.OnChat = line =>
+        {
+            NodeMark? node = line.Here ? null : Nodes.Choices.FirstOrDefault(n => n.Key == line.Where)
+                ?? new NodeMark(line.Where, line.Where, line.Machine.Split(" · ")[0].Split(' ')[0], Here: false);
+            Navigate(() =>
+            {
+                Chat.SwitchTo(node);
+                Switch(PilotPage.Chat, _show);
+            });
         };
         Flights.OnChatAboutCard = card => Cards.OnChatAbout?.Invoke(card);
         // Plan a leg says its start in the chat, whose plan card comes back to confirm: the box has it, the keyboard in it.
@@ -521,6 +533,12 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
+        // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
+        if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
+        {
+            Flights.NotePointer(move.X, move.Y);
+        }
+
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
         switch (NavigationInput.Classify(evt))
         {
@@ -733,6 +751,11 @@ internal sealed class PilotChrome<TSurface>
                 Flights.OpenDetail(code);
             }
         });
+        Repos.OnFlightCode = code => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, show);
+            Flights.OpenDetail(code);
+        });
         Repos.OnSession = line => Navigate(() =>
         {
             Switch(PilotPage.Sessions, show);
@@ -816,6 +839,9 @@ internal sealed class PilotChrome<TSurface>
         }
         file.Attach(Night);
         Night.Changed += _ => redraw();
+        // The map's layers, kept in the same file and asking for a frame when one is toggled.
+        file.Attach(Flights.MapLayers);
+        Flights.MapLayers.Changed += redraw;
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>
@@ -969,6 +995,7 @@ internal sealed class PilotChrome<TSurface>
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
         Flights.PullRequests = pullRequests?.Row;
         Cards.PullRequests = pullRequests?.Row;
+        Repos.PullRequests = pullRequests?.Row;
         Cards.Focus = Page switch
         {
             PilotPage.Flights => Flights.FocusCode,

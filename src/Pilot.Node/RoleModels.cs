@@ -242,6 +242,15 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether <paramref name="repo"/>'s flights keep their legs as sub-tasks of the work item (<see cref="NodeSettings.SubTaskReposKey"/>), in force at once.</summary>
+    public bool SubTasks(string repo)
+    {
+        lock (_lock)
+        {
+            return _settings.SubTaskRepos?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true;
+        }
+    }
+
     /// <summary>Whether the node takes no new flight (<see cref="NodeSettings.MaintenanceKey"/>): on while the setting says so, at once.</summary>
     public bool Maintenance
     {
@@ -262,6 +271,18 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.ShortcutToken;
+            }
+        }
+    }
+
+    /// <summary>Whether ready merge queue entries are batched (<see cref="NodeSettings.MergeBatchKey"/>): in force at once, and off unless the person saved it on.</summary>
+    public bool MergeBatch
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MergeBatch ?? false;
             }
         }
     }

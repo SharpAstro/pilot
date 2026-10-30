@@ -298,6 +298,15 @@ internal sealed class TranscriptEntryView
     private Layout.Node Row(TranscriptEntry entry)
     {
         // A message relayed from another session (or from the person, through the node) is said as from its sender, without its envelope.
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false })
+        {
+            // Another node's watchtower passing work on: said as that node's, dim, not as the person's.
+            var words = CrossSessionMessage.Parse(entry.Text)?.Body ?? entry.Text.Trim();
+            if (CrossSessionMessage.TryParseWatchtower(words) is { } tower)
+            {
+                return Said(entry, $"{tower.Node}'s watchtower", Tool, Dim, tower.Body);
+            }
+        }
         if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && CrossSessionMessage.Parse(entry.Text) is { } relayed)
         {
             var mine = relayed.From == CrossSessionMessage.Controller;

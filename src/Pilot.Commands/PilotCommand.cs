@@ -104,6 +104,8 @@ public static class PilotCommand
         requestId ??= NewRequestId();
         var byAgent = IsAgent(bySession, agent);
         sessionId ??= Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID");
+        // This machine's node socket as given (--node-socket), where a command sent to another node names its sender.
+        string? hereSocket = null;
         var socket = new Option<string?>("--node-socket")
         {
             Description = "The node's socket; else PILOT_NODE_SOCKET, else this user's default",
@@ -137,7 +139,8 @@ public static class PilotCommand
                     await error.WriteLineAsync($"pilot: {unknown}");
                     return 2;
                 }
-                using var client = NodeTargets.Connect(target, parseResult.GetValue(socket), here: here);
+                hereSocket = parseResult.GetValue(socket);
+                using var client = NodeTargets.Connect(target, hereSocket, here: here);
                 try
                 {
                     return await run(parseResult, client, ct);
@@ -164,7 +167,7 @@ public static class PilotCommand
         // Who a command is from: the Claude session running this host when it may be one, else the host; a leg's worker
         // or a flight's reviewer when the plane says so, as they are named already.
         Task<int> Send(NodeClient client, string verb, string target, string[] args, string sender, CancellationToken ct, string? why = null) =>
-            SendAsync(client, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
+            SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
@@ -710,6 +713,13 @@ public static class PilotCommand
             }
             return 0;
         });
+        var mergesCommand = Action(new Command("merges", "The node's merge queue: a row per flight waiting to merge, per repo in order"), async (_, client, ct) =>
+        {
+            var merges = (await SnapshotAsync(client, ct)).Merges
+                .OrderBy(m => m.Open ? 0 : 1).ThenBy(m => m.Repo, StringComparer.Ordinal).ThenBy(m => m.Place ?? int.MaxValue).ThenByDescending(m => m.ChangedAt ?? m.AddedAt).Take(30).ToList();
+            await output.WriteAsync(merges.Count == 0 ? "No merges.\n" : string.Concat(merges.Select(m => MergeLine(m) + "\n")));
+            return 0;
+        });
         var jobId = Arg("job", "The job's id, as j3");
         var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
         {
@@ -794,7 +804,7 @@ public static class PilotCommand
 
                 // Never to itself: a relayed say to the session running this would come back as a message to act on.
                 var self = bySession ? sessionId : null;
-                var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                var sender = await SenderAsync(client, hereSocket, who, bySession, byAgent, cwd, sessionId, ct);
                 var failed = 0;
                 foreach (var row in picked)
                 {
@@ -888,7 +898,7 @@ public static class PilotCommand
                 string? made = null;
                 if (kept is null || p.GetValue(summaryFresh))
                 {
-                    var sender = await SenderAsync(client, who, bySession, byAgent, cwd, sessionId, ct);
+                    var sender = await SenderAsync(client, hereSocket, who, bySession, byAgent, cwd, sessionId, ct);
                     var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Summarise, Target = target, Args = args, Who = sender, Agent = byAgent }, ct);
                     if (envelope is not { Success: true, Response: { Ok: true } result })
                     {
@@ -1125,7 +1135,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1191,6 +1201,10 @@ public static class PilotCommand
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
         return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
     }
+
+    /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
+    internal static string MergeLine(MergeRow merge) =>
+        $"{merge.Flight}  {(merge.Pr is { } pr ? $"#{pr}" : "no PR")}  {merge.Repo}  {(merge.Place is { } place ? place.ToString(CultureInfo.InvariantCulture) : "-")}  {merge.Head[..Math.Min(8, merge.Head.Length)]}  {merge.State.ToString().ToLowerInvariant()}{(merge.Why is { } why ? $"  · {why}" : "")}";
 
     /// <summary>A duration as people write it: <c>90m</c>, <c>2h</c>, <c>45s</c>.</summary>
     internal static bool TryDuration(string text, out TimeSpan span)
@@ -1394,11 +1408,38 @@ public static class PilotCommand
         return PrHere(snapshot, cwd) is { Who: not "cli" } pr ? pr.Who : null;
     }
 
-    /// <summary>Who a command is from: the Claude session running this host by its name on the node, where there is one, else <paramref name="who"/>.</summary>
-    private static async Task<string> SenderAsync(NodeClient client, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken) =>
-        bySession && (sessionId is { Length: > 0 } || agent)
-            ? Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who, agent ? await MachineAsync(client, cancellationToken) : null)
-            : who;
+    /// <summary>
+    /// Who a command is from: the Claude session running this host by its name on the node, where there is one, else
+    /// <paramref name="who"/>. Sent to another node (<c>--node</c>), the session is looked up on this machine's node
+    /// (<paramref name="hereSocket"/>), which runs it: the target's snapshot does not have it, and a watchtower's tell went
+    /// as <c>cli</c>, unmarked, as if the person had written it.
+    /// </summary>
+    private static async Task<string> SenderAsync(NodeClient client, string? hereSocket, string who, bool bySession, bool agent, string cwd, string? sessionId, CancellationToken cancellationToken)
+    {
+        if (!bySession || (sessionId is not { Length: > 0 } && !agent))
+        {
+            return who;
+        }
+        if (client.IsRemote && sessionId is { Length: > 0 } && await NamedHereAsync(hereSocket, sessionId, cancellationToken) is { } here)
+        {
+            return here;
+        }
+        return Sender(await SnapshotAsync(client, cancellationToken), sessionId, cwd, agent, who, agent ? await MachineAsync(client, cancellationToken) : null);
+    }
+
+    /// <summary>The name this machine's node gives the Claude session <paramref name="sessionId"/>, or null when it has none or no node answers here.</summary>
+    private static async Task<string?> NamedHereAsync(string? hereSocket, string sessionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var here = new NodeClient(NodeSocket.Resolve(hereSocket));
+            return SessionNamed(await SnapshotAsync(here, cancellationToken), sessionId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException or System.Net.WebSockets.WebSocketException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The node's machine prefix, or null when it cannot be had: the name of a planner the node has not listed yet is built from it.</summary>
     private static async Task<string?> MachineAsync(NodeClient client, CancellationToken cancellationToken)
@@ -1433,14 +1474,17 @@ public static class PilotCommand
         }
     }
 
-    private static async Task<int> SendAsync(NodeClient client, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string? hereSocket, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
     {
-        who = await SenderAsync(client, who, bySession, agent, cwd, sessionId, cancellationToken);
+        who = await SenderAsync(client, hereSocket, who, bySession, agent, cwd, sessionId, cancellationToken);
         var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId }, deadline, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
         {
             // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.
-            await output.WriteLineAsync($"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
+            // A finish's own words say what runs and what its worker does (end its turn); the generic tail would send it to look.
+            await output.WriteLineAsync(verb == Verbs.FinishLeg
+                ? $"queued: {verb} {target}: {waiting}"
+                : $"queued: {verb} {target}: {waiting}; it runs when that is done, and its outcome comes on the event stream and a Handled card (pilot status)");
             return ExitQueued;
         }
         if (envelope.Success && envelope.Response is { Ok: true } result)
