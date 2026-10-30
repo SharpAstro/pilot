@@ -79,6 +79,4 @@ public sealed class OpenPrBaseTests : ReviewTestsBase
         Git(flight.Worktree, "status", "--porcelain").ShouldBe("");
         F(flight.Code).PullRequest.ShouldBeNull();
     }
-
-    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
 }
