@@ -338,7 +338,7 @@ public sealed partial class LegCommander(
                 // Before the base is repaired too: that rebases the plane, and the remote's pre-rebase commits merged in after it would be duplicated.
                 await TakeRemoteAsync(flight, cancellationToken);
                 // A base that is no branch on the remote is the remote's default first, as when its PR opened.
-                var (repaired, rewrote) = await RepairBaseAsync(flight, cancellationToken);
+                var (repaired, rewrote) = await RepairBaseAsync(flight, cancellationToken, mayRewritePushed: true);
                 // Where the queue squashes or merges the base is merged in and pushed plain; only a rebase-queue repo is rebased.
                 var way = await github.UpdateWayAsync(repaired.RepoPath, Models.MergeMethod, cancellationToken);
                 // A branch that holds its base already (merged in, as a squashing merge queue allows) has nothing to update.
@@ -2409,7 +2409,7 @@ public sealed partial class LegCommander(
     /// conflicts is undone and said, never left half done. Asks git and GitHub, so never under the lock, and the repaired row is the
     /// caller's to record.
     /// </summary>
-    private async Task<(FlightRow Flight, bool Rewrote)> RepairBaseAsync(FlightRow flight, CancellationToken cancellationToken)
+    private async Task<(FlightRow Flight, bool Rewrote)> RepairBaseAsync(FlightRow flight, CancellationToken cancellationToken, bool mayRewritePushed = false)
     {
         if (flight.Base.StartsWith("origin/", StringComparison.Ordinal)
             && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/{flight.Base}"], flight.Worktree, cancellationToken)).Ok)
@@ -2425,8 +2425,9 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and its plane holds changes not committed: commit them, then open the PR, which brings it up to date with {remoteBase}");
         }
-        // A branch already pushed is never rewritten: the new base is merged in and pushed plain, as every other update is.
-        if ((await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/origin/{flight.Branch}"], flight.Worktree, cancellationToken)).Ok)
+        // A branch already pushed is never rewritten on the open-PR path: the new base is merged in and pushed plain. Only the
+        // node's own rebase-onto-base (mayRewritePushed), which pushes with a lease, drops the commits a landed base already holds.
+        if (!mayRewritePushed && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/remotes/origin/{flight.Branch}"], flight.Worktree, cancellationToken)).Ok)
         {
             var merge = await git.RunAsync(["merge", "--no-edit", remoteBase], flight.Worktree, cancellationToken);
             if (!merge.Ok)
