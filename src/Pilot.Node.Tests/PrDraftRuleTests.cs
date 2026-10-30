@@ -35,6 +35,11 @@ public sealed class PrDraftRuleTests : ReviewTestsBase
 
         (await Run(Verbs.StartReview, target, "controller")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
+        // The marks follow the recorded reviewer, outside the lock: a moment on a loaded machine.
+        for (var i = 0; i < 2000 && _github.Pr!.Draft; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
         Agree(draft: false, "pilot: reviewing", "pending");
 
         (await Run(Verbs.Review, target, Reviewer(flight.Code), "pass", "fixed")).Error.ShouldBeNull();
