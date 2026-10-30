@@ -878,7 +878,8 @@ chrome.PullRequests.OnOpen = location => OpenAway(location);
 // the five-second look at who is in the fleet (a file read and the LAN). Each frame built them all, under each feed's lock,
 // so a burst of events (181 archived on DE1, 2026-10-24) kept frames at full cost back to back and the window stalled. Built
 // again when a node's version moves (at most every 100 ms through a burst), when the render thread asks (a page switch, a
-// node pick: at once), or every second (the "ago" column); the render thread only picks up the last one made.
+// node pick: at once), or every second (the "ago" column; on Home only when a clock word it shows turns over); the render
+// thread only picks up the last one made.
 if (feed is not null)
 {
     var building = cts.Token;
@@ -912,6 +913,20 @@ if (feed is not null)
                     granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
+                // The once-a-second look at Home, with no node event and nothing asked: nothing Home draws is counted from the
+                // clock when the pages are built but what its fingerprint counts itself (the summaries' "made ago", the tasks
+                // glyph's "failed just now"), so the last pages are fingerprinted at this moment and built again only when that
+                // shows a turn-over. A merge's card lingers by the clock, so while one does, Home builds. Building every page each
+                // second, some 6 MB a build on a node of 491 sessions, kept the GC's background thread at most of the window's
+                // idle CPU (DE1, 2026-10-30).
+                var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
+                if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
+                    && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes))))
+                {
+                    continue;
+                }
+                var buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
                 var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) is PilotPage.Repos or PilotPage.Ideas);
                 var hereSummary = feed.Summary(now);
@@ -926,7 +941,9 @@ if (feed is not null)
                 var made = Tuple.Create(pages, fleetScreen);
                 Volatile.Write(ref latest, made);
                 var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes);
-                if (!frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header)))
+                var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header));
+                frameWatch.Built(System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted));
+                if (!worth)
                 {
                     continue;
                 }
@@ -1104,7 +1121,8 @@ if (restarting && Environment.ProcessPath is { } self)
     Note($"pilot-gui: window closed; started again on {self}.");
     return 0;
 }
-Note((cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.") + $" {frameWatch.Frames} frames drawn.");
+Note((cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.") + $" {frameWatch.Frames} frames drawn; {frameWatch.Builds.Count} page builds, {frameWatch.Builds.Took.TotalSeconds:0.##} s building;"
+    + $" GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} (gen 0/1/2), {GC.GetTotalAllocatedBytes() >> 20} MB allocated, {GC.GetTotalPauseDuration().TotalSeconds:0.##} s paused.");
 return 0;
 
 // Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to

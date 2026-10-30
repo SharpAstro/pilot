@@ -18,6 +18,19 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     /// <summary>How many frames have been drawn (reported to <see cref="Frame"/>).</summary>
     public long Frames => Interlocked.Read(ref _frames);
 
+    private long _builds;
+    private long _buildTicks;
+
+    /// <summary>How many page builds there were, and the time they took together (reported to <see cref="Built"/>), for the closing line.</summary>
+    public (long Count, TimeSpan Took) Builds => (Interlocked.Read(ref _builds), TimeSpan.FromTicks(Interlocked.Read(ref _buildTicks)));
+
+    /// <summary>Counts one page build that took <paramref name="took"/>, frame or not.</summary>
+    public void Built(TimeSpan took)
+    {
+        Interlocked.Increment(ref _builds);
+        Interlocked.Add(ref _buildTicks, took.Ticks);
+    }
+
     public TimeSpan SlowFrame { get; } = slowFrame ?? TimeSpan.FromMilliseconds(100);
 
     /// <summary>
@@ -198,6 +211,9 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         _drawn = current;
         return true;
     }
+
+    /// <summary>Whether <paramref name="shown"/> for the page ask <paramref name="ask"/> is what was last drawn; remembers nothing.</summary>
+    public bool Drawn(int ask, long shown) => _drawn == (ask, shown);
 
     /// <summary>Forgets what was drawn, so the next build is worth a frame (a build that failed is tried again).</summary>
     public void Forget() => _drawn = null;

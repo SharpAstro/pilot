@@ -176,6 +176,20 @@ public class FrameWatchTests
     }
 
     [Fact]
+    public void Home_s_last_pages_fingerprinted_later_move_only_when_a_clock_word_turns_over()
+    {
+        // The once-a-second look at Home fingerprints the last pages at the moment, without building them again.
+        var fleet = new FleetScreen([], T0);
+        var summary = new SummaryRow { Scope = SummaryRow.FleetScope, Markdown = "All calm.", MadeAt = T0 - TimeSpan.FromSeconds(200), Tokens = 10 };
+        var pages = Busy(T0) with { Summaries = new SummaryShelf([], new Dictionary<(string Node, string Scope), SummaryRow> { [("", SummaryRow.FleetScope)] = summary }) };
+        long At(int seconds) => FrameWatch.Fingerprint(pages, fleet, T0 + TimeSpan.FromSeconds(seconds), PilotPage.Home);
+
+        At(1).ShouldBe(At(0), "the worker's last response is in the build, not counted again");
+        At(30).ShouldBe(At(0), "made 3m ago still");
+        At(40).ShouldNotBe(At(0), "made 4m ago from 240 s on");
+    }
+
+    [Fact]
     public void The_header_switches_and_node_pills_move_the_fingerprint()
     {
         var nodes = new NodeFilter();
