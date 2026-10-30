@@ -219,7 +219,7 @@ public sealed class PrReviews(
         // Admission: a review waits for a free Opus slot, and the sweep starts it; an earlier review's own reviewer does not count against it.
         if (WaitsForSlot(pr, fix: false, Models.Model(RoleModels.Reviewer), Of(pr)?.Reviewer))
         {
-            return;
+            return $"queued: {pr} waits for a free Opus slot";
         }
 
         // One review of a PR at a time: an earlier one, still on or waiting on its card, ends first.
@@ -1352,7 +1352,7 @@ public sealed class PrReviews(
         }
         if (WaitsForSlot(pr, fix: true, Models.Model(RoleModels.Worker)))
         {
-            return;
+            return $"queued: the fixer of {pr} waits for a free Opus slot";
         }
         var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
