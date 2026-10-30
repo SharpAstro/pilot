@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -30,11 +31,38 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task UnreadHeadAfterARestartEndedAFinishCheckGetsItsReviewAtTheNewHeadOnTheSweep()
+    public async Task UnreadHeadAfterARestartEndedAFinishCheckGetsItsReviewAtTheNewHeadWhenTheFinishRunsAgain()
     {
         var (flight, read) = await ReviewedWithChanges("401");
-        // The finish's check was ended by a restart after the leg was recorded done: the commits are in the plane, never pushed, never reviewed.
+        // The finish's check was ended by a restart: the leg is left flying with its recheck set, the commits in the plane, never pushed, never reviewed.
+        var leg = _state.Legs(flight.Code).Single();
         CommitInPlane(flight, "after-restart.txt");
+        _state.PutLeg(leg with
+        {
+            State = LegState.Flying,
+            Recheck = new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UtcNow.AddMinutes(-5) },
+        });
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        head.ShouldNotBe(read);
+        var started = _workers.Started.Count;
+
+        // The finish runs again and its check passes; the sweep after it takes what the finish left.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg.Name), "controller", "done", "parser in")).Error.ShouldBeNull();
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        await _legs.AdvanceAllAsync(Ct);
+        await Started(_legs, flight.Code);
+
+        _workers.Started.Count.ShouldBe(started + 1);
+        F(flight.Code).Review.ShouldNotBeNull().ReviewedHead.ShouldBe(head);
+        F(flight.Code).Review!.State.ShouldBe(ReviewState.Reviewing);
+        Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
+    public async Task UnreadHeadOnTheSweepOfACommitAfterAChangesReviewStartsOneReviewer()
+    {
+        var (flight, read) = await ReviewedWithChanges("405");
+        CommitInPlane(flight, "later.txt");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         head.ShouldNotBe(read);
         var started = _workers.Started.Count;
@@ -44,8 +72,90 @@ public sealed class UnreadHeadTests : ReviewTestsBase
 
         _workers.Started.Count.ShouldBe(started + 1);
         F(flight.Code).Review.ShouldNotBeNull().ReviewedHead.ShouldBe(head);
-        F(flight.Code).Review!.State.ShouldBe(ReviewState.Reviewing);
         Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
+    public async Task UnreadHeadCommandFindingTheReviewRunningStartsNoSecondReviewer()
+    {
+        var flight = await NewFlight("406", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        CommitInPlane(flight, "while-reviewing.txt");
+        var review = F(flight.Code).Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Reviewing);
+        var started = _workers.Started.Count;
+
+        // What the sweep saw outside the lock is stale: the review is running by the time its command takes the lock.
+        var result = await _legs.RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [LegCommander.UnreadHeadArg], Who = "node" }, Ct);
+
+        result.Ok.ShouldBeTrue();
+        _workers.Started.Count.ShouldBe(started);
+        F(flight.Code).Review.ShouldBe(review);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
+    }
+
+    [Fact]
+    public async Task UnreadHeadCommandFindingTheHeadReadByNowStartsNoReviewer()
+    {
+        var (flight, _) = await ReviewedWithChanges("407");
+        var started = _workers.Started.Count;
+
+        var result = await _legs.RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [LegCommander.UnreadHeadArg], Who = "node" }, Ct);
+
+        result.Ok.ShouldBeTrue();
+        _workers.Started.Count.ShouldBe(started);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+    }
+
+    [Fact]
+    public async Task UnreadHeadOfAPlaneWithUncommittedChangesIsLeftToTheNextSweep()
+    {
+        var (flight, read) = await ReviewedWithChanges("408");
+        CommitInPlane(flight, "committed.txt");
+        File.WriteAllText(Path.Combine(flight.Worktree, "dirty.txt"), "not committed\n");
+        var started = _workers.Started.Count;
+
+        await _legs.AdvanceAllAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(started);
+        F(flight.Code).Review.ShouldNotBeNull().ReviewedHead.ShouldBe(read);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
+
+        // Once the plane is clean again the next sweep takes it.
+        File.Delete(Path.Combine(flight.Worktree, "dirty.txt"));
+        await _legs.AdvanceAllAsync(Ct);
+        await Started(_legs, flight.Code);
+        _workers.Started.Count.ShouldBe(started + 1);
+    }
+
+    [Fact]
+    public async Task UnreadHeadIsReviewedByTheFirstSweepAtNodeStartBeforeTheIntervalPasses()
+    {
+        var (flight, read) = await ReviewedWithChanges("409");
+        CommitInPlane(flight, "left-by-an-update.txt");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        head.ShouldNotBe(read);
+        var started = _workers.Started.Count;
+
+        using var advance = new FlightAdvance(_legs, TimeProvider.System) { Interval = TimeSpan.FromHours(1) };
+        await advance.StartAsync(Ct);
+        try
+        {
+            var clock = Stopwatch.StartNew();
+            while (F(flight.Code).Review?.ReviewedHead != head)
+            {
+                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "the first sweep did not review the unread head");
+                await Task.Delay(20, Ct);
+            }
+            await Started(_legs, flight.Code);
+        }
+        finally
+        {
+            await advance.StopAsync(CancellationToken.None);
+        }
+
+        _workers.Started.Count.ShouldBe(started + 1);
     }
 
     [Fact]

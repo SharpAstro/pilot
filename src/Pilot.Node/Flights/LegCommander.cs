@@ -187,7 +187,19 @@ public sealed partial class LegCommander(
                 case Verbs.StartReview:
                     if (command.Args is [UnreadHeadArg, ..])
                     {
-                        await PushAndReviewAsync(FlightOf(command.Target), planeHead: null, cancellationToken);
+                        // Asked by the sweep outside the lock: what it saw may be stale now, so the flight is looked at again, and a command
+                        // that has calls out for it, a review running or a head read by now leaves it alone, quietly.
+                        var flight = FlightOf(command.Target);
+                        if (_calling.ContainsKey(flight.Code) || flight.Review is not { State: not ReviewState.Reviewing } review)
+                        {
+                            break;
+                        }
+                        var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+                        if (head.Ok && string.Equals(review.ReviewedHead, head.Output.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            break;
+                        }
+                        await PushAndReviewAsync(flight, planeHead: null, cancellationToken);
                     }
                     else
                     {
@@ -651,6 +663,12 @@ public sealed partial class LegCommander(
         {
             return false;
         }
+        // A plane with changes not committed, or a merge in progress, is somebody's: the next sweep looks again.
+        var status = await git.RunAsync(["status", "--porcelain"], current.Worktree, cancellationToken);
+        if (!status.Ok || status.Output.Trim().Length > 0)
+        {
+            return false;
+        }
         if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer"))
         {
             return false;
@@ -662,7 +680,7 @@ public sealed partial class LegCommander(
         }
         _rung[current.Code] = key;
         state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head by itself", result.Error,
-            [new CardChoice { Label = "Start its reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code) }]);
+            [new CardChoice { Label = "Start its reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
         return true;
     }
 
