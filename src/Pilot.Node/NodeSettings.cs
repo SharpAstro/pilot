@@ -36,6 +36,10 @@ public sealed record NodeSettings
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    public const string PrWatchIdleKey = "pr-watch-idle";
+
+    /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
+    public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -43,7 +47,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, PrWatchIdleKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -85,6 +89,9 @@ public sealed record NodeSettings
 
     /// <summary>The 7-day window's share past which a start rings, once per window, and goes ahead.</summary>
     public double? WeekLimit { get; init; }
+
+    /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
+    public TimeSpan? PrWatchIdle { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -180,6 +187,7 @@ public sealed record NodeSettings
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
+        PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -310,6 +318,14 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weekly) && weekly is > 0 and <= 100
                     ? (settings with { WeekLimit = weekly }, null)
                     : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
+            case PrWatchIdleKey:
+                if (clear)
+                {
+                    return (settings with { PrWatchIdle = null }, null);
+                }
+                return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
+                    ? (settings with { PrWatchIdle = idle }, null)
+                    : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
             case PriorityReposKey:
             {
                 if (clear)
@@ -430,6 +446,34 @@ public sealed record NodeSettings
     public TrackerKind TrackerOf(string repo) =>
         RepoTrackers?.Select(e => e.Split('=', 2)).FirstOrDefault(p => p.Length == 2 && string.Equals(p[0], repo, StringComparison.OrdinalIgnoreCase)) is { } found
             && found[1] == "shortcut" ? TrackerKind.Shortcut : TrackerKind.GitHub;
+
+    /// <summary>A duration as <c>set node</c> spells it: <c>90s</c>, <c>15m</c>, <c>2h</c>, a bare number meaning minutes; null for anything else.</summary>
+    public static TimeSpan? ParseDuration(string? text)
+    {
+        if (text is null || text.Length == 0)
+        {
+            return null;
+        }
+        var unit = char.ToLowerInvariant(text[^1]);
+        var number = char.IsAsciiDigit(unit) ? text : text[..^1];
+        if (!double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) || n <= 0 || double.IsInfinity(n))
+        {
+            return null;
+        }
+        return unit switch
+        {
+            's' => TimeSpan.FromSeconds(n),
+            'h' => TimeSpan.FromHours(n),
+            'm' or >= '0' and <= '9' => TimeSpan.FromMinutes(n),
+            _ => null,
+        };
+    }
+
+    /// <summary>A duration the way <see cref="ParseDuration"/> reads it: whole hours as <c>2h</c>, whole minutes as <c>15m</c>, else seconds.</summary>
+    public static string DurationText(TimeSpan span) =>
+        span.TotalSeconds % 3600 == 0 ? $"{(long)span.TotalHours}h"
+        : span.TotalSeconds % 60 == 0 ? $"{(long)span.TotalMinutes}m"
+        : $"{(long)span.TotalSeconds}s";
 
     // The on/off words set node takes for a switch; null for anything else.
     private static bool? OnOff(string? value) => value?.ToLowerInvariant() switch

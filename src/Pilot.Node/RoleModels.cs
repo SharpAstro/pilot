@@ -44,11 +44,28 @@ public sealed partial class RoleModels
     /// <summary>A role's model when the settings name none: Opus where judgement decides what follows, Sonnet elsewhere.</summary>
     public static string DefaultModel(string role) => role is Planner or Reviewer or ReviewerDeep ? "opus" : "sonnet";
 
+    /// <summary>Raised after <see cref="Apply"/>, for what runs on a setting it must not wait to be asked again (the pull request watch's pace).</summary>
+    public event Action? Applied;
+
     public void Apply(NodeSettings settings)
     {
         lock (_lock)
         {
             _settings = settings;
+        }
+        Applied?.Invoke();
+    }
+
+    /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page
+    /// (<see cref="NodeSettings.PrWatchIdleKey"/>); <see cref="NodeSettings.DefaultPrWatchIdle"/> unless the settings say otherwise.</summary>
+    public TimeSpan PrWatchIdle
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.PrWatchIdle ?? NodeSettings.DefaultPrWatchIdle;
+            }
         }
     }
 

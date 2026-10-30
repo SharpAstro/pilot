@@ -22,21 +22,79 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     private Task<PullRequestsRow?>? _running;
     private string? _viewer;
     private DateTimeOffset? _limitedUntil;
+    private DateTimeOffset? _lastRead;
+    private bool _opened;
+    private CancellationTokenSource? _sleeping;
+    private PageViews _views = new();
 
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>How long it waits between reads while a client shows the Pull requests page.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>Reads the repos afresh and puts the row on the stream; joins the refresh already running, if one is; asks GitHub nothing while its rate limit holds. Null when the node has no GitHub repo to read.</summary>
-    public Task<PullRequestsRow?> RefreshAsync(CancellationToken cancellationToken)
+    /// <summary>How long it waits between reads while no client does (<see cref="NodeSettings.PrWatchIdleKey"/>); asked at each wait, so a saved setting counts.</summary>
+    public Func<TimeSpan> Idle { get; init; } = () => NodeSettings.DefaultPrWatchIdle;
+
+    /// <summary>The pages the node's clients show: one showing <see cref="ClientPages.PullRequests"/> makes the watch read every <see cref="Interval"/>, and one opening it reads at once.</summary>
+    public PageViews Views
     {
-        Task<PullRequestsRow?> run;
+        get => _views;
+        init
+        {
+            _views = value;
+            value.Changed += (page, shown) =>
+            {
+                if (page == ClientPages.PullRequests)
+                {
+                    PageChanged(shown);
+                }
+            };
+        }
+    }
+
+    /// <summary>Reads the repos afresh and puts the row on the stream; joins the refresh already running, if one is; asks GitHub nothing while its rate limit holds. Null when the node has no GitHub repo to read.</summary>
+    public Task<PullRequestsRow?> RefreshAsync(CancellationToken cancellationToken) => RunAsync("refresh asked").WaitAsync(cancellationToken);
+
+    /// <summary>Wakes the wait in progress to count again, as the idle interval was saved changed.</summary>
+    public void PaceChanged() => Wake();
+
+    // A read, or the one already running, which a later ask joins and keeps its reason.
+    private Task<PullRequestsRow?> RunAsync(string why)
+    {
         lock (_gate)
         {
-            run = _running ??= Task.Run(ReadAsync);
+            return _running ??= Task.Run(() => ReadAsync(why));
         }
-        return run.WaitAsync(cancellationToken);
+    }
+
+    private void PageChanged(bool shown)
+    {
+        if (shown)
+        {
+            lock (_gate)
+            {
+                // A read in progress is the one it joins; only when none runs does opening the page ask for one.
+                _opened = _running is null;
+            }
+        }
+        Wake();
+    }
+
+    private void Wake()
+    {
+        CancellationTokenSource? sleeping;
+        lock (_gate)
+        {
+            sleeping = _sleeping;
+        }
+        try
+        {
+            sleeping?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -45,22 +103,70 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         {
             while (!stopping.IsCancellationRequested)
             {
+                var viewed = Views.Count(ClientPages.PullRequests) > 0;
+                bool opened;
+                lock (_gate)
+                {
+                    opened = _opened;
+                    _opened = false;
+                }
+                var wait = opened ? TimeSpan.Zero : WaitFor(viewed);
+                if (wait <= TimeSpan.Zero)
+                {
+                    try
+                    {
+                        await RunAsync(opened ? "page opened" : _lastRead is null ? "node started" : viewed ? "page open" : "idle interval").WaitAsync(stopping);
+                    }
+                    catch (Exception ex) when (!stopping.IsCancellationRequested)
+                    {
+                        // A read that failed is not read again at once: the pace goes on from now.
+                        _lastRead = time.GetUtcNow();
+                        await Error.WriteLineAsync($"pull request watch: one read failed, reading again: {ex.Message}");
+                    }
+                    continue;
+                }
+                using var sleeping = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+                lock (_gate)
+                {
+                    _sleeping = sleeping;
+                    // Opened between the check above and here: it is not slept through.
+                    if (_opened)
+                    {
+                        continue;
+                    }
+                }
                 try
                 {
-                    await RefreshAsync(stopping);
+                    await Task.Delay(wait, time, sleeping.Token);
                 }
-                catch (Exception ex) when (!stopping.IsCancellationRequested)
+                catch (OperationCanceledException) when (!stopping.IsCancellationRequested)
                 {
-                    await Error.WriteLineAsync($"pull request watch: one read failed, reading again: {ex.Message}");
+                    // Woken: the page opened or closed, or the idle interval was saved; what is due is counted again.
                 }
-                // Rate-limited: the next read is when the limit resets, not a minute on.
-                var wait = _limitedUntil is { } until && until - time.GetUtcNow() is var left && left > Interval ? left : Interval;
-                await Task.Delay(wait, time, stopping);
+                finally
+                {
+                    lock (_gate)
+                    {
+                        _sleeping = null;
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
         }
+    }
+
+    // How long until the next read: a minute (or the idle interval) after the last, and no sooner than a rate limit resets.
+    private TimeSpan WaitFor(bool viewed)
+    {
+        var now = time.GetUtcNow();
+        var due = _lastRead is { } last ? last + (viewed ? Interval : Idle()) : now;
+        if (_limitedUntil is { } until && until > due)
+        {
+            due = until;
+        }
+        return due - now;
     }
 
     /// <summary>
@@ -78,7 +184,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             .Order(StringComparer.OrdinalIgnoreCase),
     ];
 
-    private async Task<PullRequestsRow?> ReadAsync()
+    private async Task<PullRequestsRow?> ReadAsync(string why)
     {
         try
         {
@@ -161,7 +267,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
                 Viewer = await ViewerAsync(),
             };
             await Error.WriteLineAsync($"pull request watch: read {row.PullRequests.Length} open PRs of {tracked.Length} repos in {searches.Length} searches, "
-                + $"{cost} GraphQL points{(remaining is { } left ? $", {left} left" : "")}");
+                + $"{cost} GraphQL points{(remaining is { } left ? $", {left} left" : "")} ({why})");
             state.PutPullRequests(row);
             return row;
         }
@@ -169,6 +275,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
         {
             lock (_gate)
             {
+                _lastRead = time.GetUtcNow();
                 _running = null;
             }
         }

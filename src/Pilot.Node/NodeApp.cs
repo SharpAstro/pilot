@@ -64,6 +64,7 @@ public static class NodeApp
         {
             Error = logWriter,
         });
+        builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
         var relayFolder = Path.Combine(options.DataFolder, "relay");
@@ -116,8 +117,15 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton(services =>
         {
-            var watch = ActivatorUtilities.CreateInstance<PullRequestWatch>(services);
+            var models = services.GetRequiredService<RoleModels>();
+            var watch = new PullRequestWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>())
+            {
+                Views = services.GetRequiredService<PageViews>(),
+                Idle = () => models.PrWatchIdle,
+            };
             watch.Error = logWriter;
+            // A saved pr-watch-idle counts at once, also for a wait already running.
+            models.Applied += watch.PaceChanged;
             return watch;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());

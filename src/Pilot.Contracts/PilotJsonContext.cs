@@ -22,6 +22,7 @@ namespace Pilot.Contracts;
     AllowOutOfOrderMetadataProperties = true,
     RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(NodeEvent))]
+[JsonSerializable(typeof(ClientPage))]
 [JsonSerializable(typeof(SnapshotEvent))]
 [JsonSerializable(typeof(SessionRow))]
 [JsonSerializable(typeof(Artifact))]
