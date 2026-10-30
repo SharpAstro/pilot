@@ -10,6 +10,13 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
 {
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
+    public LegSelfFinishTests()
+    {
+        // The flight's work item, issue 1, exists, and the tracker is the fake: for the tests of a leg's sub-task.
+        _github.Issues[1] = "Planets";
+        _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
+    }
+
     private string Origin => Path.Combine(_root, "origin.git");
 
     /// <summary>A started leg "parser" with its steps ticked, one commit made and pushed to a bare origin.</summary>
@@ -126,7 +133,8 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         // A worker that failed with a plane that does not match, so the node left it failed.
         _checks.Next = new CheckRun(1, "Parser.Tests: 3 failed");
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road")).Ok.ShouldBeTrue();
-        L("parser").State.ShouldBe(LegState.Failed);        _checks.Next = new CheckRun(0, "all green");
+        L("parser").State.ShouldBe(LegState.Failed);
+        _checks.Next = new CheckRun(0, "all green");
     }
 
     [Fact]
@@ -201,5 +209,52 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
 
         result.Ok.ShouldBeFalse();
         result.Error.ShouldNotBeNull().ShouldContain("only a failed leg is verified done");
+    }
+
+    [Fact]
+    public async Task A_leg_the_node_finishes_for_a_failed_report_gets_its_sub_task_ticked()
+    {
+        _legs.Models = new RoleModels(new NodeSettings { SubTaskRepos = ["tianwen"] });
+        await PushedLegAsync();
+        var sub = L("parser").SubTask.ShouldNotBeNull();
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road")).Ok.ShouldBeTrue();
+
+        L("parser").State.ShouldBe(LegState.Done);
+        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_verified_leg_gets_its_sub_task_ticked()
+    {
+        _legs.Models = new RoleModels(new NodeSettings { SubTaskRepos = ["tianwen"] });
+        await PushedLegAsync();
+        var sub = L("parser").SubTask.ShouldNotBeNull();
+        await FailParserAsync();
+
+        (await Verify("du1-watchtower")).Ok.ShouldBeTrue();
+
+        L("parser").State.ShouldBe(LegState.Done);
+        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_verified_check_that_outlasts_the_reply_deadline_and_fails_leaves_its_tail_on_the_card_and_keeps_the_report()
+    {
+        await PushedLegAsync();
+        await FailParserAsync();
+        _legs.ReplyDeadline = () => TimeSpan.FromMilliseconds(30);
+        _checks.Next = new CheckRun(1, "Render.Tests: 2 failed");
+        _checks.OnRun = () => Task.Delay(200, Ct);
+
+        var result = await Verify("du1-watchtower");
+
+        result.Ok.ShouldBeFalse();
+        L("parser").State.ShouldBe(LegState.Failed);
+        L("parser").Report.ShouldBe("ran out of road");
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
+        card.Detail.ShouldNotBeNull().ShouldContain("ran out of road");
+        card.Detail.ShouldContain("Render.Tests: 2 failed");
+        card.Detail.ShouldContain("du1-watchtower");
     }
 }

@@ -432,6 +432,6 @@ public sealed class WatchtowerChatTests : IDisposable
     {
         var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
 
-        brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified` for that leg first");
+        brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified --leg <code>/<leg>` for that leg first");
     }
 }

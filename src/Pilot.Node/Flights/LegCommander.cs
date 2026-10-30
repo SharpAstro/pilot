@@ -232,7 +232,8 @@ public sealed partial class LegCommander(
         error ??= notStarted;
 
         // The legs' sub-tasks in the work item follow the verb, outside the lock: the tracker takes as long as it takes, and a refusal is logged, never the verb's.
-        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted"))
+        if (error is null && (command.Verb is Verbs.PlanLeg or Verbs.RemoveLeg || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified"
+            || command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done))
         {
             await SyncSubTasksAsync(CodeOf(command.Target), removedSubTask, command.Verb == Verbs.FinishLeg ? LegOf(command.Target).Leg.Name : null, cancellationToken);
         }
@@ -1494,12 +1495,37 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is verified done");
         }
-        var (finished, why, _) = await FinishFromPushedAsync(flight, leg, report, who, cancellationToken);
+        var (finished, why, isCheck) = await FinishFromPushedAsync(flight, leg, report, who, cancellationToken);
         if (!finished)
         {
+            // The check usually outlasts the reply deadline, so the caller was told to end its turn: the card is where the reason stays.
+            if (isCheck && why is not null)
+            {
+                NoteOnLegFailedCard(flight.Code, leg.Name, $"{who} asked the node to verify it, and it did not:
+{why}");
+            }
             throw new FlightException($"{name} is not finished: {why}; it stays failed and its card stays open");
         }
     }
+
+    /// <summary>Appends a note to the open leg-failed card's detail, keeping what it said (its worker's report, an earlier verify's tail).</summary>
+    private void NoteOnLegFailedCard(string code, string leg, string note)
+    {
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == "leg-failed" && c.Subject == Verbs.LegTarget(code, leg)) is not { } card)
+        {
+            return;
+        }
+        // One verify's note replaces the last one's, so a retried verify does not stack tails.
+        var kept = card.Detail is { Length: > 0 } d && d.IndexOf("
+
+" + VerifyNoteMark, StringComparison.Ordinal) is var at and >= 0 ? d[..at] : card.Detail;
+        var detail = string.IsNullOrEmpty(kept) ? $"{VerifyNoteMark}{note}" : $"{kept}
+
+{VerifyNoteMark}{note}";
+        state.UpdateCard(card.Id, card.Title, detail, card.Choices, card.Link);
+    }
+
+    private const string VerifyNoteMark = "Verify refused: ";
 
     /// <summary>
     /// The conditions shared by a worker's "failed" and the verified outcome: every step ticked, the plane clean and at
@@ -1575,7 +1601,9 @@ public sealed partial class LegCommander(
         }
         var seen = $"finished by the node: its plane matched origin/{flight.Branch} at {Short(head)} and its check passed";
         var asked = who is null ? "The worker said it failed" : $"Verified on {who}'s word, the leg had failed";
-        await RecordDoneAsync(flight, leg, report.Length > 0 ? $"{seen}. {asked}: {report}" : seen, push: false, cancellationToken);
+        var was = who is not null && leg.Report is { Length: > 0 } old ? $"
+{old}" : "";
+        await RecordDoneAsync(flight, leg, (report.Length > 0 ? $"{seen}. {asked}: {report}" : seen) + was, push: false, cancellationToken);
         state.RaiseCard(CardBin.Handled, SelfFinishedKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} finished by the node",
             $"{(who is null ? "The worker reported it failed" : $"{who} asked the node to verify it, after it failed")}{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
         return (true, null, false);
