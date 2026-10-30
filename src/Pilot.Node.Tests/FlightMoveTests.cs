@@ -14,11 +14,7 @@ namespace Pilot.Node.Tests;
 /// (<c>move-flight</c>): a node in maintenance moves its flight once its leg has finished, the plane made safe first, and on any failure
 /// keeps the flight, says why on the row, and offers a Retry move; the flight is flown on one node only, at every moment.
 /// </summary>
-<<<<<<< HEAD
-public abstract class FlightMoveTestsBase : IDisposable
-=======
-public sealed class FlightMoveTests : IAsyncDisposable
->>>>>>> origin/main
+public abstract class FlightMoveTestsBase : IAsyncDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
