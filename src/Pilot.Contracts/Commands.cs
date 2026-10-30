@@ -171,6 +171,13 @@ public static class Verbs
     public const string Connect = "connect";
 
     /// <summary>
+    /// <c>disconnect flight/&lt;code&gt; &lt;other&gt; [--anyway]</c>: undoes a <see cref="Connect"/>, on this node or a peer. The wait and the
+    /// package waits it produced go, and the flight flies when nothing else holds it. A connection that was the controller's answer to an
+    /// overlap is refused with why, and goes with <see cref="AnywayFlag"/>, which is the person's alone.
+    /// </summary>
+    public const string Disconnect = "disconnect";
+
+    /// <summary>
     /// <c>fly-anyway flight/&lt;code&gt;</c>: the flight stops waiting for the packages it is held for (a connection's release
     /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
     /// </summary>
