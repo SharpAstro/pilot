@@ -33,13 +33,14 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     [GeneratedRegex(@"(?:backgrounded\s*\S\s*|claude stop\s+)([0-9a-f]{8})", RegexOptions.CultureInvariant)]
     private static partial Regex Job();
 
+    /// <summary>The start's whole arguments: what only a start takes (<c>--bg</c>, <c>-w</c>), then its session options.</summary>
     public static IReadOnlyList<string> Arguments(WorkerStart start)
     {
         var args = new List<string> { "--bg" };
@@ -47,6 +48,18 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             args.AddRange(["-w", plane]);
         }
+        args.AddRange(SessionArguments(start));
+        return args;
+    }
+
+    /// <summary>
+    /// The options a session keeps for its life: Remote Control, name, permission mode, <c>--strict-mcp-config</c>, model,
+    /// effort and disallowed tools. A start passes them, and a resume of a session Claude Code no longer has them on file
+    /// for passes them again (<see cref="ClaudeCliDelivery.ResumeArguments"/>).
+    /// </summary>
+    public static IReadOnlyList<string> SessionArguments(WorkerStart start)
+    {
+        var args = new List<string>();
         if (start.RemoteControl)
         {
             // Documented for interactive sessions; a background one takes it too (its record gains a bridgeSessionId).
@@ -90,6 +103,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         return job.Groups[1].Value;
     }
 

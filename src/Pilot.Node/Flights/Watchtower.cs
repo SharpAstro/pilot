@@ -407,6 +407,7 @@ public sealed class Watchtower(
                 {
                     _job = row.Id;
                     TellAllOpen();
+                    await StopOthersAsync(row.Id, null, cancellationToken);
                 }
             }
 
@@ -469,6 +470,12 @@ public sealed class Watchtower(
                 {
                     await StartAsync("its brief changed since the node started it", cancellationToken, row);
                 }
+                return;
+            }
+            if (row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
+            {
+                // Never mid-turn, and never by changing the model of the session: a fresh one on the setting.
+                await StartAsync($"it ran on {row.Model}, the setting says {setting}", cancellationToken, row);
                 return;
             }
             await TellNewCardsAsync(row, cancellationToken);
@@ -611,7 +618,39 @@ public sealed class Watchtower(
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
+        await StopOthersAsync(_job, replacing?.Id, cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// One watchtower per node: stops every live background watchtower row but <paramref name="keep"/> (and the one just
+    /// stopped, <paramref name="replaced"/>), and says which in one Handled line. An interactive session is someone's terminal, never stopped.
+    /// </summary>
+    private async Task StopOthersAsync(string? keep, string? replaced, CancellationToken cancellationToken)
+    {
+        var others = state.Sessions()
+            .Where(r => r.Role == SessionRole.Watchtower && r.Kind == SessionKind.Background && Live(r) && r.Id != keep && r.Id != replaced
+                // One the person renamed (NoteRename) is theirs now, no longer the watchtower.
+                && r.EndedBecause?.StartsWith("renamed to ", StringComparison.Ordinal) != true)
+            .OrderBy(r => r.StartedAt)
+            .ToList();
+        if (others.Count == 0)
+        {
+            return;
+        }
+        foreach (var other in others)
+        {
+            try
+            {
+                await launcher.StopAsync(other.Id, cancellationToken);
+            }
+            catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Gone already: nothing to stop.
+            }
+        }
+        state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
+            $"Stopped {(others.Count == 1 ? "another watchtower" : $"{others.Count} other watchtowers")} (one per node): {string.Join(", ", others.Select(r => $"{r.Name} ({r.Id})"))}");
     }
 
     /// <summary>Stops a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
