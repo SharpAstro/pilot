@@ -305,6 +305,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<Summaries>().Records(command);
         }
+        if (command.Verb == Verbs.ReviewCost)
+        {
+            if (command.Target != Verbs.NodeTarget)
+            {
+                return state.Complete(command, $"review-cost takes the target {Verbs.NodeTarget}, not {command.Target}");
+            }
+            var (report, error) = ReviewCost.Run(command.Args ?? [], state, Get<SessionTrackerOptions>().Profile);
+            return state.Complete(command, error, made: report);
+        }
         if (command.Verb == Verbs.Stop)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);

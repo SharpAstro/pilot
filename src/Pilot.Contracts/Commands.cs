@@ -355,6 +355,14 @@ public static class Verbs
     public const string Records = "records";
 
     /// <summary>
+    /// <c>review-cost node [--since &lt;date&gt;] [--until &lt;date&gt;] [--repo &lt;repo&gt;]</c> (#433): a read of what reviews cost, in the result's
+    /// <see cref="CommandResult.Made"/>: per landed flight, its reviewer sessions (round, model, head) and their tokens as the transcripts
+    /// hold them (input, cache creation, cache read, output, the weighted spend of <see cref="SessionRow.SpendWeighted"/>), with totals and
+    /// a per-flight average. Nothing is changed or called.
+    /// </summary>
+    public const string ReviewCost = "review-cost";
+
+    /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
     /// now and restarts the node; <c>--adopt</c> installs it over a build of one's own.
     /// </summary>
