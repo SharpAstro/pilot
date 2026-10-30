@@ -126,6 +126,16 @@ internal sealed class Presses
         return PendingOf(key) is { } pressed ? working(pressed == hit) : idle();
     }
 
+    /// <summary>
+    /// As <see cref="Button"/>, for a press that another page's <see cref="Presses"/> runs (a row's Merge asks through its card): the
+    /// working state is read from <paramref name="pendingOf"/>, the hit id of the press with the node now or null.
+    /// </summary>
+    public static Layout.Node ButtonOf(string hit, Func<string?> pendingOf, Func<Layout.Node> idle, Func<bool, Layout.Node> working)
+    {
+        MadeIds.TryAdd(hit, 0);
+        return pendingOf() is { } pressed ? working(pressed == hit || pressed.Length > 0) : idle();
+    }
+
     /// <summary>The refusal of <paramref name="key"/> as a wrapped line in <paramref name="color"/>, or null while a press is with the node or when nothing was refused.</summary>
     public Layout.Node? RefusalLine(string key, float size, RGBAColor32 color, int maxLines) =>
         PendingOf(key) is null && RefusedOf(key) is { } why ? WrappedProse.Paragraphs(why, size, color, maxLines) : null;

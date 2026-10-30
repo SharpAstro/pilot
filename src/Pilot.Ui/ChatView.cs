@@ -392,6 +392,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             return;
         }
         var refused = await Presses.PressAsync(RestartKey, "chat:restart-yes", _ => restart());
+        // The confirm stays up while the node has it, so its working label shows; it goes with the answer.
+        _confirmRestart = false;
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · a new watchtower") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -441,7 +443,6 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 buttons.Add(Presses.Button(RestartKey, "chat:restart-yes",
                     () => CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
                     {
-                        _confirmRestart = false;
                         var restart = RestartAsync();
                         Track?.Invoke(() => restart, "restart the watchtower");
                     }),

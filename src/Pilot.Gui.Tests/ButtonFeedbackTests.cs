@@ -125,14 +125,6 @@ public sealed class ButtonFeedbackTests
 
     // ---- the buttons that bypass the helper ----
 
-    // A node-bound button not yet made through Presses, by page and the pattern of its hit id: the legs of PIL461 that follow port these.
-    // "*" is a button the chrome draws on every page.
-    private static readonly (string Page, string Pattern)[] ToPort =
-    [
-        // A Merge or a Go around of a row asks the node through the card's own press, which the row does not show.
-        ("pull requests", @"^pr:.+:(merge|go-around)$"),
-    ];
-
     // A button that asks the node nothing: navigation, folds, links, copy; the reason is why it needs no working state.
     private static readonly (string Pattern, string Why)[] LocalOnly =
     [
@@ -177,7 +169,6 @@ public sealed class ButtonFeedbackTests
             {
                 seen.Add(hit);
                 var listed = made.Contains(hit)
-                    || ToPort.Any(p => (p.Page == page || p.Page == "*") && Regex.IsMatch(hit, p.Pattern))
                     || LocalOnly.Any(l => Regex.IsMatch(hit, l.Pattern));
                 if (!listed)
                 {
@@ -189,6 +180,6 @@ public sealed class ButtonFeedbackTests
         // The arranging does reach the buttons made through the helper: a PR's Review and a card's Dismiss.
         seen.ShouldContain(h => h.EndsWith(":start-review", StringComparison.Ordinal));
         seen.ShouldContain(h => h.StartsWith("card:", StringComparison.Ordinal) && h.EndsWith(":dismiss", StringComparison.Ordinal));
-        unlisted.ShouldBeEmpty("a button that asks the node is made through Presses (working at once, no second press, the outcome or the refusal where it was pressed); one that does not is listed in ToPort (a later leg ports it) or LocalOnly (why it needs none)");
+        unlisted.ShouldBeEmpty("a button that asks the node is made through Presses (working at once, no second press, the outcome or the refusal where it was pressed); one that does not is listed in LocalOnly (why it needs none)");
     }
 }

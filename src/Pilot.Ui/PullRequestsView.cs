@@ -152,6 +152,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>What the node said to the last press on a card, by card id (the panel keeps it); null when it did not refuse.</summary>
     public Func<string, string?>? RefusedOf { get; set; }
 
+    /// <summary>The hit id of the press of a card with the node now, by card id, or null: a row's Merge or Go around reads its working state here.</summary>
+    public Func<string, string?>? CardWorking { get; set; }
+
     /// <summary>Called when a refresh starts or ends, from whichever thread: the host redraws.</summary>
     public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
 
@@ -848,7 +851,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .HStar();
         if (action.Kind != PullRequestActionKind.Review)
         {
-            return Idle();
+            // Merge and Go around ask through the card, whose own press says the card is with the node.
+            return action.Card is { } card
+                ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
+                    _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
+                : Idle();
         }
         // Pressed, the node not yet answered: said, and not pressed again.
         return Presses.Button(pr.Url, ReviewHit(pr), Idle, _ => Layout.Builder.Text("Starting…", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center)

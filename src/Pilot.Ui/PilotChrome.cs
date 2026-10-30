@@ -183,6 +183,7 @@ internal sealed class PilotChrome<TSurface>
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
         PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         PullRequests.RefusedOf = Cards.RefusedOn;
+        PullRequests.CardWorking = Cards.WorkingOn;
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
