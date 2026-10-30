@@ -55,6 +55,7 @@ public sealed class ReposPageTests
     private static (PilotChrome<RgbaImage> Chrome, ReposView<RgbaImage> Repos) Chrome(RgbaImageRenderer renderer)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Repos.Tracker = new BackgroundTaskTracker();
         return (chrome, chrome.Repos);
     }
 
@@ -299,77 +300,65 @@ public sealed class ReposPageTests
         renderer.Surface.Pixels.ToArray().ShouldNotBe(empty);
     }
 
+    private static ReposRow Row(RepoStatus[] repos, DateTimeOffset? readAt = null) =>
+        new() { Repos = repos, ReadAt = readAt, Since = readAt is null ? Live.At.AddMinutes(-2) : null };
+
     [Fact]
-    public async Task AFinishedSyncReadsTheReposAgainAtOnceAndTheRowsShowTheNewStatus()
+    public async Task ThePageTakesItsReposFromTheSnapshotAndAReposChangedEventWithoutAskingTheNode()
     {
         var node = new FakeNode();
-        var reads = 0;
-        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20), repoLoader: _ =>
-        {
-            // The first read sees every repo; after the sync the node reports one fewer.
-            var n = Interlocked.Increment(ref reads);
-            return Task.FromResult<RepoStatus[]?>(n == 1 ? Sample() : Sample().Take(2).ToArray());
-        });
+        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20));
         feed.Start();
         await Until(() => node.OpenCount > 0);
-        node.Send(Live.Snapshot(1, "s-se1"));
+        node.Send(Live.Snapshot(1, "s-se1") with { Repos = Row(Sample(), Live.At) });
         await Until(() => feed.Connected);
-        var start = DateTimeOffset.UtcNow;
 
-        feed.Repos(start, wanted: true);
-        await Until(() => feed.Repos(start, wanted: true).Lines.Count == 3);
-        reads.ShouldBe(1);
+        var screen = feed.Repos(Live.At);
+        screen.Lines.Count.ShouldBe(3);
+        screen.Unread.ShouldBeFalse();
+        screen.ReadAt.ShouldBe(Live.At);
 
-        using var vessel = new RgbaImageRenderer(1, 1);
-        var (_, repos) = Chrome(vessel);
-        repos.SyncRepos = _ =>
-        {
-            feed.RefreshRepos();
-            return Task.FromResult<RepoSyncOutcome[]>([]);
-        };
-        await repos.SyncAsync();
-
-        // Same instant, well inside the cadence: it reads again anyway.
-        await Until(() => feed.Repos(start, wanted: true).Lines.Count == 2);
-        reads.ShouldBe(2);
+        // After a sync the node's refresh arrives as an event: one repo fewer.
+        node.Send(new ReposChangedEvent { Seq = 2, At = Live.At, Row = Row(Sample().Take(2).ToArray(), Live.At.AddSeconds(5)) });
+        await Until(() => feed.Repos(Live.At).Lines.Count == 2);
+        feed.Ideas(Live.At).ShouldNotBeNull();
     }
 
     [Fact]
-    public async Task ReposAreReadFromTheNodeOnlyWhileThePageIsWantedAndKeptForAWhile()
+    public async Task ReposNotReadYetAreMarkedAndAnEmptyUnreadPageSaysSince()
     {
         var node = new FakeNode();
-        var reads = 0;
-        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20), repoLoader: _ =>
-        {
-            Interlocked.Increment(ref reads);
-            return Task.FromResult<RepoStatus[]?>(Sample());
-        });
+        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20));
         feed.Start();
         await Until(() => node.OpenCount > 0);
-        node.Send(Live.Snapshot(1, "s-se1"));
+        node.Send(Live.Snapshot(1, "s-se1") with { Repos = Row([.. Sample().Select(r => r with { Unread = true })]) });
         await Until(() => feed.Connected);
-        var start = DateTimeOffset.UtcNow;
 
-        // Not wanted: nothing is read, however often it is looked at.
-        feed.Repos(start, wanted: false).Lines.ShouldBeEmpty();
-        reads.ShouldBe(0);
+        var screen = feed.Repos(Live.At);
+        screen.Unread.ShouldBeTrue();
+        screen.Lines.ShouldAllBe(l => l.Status.Unread);
+        screen.Since.ShouldBe(Live.At.AddMinutes(-2));
 
-        // Wanted: read once, and the rows appear.
-        feed.Repos(start, wanted: true);
-        await Until(() => feed.Repos(start, wanted: true).Lines.Count == 3);
-        reads.ShouldBe(1);
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        CellLayout.Describe(Arrange(repos, screen)).ShouldContain("(not read)");
 
-        // Looked at again within the cadence: not read again. After it, and for a minute after the page was left: read again.
-        feed.Repos(start.AddSeconds(5), wanted: true);
-        reads.ShouldBe(1);
-        feed.Repos(start.AddSeconds(20), wanted: false);
-        await Until(() => reads == 2);
-        reads.ShouldBe(2);
+        var empty = new ReposScreen([], "live", Live.At) { Unread = true, Since = Live.At.AddMinutes(-2) };
+        CellLayout.Describe(Arrange(repos, empty)).ShouldContain("Not read yet: the node has been reading its repos since");
+    }
 
-        // Long after the page was left: left alone.
-        feed.Repos(start.AddSeconds(200), wanted: false);
-        await Task.Delay(100, Ct);
-        reads.ShouldBe(2);
+    [Fact]
+    public void AnEmptyPageAfterAReadSaysNoReposOnlyThenAndTheTrackedOnlyTextOtherwise()
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var (_, repos) = Chrome(renderer);
+        var read = new ReposScreen([], "live", Live.At) { ReadAt = Live.At };
+
+        CellLayout.Describe(Arrange(repos, read)).ShouldContain("No tracked repos yet");
+        repos.ShowAll = true;
+        var text = CellLayout.Describe(Arrange(repos, read));
+        text.ShouldContain("No repos under the node's roots");
+        text.ShouldNotContain("Not read yet");
     }
 
     [Fact]
@@ -378,23 +367,21 @@ public sealed class ReposPageTests
         const string lan = "10.0.0.9:47731";
         var se1 = new FakeNode();
         var le1 = new FakeNode();
-        var here = new NodeFeed(se1.Open, "node.sock", TimeSpan.FromMilliseconds(20), nodeInfo: _ => Task.FromResult(Info("SE1", "s-se1")),
-            repoLoader: _ => Task.FromResult<RepoStatus[]?>([Sample()[0]]));
-        await using var watch = new FleetWatch(endpoint => new NodeFeed(le1.Open, endpoint, TimeSpan.FromMilliseconds(20), nodeInfo: _ => Task.FromResult(Info("LE1", "s-le1")),
-            repoLoader: _ => Task.FromResult<RepoStatus[]?>([Sample()[0] with { Name = "orbit-laptop", Path = "/l/orbit" }])));
+        var here = new NodeFeed(se1.Open, "node.sock", TimeSpan.FromMilliseconds(20), nodeInfo: _ => Task.FromResult(Info("SE1", "s-se1")));
+        await using var watch = new FleetWatch(endpoint => new NodeFeed(le1.Open, endpoint, TimeSpan.FromMilliseconds(20), nodeInfo: _ => Task.FromResult(Info("LE1", "s-le1"))));
         await using var hereOwner = here;
         here.Start();
         watch.Know([(lan, "LE1 LAPTOP-3")]);
         await Until(() => se1.OpenCount > 0 && le1.OpenCount > 0);
-        se1.Send(Live.Snapshot(1, "s-se1"));
-        le1.Send(Live.Snapshot(1, "s-le1"));
+        se1.Send(Live.Snapshot(1, "s-se1") with { Repos = Row([Sample()[0]], Live.At) });
+        le1.Send(Live.Snapshot(1, "s-le1") with { Repos = Row([Sample()[0] with { Name = "orbit-laptop", Path = "/l/orbit" }], Live.At) });
         using var vessel = new RgbaImageRenderer(1, 1);
         var (chrome, repos) = Chrome(vessel);
         var filter = chrome.Nodes;
         var now = DateTimeOffset.UtcNow;
 
-        FleetPages pages = watch.Pages("node.sock", here, filter, now, reposWanted: true);
-        await Until(() => (pages = watch.Pages("node.sock", here, filter, now, reposWanted: true)).Repos!.Lines.Count == 2);
+        FleetPages pages = watch.Pages("node.sock", here, filter, now);
+        await Until(() => (pages = watch.Pages("node.sock", here, filter, now)).Repos!.Lines.Count == 2);
 
         pages.Repos!.Lines.Select(l => (l.Node!.Name, l.Name)).ShouldBe([("SE1", "orbit"), ("LE1", "orbit-laptop")]);
         pages.Repos.Lines[1].Worktrees.ShouldAllBe(w => w.Node!.Name == "LE1");
@@ -410,7 +397,7 @@ public sealed class ReposPageTests
         hits.ShouldNotContain($"repo:{pages.Repos.Lines[1].Key}:new-flight");
         filter.Line().ShouldBe("[All nodes] SE1 LE1");
         filter.Toggle(filter.Choices.Single(c => c.Name == "LE1").Key);
-        watch.Pages("node.sock", here, filter, now, reposWanted: true).Repos!.Lines.ShouldHaveSingleItem().Name.ShouldBe("orbit-laptop");
+        watch.Pages("node.sock", here, filter, now).Repos!.Lines.ShouldHaveSingleItem().Name.ShouldBe("orbit-laptop");
     }
 
     private static void ClickCell(ReposView<RgbaImage> repos, ReposScreen screen, Func<HitResult.ButtonHit, bool> which)
@@ -445,7 +432,7 @@ public sealed class ReposPageTests
             new RepoSyncOutcome { Name = "widgets", Status = RepoSyncStatus.Skipped, Detail = "the main checkout is on feature/grid, not main" },
         ]);
         await Until(() => !repos.Syncing);
-        redraws.ShouldBe(2);
+        await Until(() => redraws == 2);
         var text = CellLayout.Describe(Arrange(repos, screen));
         text.ShouldContain("sync: 1 skipped, 1 updated");
         text.ShouldContain("orbit  updated  main took 2 commits from origin/main");
@@ -455,7 +442,8 @@ public sealed class ReposPageTests
         CellLayout.Describe(Arrange(repos, screen)).ShouldNotContain("sync:");
 
         repos.SyncRepos = _ => Task.FromException<RepoSyncOutcome[]>(new InvalidOperationException("watchtower: not yours"));
-        await repos.SyncAsync();
+        repos.StartSync();
+        await Until(() => repos.SyncError is not null);
         repos.SyncError.ShouldBe("watchtower: not yours");
         CellLayout.Describe(Arrange(repos, screen)).ShouldContain("sync refused: watchtower: not yours");
     }
