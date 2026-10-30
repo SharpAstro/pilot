@@ -433,6 +433,9 @@ public sealed record ReviewRow
     /// <summary>How deep the node chose to review (#74); null on a review started before it chose.</summary>
     public ReviewDepth? Depth { get; init; }
 
+    /// <summary>The model the reviewer was started on; null on a review started before the node said.</summary>
+    public string? Model { get; init; }
+
     /// <summary>Why that depth, in a few words ("usage at 88%"); said in the reviewer's brief and on the PR-ready card.</summary>
     public string? DepthWhy { get; init; }
 

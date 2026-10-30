@@ -2049,6 +2049,7 @@ public sealed partial class LegCommander(
         var subject = Verbs.FlightTarget(flight.Code);
         var before = flight.Review?.ReviewerJob;
         ReviewPlan? plan = null;
+        string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
             new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
             async entering =>
@@ -2064,8 +2065,10 @@ public sealed partial class LegCommander(
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                // A re-review reads only what changed, on the leg's model; Opus is for the first review of a large diff (if the setting lets it).
+                model = Models.ReviewerModelFor(plan.Depth, (flight.ReviewRounds?.Length ?? 0) + 1, legs.OrderBy(l => l.Order).LastOrDefault()?.Model);
                 entering();
-                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
             },
             job =>
             {
@@ -2080,7 +2083,7 @@ public sealed partial class LegCommander(
                 {
                     Review = new ReviewRow
                     {
-                        State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why,
+                        State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why, Model = model,
                         GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
                     },
                 });
@@ -2191,6 +2194,12 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
         }
+        var findings = ReviewFindings.Read(report);
+        if (verdict == "changes" && !findings.HasBlocking)
+        {
+            throw new FlightException("changes needs at least one finding under `## Blocking`; with only not blocking findings (nits, suggestions) give `review pass` with them under `## Not blocking`: a pass with notes");
+        }
+        var notes = verdict == "pass" && fromReviewer && findings.NotBlocking.Count > 0 ? findings.NotBlocking : null;
 
         // On GitHub before the verdict is kept: a gh that fails leaves the review as it was, for the reviewer to say again,
         // never a pass whose PR is still a draft, or changes whose PR can still be merged with the fixes pending.
@@ -2211,7 +2220,7 @@ public sealed partial class LegCommander(
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
                     Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
-                    Findings = kept, Depth = judged.Depth, Model = Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                    Findings = kept, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
                 }]
                 : f.ReviewRounds,
         });
@@ -2221,7 +2230,12 @@ public sealed partial class LegCommander(
         if (verdict == "pass")
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, LegWatch.ReviewStalled);
-            await RaisePrReadyAsync(flight, kept, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+            var reviewed = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
+            await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            if (notes is not null)
+            {
+                RaiseReviewNotes(flight, notes);
+            }
         }
         else
         {
@@ -2428,6 +2442,22 @@ public sealed partial class LegCommander(
 
     /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
     public const int MaxReviewGoArounds = LegRow.MaxReviewGoArounds;
+
+    /// <summary>
+    /// A pass with notes: the not blocking findings go to the watchtower as a card, to make the small ones in the plane and
+    /// commit them. No leg goes round, and the merge card stays as it is.
+    /// </summary>
+    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes)
+    {
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
+        state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
+            string.Join('\n', notes),
+            link: flight.PullRequestUrl,
+            summary: $"The review of {flight.Code} passed with {notes.Count} not blocking {(notes.Count == 1 ? "note" : "notes")}. The watchtower makes the small ones in the plane ({flight.Worktree}) and commits them; no leg goes round.");
+    }
+
+    /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>
+    public const string ReviewNotesKind = "review-notes";
 
     private void RaiseReviewChanges(FlightRow flight, string changes)
     {

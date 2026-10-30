@@ -118,6 +118,28 @@ public sealed partial class RoleModels
     public string? ReviewerModel(ReviewDepth depth) =>
         depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
 
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
+    public bool ReviewDeepFirst
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewDeepFirst ?? true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The model a reviewer starts on in <paramref name="round"/> (1 for the first review of a flight): a re-review runs on the leg
+    /// model <paramref name="legModel"/> (the worker's, Sonnet by default), as it only reads what changed; the first review is
+    /// <see cref="ReviewerModel"/>, its deep model only when the diff is deep-sized and <see cref="ReviewDeepFirst"/> is on.
+    /// </summary>
+    public string? ReviewerModelFor(ReviewDepth depth, int round, string? legModel) =>
+        round > 1 ? legModel ?? Model(Worker)
+        : depth == ReviewDepth.Deep && !ReviewDeepFirst ? Model(Reviewer)
+        : ReviewerModel(depth);
+
     /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
     /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
     /// A deep setting of <c>none</c> passes no flag, as it does for any role.</summary>

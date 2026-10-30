@@ -523,11 +523,18 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine();
+        text.AppendLine("Sort every finding under one of two headings. `## Blocking`: what must change before the merge (a Done-when that does");
+        text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
+        text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
+        text.AppendLine("pass with notes: the notes stay on the PR-ready card and the watchtower makes the small ones in the plane; no leg goes round.");
         text.AppendLine(AttachmentRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
-        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
-        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`. A fresh worker is told it as is.");
+        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`. With only not blocking findings, still `pass`, and");
+        text.AppendLine("  put them under `## Not blocking` in the report: a pass with notes.");
+        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`, with at least one finding under `## Blocking`; `changes`");
+        text.AppendLine("  without one is refused. A fresh worker is told the report as is.");
         // PIL383: the flight's page draws the report as Markdown, as the transcript does; PIL294's #357 report was one run of
         // "1) … 2) …" with every name bare, and read as a wall.
         text.AppendLine("Write the report (`changes`, and `pass` where it has findings) as Markdown: one list item per finding, each starting");
