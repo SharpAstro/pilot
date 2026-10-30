@@ -42,6 +42,10 @@ public sealed class SpendAlertTests : LegHoldTestsBase
         ring.Title.ShouldStartWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
         ring.Detail.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");
 
+        // Asked again in the same round (a retry of the start), it does not ring again.
+        _legs.RingSpendAlert(_state.Flights().Single(), L("parser"), 1);
+        Alerts().ShouldHaveSingleItem();
+
         // The next round rings again, with its own number.
         await GoAround();
         Alerts().Select(c => c.Title).ShouldContain(t => t.StartsWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 3", StringComparison.Ordinal));

@@ -69,6 +69,21 @@ public sealed class WeekPaceTests
     }
 
     [Fact]
+    public void SpendWhileHeldDoesNotRaiseAnotherCard()
+    {
+        var models = Models(10);
+        Usage(week: 70);
+        Hold(models).ShouldBeTrue();
+
+        // The others keep spending while the start waits: the figure moves, the card is the same.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Usage(week: 71);
+        Hold(models).ShouldBeTrue();
+
+        _state.Cards().ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public void WithinTheMarginAStartGoesAhead()
     {
         Usage(week: 67);
@@ -110,5 +125,58 @@ public sealed class WeekPaceTests
         NodeSettings.With(new NodeSettings(), "week-pace", ["x"]).Error.ShouldNotBeNull();
         NodeSettings.Keys.ShouldContain("week-pace");
         NodeSettings.Keys.ShouldContain("spend-alert");
+    }
+}
+
+/// <summary>The week-pace guard at the commander's own call sites: the sweep's start of a leg, for a repo and for a priority repo.</summary>
+public sealed class WeekPaceLegTests : LegHoldTestsBase
+{
+    // At Start four of seven days have elapsed (57 %), so 70 % spent is 13 points ahead.
+    private void Usage(double week) =>
+        _state.PutUsage(new UsageRow
+        {
+            ReadAt = _time.GetUtcNow(),
+            FiveHour = new UsageWindow { UsedPercent = 5, ResetsAt = Start + TimeSpan.FromHours(2) },
+            SevenDay = new UsageWindow { UsedPercent = week, ResetsAt = Start + TimeSpan.FromDays(3) },
+        });
+
+    private async Task ParserDone()
+    {
+        await FlyingParser();
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AheadOfPaceTheSweepKeepsTheNextLegPlannedWithACardAndAPriorityRepoStarts()
+    {
+        await ParserDone();
+        Usage(week: 70);
+        var started = _workers.Started.Count;
+        _legs.Models = new RoleModels(new NodeSettings { WeekPace = 10 });
+
+        await _legs.AdvanceAllAsync(Ct);
+        await _legs.AdvanceAllAsync(Ct);
+
+        L("render").State.ShouldBe(LegState.Planned);
+        _workers.Started.Count.ShouldBe(started);
+        var card = _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain("waits to start render: the 7-day window is 70 % spent but only 57 % elapsed (the pace margin is 10 points)");
+
+        // Unset, nothing waits; and a priority repo is exempt.
+        _legs.Models = new RoleModels(new NodeSettings { WeekPace = 10, PriorityRepos = ["tianwen"] });
+        await _legs.AdvanceAllAsync(Ct);
+        L("render").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task WithWeekPaceUnsetTheSweepStartsTheNextLegHoweverFastTheWeekIsSpent()
+    {
+        await ParserDone();
+        Usage(week: 95);
+        _legs.Models = new RoleModels(new NodeSettings());
+
+        await _legs.AdvanceAllAsync(Ct);
+
+        L("render").State.ShouldBe(LegState.Flying);
     }
 }

@@ -97,6 +97,9 @@ public sealed class SpendWasteTests
     [InlineData("the review asked for changes: nits only, two renames", WasteReasons.Nits)]
     [InlineData("the PR conflicts with its base (main moved): merge it", WasteReasons.Conflicts)]
     [InlineData("the PR's checks failed on abc12345: read them", WasteReasons.Checks)]
+    [InlineData("the review asked for changes: this conflicts with the existing name", WasteReasons.Findings)]
+    [InlineData("the review asked for changes: a merge conflict marker is left in X", WasteReasons.Findings)]
+    [InlineData("the review asked for changes: the log says checks failed, quoted", WasteReasons.Findings)]
     [InlineData("the last worker gave up: no reason given", WasteReasons.Other)]
     public void AGoAroundsReasonIsReadFromItsWhy(string why, string reason) => WasteReasons.OfGoAround(why).ShouldBe(reason);
 

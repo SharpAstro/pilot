@@ -41,7 +41,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// <summary>
     /// Why the 7-day window holds a start: it is spent faster than an even pace, used % above elapsed % plus <paramref name="margin"/>
     /// points. Null when the margin is null (off or exempt), the figures are missing or stale, or the pace has been caught up with.
-    /// <see cref="StartHeld.Resets"/> is when an idle account would have caught up.
+    /// <see cref="StartHeld.Resets"/> is the window's reset (what a hold says itself once per); the words say when an idle account catches up.
     /// </summary>
     public StartHeld? CheckPace(double? margin)
     {
@@ -59,9 +59,10 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             return null;
         }
         var lifts = begun + length * ((week.UsedPercent - points) / 100);
+        // Resets is the window's own reset, not the lift time: the lift moves with every point spent, and a hold says itself once.
         return new StartHeld(
             string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent but only {elapsed:0} % elapsed (the pace margin is {points:0} points); it goes on once the pace catches up, about {lifts.ToLocalTime():ddd HH:mm}"),
-            lifts);
+            resets);
     }
 
     /// <summary>

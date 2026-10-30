@@ -40,19 +40,24 @@ public static partial class WasteReasons
     /// <summary>The reason of a go-around from its why: conflicts, failing checks, nits, the review's findings, else other.</summary>
     public static string OfGoAround(string why)
     {
-        if (why.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+        // A review's own words follow its opener and must not pick the reason: only the node's own openers say conflicts or checks.
+        var review = why.StartsWith("the review asked for changes", StringComparison.OrdinalIgnoreCase);
+        if (!review)
         {
-            return Conflicts;
-        }
-        if (why.Contains("checks failed", StringComparison.OrdinalIgnoreCase) || why.Contains("fails its checks", StringComparison.OrdinalIgnoreCase))
-        {
-            return Checks;
+            if (why.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+            {
+                return Conflicts;
+            }
+            if (why.Contains("checks failed", StringComparison.OrdinalIgnoreCase) || why.Contains("fails its checks", StringComparison.OrdinalIgnoreCase))
+            {
+                return Checks;
+            }
         }
         if (Nit().IsMatch(why))
         {
             return Nits;
         }
-        return why.StartsWith("the review asked for changes", StringComparison.OrdinalIgnoreCase) ? Findings : Other;
+        return review ? Findings : Other;
     }
 }
 

@@ -1000,7 +1000,7 @@ public sealed partial class LegCommander(
 
     // Before a leg's round starts: its ledger spend in the 7-day window, past the alert share, rings once with tokens, share and model.
     // It rings and holds nothing; the round goes ahead.
-    private void RingSpendAlert(FlightRow flight, LegRow leg, int round)
+    internal void RingSpendAlert(FlightRow flight, LegRow leg, int round)
     {
         if (Ledger?.LegInWeek(flight.Code, leg.Name, time.GetUtcNow(), state.Usage()) is not { } spent || spent.Share <= Models.SpendAlert
             || !_spendRung.Add($"{flight.Code}/{leg.Name}#{round}"))
