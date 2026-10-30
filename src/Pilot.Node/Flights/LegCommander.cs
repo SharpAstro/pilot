@@ -65,7 +65,7 @@ public sealed partial class LegCommander(
 
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
-            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review
+            or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound
             or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
@@ -203,8 +203,11 @@ public sealed partial class LegCommander(
                     }
                     else
                     {
-                        await StartReviewAsync(FlightOf(command.Target), cancellationToken);
+                        await StartReviewAsync(FlightOf(command.Target), cancellationToken, who: command.Who);
                     }
+                    break;
+                case Verbs.AllowRound:
+                    AllowRound(command);
                     break;
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
@@ -1671,10 +1674,23 @@ public sealed partial class LegCommander(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
         }
 
+        var loopHeld = leg.State == LegState.Done && ReviewLoopHeld(flight);
+        if (loopHeld && !IsPerson(flight, command.Who))
+        {
+            throw new FlightException(RoundRefusal(flight));
+        }
+
         // A go-around on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the go-around.
         // This turns a passed review back too, so the block below finds it Changes and leaves it.
         await TakeMergeBackAsync(flight, Verbs.GoAround, why, cancellationToken);
         flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        // The person's go-around at a held loop is their word for one more round: the finished worker's review must start.
+        // Recorded only once nothing before it can refuse the go-around, so a refused one allows no round.
+        if (loopHeld)
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
 
         // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
         // sent back as the node's own sends are (PR to draft, review to Changes), so its finish pushes the fixed branch and a fresh
@@ -1722,7 +1738,7 @@ public sealed partial class LegCommander(
                 state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), FinishedAt = null, Report = $"go-around: {why}", Wait = null });
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, MergeFailed, PrReady);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);
                 return null;
             });
     }
@@ -2489,8 +2505,6 @@ public sealed partial class LegCommander(
             [new CardChoice { Label = $"Start {first.Name}", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, first.Name) }]);
     }
 
-    /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
-    /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
     /// <summary>
     /// A PR in review is never a draft (PIL483): once a reviewer is recorded, a draft PR of the flight is marked ready, the draft a
     /// changes verdict or a send-back left. Run without the lock (it follows the start), so it asks GitHub directly. GitHub refusing it is a card, never a lost review start.
@@ -2512,18 +2526,40 @@ public sealed partial class LegCommander(
         }
     }
 
-    private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false)
+    /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
+    /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
+    private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false, string? who = null)
     {
         string? reviewedHead = null;
         if (flight.State == FlightState.Landed)
         {
             throw new FlightException($"{flight.Code} has landed");
         }
+        // A review loop held at its round limit starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
+        var loopHeld = ReviewLoopHeld(flight);
+        if (loopHeld && !IsPerson(flight, who))
+        {
+            if (quiet)
+            {
+                return;
+            }
+            throw new FlightException(RoundRefusal(flight));
+        }
         RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+        }
+        // The person's word at a held loop allows the round, recorded once the refusals above have passed.
+        if (loopHeld)
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
+        if (await KeepPassAsync(flight, cancellationToken))
+        {
+            return;
         }
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
@@ -2546,6 +2582,7 @@ public sealed partial class LegCommander(
         var subject = Verbs.FlightTarget(flight.Code);
         var before = flight.Review?.ReviewerJob;
         ReviewPlan? plan = null;
+        string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
             new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
             async entering =>
@@ -2555,13 +2592,21 @@ public sealed partial class LegCommander(
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
-                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine, await PilotMdOfAsync(flight));
+                var again = await ReReviewOfAsync(flight, CancellationToken.None);
+                // A re-review reads only the range since the last reviewed head, so the whole PR's size must not buy it a deep fan-out.
+                if (again is not null && plan.Depth == ReviewDepth.Deep)
+                {
+                    plan = new ReviewPlan(ReviewDepth.Standard, "a re-review reads only what changed since the last round");
+                }
+                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine, again, await PilotMdOfAsync(flight));
                 // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                // A re-review reads only what changed, on the leg's model; Opus is for the first review of a large diff (if the setting lets it).
+                model = Models.ReviewerModelFor(plan.Depth, (flight.ReviewRounds?.Length ?? 0) + 1, legs.OrderBy(l => l.Order).LastOrDefault()?.Model);
                 entering();
-                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, Models.ReviewerModel(plan.Depth), Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
             },
             job =>
             {
@@ -2576,11 +2621,11 @@ public sealed partial class LegCommander(
                 {
                     Review = new ReviewRow
                     {
-                        State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why,
+                        State = ReviewState.Reviewing, Reviewer = reviewer, ReviewerJob = job, StartedAt = time.GetUtcNow(), Depth = plan.Depth, DepthWhy = plan.Why, Model = model,
                         GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
                     },
                 });
-                state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, ReviewLoopKind, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
                 return null;
             },
             after: async () =>
@@ -2589,6 +2634,66 @@ public sealed partial class LegCommander(
                 await _marks.ApplyAsync(flight.Code, CancellationToken.None);
             },
             quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
+    }
+
+    /// <summary>The last round and what changed since its head, when that head is still in the plane; null reads the whole diff.</summary>
+    private async Task<Briefs.ReReview?> ReReviewOfAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.ReviewRounds?.LastOrDefault() is not { Head: { Length: > 0 } head } last
+            || !(await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return null;
+        }
+        var commits = await git.RunAsync(["log", "--oneline", $"{head}..HEAD"], flight.Worktree, cancellationToken);
+        var stat = await git.RunAsync(["diff", "--stat", $"{head}..HEAD"], flight.Worktree, cancellationToken);
+        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) : null;
+    }
+
+    /// <summary>
+    /// A flight whose review passed at an earlier head and whose new head has the same own diff against the base (only the base
+    /// merged in between) keeps the pass: no reviewer starts, the marks move to the new head and a Handled line says so.
+    /// </summary>
+    private async Task<bool> KeepPassAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.Review is not { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } old } passed || flight.PullRequest is null)
+        {
+            return false;
+        }
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var headNow = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        if (!headNow.Ok || headNow.Output.Trim() is not { Length: > 0 } head || string.Equals(head, old, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var before = await OwnDiffIdAsync(flight, old, cancellationToken);
+        if (before is null || before != await OwnDiffIdAsync(flight, head, cancellationToken))
+        {
+            return false;
+        }
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { Review: { State: ReviewState.Passed } } now)
+        {
+            return false;
+        }
+        // The kept round moves to the new head too, so the next re-review ranges past the base that came in, not over it.
+        var rounds = now.ReviewRounds is [.. var earlier, { Verdict: ReviewState.Passed } keptRound] ? [.. earlier, keptRound with { Head = head }] : now.ReviewRounds;
+        state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null }, ReviewRounds = rounds });
+        var short8 = (string s) => s[..Math.Min(8, s.Length)];
+        state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
+        await _marks.ApplyAsync(flight.Code, cancellationToken);
+        return true;
+    }
+
+    /// <summary>The patch-id of the PR's own diff at <paramref name="head"/>: the base...head diff without its index lines and hunk positions; null when git cannot say or the diff is empty.</summary>
+    private async Task<string?> OwnDiffIdAsync(FlightRow flight, string head, CancellationToken cancellationToken)
+    {
+        var diff = await git.RunAsync(["diff", "--no-color", "--no-ext-diff", $"{flight.Base}...{head}"], flight.Worktree, cancellationToken);
+        if (!diff.Ok || diff.Output.Trim().Length == 0)
+        {
+            return null;
+        }
+        var kept = diff.Output.Split('\n').Where(l => !l.StartsWith("index ", StringComparison.Ordinal)).Select(l => l.StartsWith("@@", StringComparison.Ordinal) ? "@@" : l.TrimEnd('\r'));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', kept))));
     }
 
     /// <summary>A reviewer that could not start costs the flight its review, not its merge: the card says so and the controller decides.</summary>
@@ -2633,6 +2738,12 @@ public sealed partial class LegCommander(
         {
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
         }
+        var findings = ReviewFindings.Read(report);
+        if (verdict == "changes" && !findings.HasBlocking)
+        {
+            throw new FlightException("changes needs at least one finding under `## Blocking`; with only not blocking findings (nits, suggestions) give `review pass` with them under `## Not blocking`: a pass with notes");
+        }
+        var notes = verdict == "pass" && fromReviewer && findings.NotBlocking.Count > 0 ? findings.NotBlocking : null;
 
         // On GitHub before the verdict is kept: a gh that fails leaves the review as it was, for the reviewer to say again,
         // never a pass whose PR is still a draft, or changes whose PR can still be merged with the fixes pending.
@@ -2646,14 +2757,33 @@ public sealed partial class LegCommander(
 
         var now = time.GetUtcNow();
         var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
-        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null });
+        Record(flight.Code, f => f with
+        {
+            Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null,
+            ReviewRounds = f.Review is { } judged
+                ? [.. f.ReviewRounds ?? [], new ReviewRound
+                {
+                    Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
+                    Findings = kept, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                }]
+                : f.ReviewRounds,
+        });
         // On the PR now the verdict is kept: a mark GitHub refuses is a card, never a verdict lost.
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
         flight = FlightOf(command.Target);
         if (verdict == "pass")
         {
-            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, LegWatch.ReviewStalled);
-            await RaisePrReadyAsync(flight, kept, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, ReviewLoopKind, LegWatch.ReviewStalled);
+            var reviewed = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
+            await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            if (notes is not null)
+            {
+                RaiseReviewNotes(flight, notes);
+            }
+        }
+        else if (ReviewLoopHeld(flight))
+        {
+            RaiseReviewLoop(flight);
         }
         else
         {
@@ -2930,6 +3060,104 @@ public sealed partial class LegCommander(
 
     /// <summary>How many times the watchtower may send a done leg round on its review's findings before the card is the person's.</summary>
     public const int MaxReviewGoArounds = LegRow.MaxReviewGoArounds;
+
+    /// <summary>
+    /// A pass with notes: the not blocking findings go to the watchtower as a card, to make the small ones in the plane and
+    /// commit them. No leg goes round, and the merge card stays as it is.
+    /// </summary>
+    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes)
+    {
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
+        state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
+            string.Join('\n', notes),
+            link: flight.PullRequestUrl,
+            summary: $"The review of {flight.Code} passed with {notes.Count} not blocking {(notes.Count == 1 ? "note" : "notes")}. The watchtower makes the small ones in the plane ({flight.Worktree}) and commits them; no leg goes round.");
+    }
+
+    /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>
+    public const string ReviewNotesKind = "review-notes";
+
+    /// <summary>The card kind of a review loop held at its round limit, for the watchtower to settle.</summary>
+    public const string ReviewLoopKind = "review-loop";
+
+    /// <summary>The round at which a review that still asks for changes is held for the watchtower: the third.</summary>
+    public const int ReviewLoopRound = 3;
+
+    private static int RoundsAllowed(FlightRow flight) => Math.Max(ReviewLoopRound, flight.ReviewRoundsAllowed ?? 0);
+
+    /// <summary>The rounds whose verdict asked for changes: a pass spends none of the rounds a loop may take.</summary>
+    private static int ChangesRounds(FlightRow flight) => flight.ReviewRounds?.Count(r => r.Verdict == ReviewState.Changes) ?? 0;
+
+    /// <summary>
+    /// Whether a flight's review has used the rounds with changes it may have without the watchtower's word, and the reviewer's own
+    /// latest verdict still asks for changes. A review the node turned back to Changes after a pass (a red check, a merge taken back)
+    /// ends on a passed round and is not held.
+    /// </summary>
+    private static bool ReviewLoopHeld(FlightRow flight) =>
+        flight.Review is { State: ReviewState.Changes } && flight.ReviewRounds is [.., { Verdict: ReviewState.Changes }]
+        && ChangesRounds(flight) >= RoundsAllowed(flight);
+
+    /// <summary>
+    /// Whether a sender may start a held round or allow one: the person, as the node, the lookout of legs, the watchtower and the
+    /// flight's own reviewer and workers may not.
+    /// </summary>
+    private bool IsPerson(FlightRow flight, string? who) =>
+        !string.IsNullOrWhiteSpace(who) && who != "node" && who != LegWatch.Who && !IsWatchtower(who)
+        && !string.Equals(who, ReviewerName(flight), StringComparison.Ordinal)
+        && !state.Legs(flight.Code).Any(l => string.Equals(who, WorkerName(flight, l), StringComparison.Ordinal));
+
+    /// <summary>The person's own go-around or start-review at a held loop is their word for one more round: recorded, and the loop card closed.</summary>
+    private void AllowedByPerson(FlightRow flight)
+    {
+        var rounds = ChangesRounds(flight);
+        Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the person allowed one more round", ReviewLoopKind);
+    }
+
+    private static string RoundRefusal(FlightRow flight) =>
+        $"{flight.Code}'s review has had {ChangesRounds(flight)} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
+
+    /// <summary>The watchtower's word, or the person's, that a held review loop may have exactly one more round.</summary>
+    private void AllowRound(CommandRequest command)
+    {
+        var flight = FlightOf(command.Target);
+        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
+        {
+            throw new FlightException("only the watchtower or the person may allow another review round");
+        }
+        if (!ReviewLoopHeld(flight))
+        {
+            throw new FlightException($"{flight.Code}'s review is not held at its round limit: nothing to allow");
+        }
+        var rounds = ChangesRounds(flight);
+        Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} allowed one more round", ReviewLoopKind);
+        RaiseReviewChanges(FlightOf(command.Target), flight.Review!.Report ?? "");
+    }
+
+    /// <summary>
+    /// A review that still asks for changes at its third round: the node sends no leg round and starts no reviewer. The watchtower
+    /// gets each round's findings, and passes with notes, settles the disagreement in the plane, rings the person, or allows one more round.
+    /// </summary>
+    private void RaiseReviewLoop(FlightRow flight)
+    {
+        var rounds = flight.ReviewRounds ?? [];
+        var detail = new System.Text.StringBuilder();
+        foreach (var round in rounds)
+        {
+            detail.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}{(round.Head is { Length: > 0 } head ? $", head {head[..Math.Min(8, head.Length)]}" : "")}):");
+            detail.AppendLine(round.Findings);
+        }
+        var target = Verbs.FlightTarget(flight.Code);
+        state.CloseCardsAbout(target, "its review loop was held again", ReviewLoopKind);
+        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {rounds.Length} rounds with changes",
+            detail.ToString().TrimEnd(),
+            [
+                new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
+                new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
+            ], link: flight.PullRequestUrl,
+            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has asked for changes {rounds.Length} times. The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
+    }
 
     /// <summary>
     /// Why a done leg is sent back: what its card is worded for (the review's findings, failed checks, or a reviewer that did not start).

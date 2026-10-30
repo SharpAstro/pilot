@@ -26,6 +26,9 @@ public static class Briefs
     /// <summary>What the plane holds so far, for a go-around's brief: its commits past the base and the files they touch.</summary>
     public sealed record PlaneState(string Commits, string DiffStat);
 
+    /// <summary>A re-review's brief: the last round, and the commits and stat of its head to the plane's HEAD.</summary>
+    public sealed record ReReview(ReviewRound Last, PlaneState Range);
+
     /// <summary>
     /// The <c>pilot</c> CLI a worker runs, by its full path: beside the node (a publish puts them together), else the source
     /// tree's build of the same configuration, else <c>pilot</c> on <c>PATH</c>.
@@ -493,7 +496,8 @@ public static class Briefs
     }
 
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, string? pilotMd = null)
+    /// <param name="again">The last round and what changed since its head: a re-review reads only that range; null reads the whole diff.</param>
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, ReReview? again = null, string? pilotMd = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -501,7 +505,16 @@ public static class Briefs
         text.AppendLine($"You review flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}) before it is offered for merging.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
-        text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        if (again is null)
+        {
+            text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        }
+        else
+        {
+            text.AppendLine($"This is round {again.Last.Round + 1}: round {again.Last.Round} read {(again.Last.Head is { Length: > 0 } h ? $"`{h}`" : "an earlier head")} and said {again.Last.Verdict.ToString().ToLowerInvariant()}.");
+            text.AppendLine($"Read only what changed since: `git diff {again.Last.Head}..HEAD`, not the whole PR. First check that each finding of round {again.Last.Round}");
+            text.AppendLine("below was dealt with, then read the new code for bugs it brings, and rerun what proves each leg's Done-when. Do not edit,");
+        }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(BranchHistoryRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
@@ -541,17 +554,38 @@ public static class Briefs
         {
             text.AppendLine($"- {leg.Name}: {leg.Goal} Done when: {leg.DoneWhen}{(leg.Check is { Length: > 0 } c ? $" (check: `{c}`)" : "")}");
         }
-        if (plane.Commits.Trim().Length > 0)
+        if (again is not null)
         {
             text.AppendLine();
-            text.AppendLine("Commits:");
-            text.AppendLine(plane.Commits.Trim());
+            text.AppendLine($"Findings of round {again.Last.Round} ({again.Last.Verdict.ToString().ToLowerInvariant()}):");
+            text.AppendLine(again.Last.Findings.Trim());
+            if (again.Range.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits since:");
+                text.AppendLine(again.Range.Commits.Trim());
+            }
+            if (again.Range.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files changed since:");
+                text.AppendLine(again.Range.DiffStat.Trim());
+            }
         }
-        if (plane.DiffStat.Trim().Length > 0)
+        else
         {
-            text.AppendLine();
-            text.AppendLine("Files:");
-            text.AppendLine(plane.DiffStat.Trim());
+            if (plane.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits:");
+                text.AppendLine(plane.Commits.Trim());
+            }
+            if (plane.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files:");
+                text.AppendLine(plane.DiffStat.Trim());
+            }
         }
         text.AppendLine();
         // TIA1814's reviewers ran tianwen's whole suite themselves (10,127 tests, 40 minutes on a busy machine) while CI had it
@@ -561,11 +595,18 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine();
+        text.AppendLine("Sort every finding under one of two headings. `## Blocking`: what must change before the merge (a Done-when that does");
+        text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
+        text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
+        text.AppendLine("pass with notes: the notes stay on the PR-ready card and the watchtower makes the small ones in the plane; no leg goes round.");
         text.AppendLine(AttachmentRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
-        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
-        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`. A fresh worker is told it as is.");
+        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`. With only not blocking findings, still `pass`, and");
+        text.AppendLine("  put them under `## Not blocking` in the report: a pass with notes.");
+        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`, with at least one finding under `## Blocking`; `changes`");
+        text.AppendLine("  without one is refused. A fresh worker is told the report as is.");
         // PIL383: the flight's page draws the report as Markdown, as the transcript does; PIL294's #357 report was one run of
         // "1) … 2) …" with every name bare, and read as a wall.
         text.AppendLine("Write the report (`changes`, and `pass` where it has findings) as Markdown: one list item per finding, each starting");
@@ -893,6 +934,12 @@ public static class Briefs
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
+        text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
+        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes) and make the small ones");
+        text.AppendLine("  yourself in the plane. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
+        text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
+        text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");

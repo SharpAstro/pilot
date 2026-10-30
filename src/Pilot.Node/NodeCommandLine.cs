@@ -1,6 +1,8 @@
 using System.CommandLine;
 using Node.Lib;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Pilot.Node.Updates;
 
 namespace Pilot.Node;
@@ -168,10 +170,38 @@ public static class NodeCommandLine
             parseResult.GetValue(setupMachine), parseResult.GetValue(setupRepoRoot), parseResult.GetValue(setupChannel), !parseResult.GetValue(noFirewall),
             nodePath, output, error, ct));
 
+        // review-cost: the same report as `pilot review-cost`, read from a data folder with no node running (nothing is written).
+        var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
+        var costUntil = new Option<string?>("--until") { Description = "Flights landed on or before this date" };
+        var costRepo = new Option<string?>("--repo") { Description = "Only this repo's flights" };
+        var reviewCost = new Command("review-cost", "What reviews cost per landed flight, read from the data folder and the Claude transcripts with no node running; changes nothing")
+        {
+            Options = { data, costSince, costUntil, costRepo },
+        };
+        reviewCost.SetAction(async parseResult =>
+        {
+            List<string> args = [];
+            foreach (var (flag, option) in new[] { ("--since", costSince), ("--until", costUntil), ("--repo", costRepo) })
+            {
+                if (parseResult.GetValue(option) is { Length: > 0 } value)
+                {
+                    args.AddRange([flag, value]);
+                }
+            }
+            if (!ReviewCost.TryParse([.. args], out var since, out var until, out var repo, out var problem))
+            {
+                await error.WriteLineAsync($"pilot-node: {problem}");
+                return NodeExitCodes.InvalidArguments;
+            }
+            var mirror = ReviewCost.ReadStore(Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder));
+            await output.WriteAsync(ReviewCost.Compute(mirror.Flights.Values, mirror.Sessions.Values, ClaudeProfile.Default(), since, until, repo).Text());
+            return 0;
+        });
+
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
             Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, updateChannel, releaseFeed, repoRoot, after },
-            Subcommands = { hook, mergeGuard, hooks, autostart, setup },
+            Subcommands = { hook, mergeGuard, hooks, autostart, setup, reviewCost },
         };
         root.SetAction(async (parseResult, ct) =>
         {
