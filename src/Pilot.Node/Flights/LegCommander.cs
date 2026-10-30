@@ -190,12 +190,12 @@ public sealed partial class LegCommander(
                         // Asked by the sweep outside the lock: what it saw may be stale now, so the flight is looked at again, and a command
                         // that has calls out for it, a review running or a head read by now leaves it alone, quietly.
                         var flight = FlightOf(command.Target);
-                        if (_calling.ContainsKey(flight.Code) || flight.Review is not { State: not ReviewState.Reviewing } review)
+                        if (_calling.ContainsKey(flight.Code) || flight.Review is not { State: not ReviewState.Reviewing, ReviewedHead: { Length: > 0 } read })
                         {
                             break;
                         }
                         var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
-                        if (head.Ok && string.Equals(review.ReviewedHead, head.Output.Trim(), StringComparison.OrdinalIgnoreCase))
+                        if (head.Ok && string.Equals(read, head.Output.Trim(), StringComparison.OrdinalIgnoreCase))
                         {
                             break;
                         }
@@ -639,14 +639,15 @@ public sealed partial class LegCommander(
 
     /// <summary>
     /// The invariant on every sweep and at node start: a flying flight whose legs are all done, whose PR is open and whose review is
-    /// not running has a review started when the plane's head is not the head its last review read (a review with no head read, as
-    /// one that never started leaves, counts as unread). A finish marked done by hand, a finish check rerun after a restart and a fix
+    /// not running has a review started when the plane's head is not the head its last review read. A review that read no head (one
+    /// that never started) is left alone: its card is the controller's, "Review again" or "Ready anyway", and a start retried on
+    /// every sweep would override both while the cause lasts. A finish marked done by hand, a finish check rerun after a restart and a fix
     /// pushed after a go-around reached none of the paths that start a review before (PIL395, PIL411, TIA1874, TIA1875, TIA1910).
     /// A head the PR has not got is pushed first. Returns true when a failed step holds the flight, so its ring stays.
     /// </summary>
     private async Task<bool> ReviewUnreadHeadAsync(FlightRow current, CancellationToken cancellationToken)
     {
-        if (current.PullRequest is null || current.Review is not { } review || review.State == ReviewState.Reviewing)
+        if (current.PullRequest is null || current.Review is not { State: not ReviewState.Reviewing, ReviewedHead: { Length: > 0 } read })
         {
             return false;
         }
@@ -658,8 +659,7 @@ public sealed partial class LegCommander(
         // The sweep holds no lock, so git is asked plainly here.
         var head = await git.RunAsync(["rev-parse", "HEAD"], current.Worktree, cancellationToken);
         var planeHead = head.Ok && head.Output.Trim() is { Length: > 0 } sha ? sha : current.GitHubHead;
-        if (string.IsNullOrEmpty(planeHead)
-            || review.ReviewedHead is { Length: > 0 } read && string.Equals(read, planeHead, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(planeHead) || string.Equals(read, planeHead, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

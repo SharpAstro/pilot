@@ -206,4 +206,54 @@ public sealed class UnreadHeadTests : ReviewTestsBase
         _workers.Started.Count.ShouldBe(started);
         F(flight.Code).Review.ShouldBe(review);
     }
+
+    /// <summary>A flight whose reviewer did not start: its review is Changes with no head read, and its "Review again" card is up.</summary>
+    private async Task<FlightRow> ReviewerNotStarted(string issue)
+    {
+        var flight = await NewFlight(issue, "parser");
+        await Fly(flight, "parser");
+        _workers.Fail = new FlightException("claude --bg did not start: folder not trusted");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        _legs.Models = new RoleModels(new NodeSettings());
+        var review = F(flight.Code).Review.ShouldNotBeNull();
+        review.State.ShouldBe(ReviewState.Changes);
+        review.ReviewedHead.ShouldBeNull();
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+        return F(flight.Code);
+    }
+
+    [Fact]
+    public async Task UnreadHeadOfAReviewerThatDidNotStartIsNotRetriedBySweepsAndKeepsItsCard()
+    {
+        // A review that read no head is the controller's "Review again" card: a start tried every minute while the cause lasts would override it.
+        var flight = await ReviewerNotStarted("410");
+        var cards = _state.Cards().Count(c => c.Kind == LegCommander.ReviewChanges);
+
+        await _legs.AdvanceAllAsync(Ct);
+        await _legs.AdvanceAllAsync(Ct);
+        // A start the sweeps tried would now succeed, so none tried leaves the starts as they were.
+        _workers.Fail = null;
+        await _legs.AdvanceAllAsync(Ct);
+
+        _workers.Started.ShouldNotContain(s => s.Name == Reviewer(flight.Code));
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Title.ShouldBe($"{flight.Code}'s review did not start");
+        _state.Cards().Count(c => c.Kind == LegCommander.ReviewChanges).ShouldBe(cards);
+    }
+
+    [Fact]
+    public async Task UnreadHeadLeavesReadyAnywayOverAReviewThatDidNotStartPassed()
+    {
+        var flight = await ReviewerNotStarted("411");
+        _workers.Fail = null;
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), "controller", "pass", "ready anyway")).Error.ShouldBeNull();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        var started = _workers.Started.Count;
+
+        await _legs.AdvanceAllAsync(Ct);
+        await _legs.AdvanceAllAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(started);
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+    }
 }
