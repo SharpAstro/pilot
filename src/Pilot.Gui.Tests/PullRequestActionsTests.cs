@@ -624,7 +624,7 @@ public sealed class PullRequestActionsTests
         await Task.Yield();
         for (var i = 0; i < 100 && !Texts(Arrange(renderer, page, screen)).Contains("Reviewing…"); i++)
         {
-            await Task.Delay(10);
+            await Task.Delay(10, TestContext.Current.CancellationToken);
         }
         Texts(Arrange(renderer, page, screen)).ShouldContain("Reviewing…");
     }
@@ -668,7 +668,7 @@ public sealed class PullRequestActionsTests
         Click(arranged, Id(plain, "address-review"));
         for (var i = 0; i < 100 && !Texts(Arrange(renderer, page, screen)).Contains("Addressing…"); i++)
         {
-            await Task.Delay(10);
+            await Task.Delay(10, TestContext.Current.CancellationToken);
         }
         retried.ShouldBe(1);
         Texts(Arrange(renderer, page, screen)).ShouldContain("Addressing…");
