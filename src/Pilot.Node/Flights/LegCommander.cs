@@ -2474,6 +2474,27 @@ public sealed partial class LegCommander(
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
     /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
+    /// <summary>
+    /// A PR in review is never a draft (PIL483): once a reviewer is recorded, a draft PR of the flight is marked ready, the draft a
+    /// changes verdict or a send-back left. Run without the lock (it follows the start), so it asks GitHub directly. GitHub refusing it is a card, never a lost review start.
+    /// </summary>
+    private async Task MarkReadyForReviewAsync(FlightRow flight)
+    {
+        try
+        {
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, CancellationToken.None);
+            if (pr is { State: "OPEN", Draft: true })
+            {
+                await github.SetDraftAsync(flight.RepoPath, pr.Number, draft: false, CancellationToken.None);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.FlightTarget(flight.Code), $"GitHub refused to mark {flight.Code}'s PR ready",
+                $"{ex.Message}. The review itself started.");
+        }
+    }
+
     private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false)
     {
         string? reviewedHead = null;
@@ -2545,7 +2566,11 @@ public sealed partial class LegCommander(
                 state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
                 return null;
             },
-            after: () => _marks.ApplyAsync(flight.Code, CancellationToken.None),
+            after: async () =>
+            {
+                await MarkReadyForReviewAsync(flight);
+                await _marks.ApplyAsync(flight.Code, CancellationToken.None);
+            },
             quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
     }
 
@@ -2626,6 +2651,57 @@ public sealed partial class LegCommander(
                 await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
                 await StopQuietly(job, CancellationToken.None);
             }, CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// A PR review's approve of a flight's PR, taken as the flight's own verdict (PIL483): at the head the flight's PR has now, the
+    /// flight's review passes, even one that asked for changes, its PR is marked ready and its PR-ready card raised. A head the
+    /// PR has moved past, a landed flight or a flight with no review is left as it is. Null when taken; else why not.
+    /// </summary>
+    public async Task<string?> TakePrVerdictAsync(string code, string head, string verdict, string report, CancellationToken cancellationToken)
+    {
+        if (verdict != "approve")
+        {
+            return $"only an approve passes {code}'s review";
+        }
+        var call = await EnterAsync(code, "being given a PR review's verdict", cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Review: { } review } flight)
+            {
+                return $"{code} is landed or has no review";
+            }
+            if (review.State == ReviewState.Passed)
+            {
+                return null;
+            }
+            var current = await OffLockAsync(flight, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken));
+            if (current is not { State: "OPEN" } || !string.Equals(current.Head, head, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{code}'s PR is not open at {head[..Math.Min(8, head.Length)]}";
+            }
+            flight = FlightOf(Verbs.FlightTarget(code));
+            if (flight.PullRequest is { } number)
+            {
+                await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: false, cancellationToken));
+            }
+            var kept = $"{report} (approved by a PR review at {head[..Math.Min(8, head.Length)]})";
+            Record(code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Passed, Report = kept, FinishedAt = time.GetUtcNow(), ReviewedHead = head } : null });
+            await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
+            flight = FlightOf(Verbs.FlightTarget(code));
+            state.CloseCardsAbout(Verbs.FlightTarget(code), "passed by a PR review", ReviewChanges, LegWatch.ReviewStalled);
+            await RaisePrReadyAsync(flight, kept, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+            return null;
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
         }
     }
 
