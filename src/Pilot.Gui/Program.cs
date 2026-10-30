@@ -271,6 +271,12 @@ if (feed is not null)
 // The fleet beyond this window's node: every node heard on the LAN or granted to this user, watched on its own stream,
 // its rows merged into every page. Disposed in the shutdown drain with the feed, never by an await here (see the feed's note).
 var fleetWatch = new FleetWatch();
+// Each node streamed from is told when the Pull requests page is shown and when it is left, so its watch reads every minute only meanwhile.
+chrome.OnPageShown = page =>
+{
+    feed?.SayPage(page);
+    fleetWatch.SayPage(page);
+};
 var fleetKnownAt = DateTimeOffset.MinValue;
 IReadOnlySet<string> granted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 bool CanCommand(string where) => string.Equals(where, remoteEndpoint, StringComparison.OrdinalIgnoreCase) || granted.Contains(where);

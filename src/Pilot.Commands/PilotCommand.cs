@@ -284,7 +284,8 @@ public static class PilotCommand
         // prs
         var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };
         var freshPrs = new Option<bool>("--refresh") { Description = "Ask the node to read GitHub now, not wait for its minute" };
-        var prsCommand = Action(new Command("prs", "Every open PR of the repos pilot works in, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
+        var watchPrs = new Option<bool>("--watch") { Description = "Stay on the node's event stream as a client showing the Pull requests page (the node reads every minute meanwhile), and print the PRs again each time they change; stop with Ctrl+C" };
+        var prsCommand = Action(new Command("prs", "Every open PR of the repos pilot works in, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs, watchPrs } },
             async (p, client, ct) =>
             {
                 if (p.GetValue(freshPrs))
@@ -296,10 +297,40 @@ public static class PilotCommand
                         return 1;
                     }
                 }
-                var row = (await SnapshotAsync(client, ct)).PullRequests;
                 var onlyMine = p.GetValue(needsMe);
-                var now = DateTimeOffset.UtcNow;
-                await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(row, onlyMine, now), () => PullRequestsMarkdown.Build(row, onlyMine, now));
+                async Task PrintAsync(PullRequestsRow? shown)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(shown, onlyMine, now), () => PullRequestsMarkdown.Build(shown, onlyMine, now));
+                }
+                if (!p.GetValue(watchPrs))
+                {
+                    await PrintAsync((await SnapshotAsync(client, ct)).PullRequests);
+                    return 0;
+                }
+                // The stream stays open and says the page shown: the node counts this command as a viewer until it ends or the stream closes.
+                try
+                {
+                    await using var events = await client.OpenEventsAsync(since: null, stream: null, ct);
+                    if (await events.ReadAsync(ct) is not SnapshotEvent snapshot)
+                    {
+                        await error.WriteLineAsync("pilot: the node's stream did not start with a snapshot");
+                        return 1;
+                    }
+                    await events.SayPageAsync(ClientPages.PullRequests, ct);
+                    await PrintAsync(snapshot.PullRequests);
+                    while (await events.ReadAsync(ct) is { } next)
+                    {
+                        if (next is PullRequestsChangedEvent changed)
+                        {
+                            await PrintAsync(changed.Row);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Ctrl+C: the stream closing with this command is how the node forgets the page.
+                }
                 return 0;
             });
 

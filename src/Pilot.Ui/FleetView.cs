@@ -258,6 +258,18 @@ internal sealed class FleetWatch : IAsyncDisposable
     public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now, bool reposWanted = false) =>
         FleetPages.Merge(Feeds(hereWhere, here, now), filter, now, reposWanted);
 
+    private string? _page;
+
+    /// <summary>Tells every node watched which page this window shows (<see cref="ClientPages"/>), and each one known later at once.</summary>
+    public void SayPage(string? page)
+    {
+        Volatile.Write(ref _page, page);
+        foreach (var (feed, _) in _feeds.Values)
+        {
+            feed.SayPage(page);
+        }
+    }
+
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
 
@@ -282,6 +294,7 @@ internal sealed class FleetWatch : IAsyncDisposable
             var known = _feeds.GetOrAdd(endpoint, e =>
             {
                 var feed = _feedFor(e);
+                feed.SayPage(Volatile.Read(ref _page));
                 feed.Start();
                 return (feed, name);
             });
