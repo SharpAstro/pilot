@@ -224,6 +224,31 @@ public sealed class PrReviews(
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
+        if (read.Draft)
+        {
+            await SetDraftAsync(row, draft: false, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Draft follows the verdict for a PR outside a flight (PIL483): ready while in review and on approve or comment, a draft on
+    /// changes. A flight's PR is skipped, its draft is the flight path's. GitHub refusing it is a For-you card, as a label is.
+    /// </summary>
+    private async Task SetDraftAsync(PrReviewRow review, bool draft, CancellationToken cancellationToken)
+    {
+        if (FlightOwns(review))
+        {
+            return;
+        }
+        try
+        {
+            await github.SetDraftAsync(review.ClonePath, review.Number, draft, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
+                $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}", $"{ex.Message}. The review itself stands.", link: review.Url);
+        }
     }
 
     /// <summary>
@@ -422,6 +447,7 @@ public sealed class PrReviews(
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
         await SetLabelAsync(reviewed, cancellationToken);
+        await SetDraftAsync(reviewed, draft: verdict == "changes", cancellationToken);
         await GiveFlightVerdictAsync(reviewed, pr, cancellationToken);
         // The node posts first and asks after. The Post card used to be raised before the node's own post, which takes some 30 s,
         // and was pressed meanwhile: the press was refused as a second post and reopened the card (DIR.Lib#168, SE1, 2026-10-28).

@@ -2035,6 +2035,27 @@ public sealed partial class LegCommander(
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
     /// <param name="quiet">The caller is no command to tell: a reviewer that cannot start turns the review to Changes, with a card, as OpenPr always did.</param>
+    /// <summary>
+    /// A PR in review is never a draft (PIL483): once a reviewer is recorded, a draft PR of the flight is marked ready, the draft a
+    /// changes verdict or a send-back left. GitHub refusing it is a card, never a lost review start.
+    /// </summary>
+    private async Task MarkReadyForReviewAsync(FlightRow flight)
+    {
+        try
+        {
+            var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, CancellationToken.None));
+            if (pr is { State: "OPEN", Draft: true })
+            {
+                await OffLockAsync(null, () => github.SetDraftAsync(flight.RepoPath, pr.Number, draft: false, CancellationToken.None));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.FlightTarget(flight.Code), $"GitHub refused to mark {flight.Code}'s PR ready",
+                $"{ex.Message}. The review itself started.");
+        }
+    }
+
     private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false)
     {
         string? reviewedHead = null;
@@ -2106,7 +2127,11 @@ public sealed partial class LegCommander(
                 state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
                 return null;
             },
-            after: () => _marks.ApplyAsync(flight.Code, CancellationToken.None),
+            after: async () =>
+            {
+                await MarkReadyForReviewAsync(flight);
+                await _marks.ApplyAsync(flight.Code, CancellationToken.None);
+            },
             quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
     }
 
