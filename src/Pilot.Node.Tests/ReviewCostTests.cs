@@ -42,7 +42,7 @@ public sealed class ReviewCostTests : IDisposable
 
         report.Flights.Select(f => f.Code).ShouldBe(["PIL1", "TIA2"]);
         var pil1 = report.Flights[0];
-        pil1.Sessions.Select(s => (s.Round, s.Session, s.Model, s.Head)).ShouldBe([(1, "de1-pil1-review", "claude-opus-5-5", "aaaa1111"), (2, "de1-pil1-review", "claude-sonnet-5-5", "bbbb2222")]);
+        pil1.Sessions.Select(s => (s.Round, s.Session, s.Model, s.Head)).ShouldBe([(1, "de1-pil1-review", "claude-opus-5-5", "aaaa1111cccc"), (2, "de1-pil1-review", "claude-sonnet-5-5", "bbbb2222dddd")]);
 
         // Round 1: m1 (once, though written twice), m2 (also in the subagent's file) and the subagent's m3.
         var first = pil1.Sessions[0];
