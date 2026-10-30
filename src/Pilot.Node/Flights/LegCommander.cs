@@ -28,6 +28,9 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>The node's log (logs/node.log): a line for each move asked for, naming who asked and how it ended.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
     /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
 
@@ -213,6 +216,8 @@ public sealed partial class LegCommander(
             {
                 error = ex.Message;
             }
+            // Two asks for one move (a click and a command) are told apart only here: who asked, and what each was answered.
+            Error.WriteLine($"move-flight {moving.Code}, asked by {command.Who}: {made ?? $"refused: {error}"}");
         }
 
         // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
