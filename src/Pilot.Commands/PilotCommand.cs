@@ -466,6 +466,10 @@ public static class PilotCommand
         var connect = Action(new Command("connect", "The flight holds until the other, a flight of this node or of a reachable one, has landed") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
+        var disconnectAnyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Drop a connection the controller chose as the answer to an overlap (the person's to give)" };
+        var disconnect = Action(new Command("disconnect", "Undo a connect: the flight stops waiting for the other (on this node or another) and flies when nothing else holds it") { Arguments = { code, other }, Options = { disconnectAnyway } },
+            (p, client, ct) => Send(client, Verbs.Disconnect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(disconnectAnyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
+
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
@@ -520,8 +524,8 @@ public static class PilotCommand
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, fly, move, pr, reviewStart, merge, land } };
+        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -1674,7 +1678,7 @@ public static class PilotCommand
                     await output.WriteLineAsync($"{edited} {result.Way}");
                 }
             }
-            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
