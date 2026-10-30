@@ -58,6 +58,14 @@ public sealed record CommandRequest
     /// </summary>
     [JsonIgnore]
     public bool Autopilot { get; init; }
+
+    /// <summary>
+    /// Set by the node when it took the watchtower's answer or dismissal of a card as the person's word in its chat: the words
+    /// of their message it matched. The checks keyed on the watchtower's name let such a command through. Never read from the
+    /// wire: a client cannot claim it.
+    /// </summary>
+    [JsonIgnore]
+    public string? PersonsWord { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>
@@ -163,6 +171,13 @@ public static class Verbs
     public const string Connect = "connect";
 
     /// <summary>
+    /// <c>disconnect flight/&lt;code&gt; &lt;other&gt; [--anyway]</c>: undoes a <see cref="Connect"/>, on this node or a peer. The wait and the
+    /// package waits it produced go, and the flight flies when nothing else holds it. A connection that was the controller's answer to an
+    /// overlap is refused with why, and goes with <see cref="AnywayFlag"/>, which is the person's alone.
+    /// </summary>
+    public const string Disconnect = "disconnect";
+
+    /// <summary>
     /// <c>fly-anyway flight/&lt;code&gt;</c>: the flight stops waiting for the packages it is held for (a connection's release
     /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
     /// </summary>
@@ -225,9 +240,11 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
-    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
+    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
+    /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
+    /// its check passes there; the node refuses it otherwise, naming what did not hold.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 

@@ -41,6 +41,8 @@ public sealed class IdeaRepoTests : IDisposable
             Git(repo, "init", "-q", "-b", "main");
             File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
             File.WriteAllText(Path.Combine(repo, name + ".slnx"), "<Solution />\n");
+            // A repo pilot works in, so the idea's repo choice offers it (RepoCatalog.Tracked).
+            File.WriteAllText(Path.Combine(repo, RepoCatalog.MarkerFile), "# PILOT.md\n");
             Git(repo, "remote", "add", "origin", $"https://github.com/SharpAstro/{name}.git");
             Git(repo, "add", ".");
             Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");

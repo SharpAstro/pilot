@@ -40,26 +40,44 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
     public const string QueueDropped = "queue-dropped";
 
+    private readonly TaskCompletionSource _firstLook = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes once the first look the loop makes at start is over (it found something, failed, or the node stopped).
+    /// A test node awaits it before it hands out its state, so that look never runs against a test's half-made state
+    /// (MergedUnderLegTests on windows, run 40817578891: it landed a flight before the leg that should have kept it flying).
+    /// </summary>
+    public Task FirstLook => _firstLook.Task;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         // Merge entries a node that went away left open have no command behind them: they end before anything else is looked at.
         legs?.EndLeftMerges("the node restarted while it waited: merge again");
-        while (!stopping.IsCancellationRequested)
+        try
         {
-            try
+            while (!stopping.IsCancellationRequested)
             {
-                await LookAsync(stopping);
-                await Task.Delay(Interval, time, stopping);
+                try
+                {
+                    await LookAsync(stopping);
+                    _firstLook.TrySetResult();
+                    await Task.Delay(Interval, time, stopping);
+                }
+                catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _firstLook.TrySetResult();
+                    await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
+                    await Task.Delay(Interval, time, stopping);
+                }
             }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
-                await Task.Delay(Interval, time, stopping);
-            }
+        }
+        finally
+        {
+            _firstLook.TrySetResult();
         }
     }
 

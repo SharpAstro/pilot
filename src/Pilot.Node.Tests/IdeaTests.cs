@@ -312,6 +312,8 @@ public sealed class IdeaTests : IDisposable
     public async Task TheRepoWatchReadsTheIdeasMilestoneIntoTheRepoStatusAndTheNodesRows()
     {
         File.WriteAllText(Path.Combine(Repo, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
+        // A repo pilot works in: only those are read on GitHub (RepoCatalog.Tracked).
+        File.WriteAllText(Path.Combine(Repo, RepoCatalog.MarkerFile), "# PILOT.md\n");
         _github.AddMilestone(Repo, IdeaIds.Milestone);
         _github.AddIssue(Repo, "Seen on GitHub", IdeaIds.Milestone, author: "someone");
         _github.AddIssue(Repo, "Turned down", IdeaIds.Milestone, open: false);

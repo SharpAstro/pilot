@@ -159,7 +159,7 @@ internal sealed partial class FlightsView<TSurface>
         // the last (a stale flight's dead "Remove render") ran past the page's edge at a narrow width.
         // Retry move is in the red band under the head, not said twice.
         var buttons = CanCommand
-            ? FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Verb}")).ToList()
+            ? FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight).Select(action => ActionButton(line, action, $"flight:{line.Code}:{action.Key}")).ToList()
             : [];
 
         var facts = new List<Layout.Node>

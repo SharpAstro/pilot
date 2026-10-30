@@ -165,6 +165,30 @@ public sealed class RepoStatusTests : IDisposable
     }
 
     [Fact]
+    public async Task OnlyTheReposPilotWorksInAreReadOnGitHubAFlownOneAndOneMarkedWithAPilotMd()
+    {
+        // The owner, 2026-10-30: the Ideas pane's milestones listed every clone under the root, wabt and wasi-libc among them.
+        var tianwen = Clone("tianwen");
+        var marked = Clone("marked");
+        File.WriteAllText(Path.Combine(marked, RepoCatalog.MarkerFile), "# PILOT.md\n");
+        var wabt = Clone("wabt");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutFlight(Flight("TIA1", "tianwen", tianwen, FlightState.Landed));
+        // What a read before the rule kept of the clone pilot never worked in goes with the next read.
+        state.PutMilestones("wabt", [new MilestoneRow { Repo = "wabt", Number = 1, Title = "v1" }]);
+        var github = new FakeGitHub();
+        github.OpenPrs[wabt] = [new PullRequestStatus { Number = 5, Title = "Someone else's", Head = "feature/y" }];
+
+        var all = await Watch(new ScriptedGit(), github, state).RefreshAsync(Ct);
+
+        github.OpenPrCalls.ShouldBe(2);
+        all.Single(r => r.Path == wabt).PullRequests.ShouldBeEmpty();
+        new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])).Tracked().Select(r => r.Name)
+            .ShouldBe(["tianwen", "marked"], ignoreOrder: true);
+        state.Milestones().ShouldNotContain(m => m.Repo == "wabt");
+    }
+
+    [Fact]
     public async Task AnOpenPrOnAFlightsBranchIsMappedToItsFlightWithNoGitToSayAnythingElse()
     {
         var tianwen = Clone("tianwen");

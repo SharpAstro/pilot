@@ -35,6 +35,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>The command a compaction resumes a session with: Claude Code's own, its words what the summary keeps.</summary>
     public static string CompactPrompt(string focus) => focus.Length == 0 ? "/compact" : $"/compact {focus}";
 
+    /// <summary>How a message another node's watchtower passed on begins, its node's name following.</summary>
+    public const string FromWatchtowerPrefix = "[From the watchtower of node ";
+
     private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
@@ -118,7 +121,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             // Another node's watchtower passing work on (fleet chat): marked with its node, so this one reports back with
             // `tell --node` and does not take the words for the person's.
-            text = $"[From the watchtower of node {node}] {text}";
+            text = $"{FromWatchtowerPrefix}{node}] {text}";
         }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
