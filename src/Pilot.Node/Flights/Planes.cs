@@ -178,21 +178,32 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
         var error = new StringBuilder();
         // Read by line into builders, so what git said survives a cancel.
         var reads = Task.WhenAll(Pump(process.StandardOutput, output), Pump(process.StandardError, error));
+        var exited = false;
         try
         {
             await process.WaitForExitAsync(budget.Token);
+            exited = true;
+            // Git gone does not close its pipes when a child it left keeps them: that read is on the budget too.
+            await reads.WaitAsync(budget.Token);
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Git had already exited; only a descendant holds its pipes.
+            }
             await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
             var why = cancellationToken.IsCancellationRequested ? "was cancelled" : $"ran past its budget of {_budget.TotalSeconds:0.###}s";
+            var state = exited ? "git had exited but its output never closed" : "git had not exited";
             throw new OperationCanceledException(
-                $"git {string.Join(' ', args)} in {cwd} {why} and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
+                $"git {string.Join(' ', args)} in {cwd} {why} ({state}) and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
                 null,
                 cancellationToken.IsCancellationRequested ? cancellationToken : budget.Token);
         }
-        await reads;
         return new GitRun(process.ExitCode, output.ToString(), error.ToString());
     }
 
