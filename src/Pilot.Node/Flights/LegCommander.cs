@@ -1479,21 +1479,23 @@ public sealed partial class LegCommander(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
         }
 
-        if (leg.State == LegState.Done && ReviewLoopHeld(flight) && !IsPerson(command.Who))
+        var loopHeld = leg.State == LegState.Done && ReviewLoopHeld(flight);
+        if (loopHeld && !IsPerson(flight, command.Who))
         {
             throw new FlightException(RoundRefusal(flight));
-        }
-        // The person's go-around at a held loop is their word for one more round: the finished worker's review must start.
-        if (leg.State == LegState.Done && ReviewLoopHeld(flight))
-        {
-            AllowedByPerson(flight);
-            flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
 
         // A go-around on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the go-around.
         // This turns a passed review back too, so the block below finds it Changes and leaves it.
         await TakeMergeBackAsync(flight, Verbs.GoAround, why, cancellationToken);
         flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        // The person's go-around at a held loop is their word for one more round: the finished worker's review must start.
+        // Recorded only once nothing before it can refuse the go-around, so a refused one allows no round.
+        if (loopHeld)
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
 
         // A done leg that goes around from the merge card (a failed check, conflicts, behind) sits under a review that passed: it is
         // sent back as the node's own sends are (PR to draft, review to Changes), so its finish pushes the fixed branch and a fresh
@@ -2306,7 +2308,8 @@ public sealed partial class LegCommander(
             throw new FlightException($"{flight.Code} has landed");
         }
         // A review loop held at its round limit starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
-        if (ReviewLoopHeld(flight) && !IsPerson(who))
+        var loopHeld = ReviewLoopHeld(flight);
+        if (loopHeld && !IsPerson(flight, who))
         {
             if (quiet)
             {
@@ -2314,16 +2317,17 @@ public sealed partial class LegCommander(
             }
             throw new FlightException(RoundRefusal(flight));
         }
-        if (ReviewLoopHeld(flight))
-        {
-            AllowedByPerson(flight);
-            flight = FlightOf(Verbs.FlightTarget(flight.Code));
-        }
         RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+        }
+        // The person's word at a held loop allows the round, recorded once the refusals above have passed.
+        if (loopHeld)
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
         }
         if (await KeepPassAsync(flight, cancellationToken))
         {
@@ -2438,7 +2442,9 @@ public sealed partial class LegCommander(
         {
             return false;
         }
-        state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null } });
+        // The kept round moves to the new head too, so the next re-review ranges past the base that came in, not over it.
+        var rounds = now.ReviewRounds is [.. var earlier, { Verdict: ReviewState.Passed } keptRound] ? [.. earlier, keptRound with { Head = head }] : now.ReviewRounds;
+        state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null }, ReviewRounds = rounds });
         var short8 = (string s) => s[..Math.Min(8, s.Length)];
         state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
@@ -2543,7 +2549,7 @@ public sealed partial class LegCommander(
                 RaiseReviewNotes(flight, notes);
             }
         }
-        else if ((flight.ReviewRounds?.Length ?? 0) >= RoundsAllowed(flight))
+        else if (ReviewLoopHeld(flight))
         {
             RaiseReviewLoop(flight);
         }
@@ -2796,32 +2802,43 @@ public sealed partial class LegCommander(
 
     private static int RoundsAllowed(FlightRow flight) => Math.Max(ReviewLoopRound, flight.ReviewRoundsAllowed ?? 0);
 
-    /// <summary>Whether a flight's review has used the rounds it may start without the watchtower's word, and still asks for changes.</summary>
-    private static bool ReviewLoopHeld(FlightRow flight) =>
-        flight.Review is { State: ReviewState.Changes } && (flight.ReviewRounds?.Length ?? 0) >= RoundsAllowed(flight);
+    /// <summary>The rounds whose verdict asked for changes: a pass spends none of the rounds a loop may take.</summary>
+    private static int ChangesRounds(FlightRow flight) => flight.ReviewRounds?.Count(r => r.Verdict == ReviewState.Changes) ?? 0;
 
-    /// <summary>Whether a sender may start a held round: the person, as the node, the lookout of legs and the watchtower may not.</summary>
-    private bool IsPerson(string? who) =>
-        !string.IsNullOrWhiteSpace(who) && who != "node" && who != LegWatch.Who && !IsWatchtower(who);
+    /// <summary>
+    /// Whether a flight's review has used the rounds with changes it may have without the watchtower's word, and the reviewer's own
+    /// latest verdict still asks for changes. A review the node turned back to Changes after a pass (a red check, a merge taken back)
+    /// ends on a passed round and is not held.
+    /// </summary>
+    private static bool ReviewLoopHeld(FlightRow flight) =>
+        flight.Review is { State: ReviewState.Changes } && flight.ReviewRounds is [.., { Verdict: ReviewState.Changes }]
+        && ChangesRounds(flight) >= RoundsAllowed(flight);
+
+    /// <summary>
+    /// Whether a sender may start a held round or allow one: the person, as the node, the lookout of legs, the watchtower and the
+    /// flight's own reviewer and workers may not.
+    /// </summary>
+    private bool IsPerson(FlightRow flight, string? who) =>
+        !string.IsNullOrWhiteSpace(who) && who != "node" && who != LegWatch.Who && !IsWatchtower(who)
+        && !string.Equals(who, ReviewerName(flight), StringComparison.Ordinal)
+        && !state.Legs(flight.Code).Any(l => string.Equals(who, WorkerName(flight, l), StringComparison.Ordinal));
 
     /// <summary>The person's own go-around or start-review at a held loop is their word for one more round: recorded, and the loop card closed.</summary>
     private void AllowedByPerson(FlightRow flight)
     {
-        var rounds = flight.ReviewRounds?.Length ?? 0;
+        var rounds = ChangesRounds(flight);
         Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the person allowed one more round", ReviewLoopKind);
     }
 
     private static string RoundRefusal(FlightRow flight) =>
-        $"{flight.Code}'s review has had {flight.ReviewRounds?.Length ?? 0} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
+        $"{flight.Code}'s review has had {ChangesRounds(flight)} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
 
     /// <summary>The watchtower's word, or the person's, that a held review loop may have exactly one more round.</summary>
     private void AllowRound(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
-        if (!IsWatchtower(command.Who) && !IsPerson(command.Who)
-            || string.Equals(command.Who, ReviewerName(flight), StringComparison.Ordinal)
-            || state.Legs(flight.Code).Any(l => string.Equals(command.Who, WorkerName(flight, l), StringComparison.Ordinal)))
+        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
         {
             throw new FlightException("only the watchtower or the person may allow another review round");
         }
@@ -2829,7 +2846,7 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code}'s review is not held at its round limit: nothing to allow");
         }
-        var rounds = flight.ReviewRounds?.Length ?? 0;
+        var rounds = ChangesRounds(flight);
         Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} allowed one more round", ReviewLoopKind);
         RaiseReviewChanges(FlightOf(command.Target), flight.Review!.Report ?? "");

@@ -143,6 +143,79 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewLoopKind);
     }
 
+    /// <summary>Two rounds of changes, then a third round that passes.</summary>
+    private async Task<string> PassedAtTheThirdRound(string issue)
+    {
+        var code = await Looping(issue, 2);
+        Commit(F(code).Worktree, "fix3.txt");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        await Started(_legs, code);
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", "read the fixes")).Error.ShouldBeNull();
+        return code;
+    }
+
+    [Fact]
+    public async Task AReviewTheNodeTurnedBackAfterAPassingThirdRoundIsNotHeld()
+    {
+        var code = await PassedAtTheThirdRound("1");
+        var head = Git(F(code).Worktree, "rev-parse", "HEAD");
+
+        (await _legs.ChecksFailedAsync(code, head, Ct)).ShouldBeNull();
+        F(code).Review!.State.ShouldBe(ReviewState.Changes);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewLoopKind);
+
+        (await Run(Verbs.GoAround, $"flight/{code}/parser", Tower, "the PR's checks failed")).Error.ShouldBeNull();
+        F(code).ReviewRoundsAllowed.ShouldBeNull();
+
+        var worker = _state.Legs(code).Single(l => l.Name == "parser").Worker!;
+        Commit(F(code).Worktree, "fix4.txt");
+        (await Run(Verbs.Check, $"flight/{code}/parser", worker, "1")).Ok.ShouldBeTrue();
+        var before = _workers.Started.Count;
+        (await Run(Verbs.FinishLeg, $"flight/{code}/parser", worker, "done", "checks fixed")).Error.ShouldBeNull();
+        await Started(_legs, code);
+
+        _workers.Started.Count.ShouldBeGreaterThan(before);
+        _workers.Started.Last().Name.ShouldBe(Reviewer(code));
+    }
+
+    [Fact]
+    public async Task APassSpendsNoneOfTheRoundsALoopMayTake()
+    {
+        var code = await PassedAtTheThirdRound("1");
+        Commit(F(code).Worktree, "fix4.txt");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        await Started(_legs, code);
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+
+        // Changes, changes, pass, changes: three rounds asked for changes, so the loop is held at the fourth round.
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
+    }
+
+    [Fact]
+    public async Task TheFlightsOwnWorkerIsNotThePersonAtAHeldLoop()
+    {
+        var code = await Looping("1", 3);
+        var worker = _state.Legs(code).Single(l => l.Name == "parser").Worker!;
+
+        (await Run(Verbs.GoAround, $"flight/{code}/parser", worker, "again")).Error.ShouldNotBeNull().ShouldContain("watchtower's call");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), Reviewer(code))).Error.ShouldNotBeNull().ShouldContain("watchtower's call");
+        F(code).ReviewRoundsAllowed.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task APersonsStartReviewThatIsRefusedAllowsNoRound()
+    {
+        var code = await Looping("1", 3);
+        (await Run(Verbs.GoAround, $"flight/{code}/parser", Tower, "x")).Error.ShouldNotBeNull();
+        _state.PutLeg(_state.Legs(code).Single(l => l.Name == "parser") with { State = LegState.Flying });
+
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldNotBeNull().ShouldContain("legs not done");
+        F(code).ReviewRoundsAllowed.ShouldBeNull();
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
+    }
+
     [Fact]
     public void TheWatchtowerBriefSaysAReviewLoopIsItsJobAndAFourthRoundNeedsItsWord()
     {

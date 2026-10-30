@@ -82,6 +82,8 @@ public sealed class ReReviewTests : ReviewTestsBase
         (review.State, review.ReviewedHead, review.StatusState).ShouldBe((ReviewState.Passed, head, "success"));
         _github.Statuses.Last().Sha.ShouldBe(head);
         _state.Cards().ShouldContain(c => c.Bin == CardBin.Handled && c.Title.Contains("review kept"));
+        // The kept round moves to the merged head, so the next re-review does not range over the base's commits.
+        F(code).ReviewRounds.ShouldNotBeNull().Last().Head.ShouldBe(head);
     }
 
     [Fact]
