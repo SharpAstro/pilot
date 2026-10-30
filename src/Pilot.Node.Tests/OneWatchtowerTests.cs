@@ -192,4 +192,44 @@ public sealed class OneWatchtowerTests : IDisposable
 
         _state.Sessions().Length.ShouldBe(2);
     }
+
+    private const string Renamed = "du1-pil455-pr498-merge-ready";
+
+    [Fact]
+    public async Task ARenamedWatchtowerKeepsItsRoleAndHasNoFlight()
+    {
+        using var profile = new TempProfile();
+        var agents = new FakeClaudeAgents();
+        var tracker = new SessionTracker(_state, agents, profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance);
+
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, Renamed, "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        row.Role.ShouldBe(SessionRole.Watchtower);
+        row.Flight.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARestartedNodeKnowsARenamedWatchtowerByItsSessionId()
+    {
+        using var profile = new TempProfile();
+        var agents = new FakeClaudeAgents();
+        var tracker = new SessionTracker(_state, agents, profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance)
+        {
+            IsWatchtowerId = id => id == AgentRows.SessionA,
+        };
+
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, Renamed, "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        row.Role.ShouldBe(SessionRole.Watchtower);
+        row.Flight.ShouldBeNull();
+
+        var command = new CommandRequest { Verb = Verbs.Say, Target = "x", Who = row.Name, Agent = true };
+        Standing.Of(command, _state, "du1-watchtower").Flight.ShouldBeNull();
+    }
 }

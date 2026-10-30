@@ -164,6 +164,16 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>Whether <paramref name="id"/> is a row id or a session id of a watchtower the node has had, whatever it is called now.</summary>
+    public bool KnowsId(string id)
+    {
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            return _generations.Any(g => g.Job == id || g.SessionId == id);
+        }
+    }
+
     /// <summary>
     /// The watchtower's row now: the one it started, else the newest of its name, live first. One renamed is not current: it
     /// is still the node's, but stopped (<see cref="StopOthersAsync"/>), and cards go to the current one only.
