@@ -238,6 +238,7 @@ public sealed partial class LegCommander
                 Slots.SayCycle(Verbs.FlightTarget(flight.Code), breaking.Card);
                 break;
         }
+        Slots.PublishState();
         if (leg is not null)
         {
             if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { } now && now.Queued != why)

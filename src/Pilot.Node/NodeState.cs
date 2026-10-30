@@ -52,6 +52,7 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private MachineRow? _machine;
+    private AdmissionRow? _admission;
     private PullRequestsRow? _pullRequests;
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
@@ -642,6 +643,29 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The admission as last put; null before any.</summary>
+    public AdmissionRow? Admission()
+    {
+        lock (_gate)
+        {
+            return _admission;
+        }
+    }
+
+    /// <summary>Puts the admission when it differs from the one held, so a sweep that finds the same count adds no delta.</summary>
+    public void PutAdmission(AdmissionRow row)
+    {
+        lock (_gate)
+        {
+            if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+            {
+                return;
+            }
+            Publish(new AdmissionChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Admission = row });
+        }
+    }
+
     /// <summary>Every open PR of the repos pilot works in as last read; null before any.</summary>
     public PullRequestsRow? PullRequests()
     {
@@ -867,6 +891,9 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case AdmissionChangedEvent admission:
+                _admission = admission.Admission;
+                break;
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
                 break;
@@ -916,6 +943,7 @@ public sealed class NodeState
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
+        _admission = snapshot.Admission;
         _pullRequests = snapshot.PullRequests;
         foreach (var job in snapshot.Jobs ?? [])
         {
@@ -944,6 +972,7 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Machine = _machine,
+        Admission = _admission,
         PullRequests = _pullRequests,
         Jobs = [.. _jobs.Values],
         PrReviews = [.. _prReviews.Values],

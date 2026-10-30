@@ -129,7 +129,7 @@ else if (options.Capture is not null)
         {
             if (await events.ReadAsync(CancellationToken.None) is SnapshotEvent live)
             {
-                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
+                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs, live.Admission), screen.Source, now) { Admission = live.Admission };
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
@@ -154,7 +154,7 @@ else
 
 if (options.Capture is { } capturePath)
 {
-    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
+    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs, snapshot.Admission), screen.Source, snapshot.At) { Admission = snapshot.Admission };
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
@@ -776,7 +776,7 @@ FleetScreen? fleet = null;
 ReposScreen? repos = null;
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
-FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
+FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs, snapshot.Admission), screen.Source, snapshot.At) { Admission = snapshot.Admission };
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();

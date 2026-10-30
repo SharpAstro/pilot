@@ -166,6 +166,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     public async Task SweepAsync(CancellationToken cancellationToken)
     {
         var view = await Fleet.RefreshAsync(cancellationToken);
+        PublishState();
         var opus = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).ToArray();
         if (Fleet.IsOwner(view))
         {
@@ -185,6 +186,30 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         {
             Fleet.Forget();
         }
+    }
+
+    /// <summary>
+    /// Puts what the clients show of the admission on the snapshot: the Opus sessions counted (this node's, and the leases of the other nodes when it
+    /// keeps the count), the cap, the priority flights and whether peers were left out. Called on the sweep; a count that did not change adds no delta.
+    /// </summary>
+    public void PublishState()
+    {
+        var view = Fleet.Cached;
+        var (cap, onePerRepo) = Fleet.Settings(view, models());
+        var own = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).Select(s => s.Label);
+        var leased = Fleet.IsOwner(view)
+            ? Fleet.Leases().Where(l => !l.Node.Equals(machine, StringComparison.OrdinalIgnoreCase) && Admission.IsOpus(l.Model)).Select(l => $"{l.Label} on {l.Node}")
+            : [];
+        var counted = own.Concat(leased).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        state.PutAdmission(new AdmissionRow
+        {
+            OpusCount = counted.Length,
+            OpusCap = cap,
+            OneFlightPerRepo = onePerRepo,
+            Counted = counted,
+            Priority = [.. state.Flights().Where(f => f.State != FlightState.Landed && IsPriority(f)).Select(f => f.Code).Order(StringComparer.Ordinal)],
+            PeersNotCounted = FleetAdmission.Note(view),
+        });
     }
 
     /// <summary>What this node publishes of its admission: its settings, the sessions it counts and, when it keeps the count, the leases.</summary>

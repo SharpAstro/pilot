@@ -342,6 +342,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
             Cards = [.. _mirror.Cards.Values],
             Usage = _mirror.Usage,
             Machine = _mirror.Machine,
+            Admission = _mirror.Admission,
             Jobs = [.. _mirror.Jobs.Values],
             PrReviews = [.. _mirror.PrReviews.Values],
         };
