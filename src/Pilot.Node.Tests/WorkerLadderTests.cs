@@ -134,11 +134,11 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
         await GoAround(1);
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "stuck")).Ok.ShouldBeTrue();
-        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Redo leg parser (redo 2, on Opus)");
+        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Send parser round again to stuck (round 2, on Opus)");
 
         await GoAround(1);
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "stuck again")).Ok.ShouldBeTrue();
-        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Redo leg parser (redo 3, on Opus at xhigh)");
+        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Send parser round again to stuck again (round 3, on Opus at xhigh)");
     }
 
     [Theory]

@@ -38,7 +38,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AFailedLegSaysWhichLegGaveUp()
+    public async Task AFailedLegSaysWhichLegStopped()
     {
         var flight = await NewFlight("42", "parser");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
@@ -48,7 +48,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == "leg-failed");
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Redo leg");
+        card.Summary.ShouldContain("Send parser round again");
+        card.Summary.ShouldNotContain("gave up");
     }
 
     [Fact]

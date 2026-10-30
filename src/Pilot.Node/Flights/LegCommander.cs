@@ -194,7 +194,7 @@ public sealed partial class LegCommander(
 
         // A leg done (or a failed one marked done anyway): the flight goes on by itself to what needs no person, its next leg or
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
-        if (error is null && command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted")
+        if (error is null && command.Verb == Verbs.FinishLeg && (command.Args ?? []).FirstOrDefault() is "done" or "accepted" or PushedWithLease or MergedWithOrigin)
         {
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
         }
@@ -1098,6 +1098,11 @@ public sealed partial class LegCommander(
         // next leg with no go-around to stage (TIA1737's S2, 2026-10-23, closed by a go-around that only finished it). Its
         // card said "Accept the read", and nobody knew what that did (SE1, 2026-10-25): the words now say what happens.
         // The command keeps its word, accepted.
+        if (outcome is PushedWithLease or MergedWithOrigin)
+        {
+            await FinishPushBlockedAsync(command, flight, leg, outcome, args, cancellationToken);
+            return;
+        }
         if (outcome == "accepted")
         {
             if (leg.State != LegState.Failed)
@@ -1212,14 +1217,20 @@ public sealed partial class LegCommander(
                 {
                     break;
                 }
+                // A leg whose work is done and whose check passes, but whose branch needs a force push, is no failure: its own card.
+                if (await RaisePushBlockedAsync(flight, leg, report, cancellationToken))
+                {
+                    break;
+                }
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null });
+                var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{flight.Code}/{leg.Name} failed", report.Length > 0 ? report : null,
+                    $"{flight.Code}/{leg.Name} stopped: {reason}", report.Length > 0 ? report : null,
                     [
-                        new CardChoice { Label = Models.RedoLabel(leg), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        new CardChoice { Label = Models.SendBackLabel(leg, report.Length > 0 ? $"Send {leg.Name} round again to {reason}" : $"Send {leg.Name} round again"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
-                    summary: $"The worker of {flight.Code}/{leg.Name} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.");
+                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
@@ -1243,6 +1254,129 @@ public sealed partial class LegCommander(
                 await StopQuietly(job, cancellationToken);
             }
         }
+    }
+
+    /// <summary>The outcome of <c>finish-leg</c> that pushes a rebased branch over origin's with a lease on the sha the card named (the controller's).</summary>
+    public const string PushedWithLease = "pushed-with-lease";
+
+    /// <summary>The outcome of <c>finish-leg</c> that merges origin's branch into the plane and pushes plain (the controller's).</summary>
+    public const string MergedWithOrigin = "merged-with-origin";
+
+    /// <summary>The card a failed finish raises when the leg's work is done and its check passes but its branch needs a force push or a merge.</summary>
+    public const string PushBlockedKind = "push-blocked";
+
+    private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
+
+    /// <summary>
+    /// A leg finished failed whose plane is clean, steps ticked and check passing at its head, while origin/&lt;branch&gt; exists and is not an
+    /// ancestor of that head (the plane was rebased off a pushed branch): it is not a failure, its card says what is blocked and offers the
+    /// two ways up. Nothing is pushed here. False when the leg is not in that case, and the ordinary failed card is raised.
+    /// </summary>
+    private async Task<bool> RaisePushBlockedAsync(FlightRow flight, LegRow leg, string report, CancellationToken cancellationToken)
+    {
+        if (leg.Check is not { Length: > 0 } check || leg.Checklist.Any(i => !i.Done))
+        {
+            return false;
+        }
+        var seen = leg;
+        var found = await OffLockAsync(null, async Task<(string Head, string Origin, CheckRun Run)?> () =>
+        {
+            if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is not null)
+            {
+                return null;
+            }
+            var tracking = $"refs/remotes/origin/{flight.Branch}";
+            await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken);
+            var remote = await git.RunAsync(["rev-parse", "--verify", "--quiet", tracking], flight.Worktree, cancellationToken);
+            var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+            if (!remote.Ok || !head.Ok || (await git.RunAsync(["merge-base", "--is-ancestor", tracking, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+            {
+                return null;
+            }
+            return (head.Output.Trim(), remote.Output.Trim(), await checks.RunAsync(check, flight.Worktree, cancellationToken));
+        });
+        if (found is not { Run.Passed: true } blocked)
+        {
+            return false;
+        }
+        leg = Unchanged(flight.Code, seen) is { } current
+            ? current
+            : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was looked at: nothing was recorded, look again and finish again");
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
+        state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
+            $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
+            $"Check passed at {Short(blocked.Head)}, origin/{flight.Branch} at {Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            [
+                new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
+                new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
+            ],
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+        return true;
+    }
+
+    /// <summary>
+    /// The two controller-only ways up for a leg whose card is <see cref="PushBlockedKind"/>: the rebased branch pushed with
+    /// <c>--force-with-lease</c> naming the sha origin held when the card was raised, or origin's branch merged in and pushed plain (a
+    /// conflict sends the leg round again with that named). Either reruns the check first and marks the leg done once it is up.
+    /// </summary>
+    private async Task FinishPushBlockedAsync(CommandRequest command, FlightRow flight, LegRow leg, string outcome, string[] args, CancellationToken cancellationToken)
+    {
+        if (leg.State != LegState.Failed)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg whose branch is blocked is pushed this way");
+        }
+        if (IsWatchtower(command.Who) || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+        {
+            throw new FlightException($"pushing {flight.Code}/{leg.Name}'s branch past origin's is the controller's, not {command.Who}'s");
+        }
+        var leased = outcome == PushedWithLease
+            ? args.Length > 1 && args[1].Length > 0 ? args[1] : throw new FlightException($"{PushedWithLease} names the sha origin/{flight.Branch} held when the card was raised")
+            : null;
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var seen = leg;
+        string? conflict = null;
+        string? problem;
+        using (Calling(flight.Code, $"having {leg.Name}'s branch pushed"))
+        {
+            problem = await OffLockAsync(null, async Task<string?> () =>
+            {
+                var tracking = $"refs/remotes/origin/{flight.Branch}";
+                if (leased is null)
+                {
+                    await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken);
+                    var merge = await git.RunAsync(["merge", "--no-edit", tracking], flight.Worktree, cancellationToken);
+                    if (!merge.Ok)
+                    {
+                        await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
+                        conflict = $"merging origin/{flight.Branch} into the plane conflicts ({merge.Why}): resolve it, keeping both sides' work, then finish again";
+                        return null;
+                    }
+                }
+                if (leg.Check is { Length: > 0 } check && await checks.RunAsync(check, flight.Worktree, cancellationToken) is { Passed: false } run)
+                {
+                    return $"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); nothing was pushed. Last of its output:\n{run.Tail}";
+                }
+                await EnsureNotArmedAsync(flight, cancellationToken);
+                var push = await git.RunAsync(leased is null ? ["push", "-u", "origin", flight.Branch] : ["push", "-u", $"--force-with-lease={flight.Branch}:{leased}", "origin", flight.Branch], flight.Worktree, cancellationToken);
+                return push.Ok ? null : $"git could not push {flight.Branch}: {push.Why}";
+            });
+        }
+        if (conflict is not null)
+        {
+            await GoAroundAsync(new CommandRequest { Verb = Verbs.GoAround, Target = command.Target, Args = [conflict], Who = command.Who }, cancellationToken);
+            return;
+        }
+        if (problem is not null)
+        {
+            throw new FlightException(problem);
+        }
+        leg = Unchanged(flight.Code, seen) is { } current
+            ? current
+            : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was pushed: it is up, look again and finish again");
+        var done = leased is null ? $"origin/{flight.Branch} merged into the plane and pushed, check passing" : $"rebased branch pushed with lease over origin/{flight.Branch} at {Short(leased)}, check passing";
+        state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = leg.Report is { Length: > 0 } was ? $"{done}\n{was}" : done });
+        state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} pushed and done", PushBlockedKind, "leg-failed");
     }
 
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)

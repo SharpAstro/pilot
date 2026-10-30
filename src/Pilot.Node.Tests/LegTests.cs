@@ -1334,7 +1334,10 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Mark done anyway", Verbs.FinishLeg)]);
+        failed.Title.ShouldBe("TIA1/parser stopped: no ephemeris here");
+        failed.Title.ShouldNotContain("gave up");
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to no ephemeris here", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
         for (var i = 0; i < 100 && _workers.Stopped.Count == 0; i++)

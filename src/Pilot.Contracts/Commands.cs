@@ -216,6 +216,10 @@ public static class Verbs
     /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted [report…]</c>. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
+    /// Pushed-with-lease and merged-with-origin are the controller's too, for a failed leg whose push-blocked card says its rebased
+    /// branch cannot go up plain: the first (given the sha origin held, <c>pushed-with-lease &lt;sha&gt;</c>) reruns the check and pushes with
+    /// <c>--force-with-lease=&lt;branch&gt;:&lt;sha&gt;</c>; the second merges origin's branch into the plane, reruns the check and pushes plain
+    /// (a conflict sends the leg round again). Each marks the leg done and the flight goes on; both are refused to workers and the watchtower.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 
