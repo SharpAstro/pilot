@@ -654,18 +654,44 @@ public sealed class NodeState
 
     /// <summary>
     /// Puts the open issues of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
-    /// a delta with all the issues when they differ, nothing when they are the same.
+    /// a delta with all the issues when they differ, nothing when they are the same. A row read keeps the readiness the issue's row had
+    /// (<see cref="PutReadiness"/>): GitHub does not know it, so a read never takes it away.
     /// </summary>
     public void PutIssues(string repo, IEnumerable<IssueRow> read)
     {
         lock (_gate)
         {
-            var next = IssueIds.OrderIssues([.. _issues.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]).ToArray();
+            var kept = _issues.Where(i => i.Readiness is not null && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)).ToDictionary(i => i.Number, i => i.Readiness);
+            var next = IssueIds.OrderIssues([.. _issues.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)),
+                .. read.Select(i => i.Readiness is null && kept.TryGetValue(i.Number, out var readiness) ? i with { Readiness = readiness } : i)]).ToArray();
             // Age moves with the clock alone: a read that changes nothing else is no delta.
             if (next.Length != _issues.Length || next.Zip(_issues).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
             {
                 Publish(new IssuesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Issues = next });
             }
+        }
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="readiness"/> on the row of issue <paramref name="number"/> of <paramref name="repo"/> (a delta); false when the node has
+    /// no row for it. The answer lives on the row, so it goes when the issue leaves the open ones.
+    /// </summary>
+    public bool PutReadiness(string repo, int number, IssueReadiness readiness)
+    {
+        lock (_gate)
+        {
+            var at = Array.FindIndex(_issues, i => i.Number == number && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase));
+            if (at < 0)
+            {
+                return false;
+            }
+            if (_issues[at].Readiness != readiness)
+            {
+                var next = (IssueRow[])_issues.Clone();
+                next[at] = next[at] with { Readiness = readiness };
+                Publish(new IssuesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Issues = next });
+            }
+            return true;
         }
     }
 
@@ -854,15 +880,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
     {
         var result = new CommandResult
         {
@@ -877,6 +903,8 @@ public sealed class NodeState
             Setting = error is null ? setting : null,
             Tidy = error is null ? tidy : null,
             Milestones = error is null ? milestones : null,
+            Readiness = error is null ? readiness : null,
+            Suggestions = error is null ? suggestions : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,

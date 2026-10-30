@@ -85,7 +85,8 @@ public static class IdeaRows
 /// (made on the first one), id <c>I&lt;issue number&gt;</c>. Each verb checks the issue as GitHub has it now, never as the node
 /// last read it, and leaves the node's rows as GitHub then has them.
 /// </summary>
-public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null)
+public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null,
+    IIssueReadinessChecker? readiness = null, IMilestoneSuggester? suggester = null)
 {
     // Two plans of one idea must not both make a flight.
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -93,16 +94,22 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
     /// <summary>Where this says how long each step of noting an idea took: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone;
+    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone
+        or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
-        // Proposing writes nothing, so it must not queue behind (or hold up) the verbs that do: it runs Claude for minutes.
-        if (command.Verb == Verbs.ProposeMilestone)
+        // Proposing, checking and suggesting write nothing to GitHub, so they must not queue behind (or hold up) the verbs that do: they run Claude for minutes.
+        if (command.Verb is Verbs.ProposeMilestone or Verbs.CheckReady or Verbs.SuggestMilestones)
         {
             try
             {
-                return await ProposeAsync(command, cancellationToken);
+                return command.Verb switch
+                {
+                    Verbs.CheckReady => await CheckReadyAsync(command, cancellationToken),
+                    Verbs.SuggestMilestones => await SuggestMilestonesAsync(command, cancellationToken),
+                    _ => await ProposeAsync(command, cancellationToken),
+                };
             }
             catch (FlightException ex)
             {
@@ -121,6 +128,7 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
                 Verbs.MoveIdea => await MoveAsync(command, cancellationToken),
                 Verbs.FoldIdea => await FoldAsync(command, cancellationToken),
                 Verbs.SetMilestone => await SetMilestoneAsync(command, cancellationToken),
+                Verbs.AcceptMilestones => await AcceptMilestonesAsync(command, cancellationToken),
                 _ => await DropAsync(command, cancellationToken),
             };
         }
@@ -613,7 +621,17 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
             target = open.FirstOrDefault(m => string.Equals(m.Title, wanted, StringComparison.OrdinalIgnoreCase))?.Title
                 ?? throw new FlightException($"{name} has no open milestone {wanted} ({(open.Length > 0 ? $"it has {string.Join(", ", open.Select(m => m.Title))}" : "it has no open milestone")})");
         }
-        var made = $"{name} #{number.ToString(CultureInfo.InvariantCulture)}";
+        await MoveToMilestoneAsync(name, path, number, target, seen, refresh: true, cancellationToken);
+        return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// The guarded move <see cref="SetMilestoneAsync"/> and <see cref="AcceptMilestonesAsync"/> share: open issue <paramref name="number"/> put in the
+    /// milestone titled <paramref name="target"/> (null: none), which must exist already. Refused when the issue is closed, when it changed since
+    /// <paramref name="seen"/>, or when it kept changing under the write. The board is read again after it unless the caller does that once for many.
+    /// </summary>
+    private async Task MoveToMilestoneAsync(string name, string path, int number, string? target, DateTimeOffset? seen, bool refresh, CancellationToken cancellationToken)
+    {
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
             var now = await github.IssueNowAsync(path, number, cancellationToken)
@@ -630,13 +648,19 @@ public sealed class IdeaCommander(NodeState state, Planes planes, RepoCatalog re
             if (string.Equals(now.Milestone, target, StringComparison.OrdinalIgnoreCase))
             {
                 // Already where it was asked to go: nothing to write.
-                await RefreshBoardAsync(name, path, cancellationToken);
-                return state.Complete(command, null, made: made);
+                if (refresh)
+                {
+                    await RefreshBoardAsync(name, path, cancellationToken);
+                }
+                return;
             }
             if (await github.SetIssueMilestoneAsync(path, number, target, now.UpdatedAt, cancellationToken))
             {
-                await RefreshBoardAsync(name, path, cancellationToken);
-                return state.Complete(command, null, made: made);
+                if (refresh)
+                {
+                    await RefreshBoardAsync(name, path, cancellationToken);
+                }
+                return;
             }
             // GitHub moved on between the read and the write: read it again, and compare again (with what the caller saw too).
         }
