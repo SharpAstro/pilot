@@ -736,11 +736,12 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
-        var top = TopBar.Build(new PageHeader("ideas")
+        // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
+        var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, Autopilot, About, Night));
 
         var rows = new List<Layout.Node>();
         if (Send is not null)
