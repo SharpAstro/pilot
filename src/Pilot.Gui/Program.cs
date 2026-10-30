@@ -694,7 +694,7 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
         return granted ? null : chrome.Fleet.Said;
     }, $"connect {where}");
-    chrome.Fleet.OnConnect = line => _ = Connect(line.Where, line.Machine);
+    chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
     view.OnConnect = node => Connect(node.Where, node.Name);
     chrome.Jobs.OnConnect = node => Connect(node.Where, node.Name);
     chrome.Flights.OnConnect = node => Connect(node.Where, node.Name);
@@ -702,7 +702,7 @@ if (feed is not null && client is not null && clients is not null)
     // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
     // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
     // the next draw: the steerable set is read again at once, not at the 5 s look.
-    void Forget(string endpoint) => tracker.Run(() => Task.Run(() =>
+    Task<string?> ForgetAsync(string endpoint) => Tracked(() => Task.Run<string?>(() =>
     {
         // A file read, a write and a move: off the render thread.
         Pilot.Commands.NodeTargets.Forget(endpoint);
@@ -712,27 +712,33 @@ if (feed is not null && client is not null && clients is not null)
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: forgot {endpoint}");
         loop.RequestRedraw();
+        return (string?)null;
     }), $"forget {endpoint}");
-    chrome.Fleet.OnForget = line => Forget(line.Where);
+    chrome.Fleet.OnForget = line => ForgetAsync(line.Where);
     // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
-    chrome.Fleet.OnMaintenance = (line, on) => tracker.Run(async () =>
+    chrome.Fleet.OnMaintenance = (line, on) => Tracked(async () =>
     {
-        chrome.Fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token)).ReplaceLineEndings(" ").Trim();
+        var (refused, said) = await FleetCommands.TrySetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token);
+        chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
+        return refused;
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
     // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
     // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.
     if (remoteEndpoint is null)
     {
-        chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
+        chrome.Autopilot.OnToggle = on => Tracked(async () =>
         {
-            view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
-            Note($"pilot-gui: {view.SayStatus}");
+            var (refused, said) = await AutopilotCommands.TrySetAsync(client, on, GuiSay.Who, cts.Token);
+            view.SayStatus = said;
+            Note($"pilot-gui: {said}");
             loop.RequestRedraw();
+            return refused;
         }, $"autopilot {(on ? "on" : "off")}");
+        chrome.Autopilot.Changed = loop.RequestRedraw;
     }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
@@ -751,7 +757,7 @@ if (feed is not null && client is not null && clients is not null)
             ? given
             : throw new InvalidOperationException("the node did not send its grants");
         chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
-        chrome.Settings.Forget = Forget;
+        chrome.Settings.Forget = endpoint => _ = ForgetAsync(endpoint);
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();

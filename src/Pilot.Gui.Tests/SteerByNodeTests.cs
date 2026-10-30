@@ -362,7 +362,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
             FleetLine.From("node.sock", here: true, canCommand: true, null, Summary()),
             FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, null, Summary()),
         ], Live.At);
-        fleet.OnConnect = _ => { };
+        fleet.OnConnect = _ => Task.FromResult<string?>(null);
 
         var arranged = Layout.Engine.Arrange(fleet.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored);
         string[] buttons = [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("fleet:", StringComparison.Ordinal) && !a.StartsWith("fleet:table:", StringComparison.Ordinal))];

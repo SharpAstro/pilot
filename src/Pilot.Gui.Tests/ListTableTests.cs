@@ -159,7 +159,7 @@ public sealed class ListTableTests : IDisposable
     public void FleetWithNoDragLaysOutAsItAlwaysDidTheButtonsColumnIncluded()
     {
         var chrome = Chrome();
-        chrome.Fleet.OnConnect = _ => { };
+        chrome.Fleet.OnConnect = _ => Task.FromResult<string?>(null);
         var screen = FleetScreenOf();
         chrome.Fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
         var cells = Arranged(chrome.Fleet.Tree(screen));
@@ -184,7 +184,7 @@ public sealed class ListTableTests : IDisposable
     {
         var chrome = Chrome();
         var fleet = chrome.Fleet;
-        fleet.OnConnect = _ => { };
+        fleet.OnConnect = _ => Task.FromResult<string?>(null);
         var screen = FleetScreenOf();
         void Render() => fleet.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
         Render();

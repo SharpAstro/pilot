@@ -20,13 +20,13 @@ public sealed class PageButtonFeedbackTests
 
     // ---- the page's words and buttons, as the cell layout draws them ----
 
-    private static string Words(Layout.Node tree) =>
+    internal static string Words(Layout.Node tree) =>
         TestText.Flat(CellLayout.Describe(Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 200, 60), CellMeasureContext.PixelAuthored)));
 
-    private static bool Has(Layout.Node tree, string action) =>
+    internal static bool Has(Layout.Node tree, string action) =>
         Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 200, 60), CellMeasureContext.PixelAuthored).Any(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action);
 
-    private static void Click(Layout.Node tree, string action)
+    internal static void Click(Layout.Node tree, string action)
     {
         var arranged = Layout.Engine.Arrange(tree, new Rect<int>(0, 0, 200, 60), CellMeasureContext.PixelAuthored);
         var button = arranged.FirstOrDefault(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action);
@@ -35,7 +35,7 @@ public sealed class PageButtonFeedbackTests
     }
 
     /// <summary>The node: each ask is kept for the test to answer later, in order.</summary>
-    private sealed class LateNode
+    internal sealed class LateNode
     {
         public List<string> Asked { get; } = [];
         private readonly Queue<TaskCompletionSource<string?>> _answers = new();
@@ -52,7 +52,7 @@ public sealed class PageButtonFeedbackTests
         public void Answer(string? refusal) => _answers.Dequeue().SetResult(refusal);
     }
 
-    private static async Task Until(Func<bool> done)
+    internal static async Task Until(Func<bool> done)
     {
         for (var i = 0; i < 500 && !done(); i++)
         {

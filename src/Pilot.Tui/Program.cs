@@ -251,7 +251,7 @@ Task<string?> Connect(string where, string machine) => Task.Run<string?>(async (
     Redraw();
     return granted ? null : fleet.Said;
 });
-fleet.OnConnect = line => _ = Connect(line.Where, line.Machine);
+fleet.OnConnect = line => Connect(line.Where, line.Machine);
 // Rows on a node this user cannot steer are watch-only, with a Connect in place of their actions.
 sessions.CanSteer = clients.CanSteer;
 jobs.CanSteer = clients.CanSteer;
@@ -273,13 +273,19 @@ void Forget(string endpoint)
     sessions.SayStatus = fleet.Said;
     Redraw();
 }
-fleet.OnForget = line => Forget(line.Where);
-// Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
-fleet.OnMaintenance = (line, on) => _ = Task.Run(async () =>
+fleet.OnForget = line =>
 {
-    fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    Forget(line.Where);
+    return Task.FromResult<string?>(null);
+};
+// Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
+fleet.OnMaintenance = (line, on) => Task.Run<string?>(async () =>
+{
+    var (refused, said) = await FleetCommands.TrySetMaintenanceAsync(clients, line, on, Who, stop.Token);
+    fleet.Said = said.ReplaceLineEndings(" ").Trim();
     sessions.SayStatus = fleet.Said;
     Redraw();
+    return refused;
 });
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)

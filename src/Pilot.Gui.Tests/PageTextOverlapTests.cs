@@ -113,7 +113,7 @@ public sealed class PageTextOverlapTests
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
         chrome.Nodes.Choices = data.Nodes;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
         setup?.Invoke(chrome);

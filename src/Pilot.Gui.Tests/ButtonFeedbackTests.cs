@@ -129,7 +129,6 @@ public sealed class ButtonFeedbackTests
     // "*" is a button the chrome draws on every page.
     private static readonly (string Page, string Pattern)[] ToPort =
     [
-        ("*", "^autopilot:toggle$"),
         // A Merge or a Go around of a row asks the node through the card's own press, which the row does not show.
         ("pull requests", @"^pr:.+:(merge|go-around)$"),
     ];
@@ -151,7 +150,8 @@ public sealed class ButtonFeedbackTests
         (@"^home:", "a Home row opens its page"),
         (@"^repo:|^repos:", "the Repos page's folds and links"),
         (@"^transcript:", "the transcript's folds and its way back"),
-        (@"^wizard:", "the new-flight wizard's picks, steps and close; its own create is the wizard's"),
+        (@"^wizard:", "the new-flight wizard's picks, steps and close; its Create and Create issue go through its Presses"),
+        (@"^fleet:.+:(open|waiting)$", "opens a window of its own on that node, or takes a row's waiting count to those sessions"),
         (@"^card:[^:]+:(chat|leg)$", "opens the chat about the card, or the leg's page"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
     ];

@@ -884,6 +884,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         HeaderPill(label, action, _ => onClick(), tint, textColor);
 
+    /// <summary>A header pill with no hit: the working word of a header button whose press is with the node.</summary>
+    internal static Layout.Node DeadHeaderPill(string label, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
+            .WAuto()
+            .HFixed(AboutCard.HeaderButton)
+            .Bg(tint?.Bg ?? Button);
+
     /// <summary>A header button whose click is told which modifier keys were held: the node pills' Shift adds to the pick.</summary>
     internal static Layout.Node HeaderPill(string label, string action, Action<InputModifier> onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         Layout.Builder.Text(label, 12f, textColor ?? Bright, TextAlign.Center, TextAlign.Center)

@@ -35,6 +35,9 @@ internal sealed class Presses
     /// <summary>The hit ids of every node-bound button made through <see cref="Button"/> so far, for the test that lists the ones that bypass it.</summary>
     internal static IReadOnlyCollection<string> Made => [.. MadeIds.Keys];
 
+    /// <summary>Whether any press, of any key, is with the node now: a page's "working" line.</summary>
+    public bool AnyPending => !Volatile.Read(ref _pending).IsEmpty;
+
     /// <summary>The hit id of the button of <paramref name="key"/> whose press is with the node now, or null.</summary>
     public string? PendingOf(string key) => Volatile.Read(ref _pending).GetValueOrDefault(key);
 

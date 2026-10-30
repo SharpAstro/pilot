@@ -99,52 +99,57 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Action? Changed
     {
         get => _links.Changed;
-        set => _links.Changed = value;
+        set
+        {
+            _links.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
+    /// <summary>What a press of the page's Sync is doing: working with the node (the button reads "Syncing…" with no hit), or refused in the node's words.</summary>
+    internal Presses Presses { get; } = new();
+
+    private const string SyncKey = "repos:sync";
+
     /// <summary>Whether a sync is running now.</summary>
-    public bool Syncing { get; private set; }
+    public bool Syncing => Presses.PendingOf(SyncKey) is not null;
 
     /// <summary>What the last sync did to each repo; empty before one has run.</summary>
     public IReadOnlyList<RepoSyncOutcome> SyncOutcomes { get; private set; } = [];
 
     /// <summary>Why the last sync could not run (the node refused it); null when it ran.</summary>
-    public string? SyncError { get; private set; }
+    public string? SyncError => Presses.RefusedOf(SyncKey);
 
     /// <summary>
     /// Syncs the repos through <see cref="SyncRepos"/>: one at a time, the button shows it running, and the outcome of each repo
     /// stays under the header until the next sync or until it is put away.
     /// </summary>
-    public async Task SyncAsync()
+    public Task SyncAsync()
     {
-        if (SyncRepos is not { } sync || Syncing)
+        if (SyncRepos is not { } sync)
         {
-            return;
+            return Task.CompletedTask;
         }
-        Syncing = true;
-        SyncError = null;
-        Changed?.Invoke();
-        try
+        return Presses.PressAsync(SyncKey, SyncKey, async ct =>
         {
-            SyncOutcomes = await sync(CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            SyncOutcomes = [];
-            SyncError = ex.Message;
-        }
-        finally
-        {
-            Syncing = false;
-        }
-        Changed?.Invoke();
+            try
+            {
+                SyncOutcomes = await sync(ct);
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                SyncOutcomes = [];
+                throw;
+            }
+        });
     }
 
     /// <summary>Puts away the outcome list.</summary>
     public void ClearSync()
     {
         SyncOutcomes = [];
-        SyncError = null;
+        Presses.NoteRefused(SyncKey, null);
     }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
@@ -258,7 +263,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
             Buttons =
             [
-                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.HeaderPill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
+                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [Presses.Button(SyncKey, SyncKey, () => CardsView<TSurface>.HeaderPill("Sync", SyncKey, () => _ = SyncAsync()), _ => CardsView<TSurface>.DeadHeaderPill("Syncing…", Lit))]),
                 CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
             ],
             Lines = lines,

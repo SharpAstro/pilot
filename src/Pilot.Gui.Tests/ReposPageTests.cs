@@ -190,7 +190,7 @@ public sealed class ReposPageTests
         using var renderer = new RgbaImageRenderer(2000, 800);
         var (chrome, repos) = Chrome(renderer);
         repos.SyncRepos = _ => Task.FromResult<RepoSyncOutcome[]>([]);
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
 
         var arranged = Layout.Engine.Arrange(repos.Tree(Screen()), new Rect<float>(0, 0, 2000, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         Rect<float> Of(string action) => arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Bounds;
@@ -434,15 +434,14 @@ public sealed class ReposPageTests
         ClickCell(repos, screen, b => b.Action == "repos:sync");
         repos.Syncing.ShouldBeTrue();
         CellLayout.Describe(Arrange(repos, screen)).ShouldContain("Syncing…");
-        // A second press while it runs does nothing.
-        ClickCell(repos, screen, b => b.Action == "repos:sync");
+        // A second press while it runs is not there to make: the button has no hit.
+        Arrange(repos, screen).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action == "repos:sync");
 
         running.SetResult([
             new RepoSyncOutcome { Name = "orbit", Status = RepoSyncStatus.Updated, Detail = "main took 2 commits from origin/main" },
             new RepoSyncOutcome { Name = "widgets", Status = RepoSyncStatus.Skipped, Detail = "the main checkout is on feature/grid, not main" },
         ]);
-        await Until(() => !repos.Syncing);
-        redraws.ShouldBe(2);
+        await Until(() => !repos.Syncing && redraws == 2);
         var text = CellLayout.Describe(Arrange(repos, screen));
         text.ShouldContain("sync: 1 skipped, 1 updated");
         text.ShouldContain("orbit  updated  main took 2 commits from origin/main");
