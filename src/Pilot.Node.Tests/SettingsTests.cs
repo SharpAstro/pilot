@@ -69,9 +69,29 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, merge-method, maintenance, accept-fleet-flights, autopilot, shortcut-token, repo-trackers, no-auto-merge-repos, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, merge-method, maintenance, accept-fleet-flights, autopilot, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
+
+    [Fact]
+    public void TheOpusCapAndTheOneFlightPerRepoModeAreSettingsWithDefaults()
+    {
+        var none = new RoleModels(null);
+        (none.OpusCap, none.OneFlightPerRepo).ShouldBe((3, false));
+        var set = NodeSettings.With(NodeSettings.With(new NodeSettings(), "opus-cap", ["0"]).Settings!, "one-flight-per-repo", ["on"]).Settings!;
+        var models = new RoleModels(set);
+        (models.OpusCap, models.OneFlightPerRepo).ShouldBe((0, true));
+        set.Get("opus-cap").ShouldBe(["0"]);
+        set.Get("one-flight-per-repo").ShouldBe(["on"]);
+        NodeSettings.With(set, "opus-cap", ["default"]).Settings!.OpusCap.ShouldBeNull();
+        NodeSettings.With(set, "one-flight-per-repo", ["default"]).Settings!.OneFlightPerRepo.ShouldBeNull();
+        NodeSettings.With(new NodeSettings(), "opus-cap", ["many"]).Error.ShouldNotBeNull();
+        NodeSettings.With(new NodeSettings(), "one-flight-per-repo", ["maybe"]).Error.ShouldBe("one-flight-per-repo takes on or off");
+        var file = Path.Combine(_root, NodeSettings.FileName);
+        set.Write(file);
+        var read = NodeSettings.Read(file);
+        (read.OpusCap, read.OneFlightPerRepo).ShouldBe((0, true));
+    }
 
     [Fact]
     public void DefaultOrNothingTakesASettingOut()

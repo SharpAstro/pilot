@@ -36,6 +36,8 @@ public sealed record NodeSettings
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    public const string OpusCapKey = "opus-cap";
+    public const string OneFlightPerRepoKey = "one-flight-per-repo";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -43,13 +45,19 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r));
 
     public bool? Lan { get; init; }
+
+    /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
+    public int? OpusCap { get; init; }
+
+    /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool? OneFlightPerRepo { get; init; }
 
     /// <summary>Whether the node takes no new flight (<see cref="MaintenanceKey"/>): flights already made carry on, a create-flight is refused.</summary>
     public bool? Maintenance { get; init; }
@@ -141,6 +149,8 @@ public sealed record NodeSettings
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
+                    OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
+                    OpusCapKey => JsonValue.Create(OpusCap),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     LanPortKey => JsonValue.Create(LanPort),
@@ -166,6 +176,8 @@ public sealed record NodeSettings
     {
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
+        OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
+        OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
@@ -217,6 +229,22 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } maintenance
                     ? (settings with { Maintenance = maintenance }, null)
                     : (null, "maintenance takes on or off");
+            case OneFlightPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { OneFlightPerRepo = null }, null);
+                }
+                return OnOff(One()) is { } oneFlight
+                    ? (settings with { OneFlightPerRepo = oneFlight }, null)
+                    : (null, "one-flight-per-repo takes on or off");
+            case OpusCapKey:
+                if (clear)
+                {
+                    return (settings with { OpusCap = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
+                    ? (settings with { OpusCap = opus }, null)
+                    : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {

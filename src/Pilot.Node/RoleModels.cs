@@ -227,6 +227,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
+    public int OpusCap
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OpusCap ?? 3;
+            }
+        }
+    }
+
+    /// <summary>Whether only one flight per repo flies at a time (<see cref="NodeSettings.OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool OneFlightPerRepo
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OneFlightPerRepo ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
     public static bool IsModel(string value) => ModelName().IsMatch(value);
 
