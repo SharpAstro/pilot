@@ -250,7 +250,9 @@ public sealed class PrFixTests2 : PrFixTestsBase
             Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
         });
 
-        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        // A flight's PR has one review, the flight's (PIL483): review-pr on it is refused, so no reviewer and no fixer start.
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("flight review WID1");
+        _reviews.Of(new PrRef("acme", "widget", 7)).ShouldBeNull();
 
         Fixers.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixOfferKind || c.Kind == PrReviews.DesignKind);
