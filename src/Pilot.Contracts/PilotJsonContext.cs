@@ -46,6 +46,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(MachineGpu))]
 [JsonSerializable(typeof(MachineProcess))]
 [JsonSerializable(typeof(JobRow))]
+[JsonSerializable(typeof(ReviewRound))]
 [JsonSerializable(typeof(MergeRow))]
 [JsonSerializable(typeof(PrReviewRow))]
 [JsonSerializable(typeof(IdeaRow))]

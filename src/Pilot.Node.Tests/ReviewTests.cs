@@ -901,7 +901,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         // A clean merge of the base alone: the pass goes with the head, and the PR-ready card offers the merge at it.
-        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        F("TIA6").Review.ShouldNotBeNull().ShouldSatisfyAllConditions(r => r.State.ShouldBe(ReviewState.Passed), r => r.ReviewedHead.ShouldBe(Git(F("TIA6").Worktree, "rev-parse", "HEAD")));
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
