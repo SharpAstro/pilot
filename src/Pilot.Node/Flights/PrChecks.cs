@@ -596,6 +596,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            HandOver(flight, pr);
             if (pr is not null && pr.Number == number && pr.State is "MERGED" or "CLOSED")
             {
                 var merged = pr.State == "MERGED";

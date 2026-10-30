@@ -411,7 +411,10 @@ public sealed class PullRequestsTests : IDisposable
 
         var json = JsonSerializer.Serialize(row, PilotJsonContext.Default.PullRequestsRow);
         json.ShouldContain("\"kind\":\"InMergeQueue\"");
-        JsonSerializer.Deserialize(json, PilotJsonContext.Default.PullRequestsRow)!.PullRequests.Single().ShouldBe(row.PullRequests.Single());
+        // Records compare an array by reference, so the labels are compared on their own.
+        var back = JsonSerializer.Deserialize(json, PilotJsonContext.Default.PullRequestsRow)!.PullRequests.Single();
+        back.Labels.ShouldBe(row.PullRequests.Single().Labels);
+        (back with { Labels = row.PullRequests.Single().Labels }).ShouldBe(row.PullRequests.Single());
     }
 
     [Fact]
