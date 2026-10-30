@@ -109,6 +109,18 @@ public sealed class IdeasPaneTests
     }
 
     [Fact]
+    public void TheTitleNamesTheNodeAndNoNodePillIsOfferedWithSeveralNodes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.Nodes = new NodeFilter { Choices = [new NodeMark("here", "/sock", "DE1", Here: true), new NodeMark("se1", "http://se1", "SE1", Here: false)] };
+        var screen = Sample();
+
+        Texts(renderer, chrome, screen, 1280).Select(t => t.Text).ShouldContain("DE1's ideas (this machine)");
+        Actions(Regions(chrome, screen)).ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task EnterNotesTheIdeaWithThePageThePersonWasOnAndNoRepoPicker()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);

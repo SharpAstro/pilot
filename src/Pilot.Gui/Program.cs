@@ -626,6 +626,17 @@ if (feed is not null && client is not null && clients is not null)
             throw new InvalidOperationException(refused);
         }
     };
+    // Address review on a PR no flight owns is `pilot review fix` (fix-pr); a flight's presses its card's go-around (chrome wires it).
+    chrome.PullRequests.OnFixReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.FixPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Note($"pilot-gui: review fix {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
