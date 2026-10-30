@@ -320,10 +320,12 @@ public sealed class RepoStatusTests : IDisposable
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "planets");
 
         await using var node = await NodeHarness.StartAsync(Ct);
+        // The node reads from boot, before this flight is put: let that read end (it knows no repo, so asks gh nothing), then read afresh.
+        await node.Client.GetRepoStatusAsync(Ct);
         node.State.PutFlight(flight);
         node.GitHub.OpenPrs[repo] = [new PullRequestStatus { Number = 5, Title = "Planets", Head = flight.Branch, Checks = ChoiceStatus.Failing }];
 
-        var envelope = await node.Client.GetRepoStatusAsync(Ct);
+        var envelope = await node.Client.GetRepoStatusAsync(Ct, refresh: true);
 
         envelope.Success.ShouldBeTrue(envelope.Error);
         var status = envelope.Response!.Single();
