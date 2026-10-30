@@ -35,32 +35,16 @@ internal sealed partial class FlightsView<TSurface>
     internal FlightCanvas Canvas => _canvas;
 
     // Grid and List say it better as the marks DIR.Lib draws, each with the word as its tooltip; Canvas stays a word
-    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor.
-    private Layout.Node ViewSwitch()
-    {
-        ReadOnlySpan<Layout.ButtonGroupOption<FlightsViewMode>> options =
-        [
-            new(FlightsViewMode.Canvas, "Canvas") { Hit = new HitResult.ButtonHit("flights:view:canvas") },
-            new(FlightsViewMode.Grid, Icon: Layout.IconKind.Grid) { Hit = new HitResult.ButtonHit("flights:view:grid"), Tooltip = "Grid" },
-            new(FlightsViewMode.List, Icon: Layout.IconKind.List) { Hit = new HitResult.ButtonHit("flights:view:list"), Tooltip = "List" },
-        ];
-        var style = new Layout.ButtonGroupStyle(RowFocusBg, Button, Bright, Dim, ButtonHover)
-        {
-            Gap = 2f,
-            InsetFraction = 0.75f,
-            SegmentWidth = ViewSwitchSegment,
-        };
-        var group = Layout.Builder.ButtonGroup(options, Mode, mode => Mode = mode, style, 12f);
-        // Its height given, as the header's buttons have theirs: the group's segments are height-star (an inset band between
-        // star spacers), and under a row sized by its content they got none, so the switch drew its words at the top and
-        // its icons and fills not at all (SE1, 2026-10-25).
-        return (group is Layout.Node.Stack stack ? stack with { Children = [.. stack.Children.Select(c => c.WithCursor(CursorKind.Pointer))] } : group)
-            .WFixed(ViewSwitchWidth)
-            .HFixed(AboutCard.HeaderButton);
-    }
+    // until DIR.Lib has a mark for them (SharpAstro/DIR.Lib#151). Every segment keeps the flights:view:* id a pill had, and the hand cursor;
+    // the switch is the one the Ideas pane shares (ViewSwitch).
+    private static readonly ViewChoice<FlightsViewMode>[] ViewChoices =
+    [
+        new(FlightsViewMode.Canvas, "flights:view:canvas", "Canvas", AsWord: true),
+        new(FlightsViewMode.Grid, "flights:view:grid", "Grid", Icon: Layout.IconKind.Grid),
+        new(FlightsViewMode.List, "flights:view:list", "List", Icon: Layout.IconKind.List),
+    ];
 
-    private const float ViewSwitchSegment = 60f;
-    private const float ViewSwitchWidth = 3 * ViewSwitchSegment + 2 * 2f;
+    private Layout.Node ViewSwitch() => Pilot.Ui.ViewSwitch.Build(ViewChoices, Mode, mode => Mode = mode, P);
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)

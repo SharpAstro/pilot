@@ -797,7 +797,7 @@ CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
-IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At);
+IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At) { Milestones = snapshot.Milestones, Issues = snapshot.Issues };
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);

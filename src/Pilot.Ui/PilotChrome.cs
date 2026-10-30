@@ -204,6 +204,17 @@ internal sealed class PilotChrome<TSurface>
             });
             Chat.Attach(card, node);
         };
+        // An idea's or issue's Chat about this, on the Ideas page: this node's chat with the words that start it in the box (an idea
+        // has no card to quote), for the person to finish.
+        Ideas.OnChatAbout = text =>
+        {
+            Navigate(() =>
+            {
+                Chat.SwitchTo(null);
+                Switch(PilotPage.Chat, _show);
+            });
+            Chat.Prefill(text);
+        };
         // A reached node's own watchtower, from its row on the Fleet page; this node's row opens the fleet chat.
         Fleet.OnChat = line =>
         {
