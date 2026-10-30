@@ -405,7 +405,7 @@ public sealed class CliTests : IAsyncLifetime
     {
         var plane = await FlightWithAValidatorFlying("1612");
 
-        var (exit, output, error) = await Pilot(plane, "leg", "finish", "verified");
+        var (exit, output, error) = await Pilot(plane, "leg", "finish", "verified", "--leg", "TIA1612/render");
 
         exit.ShouldNotBe(0);
         (output + error).ShouldContain("only a failed leg is verified done");
