@@ -51,7 +51,7 @@ public sealed class LfsTests : IDisposable
         }
     }
 
-    private string Git(string cwd, params string[] args)
+    private static string Git(string cwd, params string[] args)
     {
         var (code, output) = Run(cwd, args);
         code.ShouldBe(0, $"git {string.Join(' ', args)}: {output}");
