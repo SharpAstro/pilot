@@ -180,6 +180,9 @@ public sealed class SessionTracker : BackgroundService
         return new Resuming(this, row.Id);
     }
 
+    /// <summary>Claude Code's profile folder, which says whether a session has respawn flags on file.</summary>
+    public ClaudeProfile Profile => _options.Profile;
+
     /// <summary>
     /// The name a row's session is resumed under, and listed by: its own, not the one its row shows (a renamed session's row
     /// carries the node's prefix before it). Null for a session with no name.

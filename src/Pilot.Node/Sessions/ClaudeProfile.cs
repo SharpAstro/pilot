@@ -45,6 +45,37 @@ public sealed class ClaudeProfile(string root)
         }
     }
 
+    /// <summary>
+    /// Whether Claude Code keeps respawn flags for the session: <c>jobs/&lt;first eight of the id&gt;/state.json</c> has a
+    /// non-empty <c>respawnFlags</c>. A missing file, unreadable JSON or no flags all count as none.
+    /// </summary>
+    public bool HasRespawnFlags(string sessionId)
+    {
+        var job = sessionId.Length > 8 ? sessionId[..8] : sessionId;
+        if (!IsSafeId(job))
+        {
+            return false;
+        }
+        try
+        {
+            using var stream = new FileStream(Path.Combine(Root, "jobs", job, "state.json"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var doc = JsonDocument.Parse(stream);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("respawnFlags", out var flags)
+                && flags.ValueKind switch
+                {
+                    JsonValueKind.Array => flags.GetArrayLength() > 0,
+                    JsonValueKind.String => flags.GetString() is { Length: > 0 },
+                    JsonValueKind.Object => flags.EnumerateObject().Any(),
+                    _ => false,
+                };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The transcript of a session, <c>projects/&lt;folder&gt;/&lt;sessionId&gt;.jsonl</c>, or null when none is there (yet).</summary>
     public string? FindTranscript(string sessionId)
     {
