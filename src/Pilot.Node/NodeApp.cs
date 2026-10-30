@@ -328,6 +328,8 @@ public static class NodeApp
         {
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
+            Starts = services.GetRequiredService<StartOptionsBook>(),
+            Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.

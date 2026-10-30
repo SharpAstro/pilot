@@ -471,6 +471,12 @@ public sealed class Watchtower(
                 }
                 return;
             }
+            if (row.State == SessionState.Idle && Models.Model(RoleModels.Watchtower) is { } setting && Sessions.SessionModelCheck.ModelDiffers(setting, row.Model) && now >= _nextTry)
+            {
+                // Never mid-turn, and never by changing the model of the session: a fresh one on the setting.
+                await StartAsync($"it ran on {row.Model}, the setting says {setting}", cancellationToken, row);
+                return;
+            }
             await TellNewCardsAsync(row, cancellationToken);
         }
         finally

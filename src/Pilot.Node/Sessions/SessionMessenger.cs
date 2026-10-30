@@ -199,7 +199,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
             var listedName = tracker.ListedName(row);
-            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId);
+            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file.
+            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
             // earlier ids) and else by its name, which a compaction keeps too.
             var recorded = onFile ? null : starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);

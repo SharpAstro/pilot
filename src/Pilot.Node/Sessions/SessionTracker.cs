@@ -59,6 +59,59 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
 
+    /// <summary>What each session was started on, to check a live one against; null checks none.</summary>
+    public StartOptionsBook? Starts { get; init; }
+
+    /// <summary>Where a model or effort mismatch is said (the node's log, pilot #416); nothing for a tracker built without.</summary>
+    public TextWriter Error { get; init; } = TextWriter.Null;
+
+    // By row id: what each live session was found to run on that differs from its start, as last said once; and the rows to
+    // resume as a copy on their recorded options because of it.
+    private readonly Dictionary<string, string> _saidMismatch = new Dictionary<string, string>(StringComparer.Ordinal);
+    private readonly HashSet<string> _mismatched = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>Whether the row's session runs on another model or effort than it was started on: its next wake carries its recorded options.</summary>
+    public bool IsMismatched(string rowId)
+    {
+        lock (_mismatched)
+        {
+            return _mismatched.Contains(rowId);
+        }
+    }
+
+    private void CheckModels()
+    {
+        if (Starts is null)
+        {
+            return;
+        }
+        foreach (var (id, row) in _rows)
+        {
+            string? found = null;
+            if (row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                && Starts.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [ListedName(row), row.Name]) is { } start)
+            {
+                found = SessionModelCheck.Mismatch(row, start);
+            }
+            lock (_mismatched)
+            {
+                if (found is null)
+                {
+                    _mismatched.Remove(id);
+                    _saidMismatch.Remove(id);
+                    continue;
+                }
+                _mismatched.Add(id);
+            }
+            if (_saidMismatch.TryGetValue(id, out var said) && said == found)
+            {
+                continue;
+            }
+            _saidMismatch[id] = found;
+            Error.WriteLine($"model check: session {row.Name} ({id}) runs on {found}; the setting says no change mid-session, so a watchtower is replaced and any other wakes as a copy on its recorded options");
+        }
+    }
+
     /// <summary>Where the images a session's artifacts name are kept; an archived session's copies go. Null keeps none.</summary>
     public Attachments? Attachments { get; init; }
 
@@ -341,6 +394,7 @@ public sealed class SessionTracker : BackgroundService
             }
         }
 
+        CheckModels();
         _logger.LogDebug("Polled {Count} sessions in {Elapsed} ms (listing {Listing} ms)", listed.Count, (long)clock.Elapsed.TotalMilliseconds, (long)listing.TotalMilliseconds);
     }
 
