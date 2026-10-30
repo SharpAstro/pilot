@@ -48,12 +48,18 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         return run.WaitAsync(cancellationToken);
     }
 
+    /// <remarks>The seed is put here, not in the background loop, so it is on the stream before anything starts after it.</remarks>
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        Seed();
+        return base.StartAsync(cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
         try
         {
-            Seed();
             while (!stopping.IsCancellationRequested)
             {
                 try
@@ -79,12 +85,16 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         {
             return;
         }
-        var now = time.GetUtcNow();
+        var known = repos.Repos();
+        if (known.Length == 0)
+        {
+            return;
+        }
         state.PutRepos(new ReposRow
         {
-            Repos = [.. repos.Repos().Select(r => new RepoStatus { Name = r.Name, Path = r.Path, GitHub = r.GitHub, Flights = r.Flights, Tracked = r.Flights > 0, Unread = true })],
+            Repos = [.. known.Select(r => new RepoStatus { Name = r.Name, Path = r.Path, GitHub = r.GitHub, Flights = r.Flights, Tracked = r.Flights > 0, Unread = true })],
             ReadAt = null,
-            Since = now,
+            Since = time.GetUtcNow(),
         });
     }
 

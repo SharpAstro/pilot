@@ -863,6 +863,11 @@ public sealed class NodeState
     {
         lock (_gate)
         {
+            // A node that knows no repos and has said nothing has nothing to say.
+            if (_repos is null && read.Repos.Length == 0)
+            {
+                return;
+            }
             if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
                 && held.Repos.Select(r => r with { UpdatedAt = default }).SequenceEqual(read.Repos.Select(r => r with { UpdatedAt = default })))
             {
