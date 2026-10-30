@@ -120,7 +120,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
         ready.Detail.ShouldContain("rename `x` to `count`");
         var notes = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
         notes.Detail.ShouldNotBeNull().ShouldContain("a comment is stale");
-        notes.Summary.ShouldContain("watchtower");
+        notes.Subject.ShouldBe(Verbs.FlightTarget(flight.Code));
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
         _state.Legs(flight.Code).ShouldAllBe(l => l.GoArounds == 0 && l.ReviewGoArounds == 0);
     }
