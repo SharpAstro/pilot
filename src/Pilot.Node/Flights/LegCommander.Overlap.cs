@@ -108,7 +108,7 @@ public sealed partial class LegCommander
             choices.Add(new CardChoice { Label = $"Fold into {other.Code}", Verb = Verbs.Fold, Target = target, Args = [other.Code] });
         }
         choices.Add(new CardChoice { Label = $"Connect to {other.Code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [other.Code] });
-        choices.Add(new CardChoice { Label = "Plan in parallel", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
+        choices.Add(new CardChoice { Label = $"Plan {flight.Code} in parallel with {other.Code}", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
 
         // The title names the choice the planner leans to: a fold reads "Fold PIL365 into PIL294", a connect "Connect PIL365 to PIL294".
         var title = fold ? $"Fold {flight.Code} into {at} ({shared})" : $"Connect {flight.Code} to {at} ({shared})";

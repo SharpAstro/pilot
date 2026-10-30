@@ -658,6 +658,13 @@ public static class Verbs
     /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
 
+    /// <summary>
+    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
+    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// </summary>
+    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
+        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
+
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>
         redo >= 2 && model is not null ? $"Redo leg {leg} (redo {redo}, {OnModel(model, effort)})" : RedoLeg(leg);

@@ -194,11 +194,15 @@ public sealed partial class RoleModels
         return (model, effort);
     }
 
-    /// <summary>The redo choice for <paramref name="leg"/> (its next fresh worker is attempt go-arounds + 2), numbered as the redo it orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.</summary>
-    public string RedoLabel(LegRow leg)
+    /// <summary>
+    /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
+    /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it
+    /// orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.
+    /// </summary>
+    public string RedoLabel(LegRow leg, string why)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
+        return Verbs.FreshWorker(leg.Name, why, leg.GoArounds + 1, model, effort);
     }
 
     /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>

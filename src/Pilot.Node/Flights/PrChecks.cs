@@ -502,7 +502,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
                 ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
-                : ($"{flight.Code}'s merge did not go through", dropped + autoMergeNote, null);
+                : ($"{flight.Code}'s merge did not go through: {(dropped.Split('\n')[0].Length > 70 ? dropped.Split('\n')[0][..67].TrimEnd() + "..." : dropped.Split('\n')[0])}", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {

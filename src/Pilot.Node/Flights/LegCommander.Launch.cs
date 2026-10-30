@@ -155,7 +155,9 @@ public sealed partial class LegCommander
             {
                 return failure;
             }
-            state.RaiseCard(CardBin.Ring, StartFailedKind, subject, $"{what} did not start", failure, again is null ? null : [again]);
+            // Needs someone: the start was tried and refused, and nothing retries it by itself.
+            state.RaiseCard(CardBin.Ring, StartFailedKind, subject, $"{what} did not start: {Clip(failure.Split('\n')[0])}",
+                $"The node tried to start it and was refused, and it will not try again by itself: {failure}", again is null ? null : [again]);
             return failure;
         }, CancellationToken.None);
         _launched.Value?.Add(launch);

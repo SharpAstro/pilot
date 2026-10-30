@@ -23,10 +23,28 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The models the redo choice names for its next worker (the worker ladder, PIL402); the node sets it.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    // Each kind below says whether it needs someone (PIL474): a card is raised only when the node cannot do the thing itself within
+    // its rules, and its title says what is wrong, its first detail line why it needs someone, each choice what it does in this case.
+
+    /// <summary>
+    /// A worker the API stopped. Before its usage limit resets nothing is anyone's: the node resumes it itself, so that is a Handled line
+    /// said once (<see cref="LimitWait"/>), no open card. A stop with no reset time, or one the resume did not cure, rings: nobody else can fix it.
+    /// </summary>
     public const string Stopped = "worker-stopped";
+
+    /// <summary>The Handled line for a usage-limit stop the node resumes by itself once the window resets: no card is open, so nobody is asked.</summary>
+    public const string LimitWait = "worker-limit-wait";
+
+    /// <summary>A worker idle past the nudges: the node nudged it twice, so it rings, with the nudge and the fresh worker as the ways on.</summary>
     public const string Idle = "worker-idle";
+
+    /// <summary>A worker waiting on a question or permission only a person can answer: rings, the answer is given in its own session.</summary>
     public const string Waiting = "worker-waiting";
+
+    /// <summary>A worker whose session failed: rings, since nothing the node may do brings it back but a say or a fresh worker.</summary>
     public const string Failed = "worker-failed";
+
+    /// <summary>A worker that never showed up in the session listing: rings, the fresh worker is the way on.</summary>
     public const string Missing = "worker-missing";
 
     /// <summary>A worker past its leg's budget: not a stall, so not among <see cref="Kinds"/>; it closes when the budget is extended or the leg ends.</summary>
@@ -76,6 +94,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     // By worker job: the reset each was resumed after, and how often it was nudged.
     private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+    // By worker job: the reset a usage-limit stop was said to be waiting for, so the Handled line is written once, not every look.
+    private readonly Dictionary<string, DateTimeOffset> _limitSaid = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+
     private readonly Dictionary<string, int> _nudges = new Dictionary<string, int>(StringComparer.Ordinal);
 
     // By worker job: when it was last nudged, and how many of the nudges before that it answered, so a ring can say.
@@ -126,8 +147,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 if (leg.StartedAt is { } started && now - started > ShowUpGrace)
                 {
-                    Ring(leg, Missing, $"{Name(leg)}'s worker {leg.Worker} never showed up",
-                        $"started {Ago(now, started)} ago as job {leg.WorkerJob}, and no session of that id is running on this machine");
+                    Ring(leg, Missing, $"{Name(leg)}'s worker {leg.Worker} never showed up, {Ago(now, started)} after it started",
+                        $"started as job {leg.WorkerJob}, and no session of that id is running on this machine, so there is nobody to say anything to");
                 }
                 continue;
             }
@@ -136,13 +157,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 var more = budget + budget / 2;
                 var inv = System.Globalization.CultureInfo.InvariantCulture;
-                state.RaiseCard(CardBin.Ring, OverBudget, subject, $"{Name(leg)}'s worker is past its budget",
-                    string.Create(inv, $"{worker.SpendWeighted:N0} of {budget:N0} weighted tokens; it keeps working until you choose"),
+                // Needs someone: only the controller may spend past a budget the leg was given.
+                var redo = Models.RedoLabel(leg, string.Create(inv, $"spent {worker.SpendWeighted:N0} of a {budget:N0} budget"));
+                var extend = string.Create(inv, $"Let {Name(leg)}'s worker spend up to {more:N0}");
+                state.RaiseCard(CardBin.Ring, OverBudget, subject, string.Create(inv, $"{Name(leg)}'s worker has spent {worker.SpendWeighted:N0} of its {budget:N0} budget"),
+                    $"{Steps(leg)}; it keeps working until you choose, and nothing is stopped by itself",
                     [
-                        new CardChoice { Label = string.Create(inv, $"Extend to {more:N0}"), Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
-                        new CardChoice { Label = Models.RedoLabel(leg), Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
+                        new CardChoice { Label = extend, Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
+                        new CardChoice { Label = redo, Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
                     ],
-                    summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Extend gives it more room; Redo leg starts a fresh worker.");
+                    summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. {extend} gives it more room; {redo} lets it go.");
             }
 
             switch (worker.State)
@@ -151,11 +175,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     state.CloseCardsAbout(subject, "working again", Kinds);
                     break;
                 case SessionState.Waiting:
-                    Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you",
-                        worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission", worker);
+                    var asks = worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission";
+                    Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you for {Clip(asks)}",
+                        $"{asks}; the worker cannot go on until it is answered in its own session ({Steps(leg)})", worker);
                     break;
                 case SessionState.Failed:
-                    Ring(leg, Failed, $"{Name(leg)}'s worker failed", worker.ApiError is { } why ? $"the API said {why}" : null);
+                    Ring(leg, Failed, worker.ApiError is { } why ? $"{Name(leg)}'s worker failed: the API said {why}" : $"{Name(leg)}'s worker failed with {Steps(leg)}",
+                        $"its session is in a failed state and the leg is not finished ({Steps(leg)}), which the node cannot cure by itself", worker);
                     break;
                 case SessionState.Idle or SessionState.Ended when worker.ApiError is { } error:
                     await StoppedAsync(leg, worker, error, now, cancellationToken);
@@ -186,8 +212,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 if (wait.Path is not null && wait.Until is { } limit && now > limit && !wait.Rung)
                 {
                     state.PutLeg(leg with { Wait = wait with { Rung = true } });
+                    // Needs someone: the file the worker waits for is another tool's, and only a person can say whether it is still coming.
                     state.RaiseCard(CardBin.Ring, LegCommander.WaitLateKind, subject, $"{Name(leg)} still waits for {wait.Path}, past {limit.ToLocalTime():HH:mm}",
-                        $"waiting since {Ago(now, wait.Since)} ago{(wait.Why.Length > 0 ? $": {wait.Why}" : "")}; it keeps waiting", Choices(leg, null, resumeLabel: "Resume"));
+                        $"waiting since {Ago(now, wait.Since)} ago{(wait.Why.Length > 0 ? $": {wait.Why}" : "")}; it keeps waiting, and the node cannot tell whether the file is coming",
+                        Choices(leg, null, LegCommander.WaitLateKind));
                 }
                 continue;
             }
@@ -201,7 +229,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var result = await SayAsync(job, $"What you waited for has come: {came}.{(wait.Why.Length > 0 ? $" You waited because: {wait.Why}." : "")} Carry on with your leg `{leg.Name}` of {leg.Flight}.", cancellationToken);
             if (!result.Ok)
             {
-                Ring(leg, Idle, $"{Name(leg)}'s wait is over but its worker could not be woken", result.Error);
+                Ring(leg, Idle, $"{Name(leg)}'s wait is over but its worker could not be woken: {Clip(result.Error ?? "no reason given")}", $"the node tried to tell it what came: {result.Error}", redoWhy: "could not be woken");
             }
         }
     }
@@ -224,7 +252,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var result = await SayAsync(job, leg.Recheck!.Outcome!, cancellationToken);
             if (!result.Ok)
             {
-                Ring(leg, Idle, $"{Name(leg)}'s check rerun ended but its worker could not be told", result.Error);
+                Ring(leg, Idle, $"{Name(leg)}'s check rerun ended but its worker could not be told: {Clip(result.Error ?? "no reason given")}", $"the node tried to tell it how the rerun ended: {result.Error}", redoWhy: "could not be told how its check rerun ended");
             }
         }
     }
@@ -234,21 +262,24 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var job = leg.WorkerJob!;
         if (worker.ApiErrorResetsAt is not { } resets)
         {
-            Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API", $"{error}, with no time it clears", worker);
+            Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API: {error}", $"the API gave no time the stop clears, so the node cannot resume it by itself ({Steps(leg)})", worker);
             return;
         }
         if (now < resets + ResetMargin)
         {
-            // Nothing to do yet but say so: the card is the controller's to resume sooner (extra usage) or go around.
-            state.RaiseCard(CardBin.ForYou, Stopped, Subject(leg), $"{Name(leg)}'s worker hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
-                $"{error}; the node resumes it {ResetMargin.TotalMinutes:0} minutes after the limit resets", Choices(leg, worker, resumeLabel: "Resume now"),
-                summary: $"The worker of {Name(leg)} hit the usage limit. The node resumes it at {resets.ToLocalTime():HH:mm}, after the window resets; Resume now does it sooner, {Verbs.RedoLeg(leg.Name)} starts a fresh worker.");
+            // Needs nobody: the node resumes it itself once the limit resets, so it is a Handled line, said once per reset, not a card.
+            if (!_limitSaid.TryGetValue(job, out var said) || said != resets)
+            {
+                _limitSaid[job] = resets;
+                state.RaiseCard(CardBin.Handled, LimitWait, Subject(leg), $"{Name(leg)}'s worker hit the usage limit; the node resumes it at {(resets + ResetMargin).ToLocalTime():HH:mm}",
+                    $"{error}; the limit resets at {resets.ToLocalTime():HH:mm} and the node resumes the worker {ResetMargin.TotalMinutes:0} minutes after");
+            }
             return;
         }
         if (_resumedAfter.TryGetValue(job, out var done) && done >= resets)
         {
             // Resumed for this reset already and stopped again on the same one: the resume did not take.
-            Ring(leg, Stopped, $"{Name(leg)}'s worker is still stopped after its limit reset", $"{error}; resumed once at {done.ToLocalTime():HH:mm} to no effect", worker,
+            Ring(leg, Stopped, $"{Name(leg)}'s worker is still stopped after its limit reset: {error}", $"the node resumed it once at {done.ToLocalTime():HH:mm} to no effect, and will not say it again", worker,
                 lead: $"The worker of {Name(leg)} is still stopped after its usage limit reset, though it was resumed once.");
             return;
         }
@@ -262,7 +293,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Stopped, $"{Name(leg)}'s worker could not be resumed after its limit reset", result.Error, worker,
+            Ring(leg, Stopped, $"{Name(leg)}'s worker could not be resumed after its limit reset: {Clip(result.Error ?? "no reason given")}", $"the node tried to say carry on to it: {result.Error}", worker,
                 lead: $"The worker of {Name(leg)} could not be resumed after its usage limit reset.");
         }
     }
@@ -303,10 +334,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // Each nudge counted as answered when a turn ended after it and before the next: the last one by the response now.
             var answered = _answered.GetValueOrDefault(job) + (_nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt ? 1 : 0);
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
-            Ring(leg, Idle, answered > 0 ? $"{Name(leg)}'s worker answers its nudges but stays idle with the leg unfinished" : $"{Name(leg)}'s worker stopped with the leg unfinished",
+            Ring(leg, Idle, answered > 0 ? $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, though it answers its nudges" : $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}",
                 answered > 0
-                    ? $"idle for {Ago(now, since)}; nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
-                    : $"idle for {Ago(now, since)}, nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer{report}",
+                    ? $"nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
+                    : $"nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
                 worker);
             return;
         }
@@ -325,7 +356,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Idle, $"{Name(leg)}'s worker stopped with the leg unfinished, and could not be nudged", result.Error, worker);
+            Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"the node tried to nudge it: {result.Error}", worker);
         }
     }
 
@@ -378,12 +409,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             };
             if (why is not null)
             {
-                state.RaiseCard(CardBin.Ring, ValidationStalled, subject, $"{Name(leg)}'s validation stalled", why,
+                // Needs someone: whether to fly a leg nobody checked against the tree is the controller's.
+                var go = $"Start {leg.Name} without its validation";
+                var drop = $"Drop {leg.Name} from {leg.Flight}";
+                state.RaiseCard(CardBin.Ring, ValidationStalled, subject, $"{Name(leg)}'s validator stalled: {why}", "the leg waits for a GO or NO-GO that is not coming, so it cannot start by itself",
                 [
-                    new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
-                    new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
+                    new CardChoice { Label = go, Verb = Verbs.StartLeg, Target = subject, Args = ["anyway"] },
+                    new CardChoice { Label = drop, Verb = Verbs.RemoveLeg, Target = subject, Args = ["its validation stalled"] },
                 ],
-                summary: $"The validation of {leg.Flight}/{leg.Name} stalled. Go anyway starts the leg without it; Remove leg drops the leg.");
+                summary: $"The validation of {leg.Flight}/{leg.Name} stalled. {go} flies it unchecked; {drop} drops the leg.");
             }
         }
     }
@@ -481,9 +515,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 return;
             }
         }
-        state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s review stalled", why,
-            [new CardChoice { Label = "Review again", Verb = again, Target = subject }],
-            summary: $"The review of {name} stalled. Review again starts it afresh.");
+        // Needs someone: the node told the reviewer and started it afresh once each, and a third try is a choice to make.
+        var fresh = $"Start a fresh reviewer for {name}";
+        state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s reviewer stalled: {why}", "the node told it to give its verdict and started it afresh, and it did not finish either time",
+            [new CardChoice { Label = fresh, Verb = again, Target = subject }],
+            summary: $"The review of {name} stalled twice. {fresh} starts it afresh.");
     }
 
     // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.
@@ -556,7 +592,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     continue;
                 }
             }
-            state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code} has no legs and its planning stalled", why,
+            state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code} has no legs and its planning stalled: {why}", "the node told or replaced the planner once and it still has not handed in legs",
                 idle
                     ? [new CardChoice { Label = $"Tell {flight.Code}'s planner to finish", Verb = Verbs.Say, Target = Verbs.SessionTarget(planner!.Id), Args = [$"Finish {flight.Code}'s plan now: plan its legs and hand them in."] }]
                     : [new CardChoice { Label = $"Plan {flight.Code} again", Verb = Verbs.PlanFlight, Target = subject }]);
@@ -583,26 +619,26 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private Task<CommandResult> SayAsync(string sessionId, string text, CancellationToken cancellationToken) =>
         run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [text], Who = Who }, cancellationToken);
 
-    private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null)
+    private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null, string? redoWhy = null)
     {
-        var choices = Choices(leg, worker, resumeLabel: kind == Idle ? "Nudge" : "Resume");
+        var choices = Choices(leg, worker, kind, redoWhy);
         state.RaiseCard(CardBin.Ring, kind, Subject(leg), title, detail, choices, summary: RingSummary(leg, kind, choices, lead));
     }
 
     /// <summary>
-    /// What a stall ring says, built from the kind and the choices the card really carries: Resume or Nudge is named only when
-    /// the card has one (a waiting or missing worker gets the redo alone), and the redo is always named as the card words it.
+    /// What a stall ring says, built from the kind and the choices the card really carries: the say to the worker is named only when
+    /// the card has one (a waiting or missing worker gets the fresh worker alone), and the fresh worker is always named as the card words it.
     /// </summary>
     internal static string RingSummary(LegRow leg, string kind, IReadOnlyList<CardChoice> choices, string? lead = null)
     {
         var what = Name(leg);
         var say = choices.FirstOrDefault(c => c.Verb == Verbs.Say)?.Label;
         var redo = choices.FirstOrDefault(c => c.Verb == Verbs.GoAround)?.Label ?? Verbs.RedoLeg(leg.Name);
-        var then = say is null ? $"{redo} starts a fresh worker." : $"{say} carries it on; {redo} starts a fresh worker.";
+        var then = say is null ? $"{redo} is the way on." : $"{say} carries it on; {redo} lets it go.";
         return kind switch
         {
             Stopped => $"{lead ?? $"The worker of {what} was stopped by the API and no reset time is known."} {then}",
-            Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session; {redo} starts a fresh worker.",
+            Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session; {redo} lets it go.",
             Failed => $"The worker of {what} failed. {then}",
             Missing => $"The worker of {what} never showed up. {then}",
             Idle => $"The worker of {what} stopped with its leg unfinished. {then}",
@@ -611,14 +647,24 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     }
 
     /// <summary>
-    /// A resume (or nudge) when there is a worker to say it to, and a go-around, which starts a fresh one; a waiting
-    /// worker is answered in its own session, so it gets the go-around only.
+    /// A say to the worker when there is one to say it to (a nudge for an idle one, a carry on otherwise), and a go-around, which starts a
+    /// fresh one; a waiting worker is answered in its own session, so it gets the go-around only.
     /// </summary>
-    private CardChoice[] Choices(LegRow leg, SessionRow? worker, string resumeLabel)
+    private CardChoice[] Choices(LegRow leg, SessionRow? worker, string kind, string? redoWhy = null)
     {
+        var why = redoWhy ?? kind switch
+        {
+            Idle => "went idle with the leg unfinished",
+            Failed => "failed",
+            Missing => "never showed up",
+            Waiting => "waited on you",
+            Stopped => "was stopped by the API",
+            LegCommander.WaitLateKind => "waited past its limit",
+            _ => "stalled",
+        };
         var goAround = new CardChoice
         {
-            Label = Models.RedoLabel(leg),
+            Label = Models.RedoLabel(leg, why),
             Verb = Verbs.GoAround,
             Target = Subject(leg),
             Args = [$"the last worker stalled ({worker?.ApiError ?? worker?.State.ToString().ToLowerInvariant() ?? "never showed up"})"],
@@ -627,9 +673,17 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return [goAround];
         }
-        var text = resumeLabel == "Nudge" ? Nudge(leg) : "Carry on with your leg from where you left off.";
-        return [new CardChoice { Label = resumeLabel, Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text] }, goAround];
+        var nudge = kind == Idle;
+        var text = nudge ? Nudge(leg) : "Carry on with your leg from where you left off.";
+        var label = nudge ? $"Nudge {worker.Name} to finish {leg.Name} or say why not" : $"Tell {worker.Name} to carry on with {leg.Name}";
+        return [new CardChoice { Label = label, Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text] }, goAround];
     }
+
+    /// <summary>What a leg's checklist stands at, as a title says it: <c>3 of 6 steps ticked</c>.</summary>
+    private static string Steps(LegRow leg) =>
+        leg.Checklist.Length == 0 ? "no steps listed" : $"{leg.Checklist.Count(i => i.Done)} of {leg.Checklist.Length} steps ticked";
+
+    private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
 
     private static string Subject(LegRow leg) => Verbs.LegTarget(leg.Flight, leg.Name);
 
