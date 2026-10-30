@@ -26,6 +26,9 @@ public static class Briefs
     /// <summary>What the plane holds so far, for a go-around's brief: its commits past the base and the files they touch.</summary>
     public sealed record PlaneState(string Commits, string DiffStat);
 
+    /// <summary>A re-review's brief: the last round, and the commits and stat of its head to the plane's HEAD.</summary>
+    public sealed record ReReview(ReviewRound Last, PlaneState Range);
+
     /// <summary>
     /// The <c>pilot</c> CLI a worker runs, by its full path: beside the node (a publish puts them together), else the source
     /// tree's build of the same configuration, else <c>pilot</c> on <c>PATH</c>.
@@ -424,7 +427,8 @@ public static class Briefs
     }
 
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null)
+    /// <param name="again">The last round and what changed since its head: a re-review reads only that range; null reads the whole diff.</param>
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, ReReview? again = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -432,7 +436,16 @@ public static class Briefs
         text.AppendLine($"You review flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}) before it is offered for merging.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
-        text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        if (again is null)
+        {
+            text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        }
+        else
+        {
+            text.AppendLine($"This is round {again.Last.Round + 1}: round {again.Last.Round} read {(again.Last.Head is { Length: > 0 } h ? $"`{h}`" : "an earlier head")} and said {again.Last.Verdict.ToString().ToLowerInvariant()}.");
+            text.AppendLine($"Read only what changed since: `git diff {again.Last.Head}..HEAD`, not the whole PR. First check that each finding of round {again.Last.Round}");
+            text.AppendLine("below was dealt with, then read the new code for bugs it brings, and rerun what proves each leg's Done-when. Do not edit,");
+        }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
@@ -469,17 +482,38 @@ public static class Briefs
         {
             text.AppendLine($"- {leg.Name}: {leg.Goal} Done when: {leg.DoneWhen}{(leg.Check is { Length: > 0 } c ? $" (check: `{c}`)" : "")}");
         }
-        if (plane.Commits.Trim().Length > 0)
+        if (again is not null)
         {
             text.AppendLine();
-            text.AppendLine("Commits:");
-            text.AppendLine(plane.Commits.Trim());
+            text.AppendLine($"Findings of round {again.Last.Round} ({again.Last.Verdict.ToString().ToLowerInvariant()}):");
+            text.AppendLine(again.Last.Findings.Trim());
+            if (again.Range.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits since:");
+                text.AppendLine(again.Range.Commits.Trim());
+            }
+            if (again.Range.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files changed since:");
+                text.AppendLine(again.Range.DiffStat.Trim());
+            }
         }
-        if (plane.DiffStat.Trim().Length > 0)
+        else
         {
-            text.AppendLine();
-            text.AppendLine("Files:");
-            text.AppendLine(plane.DiffStat.Trim());
+            if (plane.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits:");
+                text.AppendLine(plane.Commits.Trim());
+            }
+            if (plane.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files:");
+                text.AppendLine(plane.DiffStat.Trim());
+            }
         }
         text.AppendLine();
         // TIA1814's reviewers ran tianwen's whole suite themselves (10,127 tests, 40 minutes on a busy machine) while CI had it

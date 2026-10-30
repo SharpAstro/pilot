@@ -2024,6 +2024,10 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
         }
+        if (await KeepPassAsync(flight, cancellationToken))
+        {
+            return;
+        }
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
         var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer");
@@ -2054,7 +2058,8 @@ public sealed partial class LegCommander(
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
-                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine);
+                var again = await ReReviewOfAsync(flight, CancellationToken.None);
+                var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine, again);
                 // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
@@ -2084,6 +2089,64 @@ public sealed partial class LegCommander(
             },
             after: () => _marks.ApplyAsync(flight.Code, CancellationToken.None),
             quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
+    }
+
+    /// <summary>The last round and what changed since its head, when that head is still in the plane; null reads the whole diff.</summary>
+    private async Task<Briefs.ReReview?> ReReviewOfAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.ReviewRounds?.LastOrDefault() is not { Head: { Length: > 0 } head } last
+            || !(await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{head}^{{commit}}"], flight.Worktree, cancellationToken)).Ok)
+        {
+            return null;
+        }
+        var commits = await git.RunAsync(["log", "--oneline", $"{head}..HEAD"], flight.Worktree, cancellationToken);
+        var stat = await git.RunAsync(["diff", "--stat", $"{head}..HEAD"], flight.Worktree, cancellationToken);
+        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) : null;
+    }
+
+    /// <summary>
+    /// A flight whose review passed at an earlier head and whose new head has the same own diff against the base (only the base
+    /// merged in between) keeps the pass: no reviewer starts, the marks move to the new head and a Handled line says so.
+    /// </summary>
+    private async Task<bool> KeepPassAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.Review is not { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } old } passed || flight.PullRequest is null)
+        {
+            return false;
+        }
+        await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, cancellationToken);
+        var headNow = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        if (!headNow.Ok || headNow.Output.Trim() is not { Length: > 0 } head || string.Equals(head, old, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var before = await OwnDiffIdAsync(flight, old, cancellationToken);
+        if (before is null || before != await OwnDiffIdAsync(flight, head, cancellationToken))
+        {
+            return false;
+        }
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { Review: { State: ReviewState.Passed } } now)
+        {
+            return false;
+        }
+        state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null } });
+        var short8 = (string s) => s[..Math.Min(8, s.Length)];
+        state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
+        await _marks.ApplyAsync(flight.Code, cancellationToken);
+        return true;
+    }
+
+    /// <summary>The patch-id of the PR's own diff at <paramref name="head"/>: the base...head diff without its index lines and hunk positions; null when git cannot say or the diff is empty.</summary>
+    private async Task<string?> OwnDiffIdAsync(FlightRow flight, string head, CancellationToken cancellationToken)
+    {
+        var diff = await git.RunAsync(["diff", "--no-color", "--no-ext-diff", $"{flight.Base}...{head}"], flight.Worktree, cancellationToken);
+        if (!diff.Ok || diff.Output.Trim().Length == 0)
+        {
+            return null;
+        }
+        var kept = diff.Output.Split('\n').Where(l => !l.StartsWith("index ", StringComparison.Ordinal)).Select(l => l.StartsWith("@@", StringComparison.Ordinal) ? "@@" : l.TrimEnd('\r'));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', kept))));
     }
 
     /// <summary>A reviewer that could not start costs the flight its review, not its merge: the card says so and the controller decides.</summary>
@@ -2141,7 +2204,17 @@ public sealed partial class LegCommander(
 
         var now = time.GetUtcNow();
         var kept = fromReviewer ? report : $"{report} (passed by {command.Who} over: {review.Report})";
-        Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null });
+        Record(flight.Code, f => f with
+        {
+            Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null,
+            ReviewRounds = f.Review is { } judged
+                ? [.. f.ReviewRounds ?? [], new ReviewRound
+                {
+                    Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
+                    Findings = kept, Depth = judged.Depth, Model = Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                }]
+                : f.ReviewRounds,
+        });
         // On the PR now the verdict is kept: a mark GitHub refuses is a card, never a verdict lost.
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
         flight = FlightOf(command.Target);

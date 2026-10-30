@@ -84,6 +84,9 @@ public sealed record FlightRow
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
 
+    /// <summary>Every round of its review so far, oldest first; kept when a fresh review replaces <see cref="Review"/>. Null before the first verdict.</summary>
+    public ReviewRound[]? ReviewRounds { get; init; }
+
     /// <summary>
     /// Where its PR waits in its base's merge queue while it does (<c>in the merge queue, position 2</c>), as the node last
     /// read it; null while it is in none. A merge through a queue is not a merge yet: it lands once the queue's checks pass.
