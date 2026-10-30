@@ -94,7 +94,11 @@ jobs:
     - name: Build
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
-      run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
+      run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed"
+    - name: Test (slow)
+      # Tests tagged [Trait("Category", "Slow")] are exempt from the 5 s guard and run here. Exit code 8 means none matched.
+      run: |
+        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category=Slow' --logger "console;verbosity=detailed" || [ $? -eq 8 ]
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"

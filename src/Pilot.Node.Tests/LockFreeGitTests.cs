@@ -151,6 +151,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUpdateHeldInAFetchLeavesAnotherFlightsCommandsAnsweringAtOnce()
     {
         var (flight, _) = await Passed("1");

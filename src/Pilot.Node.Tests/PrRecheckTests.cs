@@ -530,6 +530,7 @@ public sealed class PrRecheckTests2 : PrRecheckTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
@@ -556,6 +557,7 @@ public sealed class PrRecheckTests2 : PrRecheckTestsBase
 public sealed class PrRecheckTests3 : PrRecheckTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
@@ -633,6 +635,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightsPrWithNothingToDoSaysSoAndLeavesTheLabelForWhereItStands()
     {
         await PassedFlightAsync();

@@ -618,6 +618,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobPastItsTimeoutIsStoppedWithItsWholeTreeAndSaysSo()
     {
         // A child of its own, which a kill of the wrapper alone leaves running: the timeout ends both.

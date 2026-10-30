@@ -38,6 +38,7 @@ dotnet test Pilot.Node.Tests -c Release --no-build
 dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
+- A `Pilot.Node.Tests` test over 5 s fails, naming itself, unless it is tagged `[Trait("Category", "Slow")]`; CI runs the slow ones in their own step.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with
   `--filter FullyQualifiedName~<Name>`.

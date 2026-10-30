@@ -199,6 +199,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APriorityRepoIsNeverReviewedLightly()
     {
         var start = await Review("1", lines: 1, fiveHour: 88, priority: true);
@@ -221,6 +222,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASmallDiffOrLittleHeadroomIsAStandardReviewOnTheReviewersOwnModel()
     {
         var small = await Review("1", lines: 5, fiveHour: 20, roles: new() { ["reviewer-model"] = "opus", ["reviewer-deep-model"] = "fable" });
@@ -579,6 +581,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrDroppedFromTheQueueOnAConflictHasTheBaseMergedInKeepsItsPassAndStartsNoReview()
     {
         // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
@@ -645,6 +648,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConflictingPrIsLabelledConflictsWhateverItsReviewSaidAndPassedAgainOnceGitHubSaysItMerges()
     {
         var flight = await NewFlight("32", "parser");
@@ -1241,6 +1245,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightAlreadyPushedWhoseBaseNeedsRepairHasTheBaseMergedInAndIsPushedPlainAndReviewedAfreshWithNoGoAround()
     {
         // As PIL126: cut from a feature branch that has landed on main and is no branch on the remote.
@@ -1405,6 +1410,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Theory]
     [InlineData("18")]
     [InlineData("19")]
+    [Trait("Category", "Slow")]
     public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsTakenInNotLost(string number)
     {
         var flight = await NewFlight(number, "parser");
@@ -1445,6 +1451,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 public sealed class ReviewTests4 : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnAPrBehindMainUpdatesItKeepsItsPassedReviewAndDoesNotCallMerge()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1500,6 +1507,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUpdatedHeadWithPendingChecksIsNotQueuedByTheMergeOfferedAgain()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
@@ -1616,6 +1624,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnArmedMergeAtGreenOnAPrBehindMainUpdatesItAndDropsNoMerge()
     {
         var (flight, _) = await Passed("36");
@@ -1798,6 +1807,7 @@ public sealed class ReviewTests5 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TwoConnectedFlightsLandWithNoPilotOfTheirOwn()
     {
         var first = await NewFlight("10", "core");

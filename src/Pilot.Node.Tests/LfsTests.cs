@@ -126,6 +126,7 @@ public sealed class LfsTests : IDisposable
         string.Join('\n', Directory.EnumerateFiles(Path.Combine(Main, ".git", "lfs", "objects"), "*", SearchOption.AllDirectories).Order());
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMadePlaneTransfersNoLfsAndLeavesTheStoreAlone()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
@@ -146,6 +147,7 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushWithNoLfsChangeSkipsThePrePushUploadAndOneThatChangesLfsKeepsIt()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
@@ -170,6 +172,7 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushOfAMergeWhoseResolutionChangesAnLfsFileKeepsThePrePushUpload()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
@@ -198,6 +201,7 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASyncOfTheMainCheckoutFillsItsLfsFilesWithTheirContent()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");

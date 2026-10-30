@@ -312,6 +312,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
 public sealed class PrFixTests3 : PrFixTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
