@@ -12,20 +12,21 @@ public interface IIdeaTidier
 }
 
 /// <summary>The tidy as a one-shot <c>claude -p</c> run in the idea's repo, so it can look for related issues and PRs with <c>gh</c>.</summary>
-public sealed class ClaudeIdeaTidier : IIdeaTidier
+public sealed class ClaudeIdeaTidier(Attachments? attachments = null) : IIdeaTidier
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(3);
 
     public const string Model = "sonnet";
 
-    public static string Prompt(IdeaText current) => $$"""
+    /// <param name="copies">The local files of the idea's images the node holds, which Claude may Read.</param>
+    public static string Prompt(IdeaText current, IReadOnlyList<string>? copies = null) => $$"""
         Tidy this idea, a GitHub issue in the repo you are in. It is an idea, not a plan: keep it short.
         - The title is one short line.
         - The body is short Markdown bullets, from a few lines to about ten bullets, at most one heading level, no "Done when", no walls of text.
         - Put names (files, types, commands, verbs) in code spans.
         - Fill obvious gaps: what it touches, a related issue or PR you can find (read-only gh, e.g. gh issue list --search, gh pr list --search), and an open question as a question.
         - Keep the person's meaning and words where they are clear; do not invent requirements. Change nothing in the repo or on GitHub.
-        Answer with one JSON object and nothing else: {"title": "...", "body": "..."}.
+        {{IdeaImagePrompt.ForTidy(current.Body, copies ?? [])}}Answer with one JSON object and nothing else: {"title": "...", "body": "..."}.
 
         === THE IDEA ===
         {{current.Joined}}
@@ -34,9 +35,10 @@ public sealed class ClaudeIdeaTidier : IIdeaTidier
     public async Task<IdeaText> TidyAsync(IdeaText current, string repoPath, CancellationToken cancellationToken)
     {
         ClaudeRun run;
+        var copies = IdeaImagePrompt.Copies(current.Body, attachments);
         try
         {
-            run = await ClaudeCli.RunAsync(["-p", "--model", Model], Prompt(current), repoPath, Timeout, cancellationToken);
+            run = await ClaudeCli.RunAsync(IdeaImagePrompt.Args(Model, copies, attachments), Prompt(current, copies), repoPath, Timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is TimeoutException or FileNotFoundException or InvalidOperationException)
         {

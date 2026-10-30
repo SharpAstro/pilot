@@ -210,5 +210,83 @@ public sealed class IdeaTidyTests : IDisposable
         prompt.ShouldContain("Ring shadows\non the planet");
         ClaudeIdeaTidier.Read("```json\n{\"title\": \"T\", \"body\": \"- a\"}\n```").ShouldBe(new IdeaText("T", "- a"));
         ClaudeIdeaTidier.Read("no json").ShouldBeNull();
+        prompt.ShouldNotContain("image");
+    }
+
+    private const string Shot = "![shot](pilot-attachment:abc123.png)";
+
+    [Fact]
+    public void ThePromptNamesTheImagesAndTheLocalCopiesAndTheRunReadsTheFolder()
+    {
+        var copy = Path.Combine(_root, "attachments", "ideas", "abc123.png");
+        var prompt = ClaudeIdeaTidier.Prompt(new IdeaText("Ring shadows", $"on the planet\n\n{Shot}\n\nand moons"), [copy]);
+
+        prompt.ShouldContain("holds 1 image");
+        prompt.ShouldContain("verbatim");
+        prompt.ShouldContain("same place");
+        prompt.ShouldContain($"- {copy}");
+        prompt.ShouldContain(Shot);
+
+        var attachments = new Attachments(_root);
+        IdeaImagePrompt.Args("sonnet", [copy], attachments).ShouldBe(["-p", "--model", "sonnet", "--add-dir", attachments.IdeaFolder]);
+        IdeaImagePrompt.Args("sonnet", [], attachments).ShouldBe(["-p", "--model", "sonnet"]);
+    }
+
+    [Fact]
+    public void TheCopiesAreTheOnesTheNodeHolds()
+    {
+        var attachments = new Attachments(_root);
+        var id = attachments.AddIdeaImage([1, 2, 3], "png");
+
+        var copies = IdeaImagePrompt.Copies($"a\n![x](pilot-attachment:{id}.png)\n![y](pilot-attachment:nothere.png)\n![z](https://example.com/z.png)", attachments);
+
+        copies.ShouldBe([attachments.FindIdeaImage(id)!.Value.Path]);
+        IdeaImagePrompt.Copies("no images", attachments).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnImageTheTidyDroppedIsPutBackAfterTheParagraphItFollowed()
+    {
+        var current = $"on the planet\n\n{Shot}\n\nand moons";
+
+        IdeaImagePrompt.Restore(current, "- on the planet\n\n- and moons")
+            .ShouldBe($"- on the planet\n\n{Shot}\n\n- and moons");
+        IdeaImagePrompt.Restore(current, "- and moons\n- on the planet\n\n- more")
+            .ShouldBe($"- and moons\n- on the planet\n\n{Shot}\n\n- more");
+        IdeaImagePrompt.Restore(current, "- something else").ShouldBe($"- something else\n\n{Shot}");
+        IdeaImagePrompt.Restore($"a\n\n{Shot}\n![two](https://x/y.png)", "a\n\nb")
+            .ShouldBe($"a\n\n{Shot}\n\n![two](https://x/y.png)\n\nb");
+    }
+
+    [Fact]
+    public void AnImageTheTidyDroppedThatStoodFirstIsPutBackAtTheTop()
+    {
+        const string Two = "![two](https://x/y.png)";
+
+        IdeaImagePrompt.Restore($"{Shot}\n\nmore words", "- more words").ShouldBe($"{Shot}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n{Two}\n\nmore words", "- more words").ShouldBe($"{Shot}\n\n{Two}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n{Two}\n\nmore words", $"{Shot}\n\n- more words").ShouldBe($"{Shot}\n\n{Two}\n\n- more words");
+        IdeaImagePrompt.Restore($"{Shot}\n\nmore words", "").ShouldBe(Shot);
+    }
+
+    [Fact]
+    public void AProposalThatKeptItsImagesIsLeftAsItIs()
+    {
+        var proposed = $"- on the planet\n\n{Shot}\n\n- and moons";
+
+        IdeaImagePrompt.Restore($"on the planet\n\n{Shot}\n\nand moons", proposed).ShouldBe(proposed);
+        IdeaImagePrompt.Restore("no images", "- tidy").ShouldBe("- tidy");
+    }
+
+    [Fact]
+    public async Task ATidyThatDroppedAnImageIsOfferedWithItBack()
+    {
+        await NotedAsync(body: $"on the planet\n\n{Shot}");
+        _tidier.Answer = new IdeaText("Ring shadows", "- on the planet\n- related: #12");
+
+        var tidy = (await Tidy(1)).Tidy.ShouldNotBeNull();
+
+        tidy.Body.ShouldBe($"- on the planet\n- related: #12\n\n{Shot}");
+        tidy.CurrentBody.ShouldBe($"on the planet\n\n{Shot}");
     }
 }
