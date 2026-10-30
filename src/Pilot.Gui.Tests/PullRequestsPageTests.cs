@@ -450,8 +450,33 @@ public sealed class PullRequestsPageTests
         header = Button(arranged, "prs:group:SharpAstro/pilot");
         ClickAt(arranged, header.X + 4f, header.Y + header.Height / 2f);
         page.IsFolded("SharpAstro/pilot").ShouldBeFalse();
-        Arrange(renderer, page, Screen());
+        arranged = Arrange(renderer, page, Screen());
         Numbers(page).ShouldBe([12, 300, 301, 252, 261, 258, 1799, 1820]);
+
+        // The link is the name and its ↗ only, not the header's width: a click just past it folds, it does not open GitHub (the owner, 2026-10-29).
+        name = Button(arranged, "prs:repo:SharpAstro/pilot");
+        header = Button(arranged, "prs:group:SharpAstro/pilot");
+        name.Width.ShouldBeLessThan(header.Width / 3f);
+        // The name is drawn whole on a wide page: its text leaf is as wide as the name measures (a plain star inside the
+        // content-capped stack was arranged 0 wide, and the bounds above could not tell).
+        var (measured, _) = renderer.MeasureText("SharpAstro/pilot", SessionsCapture.FontPath, 14f);
+        NameLeaf(arranged, "SharpAstro/pilot").Width.ShouldBeGreaterThanOrEqualTo(measured - 0.5f);
+        ClickAt(arranged, name.X + name.Width + 40f, header.Y + header.Height / 2f);
+        opened.Count.ShouldBe(1);
+        page.IsFolded("SharpAstro/pilot").ShouldBeTrue();
+
+        // On a narrow page it gives way, but is never squeezed away or wider than its header.
+        var narrow = Arrange(renderer, page, Screen(), width: 520f);
+        var squeezed = NameLeaf(narrow, "SharpAstro/pilot").Width;
+        squeezed.ShouldBeGreaterThan(0f);
+        squeezed.ShouldBeLessThanOrEqualTo(Button(narrow, "prs:group:SharpAstro/pilot").Width);
+    }
+
+    // The arranged bounds of a repo header's name text: the leaf whose text is exactly the repo's name.
+    private static Rect<float> NameLeaf(ImmutableArray<Layout.ArrangedNode<float>> arranged, string repo)
+    {
+        var leaf = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v == repo);
+        return leaf.Bounds;
     }
 
     [Fact]
@@ -1148,5 +1173,58 @@ public sealed class PullRequestsPageTests
             await Task.Delay(10, TestContext.Current.CancellationToken);
         }
         condition().ShouldBeTrue();
+    }
+
+    private static void ClickTitle(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, string title) =>
+        ClickButton(Arrange(renderer, page, screen, 1600f), "pull requests:table:" + title);
+
+    [Fact]
+    public void AClickOnATitleSortsThePRsWithinEachRepoAndTheGroupsKeepTheirOrder()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        var groups = page.Rows.Select(r => r.Repo).Distinct().ToList();
+        string[] Repo(string repo) => [.. page.Rows.Where(r => r.Repo == repo).Select(r => r.Url[(r.Url.LastIndexOf('/') + 1)..])];
+        Repo("SharpAstro/pilot").ShouldBe(["252", "261", "258"]);
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["252", "258", "261"]);
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["261", "258", "252"]);
+        Repo("SharpAstro/DIR.Lib").ShouldBe(["301", "300"]);
+
+        // The repos' groups are where they were, each repo's rows still together.
+        page.Rows.Select(r => r.Repo).Distinct().ShouldBe(groups);
+        page.Rows.Select(r => r.Repo).Where((repo, i) => i == 0 || repo != page.Rows[i - 1].Repo).Count().ShouldBe(groups.Count);
+
+        // The age sorts by time, the newest first on a first click: #252 (5 minutes) leads its group.
+        ClickTitle(renderer, page, screen, "Updated");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot")[0].ShouldBe("252");
+        page.Table.Sort.ShouldBe(new ListTable.SortState("Updated", Descending: true));
+    }
+
+    [Fact]
+    public void TheSelectedPRStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        page.Select(page.Rows.ToList().FindIndex(r => r.Number == 258));
+        var before = page.Selected;
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+
+        page.SelectedRow!.Number.ShouldBe(258);
+        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
+        page.Selected.ShouldNotBe(before);
     }
 }

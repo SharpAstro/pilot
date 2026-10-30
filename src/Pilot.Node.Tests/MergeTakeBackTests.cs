@@ -120,6 +120,7 @@ public sealed class MergeTakeBackTests : IDisposable
 
     private static void ShouldHaveTakenItBack(NodeHarness node, CardRow ready)
     {
+        node.State.Merges().ShouldBeEmpty();
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
         node.State.Flights().Single().Review!.State.ShouldBe(ReviewState.Changes);
         node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Closed);

@@ -107,7 +107,7 @@ internal sealed record FlightLine
         }
         var text = $"{legs.Count} {(legs.Count == 1 ? "leg" : "legs")} · {legs.Count(l => l.State == LegState.Done)} done";
         return legs.FirstOrDefault(l => l.State == LegState.Failed) is { } failed ? $"{text} · {failed.Name} failed"
-            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
+            : legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying ? $"{text} · {flying.Name} {(flying.Recheck is { Outcome: null } ? FlightWaiting.LegState(flying) : flying.Wait is { } wait ? FlightWaiting.WaitText(wait) : "flying")}{(flying.GoArounds > 0 ? $" (go-around {flying.GoArounds})" : "")}"
             : legs.FirstOrDefault(l => l.Hold is not null) is { } held ? $"{text} · {held.Name} {FlightWaiting.LegState(held)}"
             : text;
     }
@@ -406,25 +406,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Layout.Node PullRequestLink(FlightLine line, string url, string action)
     {
         var flight = line.Row;
+        var pr = PullRequestLinks.Of(flight);
         // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
-        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
-        {
-            return Link($"PR #{flight.PullRequest}", url, action).WAuto();
-        }
-        // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
-        return Layout.Builder.HStack(
-                _links.OnLink(Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
-                    .WithTooltip($"Show {pr} on the Pull requests page")
-                    .WAuto(), url),
-                _links.OnLink(Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
-                    .Pad(6f, 0f)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
-                    .WithTooltip($"Open {pr} on GitHub")
-                    .WAuto(), url))
-            .WAuto()
+        var route = OnPullRequest is { } open && pr is not null && PullRequestLinks.Lists(PullRequests, pr)
+            ? (Action?)(() => open(pr.Repo, pr.Number))
+            : null;
+        // Qualified: this method is named PullRequestLink too.
+        return Pilot.Ui.PullRequestLink.Of(_links, action, $"PR #{flight.PullRequest}", pr?.ToString() ?? url, url, OnOpen, route, "the Pull requests page",
+                Landed, RowHoverBg, mayBeCut: false, fill: false)
             // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
             .HFixed(20f);
     }
@@ -608,16 +597,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
     public IReadOnlyList<JobRow> Jobs { get; set; } = [];
 
+    /// <summary>The flights the last frame showed, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<FlightLine> Shown => _screen.Lines;
+
     /// <summary>The selected flight's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
-    /// <summary>
-    /// The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the
-    /// tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width, as pilot-tui does. The
-    /// canvas is wider than a narrow page and cannot scroll across, so a page narrower than it shows the grid, and a card is never
-    /// wider than the page.
-    /// </summary>
-    internal float? PageWidth { get; set; }
+    /// <summary>The width, in design units, the page has to draw in: <see cref="Render"/> sets it from its bounds, and a test that arranges the tree itself sets it from the room it gives it. Null (not known) draws the cards at their own width.</summary>
+    internal float? PageWidth { get => _viewWidth > 0f ? _viewWidth : null; set => _viewWidth = value ?? 0f; }
 
     public void Render(FlightsScreen screen, RectF32 bounds)
     {
@@ -631,6 +618,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             DrawSelection(fill);
         });
         _arranged = arranged;
+        NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
         if (RevealLeg(arranged))
         {
@@ -656,6 +644,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (Play is { InPlay: true })
         {
             screen = screen.InPlay(_pinned);
+        }
+        // A clicked title orders the list only, never the grid or the canvas; the flight selected before it is found again by its code.
+        if (!GridShown && !CanvasShown && Table.Sort is not null)
+        {
+            var kept = Selected >= 0 && Selected < _screen.Lines.Count ? _screen.Lines[Selected].Code : null;
+            screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
+            if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Code == kept) is >= 0 and var moved)
+            {
+                ListCursor.Open(ListId, moved, screen.Lines.Count);
+            }
         }
         if (screen.Lines.Count == 0)
         {
@@ -1014,7 +1012,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return Layout.Builder.Text(screen.Hidden is null ? "No flights yet: New flight, above, makes one" : "No flight in play: Everything, above, shows the landed", 16f, Dim, TextAlign.Center).Stretch();
         }
-        if (CanvasShown && !CanvasTooWide(screen))
+        if (CanvasShown && MapFits(screen))
         {
             return CanvasBody(screen);
         }
@@ -1047,20 +1045,42 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin),
-            new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow),
-            ListColumn.Optional("Repo", WhereWidth),
-            ListColumn.Fixed("State", StateWidth, StateMin),
-            ListColumn.Fixed("Legs", LegsWidth),
-            ListColumn.Optional("Branch", BranchWidth),
-            ListColumn.Optional("Sessions", SessionsWidth),
+            Sorted(ListColumn.Fixed("Flight", stale ? StaleCodeWidth : CodeWidth, CodeMin)),
+            Sorted(new ListColumn("What", Layout.Sizing.Star(1f, 0f), WhatDropBelow)),
+            Sorted(ListColumn.Optional("Repo", WhereWidth)),
+            Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
+            Sorted(ListColumn.Fixed("Legs", LegsWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Branch", BranchWidth)),
+            Sorted(ListColumn.Optional("Sessions", SessionsWidth), descendingFirst: true),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the flight by its code, the legs by how many are done, the state in the page's own order.
+    private static readonly IReadOnlyDictionary<string, Func<FlightLine, object?>> SortKeys = new Dictionary<string, Func<FlightLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Flight"] = l => l.Code,
+        ["What"] = l => l.Title,
+        ["Repo"] = l => l.Row.Repo,
+        ["State"] = l => (l.Row.State switch { FlightState.Flying => 0, FlightState.Held => 1, _ => 2 }, l.State),
+        ["Legs"] = l => (l.LegRows.Count(r => r.State == LegState.Done), l.LegRows.Count),
+        ["Branch"] = l => l.Branch ?? "",
+        ["Sessions"] = l => l.Sessions.Length > 0 && char.IsDigit(l.Sessions[0]) ? int.Parse(l.Sessions.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture) : 0,
+    };
 
     private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
 

@@ -162,7 +162,7 @@ internal sealed partial record SessionLine
             : span.Hours == 0 ? $"{(int)span.TotalDays} d" : $"{(int)span.TotalDays} d {span.Hours} h";
     }
 
-    private static int StateOrder(SessionState state) => state switch
+    internal static int StateOrder(SessionState state) => state switch
     {
         SessionState.Waiting => 0,
         SessionState.Working => 1,

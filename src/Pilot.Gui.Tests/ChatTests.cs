@@ -68,6 +68,85 @@ public sealed class ChatTests
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
     }
 
+    private static readonly NodeMark Own = new("here", "/sock", "DE1", Here: true);
+    private static readonly NodeMark Other = new("se1", "http://se1", "SE1", Here: false);
+
+    private static ChatView<RgbaImage> TwoNodes(RgbaImageRenderer renderer, NodeFilter nodes, List<string> read)
+    {
+        var chat = NewChat(renderer);
+        chat.Nodes = nodes;
+        nodes.Choices = [Own, Other];
+        chat.LoadOn = (node, after, _) =>
+        {
+            read.Add($"{node.Name}@{after}");
+            return Task.FromResult(new ChatPage { Entries = after < 0 ? [new TranscriptEntry { Index = 0, Kind = TranscriptKind.Assistant, Text = "from SE1", At = At }] : [], Total = 1 });
+        };
+        return chat;
+    }
+
+    [Fact]
+    public async Task TheHeaderNamesWhoseWatchtowerItIsOwnNodeAndOtherAndSwitchingReadsTheOthersFeedFromItsStart()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var read = new List<string>();
+        var chat = TwoNodes(renderer, nodes, read);
+        await Read(chat, 6);
+
+        Described(chat).ShouldContain("fleet chat");
+        Described(chat).ShouldContain("held by DE1's watchtower");
+        chat.Input.Placeholder.ShouldBe("Message the fleet chat");
+
+        chat.Open();
+        Click(chat, "chat:node:se1");
+        for (var i = 0; i < 100 && chat.Entries.Count != 1; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Close();
+
+        chat.Node.ShouldBe(Other);
+        chat.Entries.Single().Text.ShouldBe("from SE1");
+        read[0].ShouldBe("SE1@-1");
+        Described(chat).ShouldContain("watchtower · SE1");
+        Described(chat).ShouldNotContain("DE1's watchtower");
+        chat.Tree();
+        chat.Input.Placeholder.ShouldBe("Message SE1's watchtower");
+        nodes.Picked.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheTopBarOfTheChatPageHasOneChosenNodePillWhateverTheWindowFilterPicks()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var chat = TwoNodes(renderer, nodes, []);
+        nodes.Restore(["here", "se1"]);
+
+        var text = Described(chat);
+
+        text.ShouldNotContain("All nodes");
+        text.ShouldContain("DE1 (this)");
+        text.ShouldContain("SE1");
+        chat.Render(new RectF32(0, 0, 1280, 800));
+        var regions = new List<ClickableRegion>();
+        chat.CollectPaintedRegions(regions);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("chat:node:")).ShouldBe(["chat:node:here", "chat:node:se1"]);
+        chat.Node.ShouldBeNull();
+        nodes.Picked.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void ANodeWhoseChatCannotBeReadSaysSoOnItsPill()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var nodes = new NodeFilter();
+        var chat = TwoNodes(renderer, nodes, []);
+        chat.CanRead = _ => false;
+
+        Described(chat).ShouldContain("SE1 · chat not readable");
+    }
+
     [Fact]
     public async Task NewWatchtowerAsksFirstThenRestartsItAndKeepItLeavesIt()
     {
@@ -121,6 +200,42 @@ public sealed class ChatTests
             view.Render(new RectF32(0, 0, width, height));
             File.WriteAllBytes(Path.Combine(dir, $"{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, width, height));
         }
+    }
+
+    [Fact]
+    public async Task AMessageRelayedThroughTheNodeIsShownAsFromItsSenderWithoutItsEnvelope()
+    {
+        // The owner (2026-10-29): "why is it still this weird cross xml thing?" The node relays words wrapped in Claude Code's envelope.
+        const string fromYou = """
+            <cross-session-message from="uds:\\.\pipe\LOCAL\cc-msg-4aca" from-name="controller" from-mode="prompting">
+            https://github.com/SharpAstro/pilot/pull/457 this one has priority.
+
+            (Sent through the pilot node. The sender cannot be messaged back: answer in your own reply, not with SendMessage.)
+            </cross-session-message>
+            """;
+        const string fromWorker = """
+            <cross-session-message from="uds:x" from-name="de1-tia1910-measure-spread" from-mode="prompting">
+            measured: 1.6 frames a second
+
+            (Sent through the pilot node. To answer, run: pilot say 2ca9 "<your answer>". Not SendMessage: it cannot reach the sender.)
+            </cross-session-message>
+            """;
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, Page([
+            new() { Index = 0, Kind = TranscriptKind.User, Text = fromYou, At = At },
+            new() { Index = 1, Kind = TranscriptKind.User, Text = fromWorker, At = At.AddMinutes(1) },
+        ]));
+        await Read(chat, 2);
+
+        var text = Described(chat);
+
+        // The person's words as theirs (a long link is drawn in pieces, so it is checked by its ends).
+        text.ShouldContain("you https:");
+        text.ShouldContain("457 this one has priority.");
+        text.ShouldContain("de1-tia1910-measure-spread measured: 1.6 frames a second");
+        text.ShouldNotContain("cross-session-message");
+        text.ShouldNotContain("Sent through the pilot node");
+        CrossSessionMessage.Parse("just words").ShouldBeNull();
     }
 
     [Fact]
@@ -773,5 +888,69 @@ public sealed class ChatTests
             // The text keeps room for its header and a line or more, and the choices do not cost the page its box.
             card.Height.ShouldBeGreaterThanOrEqualTo(40f);
         }
+    }
+
+    private static RGBAColor32? ColorOf(ChatView<RgbaImage> chat, string contains) =>
+        Arranged(chat).Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>()
+            .Where(t => t.Value.Contains(contains, StringComparison.Ordinal))
+            .Select(t => (RGBAColor32?)t.Color)
+            .FirstOrDefault();
+
+    [Fact]
+    public async Task ASentMessageShowsAtOnceDimmedAndSendingAndTheMarkClearsWhenTheNodeTookIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var held = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var chat = NewChat(renderer, Page(queued: ["an earlier one"]), _ => held.Task);
+        await Read(chat, 6);
+
+        var send = chat.SendAsync("launch it now");
+
+        Described(chat).ShouldContain("launch it now");
+        Described(chat).ShouldContain("sending…");
+        ColorOf(chat, "launch it now").ShouldBe(ColorOf(chat, "an earlier one"), "dimmed as a queued line is");
+
+        held.SetResult(null);
+        await send;
+
+        Described(chat).ShouldContain("launch it now");
+        Described(chat).ShouldNotContain("sending…");
+        chat.Notices.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusedMessageLosesItsEntryAndIsSaidAsTheRefusalNotice()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var held = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var chat = NewChat(renderer, send: _ => held.Task);
+        await Read(chat, 6);
+
+        var send = chat.SendAsync("launch it now");
+        Described(chat).ShouldContain("sending…");
+
+        held.SetResult("refused: no watchtower");
+        await send;
+
+        Described(chat).ShouldNotContain("sending…");
+        Described(chat).ShouldContain("refused: no watchtower");
+        Described(chat).Split("launch it now").Length.ShouldBe(2, "the words show once, in the notice");
+    }
+
+    [Fact]
+    public async Task ADeliveredMessageIsNotShownTwiceOnceTheFeedCarriesIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = Conversation();
+        var chat = NewChat(renderer, send: _ => Task.FromResult<string?>(null));
+        await Read(chat, 6);
+        await chat.SendAsync("and the next one?");
+
+        // The feed already has a message with these words (index 5): only its copy shows.
+        Described(chat).Split("and the next one?").Length.ShouldBe(2);
+        feed.Length.ShouldBe(6);
+
+        await chat.SendAsync("something new");
+        Described(chat).ShouldContain("something new");
     }
 }

@@ -444,8 +444,51 @@ public sealed class PullRequestsTests : IDisposable
         return Path.Combine(_root, name);
     }
 
-    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null) =>
-        new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System);
+    private PullRequestWatch Watch(NodeState state, FakeGitHub github, TimeProvider? time = null, bool flown = true)
+    {
+        // A repo is tracked once pilot has worked in it (#429's rule, narrowed 2026-10-29): each clone made so far has a landed flight,
+        // unless the test is about a clone pilot never worked in.
+        if (flown)
+        {
+            foreach (var clone in Directory.EnumerateDirectories(_root).Where(d => Directory.Exists(Path.Combine(d, ".git"))))
+            {
+                if (!state.Flights().Any(f => string.Equals(f.RepoPath, clone, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var name = Path.GetFileName(clone);
+                    state.PutFlight(new FlightRow
+                    {
+                        Code = $"OLD{Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(name)) % 100000}", Repo = name, RepoPath = clone, Issue = 1,
+                        Branch = $"flight/old-{name}", Worktree = Path.Combine(clone, ".claude", "worktrees", "old"), Base = "origin/main",
+                        State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
+                    });
+                }
+            }
+        }
+        return new(state, new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root])), github, time ?? TimeProvider.System);
+    }
+
+    [Fact]
+    public async Task AClonePilotNeverFlewInNorReviewedInIsNotSearched()
+    {
+        // The owner (2026-10-29), seeing WebAssembly's wabt and wasi-libc on the page: "why do we have web assembly in here?". A clone
+        // that only sits under a repo root is someone else's; only the repos of pilot's flights and PR reviews are read.
+        var pilot = Clone("SharpAstro", "pilot");
+        Clone("WebAssembly", "wabt");
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutFlight(new FlightRow
+        {
+            Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
+            Base = "origin/main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        var github = new FakeGitHub();
+        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("WebAssembly/wabt", 2622, PullRequestKind.Conflicts)]);
+
+        var row = (await Watch(state, github, flown: false).RefreshAsync(Ct))!;
+
+        github.Searches.Single().ShouldBe(["SharpAstro/pilot"]);
+        row.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);
+        row.Orgs.ShouldBe(["SharpAstro"]);
+    }
 
     [Fact]
     public async Task TheWatchSearchesTheTrackedReposInOneBatchAndMapsAFlightBranchToItsFlight()
@@ -687,9 +730,9 @@ public sealed class PullRequestsTests : IDisposable
             Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         };
-        PullRequestWatch.TrackedRepos([], [flight], [Review("sharpastro/PILOT", 3), Review("acme/widget", 7)])
+        PullRequestWatch.TrackedRepos([flight], [Review("sharpastro/PILOT", 3), Review("acme/widget", 7)])
             .ShouldBe(["acme/widget", "SharpAstro/pilot"]);
-        PullRequestWatch.TrackedRepos([], [flight], []).ShouldBe(["SharpAstro/pilot"]);
+        PullRequestWatch.TrackedRepos([flight], []).ShouldBe(["SharpAstro/pilot"]);
     }
 
     [Fact]
@@ -798,7 +841,8 @@ public sealed class PullRequestsTests : IDisposable
         {
             Clone("SharpAstro", $"another-clone-{i:00}");
         }
-        var more = (await watch.RefreshAsync(Ct))!;
+        // Each new clone flown in, so it is tracked (Watch marks the clones made so far).
+        var more = (await Watch(state, github).RefreshAsync(Ct))!;
         github.Searches.Count.ShouldBeGreaterThan(2);
         more.Cost.ShouldBe(5 * (github.Searches.Count - 1));
         // And merging several nodes' rows adds their reads up.

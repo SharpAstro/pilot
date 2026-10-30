@@ -148,7 +148,7 @@ public static class ChoiceStatus
     public const string Pending = "pending";
     public const string Failing = "failing";
 
-    /// <summary>The PR conflicts with its base: GitHub cannot merge it until it is rebased, which the node does by itself.</summary>
+    /// <summary>The PR conflicts with its base: GitHub cannot merge it until the conflict is resolved, by a merge of the base in (the watchtower's, or a go-around's).</summary>
     public const string Conflicting = "conflicting";
 
     /// <summary>A merge answered while its checks run, or one that joined a merge queue: it goes through by itself once they pass or the queue takes it.</summary>
@@ -157,7 +157,7 @@ public static class ChoiceStatus
     /// <summary>The PR is in its base's merge queue (<see cref="CardChoice.Note"/> says its position): the queue merges it, nothing to press.</summary>
     public const string Queued = "queued";
 
-    /// <summary>The PR is behind its base and GitHub will not merge it as it is: the node brings it up to date (merging the base in, or rebasing, as the repo's merge method wants), so the card offers that, not Merge.</summary>
+    /// <summary>The PR is behind its base and GitHub will not merge it as it is: the node brings it up to date (the base merged in and pushed plainly, never a rebase), so the card offers that, not Merge.</summary>
     public const string Behind = "behind";
 
     /// <summary>GitHub blocks the merge (a required check failed, a review is required, the PR is a draft): <see cref="CardChoice.Note"/> says which. Not a button.</summary>

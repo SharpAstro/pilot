@@ -22,6 +22,12 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
 
     private DateTimeOffset? _warnedFor;
 
+    // The login last read, and when it was seen to change: the status line's file names no account, so after a switch it still
+    // holds the last account's figures until the status line writes again, and those were put as the new account's (the owner
+    // saw 87% of the week on an account that had used 6%, DE1 2026-10-30).
+    private string? _email;
+    private DateTimeOffset? _switchedAt;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
@@ -45,7 +51,21 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     public void Read()
     {
         var account = AccountFile is { } path ? ClaudeAccount.Read(path) : null;
-        if ((Parse(file) is { } figures ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
+        if (account is { Email: var email })
+        {
+            if ((_email ?? state.Usage()?.Account?.Email) is { } was && was != email)
+            {
+                _switchedAt = time.GetUtcNow();
+            }
+            _email = email;
+        }
+        var figures = Parse(file);
+        // Written before the login changed: the last account's, not this one's. The account is put alone until fresh ones come.
+        if (figures is not null && _switchedAt is { } switched && figures.ReadAt < switched)
+        {
+            figures = null;
+        }
+        if ((figures is not null ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
         {
             return;
         }

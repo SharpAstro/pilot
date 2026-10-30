@@ -57,6 +57,8 @@ public static class NodeApp
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, PilotJsonContext.Default));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton(NodeTraffic.Shared);
+        builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
         // The store: the node's events as files in its data folder, read back on the next start (FileJournal).
         builder.Services.AddSingleton<INodeJournal>(_ => new FileJournal(Path.Combine(options.DataFolder, "store")));
         builder.Services.AddSingleton(services => new NodeState(
@@ -78,7 +80,7 @@ public static class NodeApp
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
         // nuget.org's public flat container: what a flight connected to a releasing flight waits for.
-        builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate }) { Timeout = TimeSpan.FromSeconds(30) }));
+        builder.Services.AddSingleton<INuGetFeed>(_ => new NuGetOrgFeed(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate } }) { Timeout = TimeSpan.FromSeconds(30) }));
         builder.Services.AddSingleton<PackageReleases>();
         builder.Services.AddSingleton(services =>
         {
@@ -97,7 +99,7 @@ public static class NodeApp
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
             var models = services.GetRequiredService<RoleModels>();
-            var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
+            var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
             {
                 trackers.Add(new GitHubTracker(gitHub));
@@ -130,11 +132,13 @@ public static class NodeApp
         builder.Services.AddSingleton<RepoCommander>();
         builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
         builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
+        builder.Services.AddSingleton<IIdeaMilestoner, ClaudeIdeaMilestoner>();
         builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
         builder.Services.AddSingleton(services =>
         {
             var ideas = ActivatorUtilities.CreateInstance<IdeaCommander>(services);
             ideas.Error = logWriter;
+            ideas.Attachments = services.GetRequiredService<Attachments>();
             return ideas;
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
@@ -152,6 +156,9 @@ public static class NodeApp
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
+            // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
+            legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
+            legs.Error = services.GetRequiredService<LogWriter>();
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             return legs;
@@ -334,7 +341,7 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
-            services.GetRequiredService<IClaudeAgents>(), relayFolder));
+            services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile));
         builder.Services.AddSingleton(services => new SessionMessenger(
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
@@ -375,7 +382,7 @@ public static class NodeApp
                 || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
                 || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/log", StringComparison.Ordinal));
             return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
-                : (post && path == NodeWire.CommandsRoute) || granted ? NodeRouteAccess.Command
+                : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
                 : NodeRouteAccess.ThisMachineOnly;
         },
         MayCommand = async context =>
@@ -430,7 +437,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, NodeTraffic traffic) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -447,6 +454,7 @@ public static class NodeApp
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 Watchtower = watchtower.Health(),
+                Traffic = traffic.LastHourRow(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 
@@ -505,14 +513,15 @@ public static class NodeApp
                     : Results.Json(ResponseEnvelope<TranscriptPage>.Fail($"{row.Name} has no transcript yet", 404), PilotJsonContext.Default.ResponseEnvelopeTranscriptPage, statusCode: 404));
 
         // The copy of an image an artifact names, as the file; the artifact (a leg's or a session's) says whose it is.
-        app.MapGet(NodeWire.AttachmentPattern, (string id, NodeState state, Attachments attachments) =>
+        IdeaImageRoutes.Map(app);
+        app.MapGet(NodeWire.AttachmentPattern, async (string id, NodeState state, Attachments attachments, RepoCatalog repos, IGitHub github, CancellationToken cancellationToken) =>
         {
             var found = state.Flights().SelectMany(f => state.Legs(f.Code).SelectMany(l => l.Artifacts).Select(a => (Owner: f.Code, Artifact: a)))
                 .Concat(state.Sessions().SelectMany(s => (s.Artifacts ?? []).Select(a => (Owner: s.Id, Artifact: a))))
                 .FirstOrDefault(x => x.Artifact?.Attachment == id);
             if (found.Artifact?.AttachmentExt is not { } ext || attachments.PathOf(found.Owner, id, ext) is not { } path || !File.Exists(path))
             {
-                return Results.NotFound();
+                return await IdeaImageRoutes.ServeAsync(id, state, attachments, repos, github, cancellationToken);
             }
             return Results.File(path, Attachments.ContentType(ext));
         });
@@ -598,7 +607,12 @@ public static class NodeApp
                 if (finished != run)
                 {
                     _ = run.ContinueWith(t => logger.LogError(t.Exception, "{Verb} {Target} failed after its reply deadline", command.Verb, command.Target), TaskContinuationOptions.OnlyOnFaulted);
-                    var waiting = state.Complete(command, null, waiting: $"still running after {commands.ReplyDeadline.TotalSeconds:0} s; its outcome follows on the stream, check pilot status");
+                    // A finish's wait is its check being rerun, recorded on the leg (pilot status shows it, with since when): its worker has
+                    // nothing to check or retry, the node tells it the outcome (pilot #487).
+                    var after = $"still running after {commands.ReplyDeadline.TotalSeconds:0} s; its outcome follows on the stream";
+                    var waiting = state.Complete(command, null, waiting: command.Verb == Verbs.FinishLeg
+                        ? $"{after}; the leg's check is rerunning (pilot status shows since when); end your turn: the node tells you the outcome"
+                        : $"{after}, check pilot status");
                     return Results.Json(ResponseEnvelope<CommandResult>.Ok(waiting), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 202);
                 }
                 var result = await run;

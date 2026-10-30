@@ -50,11 +50,18 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// What the lookout does as the person's assistant when the autopilot is on (see NodeCommands.RunAsync): a flight's merge,
-    /// its landing, a rerun of its checks, and a card's answer or dismissal. The node's settings, setup, grants and updates stay the person's.
+    /// its landing, a rerun of its checks, a card's answer or dismissal, and a fixer on a PR whose review asked for changes, within
+    /// the guards the node's own fixer keeps (PrReviews.FixAsync): no fourth round, no design question, and no first fixer on another
+    /// author's PR, whose Fix it stays the person's. The node's settings, setup, grants and updates stay the person's.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Verbs.FixPr"/> was the lookout's never: told overnight to get every PR with review findings fixed, the watchtower
+    /// answered the Retry of #467's fixer that could not start (c2737) and was refused, and the PRs outside a flight waited on the
+    /// person (DE1, 2026-10-29).
+    /// </remarks>
     public static readonly IReadOnlySet<string> LookoutOnAutopilot = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss,
+        Verbs.Merge, Verbs.Land, Verbs.RerunChecks, Verbs.Answer, Verbs.Dismiss, Verbs.FixPr,
     };
 
     /// <summary>
@@ -64,7 +71,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.SaveTidyIdea, Verbs.FoldIdea,
+        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea,
     };
 
     /// <summary>
@@ -73,7 +80,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.SaveTidyIdea, Verbs.FoldIdea,
+        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea,
     };
 
     /// <summary>
