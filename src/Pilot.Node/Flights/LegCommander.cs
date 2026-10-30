@@ -1501,8 +1501,7 @@ public sealed partial class LegCommander(
             // The check usually outlasts the reply deadline, so the caller was told to end its turn: the card is where the reason stays.
             if (isCheck && why is not null)
             {
-                NoteOnLegFailedCard(flight.Code, leg.Name, $"{who} asked the node to verify it, and it did not:
-{why}");
+                NoteOnLegFailedCard(flight.Code, leg.Name, $"{who} asked the node to verify it, and it did not:\n{why}");
             }
             throw new FlightException($"{name} is not finished: {why}; it stays failed and its card stays open");
         }
@@ -1516,12 +1515,8 @@ public sealed partial class LegCommander(
             return;
         }
         // One verify's note replaces the last one's, so a retried verify does not stack tails.
-        var kept = card.Detail is { Length: > 0 } d && d.IndexOf("
-
-" + VerifyNoteMark, StringComparison.Ordinal) is var at and >= 0 ? d[..at] : card.Detail;
-        var detail = string.IsNullOrEmpty(kept) ? $"{VerifyNoteMark}{note}" : $"{kept}
-
-{VerifyNoteMark}{note}";
+        var kept = card.Detail is { Length: > 0 } d && d.IndexOf("\n\n" + VerifyNoteMark, StringComparison.Ordinal) is var at and >= 0 ? d[..at] : card.Detail;
+        var detail = string.IsNullOrEmpty(kept) ? $"{VerifyNoteMark}{note}" : $"{kept}\n\n{VerifyNoteMark}{note}";
         state.UpdateCard(card.Id, card.Title, detail, card.Choices, card.Link);
     }
 
