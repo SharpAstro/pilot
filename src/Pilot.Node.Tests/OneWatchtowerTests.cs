@@ -96,6 +96,52 @@ public sealed class OneWatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedWatchtowerThenAFreshStartLeavesOneLiveAndNoSayReachesTheOldId()
+    {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        var oldId = _tower.Generations().ShouldHaveSingleItem().Job;
+
+        // The node's own watchtower turns up renamed, its role gone, and is live.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row(oldId, SessionState.Idle, Start, name: "de1-pil455-pr498-merge-ready", role: SessionRole.AdHoc);
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(2);
+        var freshId = _tower.Generations().Last().Job;
+        freshId.ShouldNotBe(oldId);
+        Row(freshId, SessionState.Idle, _time.GetUtcNow());
+
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldContain(oldId);
+        _workers.Stopped.ShouldNotContain(freshId);
+        _tower.Current()!.Id.ShouldBe(freshId);
+        _tower.TellTarget().Target.ShouldBe(Verbs.SessionTarget(freshId));
+        _state.Cards().Count(c => c.Kind == "watchtower-duplicate").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ARenamedOldWatchtowerStillLiveIsStoppedByAPlainLook()
+    {
+        await _tower.LookAsync(Ct);
+        var oldId = _tower.Generations().ShouldHaveSingleItem().Job;
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row(oldId, SessionState.Idle, Start, name: "my-own-name", role: SessionRole.AdHoc);
+        Row("new00001", SessionState.Idle, _time.GetUtcNow());
+        RecordCurrentBrief();
+        _tower.Generations();
+
+        // The new one is the node's by name; the old by id.
+        await _tower.LookAsync(Ct);
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldBe([oldId]);
+        _state.Cards().Single(c => c.Kind == "watchtower-duplicate").Title.ShouldContain($"my-own-name ({oldId})");
+    }
+
+    [Fact]
     public async Task AnInteractiveSessionNamedLikeTheWatchtowerIsNeverStopped()
     {
         Row("mine0001", SessionState.Idle, Start.AddHours(-2), SessionKind.Interactive, role: SessionRole.AdHoc);
