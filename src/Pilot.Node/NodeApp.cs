@@ -155,6 +155,8 @@ public static class NodeApp
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
+            // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
+            legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             legs.Error = services.GetRequiredService<LogWriter>();
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
@@ -601,7 +603,12 @@ public static class NodeApp
                 if (finished != run)
                 {
                     _ = run.ContinueWith(t => logger.LogError(t.Exception, "{Verb} {Target} failed after its reply deadline", command.Verb, command.Target), TaskContinuationOptions.OnlyOnFaulted);
-                    var waiting = state.Complete(command, null, waiting: $"still running after {commands.ReplyDeadline.TotalSeconds:0} s; its outcome follows on the stream, check pilot status");
+                    // A finish's wait is its check being rerun, recorded on the leg (pilot status shows it, with since when): its worker has
+                    // nothing to check or retry, the node tells it the outcome (pilot #487).
+                    var after = $"still running after {commands.ReplyDeadline.TotalSeconds:0} s; its outcome follows on the stream";
+                    var waiting = state.Complete(command, null, waiting: command.Verb == Verbs.FinishLeg
+                        ? $"{after}; the leg's check is rerunning (pilot status shows since when); end your turn: the node tells you the outcome"
+                        : $"{after}, check pilot status");
                     return Results.Json(ResponseEnvelope<CommandResult>.Ok(waiting), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 202);
                 }
                 var result = await run;
