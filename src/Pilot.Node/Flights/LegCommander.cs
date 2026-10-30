@@ -1318,9 +1318,9 @@ public sealed partial class LegCommander(
                 {
                     var (checkedFlight, checkedLeg, run, late) = await RerunCheckAsync(flight, leg, cancellationToken);
                     (flight, leg) = (checkedFlight, checkedLeg);
-                    if (run is { Passed: false })
+                    // A run is there only when a check ran, so the check is too.
+                    if (run is { Passed: false } && leg.Check is { } check)
                     {
-                        var check = leg.Check;
                         // A restore that fails on a package a sibling is publishing is the leg's to wait out, not to fail.
                         if (await TryHoldAsync(flight, leg with { Recheck = null }, run.Tail, cancellationToken))
                         {
@@ -1363,7 +1363,9 @@ public sealed partial class LegCommander(
                 {
                     break;
                 }
-                state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null });
+                // The attempt may have recorded on the leg (a corrected check): the failure keeps that.
+                leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
+                state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
                     $"{flight.Code}/{leg.Name} failed", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
                     [
@@ -1480,8 +1482,21 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<(bool Finished, string? NotWhy)> TrySelfFinishAsync(FlightRow flight, LegRow leg, string report, CancellationToken cancellationToken)
     {
-        var (finished, why, isCheck) = await FinishFromPushedAsync(flight, leg, report, null, cancellationToken);
-        return (finished, isCheck ? why : null);
+        try
+        {
+            var (finished, why, isCheck) = await FinishFromPushedAsync(flight, leg, report, null, cancellationToken);
+            return (finished, isCheck ? why : null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The worker's failed still rings: a refused call, a leg changed meanwhile or a runner that threw is a reason on its card,
+            // not an answer of 500 that loses the report. A leg recorded done before the throw stays done.
+            if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { State: LegState.Done })
+            {
+                return (true, null);
+            }
+            return (false, $"The node did not finish it itself: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -1528,6 +1543,10 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<(bool Finished, string? Why, bool IsCheck)> FinishFromPushedAsync(FlightRow flight, LegRow leg, string report, string? who, CancellationToken cancellationToken)
     {
+        if (leg.Check is not { Length: > 0 })
+        {
+            return (false, "it has no check to rerun", false);
+        }
         if (leg.Checklist.Any(i => !i.Done))
         {
             return (false, $"steps not ticked: {string.Join("; ", leg.Checklist.Where(i => !i.Done).Select(i => i.Text))}", false);

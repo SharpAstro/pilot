@@ -88,13 +88,46 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
-    public async Task A_plane_behind_or_diverged_from_origin_still_raises_leg_failed()
+    public async Task A_plane_diverged_from_origin_still_raises_leg_failed()
     {
         var flight = await PushedLegAsync();
         // Rewritten after its push (as a rebase does), not pushed again: the plane and origin hold different heads.
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--amend", "-m", "The parser, rebased", "--date=2001-01-01T00:00:00");
 
         await AssertStillFailedAsync();
+    }
+
+    [Fact]
+    public async Task A_plane_behind_origin_still_raises_leg_failed()
+    {
+        var flight = await PushedLegAsync();
+        // Its pushed commit taken back out of the plane: origin holds work the plane does not.
+        Git(flight.Worktree, "reset", "-q", "--hard", "HEAD~1");
+
+        await AssertStillFailedAsync();
+        _checks.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_leg_with_no_check_still_raises_leg_failed()
+    {
+        await PushedLegAsync();
+        _state.PutLeg(L("parser") with { Check = null });
+
+        await AssertStillFailedAsync();
+        _checks.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_check_runner_that_throws_still_raises_leg_failed_with_the_report_and_the_reason_on_the_card()
+    {
+        await PushedLegAsync();
+        _checks.OnRun = () => Task.FromException(new InvalidOperationException("the runner broke"));
+
+        await AssertStillFailedAsync("the runner broke");
+        L("parser").Report.ShouldBe("ran out of road");
+        L("parser").Recheck.ShouldBeNull();
+        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Detail.ShouldNotBeNull().ShouldContain("ran out of road");
     }
 
     [Fact]
@@ -184,6 +217,23 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         result.Ok.ShouldBeFalse();
         result.Error.ShouldNotBeNull().ShouldContain("Parser.Tests: 3 failed");
         L("parser").State.ShouldBe(LegState.Failed);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == "leg-failed");
+    }
+
+    [Fact]
+    public async Task Verified_on_a_leg_with_no_check_is_refused()
+    {
+        await PushedLegAsync();
+        await FailParserAsync();
+        _state.PutLeg(L("parser") with { Check = null });
+        var runs = _checks.Runs.Count;
+
+        var result = await Verify("du1-watchtower");
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("it has no check to rerun");
+        L("parser").State.ShouldBe(LegState.Failed);
+        _checks.Runs.Count.ShouldBe(runs);
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == "leg-failed");
     }
 
