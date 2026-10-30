@@ -43,6 +43,12 @@ public static class NodeWire
     /// </summary>
     public const string ChatRoute = "/api/v1/chat";
 
+    /// <summary>
+    /// The token ledger over a window, a <see cref="SpendReport"/>: <c>/api/v1/spend?window=5h|today|week</c>. This machine
+    /// only: the LAN policy lets no route through it does not name.
+    /// </summary>
+    public const string SpendRoute = "/api/v1/spend";
+
     /// <summary>The node's jobs: <c>/api/v1/jobs/&lt;id&gt;/log</c> is one's output, its end, as a <see cref="JobLog"/>.</summary>
     public const string JobsRoute = "/api/v1/jobs";
 

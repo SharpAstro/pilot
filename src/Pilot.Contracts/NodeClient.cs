@@ -152,6 +152,10 @@ public sealed class NodeClient : IDisposable
         GetEnvelopeAsync($"{NodeWire.ChatRoute}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             PilotJsonContext.Default.ResponseEnvelopeChatPage, cancellationToken);
 
+    /// <summary>What the token ledger says was spent over <paramref name="window"/> (<c>5h</c>, <c>today</c> or <c>week</c>).</summary>
+    public Task<ResponseEnvelope<SpendReport>> GetSpendAsync(string window, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.SpendRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendReport, cancellationToken);
+
     /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);

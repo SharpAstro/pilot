@@ -145,6 +145,7 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
@@ -338,6 +339,7 @@ public static class NodeApp
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
+            Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
@@ -531,6 +533,12 @@ public static class NodeApp
         // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
         app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
+
+        // What the token ledger says was spent over a window (5h, today, week): pilot spend. This machine only.
+        app.MapGet(NodeWire.SpendRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Report(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } report
+                ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
+                : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
