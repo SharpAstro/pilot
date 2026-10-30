@@ -400,6 +400,17 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
     }
 
+    [Fact]
+    public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
+    {
+        var plane = await FlightWithAValidatorFlying("1612");
+
+        var (exit, output, error) = await Pilot(plane, "leg", "finish", "verified");
+
+        exit.ShouldNotBe(0);
+        (output + error).ShouldContain("only a failed leg is verified done");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {

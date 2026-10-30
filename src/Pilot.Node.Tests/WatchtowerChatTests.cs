@@ -410,4 +410,12 @@ public sealed class WatchtowerChatTests : IDisposable
         // Nothing promised that the node refuses it: a design question and a capped flight stay the person's.
         brief.ShouldContain("are the person's: say so on the card and leave it to them.");
     }
+
+    [Fact]
+    public void The_watchtower_brief_says_to_verify_a_failed_leg_first()
+    {
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+
+        brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified` for that leg first");
+    }
 }

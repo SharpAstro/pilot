@@ -117,4 +117,89 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
 
         await AssertStillFailedAsync("Parser.Tests: 3 failed");
     }
+
+    private Task<CommandResult> Verify(string who, params string[] args) =>
+        _legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["verified", .. args], Who = who }, Ct);
+
+    private async Task FailParserAsync()
+    {
+        // A worker that failed with a plane that does not match, so the node left it failed.
+        _checks.Next = new CheckRun(1, "Parser.Tests: 3 failed");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road")).Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Failed);        _checks.Next = new CheckRun(0, "all green");
+    }
+
+    [Fact]
+    public async Task Verified_from_the_watchtower_finishes_a_failed_leg_whose_plane_matches_its_branch_and_whose_check_passes()
+    {
+        _legs.Models = new RoleModels(null);
+        var flight = await PushedLegAsync();
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        await FailParserAsync();
+
+        var result = await Verify("du1-watchtower", "pushed work checks out");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        L("parser").State.ShouldBe(LegState.Done);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "leg-failed");
+        var handled = _state.Cards().Single(c => c.Kind == LegCommander.SelfFinishedKind);
+        handled.Bin.ShouldBe(CardBin.Handled);
+        handled.Detail.ShouldNotBeNull().ShouldContain(head[..8]);
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+    }
+
+    [Fact]
+    public async Task Verified_on_a_plane_that_does_not_match_its_branch_is_refused_and_the_card_stays_open()
+    {
+        var flight = await PushedLegAsync();
+        await FailParserAsync();
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--amend", "-m", "The parser, rebased", "--date=2001-01-01T00:00:00");
+
+        var result = await Verify("du1-watchtower");
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("does not match origin/");
+        L("parser").State.ShouldBe(LegState.Failed);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == "leg-failed");
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.SelfFinishedKind);
+    }
+
+    [Fact]
+    public async Task Verified_with_a_failing_check_is_refused_and_the_card_stays_open()
+    {
+        await PushedLegAsync();
+        await FailParserAsync();
+        _checks.Next = new CheckRun(1, "Parser.Tests: 3 failed");
+
+        var result = await Verify("du1-watchtower");
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("Parser.Tests: 3 failed");
+        L("parser").State.ShouldBe(LegState.Failed);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == "leg-failed");
+    }
+
+    [Fact]
+    public async Task Accepted_from_the_watchtower_is_still_refused()
+    {
+        await PushedLegAsync();
+        await FailParserAsync();
+
+        var result = await _legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["accepted"], Who = "du1-watchtower" }, Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("is the controller's");
+        L("parser").State.ShouldBe(LegState.Failed);
+    }
+
+    [Fact]
+    public async Task Verified_on_a_leg_that_is_not_failed_is_refused()
+    {
+        await PushedLegAsync();
+
+        var result = await Verify("du1-watchtower");
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("only a failed leg is verified done");
+    }
 }

@@ -196,7 +196,7 @@ public sealed partial class LegCommander(
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
         // A worker's "failed" that the node finished as done (its plane matched its pushed branch and its check passed) goes on too.
         if (error is null && command.Verb == Verbs.FinishLeg
-            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted"
+            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified"
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
@@ -1116,6 +1116,11 @@ public sealed partial class LegCommander(
             state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} marked done anyway");
             return;
         }
+        if (outcome == "verified")
+        {
+            await VerifyFinishAsync(flight, leg, report, command.Who, cancellationToken);
+            return;
+        }
         if (leg.State != LegState.Flying)
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}, not flying");
@@ -1287,42 +1292,87 @@ public sealed partial class LegCommander(
     /// </summary>
     private async Task<(bool Finished, string? NotWhy)> TrySelfFinishAsync(FlightRow flight, LegRow leg, string report, CancellationToken cancellationToken)
     {
-        if (leg.Checklist.Any(i => !i.Done) || !Directory.Exists(flight.Worktree))
+        var (finished, why, isCheck) = await FinishFromPushedAsync(flight, leg, report, null, cancellationToken);
+        return (finished, isCheck ? why : null);
+    }
+
+    /// <summary>
+    /// The verified outcome of finish-leg: anyone may ask, the node grants it only when the self-finish conditions hold for a failed
+    /// leg, and otherwise refuses naming the one that did not. The node checking facts, not a person's choice (accepted is that).
+    /// </summary>
+    private async Task VerifyFinishAsync(FlightRow flight, LegRow leg, string report, string who, CancellationToken cancellationToken)
+    {
+        var name = $"{flight.Code}/{leg.Name}";
+        if (leg.State != LegState.Failed)
         {
-            return (false, null);
+            throw new FlightException($"{name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is verified done");
         }
+        var (finished, why, _) = await FinishFromPushedAsync(flight, leg, report, who, cancellationToken);
+        if (!finished)
+        {
+            throw new FlightException($"{name} is not finished: {why}; it stays failed and its card stays open");
+        }
+    }
+
+    /// <summary>
+    /// The conditions shared by a worker's "failed" and the verified outcome: every step ticked, the plane clean and at
+    /// <c>origin/&lt;branch&gt;</c> after a fetch, and the check passing at that head. <paramref name="who"/> is null for the worker's own.
+    /// </summary>
+    private async Task<(bool Finished, string? Why, bool IsCheck)> FinishFromPushedAsync(FlightRow flight, LegRow leg, string report, string? who, CancellationToken cancellationToken)
+    {
+        if (leg.Checklist.Any(i => !i.Done))
+        {
+            return (false, $"steps not ticked: {string.Join("; ", leg.Checklist.Where(i => !i.Done).Select(i => i.Text))}", false);
+        }
+        if (!Directory.Exists(flight.Worktree))
+        {
+            return (false, "its plane's folder does not exist", false);
+        }
+        string? notWhy = null;
         var head = await OffLockAsync(null, async Task<string?> () =>
         {
             try
             {
-                if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is not null)
+                if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
+                    notWhy = $"its plane has {dirty}";
                     return null;
                 }
                 var tracking = $"refs/remotes/origin/{flight.Branch}";
                 if (!(await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken)).Ok)
                 {
+                    notWhy = $"origin/{flight.Branch} could not be fetched";
                     return null;
                 }
                 var plane = await git.RunAsync(["rev-parse", "--verify", "--quiet", "HEAD"], flight.Worktree, cancellationToken);
                 var remote = await git.RunAsync(["rev-parse", "--verify", "--quiet", tracking], flight.Worktree, cancellationToken);
-                return plane.Ok && remote.Ok && plane.Output.Trim() == remote.Output.Trim() && plane.Output.Trim().Length > 0 ? plane.Output.Trim() : null;
+                if (plane.Ok && remote.Ok && plane.Output.Trim() == remote.Output.Trim() && plane.Output.Trim().Length > 0)
+                {
+                    return plane.Output.Trim();
+                }
+                notWhy = $"its plane's HEAD does not match origin/{flight.Branch}";
+                return null;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                notWhy = $"its plane could not be read: {ex.Message}";
                 return null;
             }
         });
-        if (head is null || Unchanged(flight.Code, leg) is not { } now)
+        if (head is null)
         {
-            return (false, null);
+            return (false, notWhy, false);
+        }
+        if (Unchanged(flight.Code, leg) is not { } now)
+        {
+            return (false, "the leg changed while it was checked", false);
         }
         leg = now;
         var (checkedFlight, checkedLeg, run) = await RerunCheckAsync(FlightOf(Verbs.FlightTarget(flight.Code)), leg, cancellationToken);
         (flight, leg) = (checkedFlight, checkedLeg);
         if (run is { Passed: false })
         {
-            return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}");
+            return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
         var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
             && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
@@ -1335,10 +1385,11 @@ public sealed partial class LegCommander(
             }
         }
         var seen = $"finished by the node: its plane matched origin/{flight.Branch} at {Short(head)} and its check passed";
-        await RecordDoneAsync(flight, leg, report.Length > 0 ? $"{seen}. The worker said it failed: {report}" : seen, push: false, null, cancellationToken);
+        var asked = who is null ? "The worker said it failed" : $"Verified on {who}'s word, the leg had failed";
+        await RecordDoneAsync(flight, leg, report.Length > 0 ? $"{seen}. {asked}: {report}" : seen, push: false, null, cancellationToken);
         state.RaiseCard(CardBin.Handled, SelfFinishedKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} finished by the node",
-            $"The worker reported it failed{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
-        return (true, null);
+            $"{(who is null ? "The worker reported it failed" : $"{who} asked the node to verify it, after it failed")}{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
+        return (true, null, false);
     }
 
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)
