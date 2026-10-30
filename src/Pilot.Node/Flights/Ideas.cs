@@ -261,7 +261,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// </summary>
     private async Task<RepoOption[]> ChooseAsync(IdeaText idea, string context, CancellationToken cancellationToken)
     {
-        var options = repos.Repos().Where(r => r.GitHub is not null).Select(r => new RepoOption(r.Name, RepoTypes.Of(r.Path), r.Path)).ToArray();
+        var options = repos.Tracked().Select(r => new RepoOption(r.Name, RepoTypes.Of(r.Path), r.Path)).ToArray();
         if (options.Length == 0)
         {
             throw new FlightException("the node tracks no repo on GitHub to file the idea in: name one with --repo");
