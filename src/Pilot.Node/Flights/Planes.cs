@@ -22,13 +22,23 @@ public interface IGit
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
 public sealed class GitCli : IGit
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(2);
+
+    private readonly TimeSpan _budget;
+
+    public GitCli() : this(DefaultBudget)
+    {
+    }
+
+    /// <summary>A git CLI whose runs get <paramref name="budget"/> before they are killed (a test's seam; the node uses the default).</summary>
+    public GitCli(TimeSpan budget) => _budget = budget;
 
     public async Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = cwd,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -44,10 +54,14 @@ public sealed class GitCli : IGit
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
 
         using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+        // Git never waits on a handle it inherited: its stdin is closed at once.
+        process.StandardInput.Close();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(budget.Token);
-        var error = process.StandardError.ReadToEndAsync(budget.Token);
+        budget.CancelAfter(_budget);
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        // Read by line into builders, so what git said survives a cancel.
+        var reads = Task.WhenAll(Pump(process.StandardOutput, output), Pump(process.StandardError, error));
         try
         {
             await process.WaitForExitAsync(budget.Token);
@@ -55,9 +69,36 @@ public sealed class GitCli : IGit
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
-            throw;
+            await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            var why = cancellationToken.IsCancellationRequested ? "was cancelled" : $"ran past its budget of {_budget.TotalSeconds:0.###}s";
+            throw new OperationCanceledException(
+                $"git {string.Join(' ', args)} in {cwd} {why} and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
+                null,
+                cancellationToken.IsCancellationRequested ? cancellationToken : budget.Token);
         }
-        return new GitRun(process.ExitCode, await output, await error);
+        await reads;
+        return new GitRun(process.ExitCode, output.ToString(), error.ToString());
+    }
+
+    private static async Task Pump(StreamReader reader, StringBuilder into)
+    {
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer, CancellationToken.None)) > 0)
+        {
+            lock (into)
+            {
+                into.Append(buffer, 0, read);
+            }
+        }
+    }
+
+    private static string Snapshot(StringBuilder text)
+    {
+        lock (text)
+        {
+            return text.ToString().Trim();
+        }
     }
 }
 
