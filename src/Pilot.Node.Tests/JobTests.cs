@@ -391,9 +391,9 @@ public sealed class JobTests : IDisposable
         var command = OperatingSystem.IsWindows()
             ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
-        var id = Run(command, timeoutSeconds: 5).Made!;
+        var id = Run(command, timeoutSeconds: 10).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
+        for (var i = 0; i < 1200 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
             await Task.Delay(50, Ct);
         }
@@ -401,7 +401,7 @@ public sealed class JobTests : IDisposable
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 5s"));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 10s"));
         (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(30));
         for (var i = 0; i < 100 && (IsAlive(childPid) || IsAlive(running.Pid!.Value)); i++)
         {
@@ -754,7 +754,7 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task ANearIdleJobWithNothingQueuedBehindItRaisesNoCard()
     {
-        var (jobs, clock, cpu, _) = Idle();
+        var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         cpu[first] = TimeSpan.Zero;
         jobs.Dispatch(JobRunner.LookAgain.Instance);
@@ -763,13 +763,15 @@ public sealed class JobTests : IDisposable
         jobs.Dispatch(JobRunner.LookAgain.Instance);
 
         IdleCards(openOnly: false).ShouldBeEmpty();
+        // The runner is not started, so its stop would wait out the real sleep: end the job first.
+        await gone(first);
         await jobs.StopAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task AJobThatKeepsWorkingRaisesNoCardAndTheCardClosesWhenTheQueueEmpties()
     {
-        var (jobs, clock, cpu, _) = Idle();
+        var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         var second = Hand(jobs, Echo("later"));
         cpu[first] = TimeSpan.Zero;
@@ -790,13 +792,15 @@ public sealed class JobTests : IDisposable
         IdleCards().ShouldHaveSingleItem();
         jobs.Dispatch(new JobRunner.Withdrawn(second, "controller"));
         IdleCards().ShouldBeEmpty();
+        // The runner is not started, so its stop would wait out the real sleep: end the job first.
+        await gone(first);
         await jobs.StopAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task AJobWhoseCpuReadingFallsWhenAChildEndsAndRisesAgainRaisesNoCard()
     {
-        var (jobs, clock, cpu, _) = Idle();
+        var (jobs, clock, cpu, gone) = Idle();
         var first = Hand(jobs, Sleep(60));
         Hand(jobs, Echo("later"));
         double[] sawtooth = [0.8, 2.0, 3.1, 1.2, 2.2, 3.3, 1.4, 2.5, 3.7, 0.0];
@@ -807,6 +811,8 @@ public sealed class JobTests : IDisposable
             jobs.Dispatch(JobRunner.LookAgain.Instance);
         }
         IdleCards(openOnly: false).ShouldBeEmpty();
+        // The runner is not started, so its stop would wait out the real sleep: end the job first.
+        await gone(first);
         await jobs.StopAsync(CancellationToken.None);
     }
 

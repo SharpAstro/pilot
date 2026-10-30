@@ -103,3 +103,26 @@ The three review and recheck classes alone are 2365 s of the 7938 s total, and R
 6. **Flaky wait on a child's file (`AJobPastItsTimeout...`).** Poll for `child.pid` before reading it; seen once in the capped run.
 7. **Per-test node start-up (`NodeHarness.StartAsync`).** Start one node per class where a class's tests do not share state; not a top-20 cause by itself, but it is the
    floor under the many tests of 5 to 30 s in FlightMoveTests, LegCommanderTests, ConnectTests and PrMarksTests.
+
+## After fix-waits (PIL501, leg fix-waits)
+
+Cause found for the "real `sleep 60` under a fake clock" tests: their `JobRunner` is never started, so `StopAsync` never cancels the job
+watches and `Dispose` waited out the real `sleep 60`. The clock was already injected; no new `TimeProvider` or options interval was needed for them.
+The three tests now end their job with the existing `gone(first)` helper before `StopAsync`; their assertions are unchanged.
+
+| Test | Before s | After s |
+|---|---|---|
+| JobTests.ANearIdleJobWithNothingQueuedBehindItRaisesNoCard | 63.9 | about 1 |
+| JobTests.AJobThatKeepsWorkingRaisesNoCardAndTheCardClosesWhenTheQueueEmpties | 70.3 | about 1 |
+| JobTests.AJobWhoseCpuReadingFallsWhenAChildEndsAndRisesAgainRaisesNoCard | 63.8 | about 1 |
+| JobTests.AJobPastItsTimeoutIsStoppedWithItsWholeTreeAndSaysSo | 5+ (flaky) | about 10 |
+
+The last one is a real child process under a real job timeout; the timeout rose from 5 s to 10 s and the `child.pid` poll from 15 s to 60 s,
+because a loaded machine (a full run, 16 tests at once) failed it twice: the job was stopped before its child wrote `child.pid`. It cannot be made
+fast without changing what it proves, so it is left for the guard leg to tag as slow.
+
+JobTests as a class: 59 passed in 4m08s alone (417 s summed before). Its remaining time is real processes (`sleep`, pwsh) and polls
+for them; the other `Task.Delay` waits in JobTests, RestartTests, LegTests, CliTests, CommandReplyTests and LockWaitTests were not changed in this leg
+and stay on the list for a later leg, as does everything git-bound (the Review, Recheck, Lfs, PrFix classes), which is not a timer cause.
+
+Full Pilot.Node.Tests with the first version of the fix (shared machine, other flights running): 2264 passed, 1 failed (the timeout test above), 41m10s wall.
