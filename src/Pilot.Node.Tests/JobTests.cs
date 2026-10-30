@@ -1671,15 +1671,20 @@ public sealed class JobTests : IDisposable
     public async Task ACheckJobOverItsBudgetEndsTheProcessesItStartedAndSaysSo()
     {
         var marker = Path.Combine(_root, "grandchild.pid");
-        var run = _jobs.RunCheckAsync("TIA1", "parser", Grandchild(marker), _root, TimeSpan.FromSeconds(6), Ct);
+        // The clock is the test's, so a slow start under load does not eat the budget: it runs out when the test says.
+        var (jobs, clock, _, _) = Idle();
+        var run = jobs.RunCheckAsync("TIA1", "parser", Grandchild(marker), _root, TimeSpan.FromMinutes(30), Ct);
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Kind == JobKind.Check)));
         var child = await GrandchildPid(marker, run);
 
+        clock.Advance(TimeSpan.FromMinutes(31));
         var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
 
         result.ExitCode.ShouldBe(-1);
         result.Tail.ShouldContain("of running and was stopped");
         await GoneWithin(child);
         _state.Jobs().Single(j => j.Kind == JobKind.Check).State.ShouldBe(JobState.Failed);
+        await jobs.StopAsync(CancellationToken.None);
     }
 
     [Fact(Timeout = 90_000)]
@@ -1688,7 +1693,7 @@ public sealed class JobTests : IDisposable
         var marker = Path.Combine(_root, "grandchild-stop.pid");
         using var node = await Node.StartAsync(_root);
         node.Jobs.MaxRunning = 2;
-        var jobId = node.Run(_root, "sleep 4; " + Echo("still going")).Made!;
+        var jobId = node.Run(_root, "sleep 90; " + Echo("still going")).Made!;
         var job = await node.UntilAsync(jobId, j => j.State == JobState.Running, Ct);
         var running = node.Jobs.RunCheckAsync("TIA1", "one", Grandchild(marker), _root, TimeSpan.FromMinutes(30), Ct);
         var waiting = node.Jobs.RunCheckAsync("TIA1", "two", Echo("never"), _root, TimeSpan.FromMinutes(30), Ct);
@@ -1710,6 +1715,11 @@ public sealed class JobTests : IDisposable
         // The ordinary job is the node's to leave behind.
         node.Job(jobId).State.ShouldBe(JobState.Running);
         IsAlive(job.Pid!.Value).ShouldBeTrue();
+        // Left behind on purpose by the node; this test ends it so nothing outlives the run.
+        using (var left = System.Diagnostics.Process.GetProcessById(job.Pid!.Value))
+        {
+            left.Kill(entireProcessTree: true);
+        }
     }
 
     [Fact(Timeout = 60_000)]
