@@ -690,6 +690,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
         };
         state.PutFlight(marked);
+        // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
+        state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
         state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
@@ -839,7 +841,13 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
         }) ?? flight;
-        if (foldedInto is null)
+        // After a merge the entry ends merged whatever it stood at: a look that saw the arm cleared, or a merge refused as the PR was
+        // merged already, may have dropped it just before (pilot #395). A landing by hand ends only an entry still open.
+        if (mergedHead is not null)
+        {
+            state.EndMergeAsMerged(flight.Code, null);
+        }
+        else if (foldedInto is null)
         {
             state.EndMerge(flight.Code, MergeEntryState.Merged, null);
         }

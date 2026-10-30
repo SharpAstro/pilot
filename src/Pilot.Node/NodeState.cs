@@ -600,6 +600,22 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>
+    /// Ends a flight's merge entry as merged whatever state it stands in, one already dropped included: its PR merged, and a look or a
+    /// refused merge that dropped it just before is not the last word. Nothing when it has none, or it is merged already.
+    /// </summary>
+    public void EndMergeAsMerged(string flight, string? why)
+    {
+        lock (_gate)
+        {
+            if (_merges.TryGetValue(flight, out var held) && held.State != MergeEntryState.Merged)
+            {
+                PutMerge(held with { State = MergeEntryState.Merged, Why = why, Place = null, AwaitsReview = false, ChangedAt = _time.GetUtcNow() });
+                Renumber(held.Repo);
+            }
+        }
+    }
+
     /// <summary>Sets every open entry of <paramref name="repo"/>'s place: 1 for the one that joined first.</summary>
     public void Renumber(string repo)
     {

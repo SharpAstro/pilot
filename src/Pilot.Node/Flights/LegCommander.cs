@@ -92,7 +92,7 @@ public sealed partial class LegCommander(
         catch (Exception ex) when (held.Code is { } code)
         {
             // Given up (cancelled, the node stopping) or failed outright mid-merge: the entry leaves the queue with why, before the turn goes.
-            EndUnfinished(code, ex);
+            await EndUnfinishedAsync(code, ex, held.Answered);
             throw;
         }
         finally
@@ -1403,11 +1403,11 @@ public sealed partial class LegCommander(
         {
             throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
         }
+        // The turn is the command's before its entry is put: a journal that cannot write the entry (a full disk) throws out of Enqueue
+        // with the flight already among those under way, and only the command's end gives it back.
+        var holder = _held.Value ?? new HeldTurn();
+        holder.Code = asked.Code;
         Enqueue(asked, askedHead, askedMethod, by);
-        if (_held.Value is { } holder)
-        {
-            holder.Code = asked.Code;
-        }
         await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
         try
         {
@@ -1417,10 +1417,12 @@ public sealed partial class LegCommander(
             }
             if (TakeLanded(asked.Code) is { } batch)
             {
+                holder.Answered = true;
                 SetEntry(asked.Code, MergeEntryState.Merging, $"merged with {batch}: the flight lands");
                 return (true, null, null);
             }
             var result = await MergeEntryAsync(command, cancellationToken);
+            holder.Answered = true;
             if (result.Merged)
             {
                 SetEntry(asked.Code, MergeEntryState.Merging, "merged: the flight lands");

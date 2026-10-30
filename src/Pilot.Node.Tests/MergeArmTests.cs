@@ -583,7 +583,7 @@ public sealed class MergeArmTests
     [Theory]
     [InlineData(MergeKinds.Conflicts)]
     [InlineData(MergeKinds.Behind)]
-    public async Task ANativelyArmedMergeThatConflictsOrFallsBehindIsDisarmedBeforeTheNodeRebasesIt(string kind)
+    public async Task ANativelyArmedMergeThatConflictsOrFallsBehindIsDisarmedBeforeTheBaseIsMergedIn(string kind)
     {
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
@@ -597,7 +597,7 @@ public sealed class MergeArmTests
 
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
-        // The card loop took over: a go-around that rebases, no Merge, and no card of a dropped merge beside it.
+        // The card loop took over: a go-around, no Merge, and no card of a dropped merge beside it.
         var card = Card(node, ready);
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
         node.State.Cards().Where(c => c.Kind == PrChecks.MergeDropped).ShouldBeEmpty();

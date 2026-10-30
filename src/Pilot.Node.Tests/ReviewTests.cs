@@ -544,7 +544,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheFlightIsRebasedAndReviewedAfresh()
+    public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver()
     {
         var (flight, _) = await Passed("34");
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
@@ -571,7 +571,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APrDroppedFromTheQueueOnAConflictIsRebasedAndReviewedAfreshNotOfferedMergeAgain()
+    public async Task APrDroppedFromTheQueueOnAConflictHasTheBaseMergedInKeepsItsPassAndStartsNoReview()
     {
         // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
         var flight = await NewFlight("21", "parser");
@@ -885,7 +885,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APassedPrThatConflictsWithItsBaseIsRebasedAndReviewedAfresh()
+    public async Task APassedPrWhoseBaseMovedOnHasTheBaseMergedInAndKeepsItsPass()
     {
         var flight = await NewFlight("6", "parser");
         await Fly(flight, "parser");
@@ -906,7 +906,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task TheNodesOwnRebaseOfAnArmedPrLetsGoOfTheMergeAndGitHubsAutoMergeAndRaisesNoDroppedMergeCard()
+    public async Task TheNodesOwnBaseMergeIntoAnArmedPrLetsGoOfTheMergeAndGitHubsAutoMergeAndRaisesNoDroppedMergeCard()
     {
         var flight = await NewFlight("16", "parser");
         await Fly(flight, "parser");
@@ -1101,7 +1101,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
 public sealed class ReviewTests3 : ReviewTestsBase
 {
     [Fact]
-    public async Task APassedPrRebasedOverASpentWindowIsReviewedAfreshOnlyOnceItHasReset()
+    public async Task APassedPrWithTheBaseMergedInOverASpentWindowKeepsItsPassAndStartsNoReview()
     {
         var flight = await NewFlight("10", "parser");
         await Fly(flight, "parser");
@@ -1126,7 +1126,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task ARebaseThatConflictsIsUndoneAndSaysSo()
+    public async Task ABaseMergeThatConflictsIsAbortedAndSaysSo()
     {
         var flight = await NewFlight("7", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
@@ -1803,7 +1803,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
-    public async Task ADisarmThatFailsKeepsTheArmSoItIsRetriedAndTheNodesRebaseRefuses()
+    public async Task ADisarmThatFailsKeepsTheArmSoItIsRetriedAndTheNodesBaseMergeRefuses()
     {
         var (flight, pr, checks) = await ArmedPassedFlight("33");
         var code = flight.Code;
@@ -1814,7 +1814,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         _github.DisarmFails = "gh could not turn auto-merge off on #71: HTTP 502";
         await checks.LookAsync(Ct);
 
-        // Still armed on GitHub, so still armed here; the card says why, and the rebase of the same look did not run.
+        // Still armed on GitHub, so still armed here; the card says why, and the base merge of the same look did not run.
         F(code).MergeWhenGreen.ShouldNotBeNull();
         _github.AutoMergeDisarmed.ShouldBeEmpty();
         Open().Single().Detail.ShouldNotBeNull().ShouldContain("could not be turned off");

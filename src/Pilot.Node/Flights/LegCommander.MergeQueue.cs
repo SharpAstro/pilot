@@ -20,10 +20,13 @@ public sealed partial class LegCommander
     private static TaskCompletionSource NewTurn() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // The turn a running command took (the flight it enqueued), set by MergeAsync and given back when the command ends; a command
-    // refused before it enqueued holds none, so it never gives back another command's.
+    // refused before it enqueued holds none, so it never gives back another command's. Answered once the merge had its answer
+    // (GitHub's merge call returned, or a green batch landed it): a merging entry is then the landing's or GitHub's queue's to end.
     private sealed class HeldTurn
     {
         public string? Code { get; set; }
+
+        public bool Answered { get; set; }
     }
 
     private readonly AsyncLocal<HeldTurn?> _held = new();
@@ -124,7 +127,7 @@ public sealed partial class LegCommander
     /// Ends every open entry that nothing drives, with a why: one waiting, updating or batched whose flight has no merge command under
     /// way (left by a node that went away, or by a command given up) ends with <paramref name="why"/>, and one waiting for its checks
     /// whose merge is no longer armed ends too. A merging one is left alone: GitHub's own queue may hold it, and the landing ends it,
-    /// or <see cref="EndLeftQueue"/> when GitHub lets it go unmerged.
+    /// or <see cref="EndLeftQueue"/> when GitHub lets it go unmerged (one whose own command died is ended by <see cref="EndUnfinishedAsync"/>).
     /// Run at node start and at each look, so <c>pilot merges</c> lists no entry in flight that nobody works on, and no place is counted
     /// for one.
     /// </summary>
@@ -166,20 +169,79 @@ public sealed partial class LegCommander
         }
     }
 
+    /// <summary>How long the end of a merge command that died may ask GitHub whether its PR merged all the same.</summary>
+    private static readonly TimeSpan UnfinishedLookBudget = TimeSpan.FromSeconds(20);
+
     /// <summary>
     /// A merge command that ended in something other than an answer (given up, the node stopping, a failure past the queue's own): its
-    /// entry is not left waiting, updating or batched with no command behind it. One a green batch already landed ends merged.
+    /// entry is not left waiting, updating, batched or merging with no command behind it. One a green batch already landed ends merged.
+    /// A merging one whose merge call went without an answer (<paramref name="answered"/> false: given up, past the call's time budget,
+    /// gh not started) may have merged all the same, so GitHub is asked once: merged when its PR reads MERGED, left to the queues' look
+    /// while GitHub's merge queue holds it, else dropped with why. One GitHub answered is the landing's, or its queue's, to end.
     /// </summary>
-    private void EndUnfinished(string code, Exception ex)
+    private async Task EndUnfinishedAsync(string code, Exception ex, bool answered)
     {
         if (TakeLanded(code) is { } batch)
         {
             state.EndMerge(code, MergeEntryState.Merged, $"landed with {batch}; its merge command ended before the flight landed");
             return;
         }
-        if (state.Merges().FirstOrDefault(m => m.Flight == code) is { State: MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Batched })
+        var why = ex is OperationCanceledException ? "its merge command was given up before it merged: merge again" : $"its merge command failed: {ex.Message}";
+        switch (state.Merges().FirstOrDefault(m => m.Flight == code))
         {
-            DropMerge(code, ex is OperationCanceledException ? "its merge command was given up before it merged: merge again" : $"its merge command failed: {ex.Message}");
+            case { State: MergeEntryState.Waiting or MergeEntryState.Updating or MergeEntryState.Batched }:
+                DropMerge(code, why);
+                break;
+            case { State: MergeEntryState.Merging } merging when !answered:
+                switch (await MergingNowAsync(merging))
+                {
+                    case MergingNow.Merged:
+                        state.EndMerge(code, MergeEntryState.Merged, "merged on GitHub; its merge command ended before GitHub answered");
+                        break;
+                    case MergingNow.Queued:
+                        // GitHub's merge queue holds it: the queues' look ends it when the queue lets it go, the landing when it merges.
+                        break;
+                    default:
+                        DropMerge(code, ex is OperationCanceledException ? "its merge command was given up before GitHub answered: merge again" : $"its merge command failed before GitHub answered: {ex.Message}");
+                        break;
+                }
+                break;
+        }
+    }
+
+    private enum MergingNow
+    {
+        Unknown,
+        Merged,
+        Queued,
+    }
+
+    // What GitHub says of a merging entry's PR now: merged, in its base's merge queue, or neither (no answer within the budget
+    // included). Its own token: the command's may be the one cancelled.
+    private async Task<MergingNow> MergingNowAsync(MergeRow entry)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code == entry.Flight) is not { } flight || entry.Pr is not { } number)
+        {
+            return MergingNow.Unknown;
+        }
+        using var budget = new CancellationTokenSource(UnfinishedLookBudget);
+        try
+        {
+            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, budget.Token);
+            if (pr is null || pr.Number != number)
+            {
+                return MergingNow.Unknown;
+            }
+            if (pr.State == "MERGED")
+            {
+                return MergingNow.Merged;
+            }
+            return pr.State == "OPEN" && await github.MergeQueueAsync(flight.RepoPath, number, budget.Token) is { State: "OPEN", Queued: true } ? MergingNow.Queued : MergingNow.Unknown;
+        }
+        catch (Exception look) when (look is FlightException or OperationCanceledException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // No answer: the entry is dropped, and the landing ends it merged should the PR turn out merged after all.
+            return MergingNow.Unknown;
         }
     }
 
