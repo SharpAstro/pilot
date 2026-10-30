@@ -33,8 +33,8 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     /// <summary>How long it waits between reads while a client shows the Pull requests page.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>How long it waits between reads while no client does (<see cref="NodeSettings.PrWatchIdleKey"/>); asked at each wait, so a saved setting counts.</summary>
-    public Func<TimeSpan> Idle { get; init; } = () => NodeSettings.DefaultPrWatchIdle;
+    /// <summary>How long it waits between reads while no client does (<see cref="NodeSettings.PrWatchIdleKey"/>); asked at each wait, so a saved setting counts. Unset, it is <see cref="Interval"/>: the node sets it.</summary>
+    public Func<TimeSpan>? Idle { get; init; }
 
     /// <summary>The pages the node's clients show: one showing <see cref="ClientPages.PullRequests"/> makes the watch read every <see cref="Interval"/>, and one opening it reads at once.</summary>
     public PageViews Views
@@ -161,7 +161,7 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     private TimeSpan WaitFor(bool viewed)
     {
         var now = time.GetUtcNow();
-        var due = _lastRead is { } last ? last + (viewed ? Interval : Idle()) : now;
+        var due = _lastRead is { } last ? last + (viewed ? Interval : Idle?.Invoke() ?? Interval) : now;
         if (_limitedUntil is { } until && until > due)
         {
             due = until;

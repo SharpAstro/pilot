@@ -37,9 +37,9 @@ public sealed class PullRequestWatchPaceTests : IDisposable
 
         public int Reads => GitHub.Searches.Count;
 
-        public int Points => Log.ToString().Split('\n').Count(l => l.Contains("GraphQL points")) * GitHub.SearchCost;
+        public int Points => Lines.Split('\n').Count(l => l.Contains("GraphQL points")) * GitHub.SearchCost;
 
-        public string Lines => Log.ToString();
+        public string Lines => Log.ToString().ReplaceLineEndings("\n");
 
         public async Task SettledAsync(int reads) => await Until(() => Reads == reads && Time.Waiting == 1);
 
