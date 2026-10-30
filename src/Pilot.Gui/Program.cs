@@ -917,8 +917,8 @@ if (feed is not null)
                 // clock when the pages are built but what its fingerprint counts itself (the summaries' "made ago", the tasks
                 // glyph's "failed just now"), so the last pages are fingerprinted at this moment and built again only when that
                 // shows a turn-over. A merge's card lingers by the clock, so while one does, Home builds. Building every page each
-                // second, some 6 MB a build on a node of 491 sessions, kept the GC's background thread at most of the window's
-                // idle CPU (DE1, 2026-10-30).
+                // second, some 6 MB a build on a node of 491 sessions, was two thirds of an idle Home's builds and a quarter of
+                // what it allocated (DE1, 2026-10-30).
                 var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
                 if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
                     && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
