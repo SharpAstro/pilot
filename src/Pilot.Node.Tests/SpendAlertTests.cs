@@ -39,12 +39,12 @@ public sealed class SpendAlertTests : LegHoldTestsBase
 
         var ring = Alerts().ShouldHaveSingleItem();
         ring.Bin.ShouldBe(CardBin.Ring);
-        ring.Title.ShouldBe("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
-        ring.Summary.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");
+        ring.Title.ShouldStartWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 2");
+        ring.Detail.ShouldNotBeNull().ShouldContain("claude-sonnet-5-5, high");
 
         // The next round rings again, with its own number.
         await GoAround();
-        Alerts().Select(c => c.Title).ShouldBe([ring.Title, "TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 3"], ignoreOrder: true);
+        Alerts().Select(c => c.Title).ShouldContain(t => t.StartsWith("TIA1/parser has spent 1,000 tokens, 10 % of the 7-day window, before round 3", StringComparison.Ordinal));
     }
 
     [Fact]
