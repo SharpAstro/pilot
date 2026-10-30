@@ -192,6 +192,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.PriorityReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).PriorityRepos ?? []),
         NodeSettings.RepoTrackersKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).RepoTrackers ?? []),
         NodeSettings.NoAutoMergeReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).NoAutoMergeRepos ?? []),
+        NodeSettings.SubTaskReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).SubTaskRepos ?? []),
         // A deep review runs on the reviewer's model and a step above its effort until these are set, so say that, not the bare role's.
         _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => (effort ? roles.ReviewerEffort(ReviewDepth.Deep) : roles.ReviewerModel(ReviewDepth.Deep)) ?? RoleModels.NoneValue,
         _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,

@@ -20,6 +20,8 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
         _legs.Error = _log;
         // The flight's work item, issue 1, exists: the fake numbers a sub-issue after the highest issue it knows.
         _github.Issues[1] = "Planets";
+        // The test base's flight commander has no GitHub of its own: its trackers are the one for the fake.
+        _flights.Trackers = new Trackers([new GitHubTracker(_github)]);
     }
 
     private void OptIn(params string[] repos) => _legs.Models = new RoleModels(new NodeSettings { SubTaskRepos = repos });
