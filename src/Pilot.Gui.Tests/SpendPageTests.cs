@@ -105,8 +105,7 @@ public sealed class SpendPageTests
         page.CollectPaintedRegions(regions);
 
         var week = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "spend:window:week" });
-        chrome.HandleInput(new InputEvent.MouseDown(week.X + 2, week.Y + 2));
-        chrome.HandleInput(new InputEvent.MouseUp(week.X + 2, week.Y + 2));
+        week.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
 
         page.Window.ShouldBe("week");
         asked.ShouldBe(["week"]);
