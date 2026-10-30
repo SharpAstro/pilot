@@ -1601,8 +1601,7 @@ public sealed partial class LegCommander(
         }
         var seen = $"finished by the node: its plane matched origin/{flight.Branch} at {Short(head)} and its check passed";
         var asked = who is null ? "The worker said it failed" : $"Verified on {who}'s word, the leg had failed";
-        var was = who is not null && leg.Report is { Length: > 0 } old ? $"
-{old}" : "";
+        var was = who is not null && leg.Report is { Length: > 0 } old ? $"\n{old}" : "";
         await RecordDoneAsync(flight, leg, (report.Length > 0 ? $"{seen}. {asked}: {report}" : seen) + was, push: false, cancellationToken);
         state.RaiseCard(CardBin.Handled, SelfFinishedKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} finished by the node",
             $"{(who is null ? "The worker reported it failed" : $"{who} asked the node to verify it, after it failed")}{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
