@@ -126,3 +126,26 @@ for them; the other `Task.Delay` waits in JobTests, RestartTests, LegTests, CliT
 and stay on the list for a later leg, as does everything git-bound (the Review, Recheck, Lfs, PrFix classes), which is not a timer cause.
 
 Full Pilot.Node.Tests with the first version of the fix (shared machine, other flights running): 2264 passed, 1 failed (the timeout test above), 41m10s wall.
+
+## After fix-starts (PIL501, leg fix-starts)
+
+What was done: ReviewTests3 split into ReviewTests3, 4 and 5 (`MainMoves` moved into `ReviewTestsBase`); PrRecheckTests, PrMarksTests,
+FlightMoveTests and JobTests each split into parts on an abstract `...Base` holding their fields and helpers. No test was changed, skipped or deleted,
+and no assertion touched. The longest serial class is now ReviewTests1 (754 s summed, was 668 s in a quieter run).
+
+Full Pilot.Node.Tests, default parallelism, Release, through `pilot run`: 2265 passed, 2 skipped, wall 46m05s (sum of per-test time 10579 s).
+That is slower than the 33m57s of the measure leg, not faster: the machine was at 100% CPU from other flights during both this run and
+the one-flight probe below, and every process start cost 0.3 to 1.6 s. The `xUnit.MaxParallelThreads=4` run was not made.
+
+Where one flight's time goes (probe: a counting `IGit` around `ReviewTests1.APriorityRepoIsNeverReviewedLightly`, 27 s alone on the loaded machine):
+the node itself ran 32 git processes for one flight (7 `fetch`, 2 `push`, 6 `rev-parse --verify`, `worktree add`, `log`, `diff`, `show`, ...), about 19 s of
+the 27 s, plus the test's own `add`/`commit` calls. Many repeat: `fetch origin +refs/heads/flight/x:...` four times and `fetch --quiet origin` four times in
+one flight. So the per-flight cost is a count of git starts, and it is node production code (`Planes`, `LegCommander`, `PrReviews` doing a fetch and a
+verify per step), not test setup. A fake `IGit` would drop the real push and merge those tests assert on, so it was not added.
+
+Not done, so the Done-when is NOT met (slowest 20 still 55 to 289 s; suite not under 3 minutes):
+1. Fewer git processes per flight: memoise `fetch` of the same ref within one command, merge the `rev-parse --verify` pairs. Needs a production change and its own review.
+2. LfsTests (630 s, 5 tests, three over 100 s): build the LFS origin once as a template copied per test, in the class's own collection.
+3. LockFreeGitTests (448 s) and ConnectTests (526 s) were not looked at.
+4. A node per class via IClassFixture was not done: the slow tests are git-bound, not start-up bound.
+5. NodeLogTests' DisableParallelization collection was not narrowed.
