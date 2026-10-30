@@ -641,4 +641,59 @@ public sealed class JobsTests
         noQueue.Holder.ShouldBeNull();
         Cells(jobs, noQueue).ShouldNotContain("holds the queue");
     }
+
+    private static void ClickTitle(JobsView<RgbaImage> jobs, JobsScreen screen, string title)
+    {
+        var bounds = new RectF32(0f, 0f, 1280f, 800f);
+        jobs.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        jobs.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "jobs:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        jobs.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnATitleSortsTheJobsByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+
+        // Started by time, newest first at the first click: the queued job is the newest handed over.
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+
+        // Took by how long: the running job has run longest, the queued one not at all.
+        ClickTitle(jobs, screen, "Took");
+        jobs.Shown.ShouldBe(["j14", "j13", "j12", "j15"]);
+        jobs.Table.Sort.ShouldBe(new ListTable.SortState("Took", Descending: true));
+
+        ClickTitle(jobs, screen, "State");
+        jobs.Shown.Take(2).ShouldBe(["j14", "j15"]);
+    }
+
+    [Fact]
+    public void TheSelectedJobStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+        jobs.Render(screen, new RectF32(0f, 0f, 1280f, 800f));
+        jobs.Select(screen, screen.Lines.Single(l => l.Id == "j14"));
+        var before = jobs.Selected;
+
+        ClickTitle(jobs, screen, "Started");
+
+        jobs.Shown[jobs.Selected].ShouldBe("j14");
+        jobs.Selected.ShouldNotBe(before, "the sort moved the row, and the selection went with it");
+    }
 }

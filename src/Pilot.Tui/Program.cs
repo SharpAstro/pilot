@@ -197,15 +197,22 @@ chat.OnSendOn = async (node, text) =>
     Redraw();
     return refused;
 };
-// A card's Chat about this opens the chat of the node the card was raised on.
+// A card's Chat about this opens the fleet chat, this node's watchtower's, with the card quoted with its node.
 cards.OnChatAbout = card =>
 {
     var node = cards.NodeOf(card);
     chrome.Show(PilotPage.Chat);
-    chat.SwitchTo(node);
+    chat.SwitchTo(null);
     chat.Attach(card, node);
 };
 flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
+// An idea's or issue's Chat about this opens the same chat, with the words that start it in the box.
+chrome.Ideas.OnChatAbout = text =>
+{
+    chrome.Show(PilotPage.Chat);
+    chat.SwitchTo(null);
+    chat.Prefill(text);
+};
 chat.OnRestart = async () =>
 {
     var refused = await ChatCommands.RestartWatchtowerAsync(client, Who, stop.Token);

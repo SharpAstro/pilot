@@ -318,6 +318,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private string? _pinned;
     private IReadOnlyList<string> _shown = [];
 
+    /// <summary>The keys of the jobs the last frame showed, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<string> Shown => _shown;
+
     /// <summary>The selected job's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
@@ -331,6 +334,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             screen = screen.InPlay(_pinned);
         }
+        screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
         _shown = [.. screen.Lines.Select(l => l.Key)];
         var index = screen.Lines.ToList().FindIndex(l => l.Key == job.Key);
         if (index >= 0)
@@ -368,6 +372,13 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         if (Play is { InPlay: true })
         {
             screen = screen.InPlay(_pinned);
+        }
+        // The job selected before a sort, found again by its key in the sorted rows: it keeps the selection wherever the sort puts it.
+        var kept = Table.Sort is not null && Selected >= 0 && Selected < _shown.Count ? _shown[Selected] : null;
+        screen = screen with { Lines = Table.Order(screen.Lines, l => l.Node?.Name ?? "", SortKeys) };
+        if (kept is not null && screen.Lines.Count > 0 && screen.Lines.ToList().FindIndex(l => l.Key == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, screen.Lines.Count);
         }
         if (screen.Lines.Count == 0)
         {
@@ -578,19 +589,40 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     {
         var columns = new List<ListColumn>
         {
-            ListColumn.Fixed("Job", IdWidth, IdMin),
-            ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight),
-            ListColumn.Fixed("For", ForWidth),
-            ListColumn.Fixed("State", StateWidth, StateMin),
-            ListColumn.Optional("Started", StartedWidth),
-            ListColumn.Optional("Took", TookWidth),
+            Sorted(ListColumn.Fixed("Job", IdWidth, IdMin)),
+            Sorted(ListColumn.Star("Command", 0f, 0f, CommandSqueezedWeight)),
+            Sorted(ListColumn.Fixed("For", ForWidth)),
+            Sorted(ListColumn.Fixed("State", StateWidth, StateMin)),
+            Sorted(ListColumn.Optional("Started", StartedWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Took", TookWidth), descendingFirst: true),
         };
         if (marked)
         {
-            columns.Insert(0, ListColumn.Fixed("Node", NodeWidth, NodeMin));
+            columns.Insert(0, Sorted(ListColumn.Fixed("Node", NodeWidth, NodeMin)));
         }
         return columns;
     }
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the id as its number, the state in the page's own order, the times as times.
+    private static readonly IReadOnlyDictionary<string, Func<JobLine, object?>> SortKeys = new Dictionary<string, Func<JobLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Node?.Name ?? "",
+        ["Job"] = l => (int.TryParse(l.Id.AsSpan().TrimStart('j'), out var n) ? n : int.MaxValue, l.Id),
+        ["Command"] = l => l.Command,
+        ["For"] = l => l.For,
+        ["State"] = l => (l.Row.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 }, l.State),
+        ["Started"] = l => l.Row.State == JobState.Queued ? l.Row.QueuedAt ?? l.Row.StartedAt : l.Row.StartedAt,
+        ["Took"] = l => l.Row.State == JobState.Queued ? TimeSpan.Zero : (l.Row.EndedAt ?? DateTimeOffset.UtcNow) - l.Row.StartedAt,
+    };
 
     private static Layout.Node Top(Layout.Node content) => ListTable.Top(content);
 

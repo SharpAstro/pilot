@@ -15,6 +15,12 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
     /// <summary>The flights, so a planned idea's id leads to its flight.</summary>
     public IReadOnlyList<FlightRow> Flights { get; init; } = [];
 
+    /// <summary>The open milestones of every repo the node reads, the Ideas milestone among them.</summary>
+    public IReadOnlyList<MilestoneRow> Milestones { get; init; } = [];
+
+    /// <summary>The open issues of every repo, in a milestone or in none; an idea's issue is one of them, and carries its readiness.</summary>
+    public IReadOnlyList<IssueRow> Issues { get; init; } = [];
+
     /// <summary>The ideas moved to another repo: an old id keeps resolving.</summary>
     public IReadOnlyList<IdeaMoveRow> Moves { get; init; } = [];
 
@@ -29,7 +35,7 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
 }
 
 /// <summary>What the node said to an idea verb, as the page needs it.</summary>
-internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null);
+internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null, ReadinessResult? Readiness = null, MilestoneSuggestions? Suggestions = null);
 
 /// <summary>
 /// The Ideas page: a box to note an idea in one line (Claude picks the repo, so there is no picker), the ideas newest first with
@@ -37,7 +43,7 @@ internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = nu
 /// folded below. A question the node asked (a repo choice, an edit that contradicts GitHub) shows inline with its choices.
 /// Every button is a verb on the node, sent through <see cref="Send"/>. Generic over the surface, as the other pages are.
 /// </summary>
-internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
+internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     public const string ListId = "ideas";
 
@@ -59,10 +65,18 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // A tidy proposal, kept with the idea it is for.
     private sealed record Proposal(string Key, IdeaTidyProposal Tidy);
 
+    // The milestones Plan offers for the idea it is open on, with Claude's proposal (Done is false until Claude has answered or failed).
+    private sealed record Choices(string Key, MilestoneProposal? Answer, bool Done);
+
+    // One line of the pick list: Key is "m:<title>" (an open milestone), "s" (Claude's suggested new one) or "n" (the typed new one).
+    private sealed record Item(string Key, string Title, string? Description, bool IsNew, string Meta, string? Reason);
+
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
     private IdeasScreen _screen = IdeasScreen.Empty;
     private Open? _open;
     private Proposal? _proposal;
+    private Choices? _choices;
+    private string? _picked;
     private string? _editFrom;
     private string _said = "";
     private bool _saidRefusal;
@@ -101,6 +115,23 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>What a press of an idea's button is doing, by the idea's key: working with the node, or refused in its words beside the row.</summary>
     internal Presses Presses { get; } = new();
+
+    /// <summary>The image on the clipboard as PNG (or whatever it is) bytes and its extension, or null when it holds none; null leaves Ctrl+V to text.</summary>
+    public Func<(byte[] Bytes, string Ext)?>? GetClipboardImage { get; set; }
+
+    /// <summary>Keeps an image on the node: the id it is served and referred to by, or the reason it was refused. Null leaves images out of the boxes.</summary>
+    public Func<byte[], string, CancellationToken, Task<(string? Id, string? Error)>>? Upload { get; set; }
+
+    /// <summary>The thumbnails of an idea's images and the viewer that opens one; shared with the other pages, so the host wires pictures once.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
+    private int _uploading;
+    // Markers of uploaded images, put into their box by the render thread: the pool never changes an editor in place.
+    private System.Collections.Immutable.ImmutableQueue<(TextEditorState Editor, string Marker)> _markers = [];
+    private string? _pasteSaid;
+    private TextEditorState? _pasteSaidIn;
+
+    private static readonly string[] ImageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
     /// <summary>The page or flight the person was on, sent with a noted idea so Claude can tell which repo it belongs in.</summary>
     public string? Context { get; set; }
@@ -254,6 +285,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return reply;
     }
 
+    // A board action on a target (a repo or an item): the same helper, keyed by the target, so it works at once and takes no second press.
+    private Task<IdeaReply?> RunAsync(string verb, string target, string[] args) =>
+        RunAsync($"board:{target}", $"ideas:board:{verb}:{target}", "working", verb, target, args);
+
     private Task<IdeaReply?> RunAsync(IdeaRow idea, string hit, string word, string verb, string[] args) =>
         RunAsync(KeyOf(idea), hit, word, verb, TargetOf(idea), args);
 
@@ -298,7 +333,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         RowInput.Placeholder = mode switch
         {
-            Mode.Plan => "milestone (Enter plans it in the next open one)",
+            Mode.Plan => "filter the milestones, or type a new one's title",
             Mode.Drop => "why drop it?",
             _ => "",
         };
@@ -310,12 +345,135 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Ui.Focus.Focus(EditInput);
         }
+        _choices = null;
+        _picked = null;
         if (mode == Mode.Tidy)
         {
             _proposal = null;
             Run(() => TidyAsync(idea), $"tidy {idea.Id}");
         }
+        else if (mode == Mode.Plan)
+        {
+            if (_proposal is { Tidy.Milestone: { } kept } held && held.Key == key)
+            {
+                // A tidy already asked Claude where it belongs: Plan starts from that.
+                _choices = new Choices(key, kept, true);
+                Seed();
+            }
+            else
+            {
+                _choices = new Choices(key, null, false);
+                Run(() => ProposeAsync(idea), $"milestone for {idea.Id}");
+            }
+        }
         Changed?.Invoke();
+    }
+
+    private async Task ProposeAsync(IdeaRow idea)
+    {
+        var reply = await RunAsync(Verbs.ProposeMilestone, TargetOf(idea), []);
+        if (reply is null || _open is not { Mode: Mode.Plan } open || open.Key != KeyOf(idea))
+        {
+            return;
+        }
+        _choices = new Choices(open.Key, reply.Ok ? reply.Milestones : null, true);
+        Seed();
+        if (!reply.Ok)
+        {
+            Say($"no milestone proposed for {Name(idea)}: {reply.Error}", refusal: true);
+        }
+        Changed?.Invoke();
+    }
+
+    // The proposal is chosen at first: a milestone it names, else the new one it suggests. No proposal chooses nothing.
+    private void Seed()
+    {
+        _picked = null;
+        if (_choices?.Answer is not { } answer)
+        {
+            return;
+        }
+        if (Proposed(answer) is { } named)
+        {
+            _picked = "m:" + named.Title;
+        }
+        else if (answer.NewTitle is { Length: > 0 })
+        {
+            _picked = "s";
+        }
+    }
+
+    private static MilestoneChoice? Proposed(MilestoneProposal answer) =>
+        answer.Title is { Length: > 0 } title ? answer.Open.FirstOrDefault(m => string.Equals(m.Title, title, StringComparison.OrdinalIgnoreCase)) : null;
+
+    // What the list shows for the filter typed: the proposal first, then the rest; the typed text as a new milestone when nothing matches.
+    private List<Item> Items(string filter)
+    {
+        var items = new List<Item>();
+        if (_choices is not { Done: true })
+        {
+            // Claude is still choosing: typed text must not become a new milestone before the open ones are known.
+            return items;
+        }
+        if (_choices.Answer is { } answer)
+        {
+            var proposed = Proposed(answer);
+            Item? suggested = answer.NewTitle is { Length: > 0 } newTitle
+                ? new Item("s", newTitle, answer.NewDescription, true, proposed is null ? "proposed" : "suggested", proposed is null ? answer.Reason : null)
+                : null;
+            if (suggested is not null && proposed is null)
+            {
+                items.Add(suggested);
+            }
+            foreach (var m in answer.Open.OrderBy(m => proposed is not null && m.Title == proposed.Title ? 0 : 1))
+            {
+                var isProposed = proposed is not null && m.Title == proposed.Title;
+                var meta = string.Join(" · ", new[] { isProposed ? "proposed" : null, m.DueOn is { } due ? "due " + due.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : null, $"{m.OpenIssues} open" }.OfType<string>());
+                items.Add(new Item("m:" + m.Title, m.Title, null, false, meta, isProposed ? answer.Reason : null));
+            }
+            if (suggested is not null && proposed is not null)
+            {
+                items.Add(suggested);
+            }
+        }
+        var wanted = filter.Trim();
+        if (wanted.Length == 0)
+        {
+            return items;
+        }
+        items = [.. items.Where(i => i.Title.Contains(wanted, StringComparison.OrdinalIgnoreCase))];
+        if (items.Count == 0)
+        {
+            items.Add(new Item("n", wanted, null, true, "", null));
+        }
+        return items;
+    }
+
+    // The milestone Plan would use: the one picked while it is in the list, else, once something is typed, the first the filter leaves.
+    private Item? Chosen(List<Item> items)
+    {
+        if (_picked is { } picked && items.FirstOrDefault(i => i.Key == picked) is { } item)
+        {
+            return item;
+        }
+        return RowInput.Text.Trim().Length > 0 ? items.FirstOrDefault() : null;
+    }
+
+    /// <summary>Plans the idea into the milestone chosen in the list (or the new one typed or suggested); nothing chosen is not sent.</summary>
+    public async Task PlanChosenAsync(IdeaRow idea)
+    {
+        if (_open is { Mode: Mode.Plan } waiting && waiting.Key == KeyOf(idea) && _choices is not { Done: true })
+        {
+            Say("Claude is still choosing a milestone; pick one when the list is in", refusal: true);
+            return;
+        }
+        if (_open is not { Mode: Mode.Plan } open || open.Key != KeyOf(idea) || Chosen(Items(RowInput.Text)) is not { } chosen)
+        {
+            Say("pick a milestone to plan it in", refusal: true);
+            return;
+        }
+        string[] args = !chosen.IsNew ? [chosen.Title] : chosen.Description is { Length: > 0 } description ? [Verbs.NewMilestoneArg, chosen.Title, description] : [Verbs.NewMilestoneArg, chosen.Title];
+        await PlanAsync(idea, args);
     }
 
     /// <summary>Puts away the open action and its box.</summary>
@@ -323,16 +481,17 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         _open = null;
         _proposal = null;
+        _choices = null;
         Ui.Focus.BlurIfFocused(RowInput);
         Ui.Focus.BlurIfFocused(EditInput);
         Changed?.Invoke();
     }
 
-    /// <summary>Plans the idea: moved out of Ideas to <paramref name="milestone"/>, or the next open one when it is empty.</summary>
-    public async Task PlanAsync(IdeaRow idea, string milestone)
+    // Plans the idea: moved out of Ideas to the milestone the args name, or to the new one they ask for.
+    private async Task PlanAsync(IdeaRow idea, string[] args)
     {
         Close();
-        var reply = await RunAsync(idea, $"ideas:plan-next:{KeyOf(idea)}", "planning", Verbs.PlanIdea, milestone.Trim().Length > 0 ? [milestone.Trim()] : []);
+        var reply = await RunAsync(idea, $"ideas:plan-go:{KeyOf(idea)}", "planning", Verbs.PlanIdea, args);
         if (reply is not null)
         {
             Say(reply.Ok ? $"planned {Name(idea)}{(reply.Made is { Length: > 0 } flight ? $" as flight {flight}" : "")}" : $"{Name(idea)} not planned: {reply.Error}", !reply.Ok);
@@ -461,17 +620,129 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         Palette.Use(Night);
         BeginFrame();
-        RenderLayout(Tree(screen), bounds);
+        _pageHeight = bounds.Height;
+        PageWidth = Scale.ToDesignX(bounds.Width);
+        RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
+    }
+
+    // The box an image goes to: the open Edit's, else the note box; none on a page that cannot send.
+    private TextEditorState? PasteTarget => Send is null || Upload is null ? null : _open is { Mode: Mode.Edit } ? EditInput : NoteInput;
+
+    /// <summary>Ctrl+V in <paramref name="editor"/>: an image on the clipboard is uploaded and its marker put at the caret. False when it holds none, and the paste is the text's.</summary>
+    internal bool PasteImage(TextEditorState editor)
+    {
+        if (Upload is null || GetClipboardImage?.Invoke() is not { } image)
+        {
+            return false;
+        }
+        Run(() => UploadAsync(editor, image.Bytes, image.Ext), "upload image");
+        return true;
+    }
+
+    /// <summary>A file dropped on the window: an image goes into the open Edit or the note box like a paste; anything else is ignored. True when it was taken.</summary>
+    public bool DropFile(string path)
+    {
+        var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+        if (PasteTarget is not { } editor || !ImageExtensions.Contains(ext))
+        {
+            return false;
+        }
+        Run(async () =>
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = await File.ReadAllBytesAsync(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                PasteSay(editor, $"image not read: {ex.Message}");
+                return;
+            }
+            await UploadAsync(editor, bytes, ext);
+        }, "upload image");
+        return true;
+    }
+
+    private async Task UploadAsync(TextEditorState editor, byte[] bytes, string ext)
+    {
+        Interlocked.Increment(ref _uploading);
+        _pasteSaid = null;
+        Changed?.Invoke();
+        (string? Id, string? Error) result;
+        try
+        {
+            result = await Upload!(bytes, ext, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            result = (null, ex.Message);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _uploading);
+        }
+        if (result.Id is { Length: > 0 } id)
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Enqueue(ref _markers, (editor, IdeaImages.Marker("screenshot", id, ext.ToLowerInvariant())));
+            Changed?.Invoke();
+        }
+        else
+        {
+            PasteSay(editor, $"image not uploaded: {result.Error ?? "the node gave no id"}");
+        }
+    }
+
+    private void PasteSay(TextEditorState editor, string text)
+    {
+        _pasteSaid = text;
+        _pasteSaidIn = editor;
+        Changed?.Invoke();
+    }
+
+    // The line under a box: while an image goes up it says so, a refused one is said under the box it was pasted in.
+    private string Hint(TextEditorState editor, string idle, out RGBAColor32 color)
+    {
+        if (Volatile.Read(ref _uploading) > 0)
+        {
+            color = P.Held;
+            return "● uploading image…";
+        }
+        if (_pasteSaid is { } said && ReferenceEquals(_pasteSaidIn, editor))
+        {
+            color = P.Failed;
+            return said;
+        }
+        color = P.Dim;
+        return idle;
     }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what a test arranges.</summary>
     internal Layout.Node Tree(IdeasScreen screen)
     {
         _screen = screen;
+        var marked = false;
+        while (System.Collections.Immutable.ImmutableInterlocked.TryDequeue(ref _markers, out var marker))
+        {
+            marker.Editor.InsertText(marker.Marker);
+            marked = true;
+        }
+        if (marked)
+        {
+            Changed?.Invoke();
+        }
         NoteInput.OnCommit = _ => NoteAsync();
         NoteInput.Placeholder = "Note an idea: the first line is its title";
         EditInput.OnCommit = text => CommitEditAsync(text);
-        EditInput.OnCancel = Close;
+        EditInput.OnCancel = () =>
+        {
+            if (!Gallery.HandleKey(InputKey.Escape))
+            {
+                Close();
+            }
+        };
+        NoteInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(NoteInput);
+        EditInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(EditInput);
         RowInput.OnCommit = text => CommitRowAsync(text);
         RowInput.OnCancel = Close;
         // A page switched away from while an action was open leaves nothing behind it, and a gone idea closes its action.
@@ -479,62 +750,140 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             _open = null;
             _proposal = null;
+            _choices = null;
         }
 
         var ideas = IdeaIds.Order(screen.Ideas).ToList();
-        var noted = ideas.Where(i => i.State == IdeaState.Noted).ToList();
+        var board = _board = IdeasBoard.Build(screen);
+        Prune(board);
+        // The selected row is one the board still holds: one the node's read moved away or closed is no longer selected.
+        if (_selected is { } picked && board.Find(picked) is null)
+        {
+            _selected = null;
+        }
+        var noted = board.Unsorted.Items;
         var folded = ideas.Where(i => i.State != IdeaState.Noted).ToList();
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
-        var top = TopBar.Build(new PageHeader("ideas")
+        // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
+        var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
+            Buttons = [ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            {
+                ViewMode = mode;
+                Changed?.Invoke();
+            }, P)],
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, Autopilot, About, Night));
 
-        var rows = new List<Layout.Node>();
+        // What every view starts with: the box that notes an idea, what was said, the questions the node asked.
+        var head = new List<Layout.Node>();
         if (Send is not null)
         {
-            rows.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
+            head.Add(Layout.Builder.TextEditor(NoteInput, 14f, colors: InputColors, focusOnOpen: true).WStar());
             // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
-            rows.Add(Layout.Builder.Text(Working && _noting.IsEmpty ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo", 11f, Working && _noting.IsEmpty ? P.Held : P.Dim).RowH(16f));
+            var working = Working && _noting.IsEmpty;
+            var hint = Hint(NoteInput, working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo" + (Upload is null ? "" : " · Ctrl+V pastes an image"), out var hintColor);
+            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
         }
         if (_said.Length > 0)
         {
-            rows.Add(WrappedProse.Of(_said, 13f, _saidRefusal ? P.Failed : P.Body).Pad(0f, 2f));
+            head.Add(WrappedProse.Of(_said, 13f, _saidRefusal ? P.Failed : P.Body).Pad(0f, 2f));
         }
         foreach (var ask in screen.Asks.Where(IdeasScreen.IsAsk))
         {
-            rows.Add(Ask(ask));
+            head.Add(Ask(ask));
         }
         var ideating = Volatile.Read(ref _noting);
-        rows.AddRange(ideating.Reverse().Select(Ideating));
-        if (noted.Count == 0 && ideating.IsEmpty)
+        var empty = UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
+        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
+
+        Layout.Node body;
+        switch (ViewMode)
         {
-            rows.Add(WrappedProse.Of(ideas.Count == 0
-                ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
-                : "Nothing is waiting: every idea is planned or dropped.", 13f, P.Dim).Pad(0f, 8f));
+            case IdeasViewMode.Canvas:
+                body = CanvasBody(head, ideating, empty, shown, folded);
+                break;
+            case IdeasViewMode.Tree:
+                body = TreeBody(head, ideating, empty, shown, folded);
+                break;
+            default:
+                body = ListBody(head, ideating, empty, shown, folded);
+                break;
         }
-        rows.AddRange(noted.Select(Row));
-        if (folded.Count > 0)
+        var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
+        return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
+    }
+
+    // What the pinned section says while it holds nothing, or null once it holds something.
+    private Layout.Node? UnsortedEmpty(int ideas, int noted, bool ideating) =>
+        noted > 0 || ideating
+            ? null
+            : WrappedProse.Of(ideas == 0
+                ? "No ideas yet. Note one above: an idea is an issue in its repo's Ideas milestone, with an id like I381."
+                : "Nothing is waiting: every idea is planned or dropped.", 13f, P.Dim).Pad(0f, 8f);
+
+    // The planned and dropped ideas, folded below every view: the pill that opens them, and them once it has.
+    private IEnumerable<Layout.Node> FoldedRows(List<IdeaRow> folded)
+    {
+        if (folded.Count == 0)
         {
-            rows.Add(CardsView<TSurface>.Pill($"{(ShowFolded ? "▾" : "▸")} Planned and dropped ({folded.Count})", "ideas:folded", () =>
+            yield break;
+        }
+        yield return CardsView<TSurface>.Pill($"{(ShowFolded ? "▾" : "▸")} Planned and dropped ({folded.Count})", "ideas:folded", () =>
+        {
+            ShowFolded = !ShowFolded;
+            Changed?.Invoke();
+        }, Tint, P.Body);
+        if (ShowFolded)
+        {
+            foreach (var idea in folded)
             {
-                ShowFolded = !ShowFolded;
-                Changed?.Invoke();
-            }, Tint, P.Body));
-            if (ShowFolded)
-            {
-                rows.AddRange(folded.Select(Folded));
+                yield return Folded(idea);
             }
         }
-
-        var list = Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(_scroll).Stretch();
-        var body = Layout.Builder.VStack(list.HStar()).Pad(Gutter, 8f).Stretch();
-        var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
-        return About?.Over(whole, NightOrNull) ?? whole;
     }
+
+    // The list: the pinned section over a handle, under it No milestone and every milestone, then the planned and dropped.
+    private Layout.Node ListBody(List<Layout.Node> head, System.Collections.Immutable.ImmutableList<string> ideating, Layout.Node? empty, List<BoardSection> shown, List<IdeaRow> folded)
+    {
+        var board = _board;
+        var rows = new List<Layout.Node>(head);
+        rows.AddRange(SectionHead(board.Unsorted, collapsible: false, target: false, hint: true));
+        rows.AddRange(ideating.Reverse().Select(Ideating));
+        if (empty is not null)
+        {
+            rows.Add(empty);
+        }
+        rows.AddRange(board.Unsorted.Items.Select(item => ItemRow(item, board.Unsorted)));
+
+        // Under the handle: No milestone, then every milestone, then the planned and dropped.
+        var below = new List<Layout.Node>();
+        foreach (var section in shown)
+        {
+            below.AddRange(SectionHead(section, collapsible: true, target: true, hint: true));
+            if (!_collapsed.Contains(section.Key))
+            {
+                below.AddRange(section.Items.Select(item => ItemRow(item, section)));
+            }
+        }
+        below.AddRange(FoldedRows(folded));
+
+        var first = Pane(rows, _scroll);
+        return below.Count == 0
+            ? first
+            : Layout.Builder.Split(first, Pane(below, _boardScroll), resize =>
+            {
+                _splitExtent = resize.FirstExtent;
+                Changed?.Invoke();
+            }, Layout.Axis.Vertical, _splitExtent ?? DefaultSplit, SplitThickness, SplitGrab, new HitResult.ButtonHit(SplitHit), P.Faint).Stretch();
+    }
+
+    // One of the two panes: its rows, scrolled by its own controller, inside the page's gutters.
+    private Layout.Node Pane(List<Layout.Node> rows, ListScrollController scroll) =>
+        Layout.Builder.VStack(Layout.Builder.VStack([.. rows]).WithGap(RowGap).WithScroll(scroll).Stretch().HStar()).Pad(Gutter, 8f).Stretch();
 
     private async Task CommitRowAsync(string text)
     {
@@ -545,7 +894,7 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         switch (open.Mode)
         {
             case Mode.Plan:
-                await PlanAsync(idea, text);
+                await PlanChosenAsync(idea);
                 break;
             case Mode.Drop:
                 await DropAsync(idea, text);
@@ -605,10 +954,41 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var key = (KeyOf(idea), idea.Body, IsNight);
         if (!_markdown.TryGetValue(key, out var document))
         {
-            _markdown[key] = document = Layout.Builder.Markdown(Soften(idea.Body), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+            _markdown[key] = document = Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
         }
         return document;
     }
+
+    // The images are shown as thumbnails under the body, so their Markdown is not shown as text as well.
+    private static string WithoutImages(string body)
+    {
+        var spans = IdeaImages.Spans(body);
+        if (spans.Length == 0)
+        {
+            return body;
+        }
+        var text = new System.Text.StringBuilder(body);
+        foreach (var span in spans.OrderByDescending(s => s.At))
+        {
+            text.Remove(span.At, span.Length);
+        }
+        return text.ToString().Trim();
+    }
+
+    // The idea's images as the gallery shows them: the copy the node serves by id, or, for a link out, only its extension.
+    private static IReadOnlyList<AttachmentRef> CopiesOf(IdeaRow idea) =>
+    [
+        .. idea.Images.Select(image =>
+        {
+            var title = image.Alt.Length > 0 ? image.Alt : "image";
+            if (IdeaImages.CopyOf(image.Url) is { } copy)
+            {
+                return new AttachmentRef(copy.Id, title, copy.Ext, null);
+            }
+            var ext = Path.GetExtension(image.Url.Split('?', '#')[0]).TrimStart('.').ToLowerInvariant();
+            return new AttachmentRef("", title, ext.Length > 0 ? ext : "img", null);
+        }),
+    ];
 
     // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
     // separators with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
@@ -645,39 +1025,6 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             return text.ToString();
         }
-    }
-
-    private Layout.Node Row(IdeaRow idea)
-    {
-        var key = KeyOf(idea);
-        var parts = new List<Layout.Node> { Header(idea) };
-        if (Meta(idea) is { Length: > 0 } meta)
-        {
-            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).RowH(16f));
-        }
-        if (idea.Body.Trim().Length > 0)
-        {
-            parts.Add(BodyOf(idea).WStar());
-        }
-        var buttons = new List<Layout.Node>
-        {
-            ActionPill("Plan", idea, Mode.Plan),
-            ActionPill("Drop", idea, Mode.Drop),
-            ActionPill("Edit", idea, Mode.Edit),
-            ActionPill("Tidy", idea, Mode.Tidy),
-            ActionPill("Move to repo…", idea, Mode.Move),
-            OpenPill(idea),
-        };
-        parts.Add(Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar());
-        if (PressLine(idea) is { } pressed)
-        {
-            parts.Add(pressed);
-        }
-        if (_open is { } open && open.Key == key)
-        {
-            parts.AddRange(OpenRows(idea, open.Mode));
-        }
-        return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(10f, 8f).Bg(P.RowAltBg).WStar().HAuto();
     }
 
     private Layout.Node ActionPill(string label, IdeaRow idea, Mode mode) =>
@@ -722,17 +1069,55 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     if (mode == Mode.Plan)
                     {
                         // What the box is for, said: "plan in" over an empty box left the owner unsure what it wanted (2026-10-29).
-                        yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Type the milestone to put it in, or leave the box empty for the next open one.", 12f, P.Body).WStar();
+                        yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Pick the milestone to put it in.", 12f, P.Body).WStar();
                     }
                     yield return Layout.Builder.HStack(
-                            Layout.Builder.Text(mode == Mode.Plan ? "milestone (optional)" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).WAuto(),
                             Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
                         .WithGap(10f).RowH(30f);
+                }
+                Item? chosen = null;
+                if (mode == Mode.Plan)
+                {
+                    if (_choices is { Done: false })
+                    {
+                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).RowH(18f);
+                    }
+                    var items = Items(RowInput.Text);
+                    chosen = Chosen(items);
+                    foreach (var item in items)
+                    {
+                        var pick = item.Key;
+                        var label = (chosen?.Key == pick ? "● " : "") + (item.IsNew ? $"new milestone: {item.Title}" : item.Title) + (item.Meta.Length > 0 ? " · " + item.Meta : "");
+                        var rows = new List<Layout.Node>
+                        {
+                            CardsView<TSurface>.Pill(label, $"ideas:milestone:{KeyOf(idea)}:{pick}", () =>
+                            {
+                                _picked = pick;
+                                Changed?.Invoke();
+                            }, chosen?.Key == pick ? Lit : Tint, P.Bright),
+                        };
+                        if (item.Description is { Length: > 0 } description)
+                        {
+                            rows.Add(WrappedProse.Of(description, 12f, P.Dim).WStar());
+                        }
+                        if (item.Reason is { Length: > 0 } reason)
+                        {
+                            rows.Add(WrappedProse.Of(reason, 12f, P.Dim).WStar());
+                        }
+                        yield return Layout.Builder.VStack([.. rows]).WithGap(2f).WStar().HAuto();
+                    }
+                    if (_choices is { Done: true, Answer.Note: { Length: > 0 } note })
+                    {
+                        yield return WrappedProse.Of(note, 12f, P.Dim).WStar();
+                    }
                 }
                 var buttons = new List<Layout.Node>();
                 if (mode == Mode.Plan)
                 {
-                    buttons.Add(NodeButton(idea, "Plan in the next open milestone", "plan-next", "planning", () => Run(() => PlanAsync(idea, ""), $"plan {idea.Id}"), Lit));
+                    buttons.Add(chosen is null
+                        ? Layout.Builder.Text("Plan", 12f, P.Faint, TextAlign.Center).Pad(10f, 4f).Bg(P.GhostBg).WAuto()
+                        : NodeButton(idea, "Plan", "plan-go", "planning", () => Run(() => PlanChosenAsync(idea), $"plan {idea.Id}"), Lit));
                 }
                 if (mode == Mode.Edit)
                 {
@@ -740,10 +1125,18 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 }
                 buttons.Add(CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body));
                 yield return Layout.Builder.WrapH([.. buttons]).WithGap(8f).WithLineGap(4f).WStar();
+                if (mode == Mode.Edit)
+                {
+                    var editHint = Hint(EditInput, "", out var editColor);
+                    if (editHint.Length > 0)
+                    {
+                        yield return Layout.Builder.Text(editHint, 11f, editColor).RowH(16f);
+                    }
+                }
                 yield return Layout.Builder.Text(mode switch
                 {
-                    Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels",
-                    Mode.Plan => "Enter plans it (an empty box: the next open milestone) · Esc cancels",
+                    Mode.Plan => "Type to filter · Enter plans the chosen milestone · Esc cancels",
+                    Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels" + (Upload is null ? "" : " · Ctrl+V pastes an image"),
                     _ => "Enter sends · Esc cancels",
                 }, 11f, P.Faint).RowH(16f);
                 break;
@@ -780,6 +1173,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.Text(mark, 13f, color).WFixed(16f),
                     line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
                 .WStar().HAuto();
+        }
+        if (tidy.Milestone is { } plan && (Proposed(plan)?.Title ?? plan.NewTitle) is { Length: > 0 } where)
+        {
+            yield return WrappedProse.Of($"Plan it in: {(Proposed(plan) is null ? "new milestone " : "")}{where}" + (plan.Reason is { Length: > 0 } why ? $" ({why})" : ""), 12f, P.Dim).WStar();
         }
         yield return Layout.Builder.WrapH(
                 NodeButton(idea, "Save", "tidy-save", "saving the tidy", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit),
@@ -848,6 +1245,10 @@ internal sealed class IdeasView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     public override bool HandleInput(InputEvent evt)
     {
+        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
+        {
+            return true;
+        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _open is not null)
         {
             Close();

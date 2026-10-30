@@ -51,6 +51,56 @@ public sealed class CheckRunnerTests
         run.Passed.ShouldBeTrue(run.Tail);
     }
 
+    /// <summary>
+    /// A check given up from outside ends with everything it started: only the time budget's kill took the tree before,
+    /// so a cancelled check's Pilot.Node.Tests.exe went on running and held the plane's DLLs (PIL446, PIL474, 2026-10-31).
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public async Task ACancelledCheckEndsTheProcessesItStarted()
+    {
+        var marker = Path.Combine(Path.GetTempPath(), $"check-child-{Guid.NewGuid():N}.pid");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; Start-Sleep 120"
+            : $"sleep 120 & echo $! > '{marker}'; wait";
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var run = new ShellCheckRunner().RunAsync(command, Path.GetTempPath(), cancel.Token);
+        try
+        {
+            while (!File.Exists(marker) || File.ReadAllText(marker).Trim().Length == 0)
+            {
+                run.IsCompleted.ShouldBeFalse();
+                await Task.Delay(100, Ct);
+            }
+            var child = int.Parse(File.ReadAllText(marker).Trim());
+
+            await cancel.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(run);
+
+            using var gone = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (Alive(child))
+            {
+                await Task.Delay(100, gone.Token);
+            }
+        }
+        finally
+        {
+            File.Delete(marker);
+        }
+    }
+
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The script a Windows check runs from is gone once it has run.</summary>
     [Fact]
     public void TheScriptIsDeletedWithTheRun()

@@ -76,8 +76,8 @@ public sealed record FlightRow
 
     /// <summary>
     /// The head its PR merged at while a leg was planned or flying (#342): the merge went without that leg's work, so the flight
-    /// is not landed as merged, and when its legs are done the plane is rebased onto the base from this head and goes up as a
-    /// new PR. Null otherwise.
+    /// is not landed as merged, and when its legs are done the base, which holds this head, is merged into the plane and it goes up
+    /// as a new PR. Null otherwise.
     /// </summary>
     public string? MergedHead { get; init; }
 
@@ -86,6 +86,12 @@ public sealed record FlightRow
 
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
+
+    /// <summary>Every round of its review so far, oldest first; kept when a fresh review replaces <see cref="Review"/>. Null before the first verdict.</summary>
+    public ReviewRound[]? ReviewRounds { get; init; }
+
+    /// <summary>How many review rounds the watchtower (or the person) has allowed in all, past the third at which a loop is held; null until one is allowed.</summary>
+    public int? ReviewRoundsAllowed { get; init; }
 
     /// <summary>
     /// Where its PR waits in its base's merge queue while it does (<c>in the merge queue, position 2</c>), as the node last
@@ -127,6 +133,14 @@ public sealed record FlightRow
     /// its failed checks then send the leg round as changes rather than ring a card for a person who never pressed Merge.
     /// </summary>
     public string[]? MergeWhenGreen { get; init; }
+
+    /// <summary>
+    /// The work item's sub-tasks that are no leg's (a sub-issue or a task a person added in the tracker), as the node read them at
+    /// its last sync of the legs, for the flight's page to list under the legs; they change no leg. Null before a sync, in a repo
+    /// that has sub-tasks off, and in a journal written before them.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SubTaskItem[]? OtherSubTasks { get; init; }
 
     /// <summary>
     /// The other flights the planner found this one overlapping, each with the answer to it: a pair is asked once, so
@@ -308,8 +322,12 @@ public static class FlightWaiting
     /// <summary>Where a leg is in a line of words: its state, or what it holds for (<c>holding for Drawboard.Core 1.2.7</c>).</summary>
     public static string LegState(LegRow leg) =>
         leg.Hold is { } hold ? $"holding for {hold.Id} {hold.Wanted ?? hold.Line}"
+        : leg.Recheck is { Outcome: null } recheck && leg.State == Pilot.Contracts.LegState.Flying ? RecheckText(recheck)
         : leg.Wait is { } wait && leg.State == Pilot.Contracts.LegState.Flying ? WaitText(wait)
         : leg.State.ToString().ToLowerInvariant();
+
+    /// <summary>What a leg whose finish reruns its check says: <c>rechecking since 14:30</c>.</summary>
+    public static string RecheckText(LegRecheck recheck) => $"rechecking since {recheck.Since.ToLocalTime():HH:mm}";
 
     /// <summary>What a leg's worker waits on: <c>waiting for C:\x\done.txt</c>, or <c>waiting until 14:30</c> for a time alone.</summary>
     public static string WaitText(LegWait wait) =>
@@ -432,6 +450,9 @@ public sealed record ReviewRow
 
     /// <summary>How deep the node chose to review (#74); null on a review started before it chose.</summary>
     public ReviewDepth? Depth { get; init; }
+
+    /// <summary>The model the reviewer was started on; null on a review started before the node said.</summary>
+    public string? Model { get; init; }
 
     /// <summary>Why that depth, in a few words ("usage at 88%"); said in the reviewer's brief and on the PR-ready card.</summary>
     public string? DepthWhy { get; init; }

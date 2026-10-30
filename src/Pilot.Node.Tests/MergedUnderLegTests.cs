@@ -148,7 +148,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
-    public async Task ADoneLegGoesToANewPrFromTheMergedBase()
+    public async Task ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Merged(node);
@@ -166,37 +166,11 @@ public sealed class MergedUnderLegTests : IDisposable
         node.GitHub.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
         flight.PullRequest.ShouldBe(71);
         flight.MergedHead.ShouldBeNull();
-        // Rebased onto the base as it now stands: the merged commit is out, only the new leg's is on it.
-        Git(Plane, "log", "--format=%s", "main..HEAD").ShouldBe("the render");
-        Git(Plane, "rev-parse", "HEAD~1").ShouldBe(Git(Repo, "rev-parse", "main"));
-        Git(Origin, "rev-parse", "flight/tia1").ShouldBe(Git(Plane, "rev-parse", "HEAD"));
-        node.State.Cards(openOnly: true).Any(c => c.Kind == FlightCommander.MergedUnderLegKind).ShouldBeFalse();
-        node.State.Cards().Any(c => c.Kind == LegCommander.MergeTakenBackKind).ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task ADoneLegGoesToANewPrFromTheMergedBaseInAMergeWayRepo()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        node.GitHub.UpdateWay = UpdateWay.Merge;
-        var ready = Merged(node);
-        (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
-        ShouldHaveRung(node, ready);
-
-        // The new leg's work, committed in the plane, and the leg done.
-        Commit(Plane, "render.txt", "the render");
-        node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "render") with { State = LegState.Done });
-        node.GitHub.Created.Clear();
-
-        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldBeNull();
-
-        var flight = node.State.Flights().Single();
-        node.GitHub.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
-        flight.PullRequest.ShouldBe(71);
-        flight.MergedHead.ShouldBeNull();
-        // Rebased onto the base as it now stands: the merged commit is out, only the new leg's is on it.
-        Git(Plane, "log", "--format=%s", "main..HEAD").ShouldBe("the render");
-        Git(Plane, "rev-parse", "HEAD~1").ShouldBe(Git(Repo, "rev-parse", "main"));
+        // The base as it now stands is merged in, never rebased: the new leg's commit and the old head are both still in the history.
+        Git(Plane, "merge-base", "--is-ancestor", "main", "HEAD");
+        Git(Plane, "merge-base", "--is-ancestor", _mergedHead, "HEAD");
+        // (the old commit and the squash can share an id when made in the same second, so the log is no fixed count: the diff is what counts)
+        Git(Plane, "diff", "--name-only", "main", "HEAD").ShouldBe("render.txt");
         Git(Origin, "rev-parse", "flight/tia1").ShouldBe(Git(Plane, "rev-parse", "HEAD"));
         node.State.Cards(openOnly: true).Any(c => c.Kind == FlightCommander.MergedUnderLegKind).ShouldBeFalse();
         node.State.Cards().Any(c => c.Kind == LegCommander.MergeTakenBackKind).ShouldBeFalse();
@@ -258,6 +232,24 @@ public sealed class MergedUnderLegTests : IDisposable
         var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == "not-landed");
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Detail.ShouldNotBeNull().ShouldContain("a late commit");
+    }
+
+    [Fact]
+    public async Task TheNodesOwnFirstLookIsOverBeforeStartReturnsSoItNeverLandsAStateTheTestPutsAfter()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        // The background loop looks once at start; the harness waited for that look, so none is left to come.
+        node.App.Services.GetRequiredService<PrChecks>().FirstLook.IsCompletedSuccessfully.ShouldBeTrue();
+
+        // A merged PR with every leg done, put in after start: flying until the test's own look lands it.
+        Merged(node);
+        node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
+        Directory.Exists(Plane).ShouldBeTrue();
+
+        await Look(node);
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
     }
 
     [Fact]

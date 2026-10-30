@@ -181,33 +181,32 @@ public sealed class OtherPagesButtonFeedbackTests
         var screen = new IdeasScreen([Idea(381, "Ideas pane")], [], ["pilot", "tianwen"], "live from the node", Live.At);
         Layout.Node Tree() => ideas.Tree(screen);
 
-        // Plan: its panel's button asks the node; the row says "planning…" at once and the page is working.
-        Click(Tree(), ActionWith(Tree(), "ideas:plan:"));
-        var planNext = ActionWith(Tree(), "ideas:plan-next:");
-        planNext.ShouldNotBeEmpty();
-        Click(Tree(), planNext);
-        node.Sent.Select(s => s.Verb).ShouldBe([Verbs.PlanIdea]);
+        // Drop: sent from its box (Enter); the row says "dropping…" at once and the page is working.
+        Click(Tree(), ActionWith(Tree(), "ideas:drop:"));
+        ideas.RowInput.Text = "a duplicate";
+        var firstDrop = ideas.RowInput.OnCommit!("a duplicate");
+        node.Sent.Select(s => s.Verb).ShouldBe([Verbs.DropIdea]);
         ideas.Working.ShouldBeTrue();
-        Words(Tree()).ShouldContain("planning…");
+        Words(Tree()).ShouldContain("dropping…");
 
         // The press is with the node: no second one reaches it, whichever way it is made.
-        await ideas.PlanAsync(screen.Ideas[0], "");
+        await ideas.DropAsync(screen.Ideas[0], "a duplicate");
         node.Sent.Count.ShouldBe(1);
 
         // Refused: the node's words beside the row, and the row is no longer working.
         node.Answer(new IdeaReply(false, "no milestone is open"));
         await Until(() => !ideas.Working);
-        Words(Tree()).ShouldNotContain("planning…");
+        Words(Tree()).ShouldNotContain("dropping…");
         Words(Tree()).ShouldContain("no milestone is open");
-        ideas.Said.ShouldBe("I381 not planned: no milestone is open");
+        ideas.Said.ShouldBe("I381 not dropped: no milestone is open");
 
         // Taken: the outcome is said at once and the row's words are gone.
-        var again = ideas.PlanAsync(screen.Ideas[0], "");
+        var again = ideas.DropAsync(screen.Ideas[0], "a duplicate");
         ideas.Working.ShouldBeTrue();
         ideas.Presses.RefusedOf("pilot I381").ShouldBeNull();
         node.Answer(new IdeaReply(true, Made: "PIL462"));
         await again;
-        ideas.Said.ShouldBe("planned I381 as flight PIL462");
+        ideas.Said.ShouldBe("dropped I381");
         ideas.Working.ShouldBeFalse();
 
         // Move: working with the repo chosen, then refused in the node's words.

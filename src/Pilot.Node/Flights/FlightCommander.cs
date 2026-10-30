@@ -62,11 +62,14 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>The Handled card that says a flight went to another node, as this one is in maintenance.</summary>
     public const string RoutedKind = "routed";
 
+    /// <summary>The Handled card that says who undid a flight's connection.</summary>
+    public const string DisconnectedKind = "disconnected";
+
     /// <summary>The Handled card that says a flight came from another node.</summary>
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Land or Verbs.FlyAnyway;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -88,6 +91,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                 {
                     case Verbs.Connect:
                         made = await ConnectAsync(command, cancellationToken);
+                        break;
+                    case Verbs.Disconnect:
+                        made = Disconnect(command);
                         break;
                     case Verbs.Land:
                         await LandAsync(command, cancellationToken);
@@ -587,6 +593,59 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     }
 
     /// <summary>
+    /// <c>disconnect flight/&lt;code&gt; &lt;other&gt; [--anyway]</c>: undoes a connect. The wait for <c>other</c> (on this node or a peer) goes, and
+    /// so does every package wait its landing produced; the flight flies when nothing else holds it, and a Handled card says who removed it.
+    /// A connection the controller chose as the answer to an overlap is refused with why unless given <see cref="Verbs.AnywayFlag"/>; the
+    /// overlap's row stays, so the planner is not asked again. Returns what the caller is told.
+    /// </summary>
+    private string Disconnect(CommandRequest command)
+    {
+        var flight = Find(command.Target);
+        var args = command.Args ?? [];
+        var anyway = args.Contains(Verbs.AnywayFlag, StringComparer.Ordinal);
+        var given = args.FirstOrDefault(a => a != Verbs.AnywayFlag);
+        if (given is null)
+        {
+            throw new FlightException($"disconnect needs the code of a flight {flight.Code} waits for, as in disconnect flight/{flight.Code} TIA1611");
+        }
+        if (flight.State == FlightState.Landed)
+        {
+            throw new FlightException($"{flight.Code} has landed: it waits for nothing");
+        }
+        bool Is(string c) => string.Equals(c, given, StringComparison.OrdinalIgnoreCase);
+        if (!flight.Connections.Any(Is) && !flight.PeerConnections.Any(c => Is(c.Code)) && !flight.PackageWaits.Any(w => Is(w.Producer)))
+        {
+            var waits = FlightWaiting.For(flight);
+            throw new FlightException(waits.Length == 0
+                ? $"{flight.Code} does not wait for {given}: it waits for nothing"
+                : $"{flight.Code} does not wait for {given}: it waits for {waits}");
+        }
+        if (!anyway && flight.Overlaps.FirstOrDefault(o => Is(o.Other) && o.Answer == OverlapAnswer.Connect) is { } overlap)
+        {
+            var files = overlap.Files is { Length: > 0 } f ? $", touching {string.Join(", ", f)}" : "";
+            throw new FlightException($"{flight.Code} waits for {overlap.Other} because the controller answered an overlap with it that way, on {overlap.At.ToLocalTime():yyyy-MM-dd HH:mm} ({overlap.Why}{files}): give {Verbs.AnywayFlag} to drop it all the same");
+        }
+
+        var dropped = flight with
+        {
+            Connections = [.. flight.Connections.Where(c => !Is(c))],
+            PeerConnections = [.. flight.PeerConnections.Where(c => !Is(c.Code))],
+            PackageWaits = [.. flight.PackageWaits.Where(w => !Is(w.Producer))],
+        };
+        var settled = Settle(dropped);
+        state.PutFlight(settled);
+        if (dropped.PackageWaits.Length == 0)
+        {
+            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} disconnected {flight.Code} from {given}", PackageWatch.LateKind);
+        }
+        var made = settled.State == FlightState.Flying
+            ? $"{flight.Code} is disconnected from {given} and flies now"
+            : $"{flight.Code} is disconnected from {given}, but is still held: it waits for {FlightWaiting.For(settled)}";
+        state.RaiseCard(CardBin.Handled, DisconnectedKind, Verbs.FlightTarget(flight.Code), $"{command.Who} disconnected {flight.Code} from {given}", made);
+        return made;
+    }
+
+    /// <summary>
     /// Connects the flight to a flight of this node, as <c>connect</c> does, for the controller's answer to an overlap: one at a time with
     /// the flight verbs. Throws <see cref="FlightException"/> with why it could not, and then changes nothing. Returns what the connect
     /// said of a flight of another node (that it waits, or that it has landed already and there is nothing to wait for), or null.
@@ -690,10 +749,12 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             MergeWhenGreen = null, MergeQueue = null, GitHubHead = null,
         };
         state.PutFlight(marked);
+        // Its merge entry ends merged too: with the PR let go, no look of the queues sees the flight again to end it.
+        state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
         state.RaiseCard(CardBin.Ring, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
-            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (rebased onto the base, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
+            $"{why}. GitHub merged #{number} at {mergedHead[..Math.Min(8, mergedHead.Length)]} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",
             link: flight.PullRequestUrl);
         return marked;
     }
@@ -839,6 +900,16 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
         }) ?? flight;
+        // After a merge the entry ends merged whatever it stood at: a look that saw the arm cleared, or a merge refused as the PR was
+        // merged already, may have dropped it just before (pilot #395). A landing by hand ends only an entry still open.
+        if (mergedHead is not null)
+        {
+            state.EndMergeAsMerged(flight.Code, null);
+        }
+        else if (foldedInto is null)
+        {
+            state.EndMerge(flight.Code, MergeEntryState.Merged, null);
+        }
 
         // The item is no longer flying here: its node label goes, unless another flight of this node (a suffixed second one)
         // is still on the same item. Landed already, so a failure is said, not a refusal.

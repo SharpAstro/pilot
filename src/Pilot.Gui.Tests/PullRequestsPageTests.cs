@@ -1174,4 +1174,57 @@ public sealed class PullRequestsPageTests
         }
         condition().ShouldBeTrue();
     }
+
+    private static void ClickTitle(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, string title) =>
+        ClickButton(Arrange(renderer, page, screen, 1600f), "pull requests:table:" + title);
+
+    [Fact]
+    public void AClickOnATitleSortsThePRsWithinEachRepoAndTheGroupsKeepTheirOrder()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        var groups = page.Rows.Select(r => r.Repo).Distinct().ToList();
+        string[] Repo(string repo) => [.. page.Rows.Where(r => r.Repo == repo).Select(r => r.Url[(r.Url.LastIndexOf('/') + 1)..])];
+        Repo("SharpAstro/pilot").ShouldBe(["252", "261", "258"]);
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["252", "258", "261"]);
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot").ShouldBe(["261", "258", "252"]);
+        Repo("SharpAstro/DIR.Lib").ShouldBe(["301", "300"]);
+
+        // The repos' groups are where they were, each repo's rows still together.
+        page.Rows.Select(r => r.Repo).Distinct().ShouldBe(groups);
+        page.Rows.Select(r => r.Repo).Where((repo, i) => i == 0 || repo != page.Rows[i - 1].Repo).Count().ShouldBe(groups.Count);
+
+        // The age sorts by time, the newest first on a first click: #252 (5 minutes) leads its group.
+        ClickTitle(renderer, page, screen, "Updated");
+        Arrange(renderer, page, screen, 1600f);
+        Repo("SharpAstro/pilot")[0].ShouldBe("252");
+        page.Table.Sort.ShouldBe(new ListTable.SortState("Updated", Descending: true));
+    }
+
+    [Fact]
+    public void TheSelectedPRStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        Arrange(renderer, page, screen, 1600f);
+        page.Select(page.Rows.ToList().FindIndex(r => r.Number == 258));
+        var before = page.Selected;
+
+        ClickTitle(renderer, page, screen, "Pull request");
+        Arrange(renderer, page, screen, 1600f);
+
+        page.SelectedRow!.Number.ShouldBe(258);
+        page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
+        page.Selected.ShouldNotBe(before);
+    }
 }

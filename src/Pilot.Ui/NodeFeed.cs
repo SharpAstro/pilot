@@ -51,7 +51,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
         string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
-        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null);
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -229,6 +229,8 @@ internal sealed class NodeFeed : IAsyncDisposable
         {
             Flights = view.Flights,
             Moves = view.IdeaMoves ?? [],
+            Milestones = view.Milestones ?? [],
+            Issues = view.Issues ?? [],
         };
     }
 
@@ -452,11 +454,15 @@ internal sealed class NodeFeed : IAsyncDisposable
         var pullRequests = _mirror.PullRequests;
         var ideas = _mirror.Ideas.ToArray();
         var ideaMoves = _mirror.IdeaMoves.ToArray();
+        var milestones = _mirror.Milestones.ToArray();
+        var issues = _mirror.Issues.ToArray();
         ImmutableInterlocked.Update(ref _view, view => view with
         {
             PullRequests = pullRequests,
             Ideas = ideas,
             IdeaMoves = ideaMoves,
+            Milestones = milestones,
+            Issues = issues,
             Sessions = sessions,
             Flights = flights,
             Legs = legs,

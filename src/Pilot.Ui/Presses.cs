@@ -137,6 +137,6 @@ internal sealed class Presses
     }
 
     /// <summary>The refusal of <paramref name="key"/> as a wrapped line in <paramref name="color"/>, or null while a press is with the node or when nothing was refused.</summary>
-    public Layout.Node? RefusalLine(string key, float size, RGBAColor32 color, int maxLines) =>
-        PendingOf(key) is null && RefusedOf(key) is { } why ? WrappedProse.Paragraphs(why, size, color, maxLines) : null;
+    public Layout.Node? RefusalLine(string key, float size, RGBAColor32 color, int maxLines, int lineChars = 0) =>
+        PendingOf(key) is null && RefusedOf(key) is { } why ? WrappedProse.Paragraphs(why, size, color, maxLines, lineChars) : null;
 }

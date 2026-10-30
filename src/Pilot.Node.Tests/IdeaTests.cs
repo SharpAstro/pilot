@@ -162,13 +162,13 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
-    public async Task PlanningMovesTheIdeaToTheNextOpenMilestoneAndMakesItsFlightRememberingTheIdea()
+    public async Task PlanningMovesTheIdeaToTheNamedMilestoneAndMakesItsFlightRememberingTheIdea()
     {
         _github.AddMilestone(Repo, "v2", dueOn: new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
         _github.AddMilestone(Repo, "v1", dueOn: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
         await Note("Ring shadows");
 
-        var planned = await Plan("I1");
+        var planned = await Plan("I1", "v1");
 
         planned.Ok.ShouldBeTrue(planned.Error);
         planned.Made.ShouldBe("PIL1");
@@ -215,7 +215,7 @@ public sealed class IdeaTests : IDisposable
         _github.AddMilestone(Repo, "v1");
         await Note("Ring shadows");
         await Note("Ring tilt\nseen edge on");
-        (await Plan("I1")).Ok.ShouldBeTrue();
+        (await Plan("I1", "v1")).Ok.ShouldBeTrue();
 
         var folded = await _commander.RunAsync(new CommandRequest { Verb = Verbs.FoldIdea, Target = IdeaIds.Target(IdeaIds.DefaultRepo, 2), Args = ["PIL1"], Who = "tests" }, Ct);
 
@@ -312,6 +312,8 @@ public sealed class IdeaTests : IDisposable
     public async Task TheRepoWatchReadsTheIdeasMilestoneIntoTheRepoStatusAndTheNodesRows()
     {
         File.WriteAllText(Path.Combine(Repo, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
+        // A repo pilot works in: only those are read on GitHub (RepoCatalog.Tracked).
+        File.WriteAllText(Path.Combine(Repo, RepoCatalog.MarkerFile), "# PILOT.md\n");
         _github.AddMilestone(Repo, IdeaIds.Milestone);
         _github.AddIssue(Repo, "Seen on GitHub", IdeaIds.Milestone, author: "someone");
         _github.AddIssue(Repo, "Turned down", IdeaIds.Milestone, open: false);
@@ -403,5 +405,40 @@ public sealed class IdeaCliTests : IDisposable
         all.Output.ShouldContain("I1  tianwen  dropped");
         bad.Exit.ShouldBe(1);
         bad.Output.ShouldContain("I77 is no idea of tianwen");
+    }
+
+    [Fact]
+    public async Task IdeaPlanWithoutAMilestoneProposesOneAndPlansNothingAndNewMilestoneMakesIt()
+    {
+        var repo = Path.Combine(_root, "tianwen");
+        Directory.CreateDirectory(repo);
+        using (var git = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        {
+            await git.WaitForExitAsync(Ct);
+        }
+        // Planning makes a flight, whose plane needs a commit to branch from.
+        using (var commit = Process.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
+        {
+            await commit.WaitForExitAsync(Ct);
+        }
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.GitHub.AddMilestone(repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", 4);
+        node.Milestoner.Answer = new MilestoneAnswer("v1", null, null, "it is about the GPU");
+        await Pilot(node, _root, "idea", "--repo", repo, "Planets on the GPU");
+
+        var proposed = await Pilot(node, _root, "idea", "--repo", repo, "I1", "plan");
+
+        proposed.Exit.ShouldBe(0, proposed.Output + proposed.Error);
+        proposed.Output.ShouldContain("I1: proposed milestone v1: it is about the GPU");
+        proposed.Output.ShouldContain("v1 (4 open, due 2026-11-01): The GPU work");
+        node.GitHub.Moves.ShouldBeEmpty();
+        node.State.Flights().ShouldBeEmpty();
+
+        var made = await Pilot(node, _root, "idea", "--repo", repo, "I1", "plan", "--new-milestone", "Rings", "--milestone-description", "Ring shadows and tilt");
+
+        made.Exit.ShouldBe(0, made.Output + made.Error);
+        node.GitHub.MilestonesMade.Select(m => m.Title).ShouldContain("Rings");
+        node.GitHub.MilestonesOf[Path.GetFullPath(repo)].Single(m => m.Title == "Rings").Description.ShouldBe("Ring shadows and tilt");
+        node.GitHub.Moves.ShouldBe([(1, "Rings")]);
     }
 }

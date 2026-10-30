@@ -145,6 +145,10 @@ public sealed class ButtonFeedbackTests
         (@"^wizard:", "the new-flight wizard's picks, steps and close; its Create and Create issue go through its Presses"),
         (@"^fleet:.+:(open|waiting)$", "opens a window of its own on that node, or takes a row's waiting count to those sessions"),
         (@"^card:[^:]+:(chat|leg)$", "opens the chat about the card, or the leg's page"),
+        (@":table:[^:]*$", "a column header of a list: the page's sort"),
+        (@"^chat:node:", "the chat's pick of a node's watchtower: which chat the page shows"),
+        (@"^flight:[^:]+:checklist:", "a checklist line of the flight page reveals its leg"),
+        (@"^FlightMapLayer|^map:", "the flight map's layer switches, grip and nodes: what the canvas shows and where its cursor is"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
         (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];

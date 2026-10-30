@@ -58,6 +58,14 @@ public sealed record CommandRequest
     /// </summary>
     [JsonIgnore]
     public bool Autopilot { get; init; }
+
+    /// <summary>
+    /// Set by the node when it took the watchtower's answer or dismissal of a card as the person's word in its chat: the words
+    /// of their message it matched. The checks keyed on the watchtower's name let such a command through. Never read from the
+    /// wire: a client cannot claim it.
+    /// </summary>
+    [JsonIgnore]
+    public string? PersonsWord { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>
@@ -93,6 +101,18 @@ public sealed record CommandResult
     /// <summary>A <c>tidy-idea</c>'s proposal; null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IdeaTidyProposal? Tidy { get; init; }
+
+    /// <summary>A <c>propose-milestone</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneProposal? Milestones { get; init; }
+
+    /// <summary>A <c>check-ready</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ReadinessResult? Readiness { get; init; }
+
+    /// <summary>A <c>suggest-milestones</c>'s answer; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneSuggestions? Suggestions { get; init; }
 
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
@@ -149,6 +169,13 @@ public static class Verbs
 
     /// <summary><c>connect flight/&lt;code&gt; &lt;other&gt;</c>: the flight holds until the other has landed.</summary>
     public const string Connect = "connect";
+
+    /// <summary>
+    /// <c>disconnect flight/&lt;code&gt; &lt;other&gt; [--anyway]</c>: undoes a <see cref="Connect"/>, on this node or a peer. The wait and the
+    /// package waits it produced go, and the flight flies when nothing else holds it. A connection that was the controller's answer to an
+    /// overlap is refused with why, and goes with <see cref="AnywayFlag"/>, which is the person's alone.
+    /// </summary>
+    public const string Disconnect = "disconnect";
 
     /// <summary>
     /// <c>fly-anyway flight/&lt;code&gt;</c>: the flight stops waiting for the packages it is held for (a connection's release
@@ -213,9 +240,11 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
-    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
+    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
+    /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
+    /// its check passes there; the node refuses it otherwise, naming what did not hold.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 
@@ -301,6 +330,12 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
+    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// </summary>
+    public const string AllowRound = "allow-round";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -351,6 +386,14 @@ public static class Verbs
     /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
     /// </summary>
     public const string Records = "records";
+
+    /// <summary>
+    /// <c>review-cost node [--since &lt;date&gt;] [--until &lt;date&gt;] [--repo &lt;repo&gt;]</c> (#433): a read of what reviews cost, in the result's
+    /// <see cref="CommandResult.Made"/>: per landed flight, its reviewer sessions (round, model, head) and their tokens as the transcripts
+    /// hold them (input, cache creation, cache read, output, the weighted spend of <see cref="SessionRow.SpendWeighted"/>), with totals and
+    /// a per-flight average. Nothing is changed or called.
+    /// </summary>
+    public const string ReviewCost = "review-cost";
 
     /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
@@ -414,10 +457,21 @@ public static class Verbs
     public const string FoldIdea = "fold-idea";
 
     /// <summary>
-    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; [milestone…]</c>: the idea's issue moved out of Ideas (to the named milestone, else the next open
-    /// one) and a flight created on it, which remembers it came from the idea; the result's <see cref="CommandResult.Made"/> is the flight's code.
+    /// <c>plan-idea idea/&lt;repo&gt;/I&lt;n&gt; [milestone…]</c>: the idea's issue moved out of Ideas to the named open milestone, or to a new one
+    /// (args <c>--new</c>, its title, then its description, which is made on GitHub once every other refusal is checked), and a flight created on it,
+    /// which remembers it came from the idea; the result's <see cref="CommandResult.Made"/> is the flight's code. With no milestone it is refused,
+    /// naming the open ones: see <see cref="ProposeMilestone"/>.
     /// </summary>
     public const string PlanIdea = "plan-idea";
+
+    /// <summary>The first arg of <see cref="PlanIdea"/> that asks for a new milestone: then the title and the description follow.</summary>
+    public const string NewMilestoneArg = "--new";
+
+    /// <summary>
+    /// <c>propose-milestone idea/&lt;repo&gt;/I&lt;n&gt;</c>: the repo's open milestones and Claude's proposal for the idea (one of them, or a new one),
+    /// in <see cref="CommandResult.Milestones"/>. Nothing is written; Claude failing gives the list with no proposal.
+    /// </summary>
+    public const string ProposeMilestone = "propose-milestone";
 
     /// <summary>
     /// <c>drop-idea idea/&lt;repo&gt;/I&lt;n&gt; &lt;why…&gt;</c>: the idea's issue closed as not planned, with why as its comment.
@@ -447,6 +501,53 @@ public static class Verbs
 
     /// <summary>What an idea target starts with: <c>idea/&lt;repo&gt;/I381</c> (see <see cref="IdeaIds.Target"/>).</summary>
     public const string IdeaTargetPrefix = "idea/";
+
+    /// <summary>
+    /// <c>set-milestone issue/&lt;repo&gt;/#&lt;n&gt; &lt;milestone&gt; [&lt;updated_at&gt;]</c>: the open issue moved into the open milestone of that name, or out of
+    /// every milestone with <see cref="NoMilestone"/>. The optional <c>updated_at</c> (ISO 8601) is the issue's as the caller saw it: when GitHub has
+    /// moved it on since, nothing is written. The write is guarded on the <c>updated_at</c> read just before it, as <see cref="PlanIdea"/>'s is.
+    /// A milestone that is not open is refused, naming the open ones. The result's <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; #&lt;n&gt;</c>.
+    /// </summary>
+    public const string SetMilestone = "set-milestone";
+
+    /// <summary>The milestone of <see cref="SetMilestone"/> that takes the issue out of every milestone.</summary>
+    public const string NoMilestone = "none";
+
+    /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
+    public const string IssueTargetPrefix = "issue/";
+
+    /// <summary>
+    /// <c>check-ready issue/&lt;repo&gt;/#&lt;n&gt;</c> (an idea target, <c>idea/&lt;repo&gt;/I&lt;n&gt;</c>, works too): Claude judges whether the issue is ready to
+    /// become a flight (one leg-sized goal, tests that can be named, no open questions), and the answer is kept on the issue's row
+    /// (<see cref="IssueRow.Readiness"/>) with the reasons and the time. Writes nothing to GitHub. Claude failing leaves the row as it was and says why in the
+    /// note of <see cref="CommandResult.Readiness"/>.
+    /// </summary>
+    public const string CheckReady = "check-ready";
+
+    /// <summary>
+    /// <c>suggest-milestones issue/&lt;repo&gt;/#&lt;n&gt;</c> or <c>section/&lt;repo&gt;/unsorted|none</c>: Claude proposes a milestone for the one open issue or
+    /// for each open issue of the section (<see cref="SectionUnsorted"/>: the Ideas milestone; <see cref="NoMilestone"/>: no milestone), an open one each or a
+    /// new one (title and one-line goal) grouping the issues that would go in it. The answer is in <see cref="CommandResult.Suggestions"/> and is kept for
+    /// <see cref="AcceptMilestones"/>. Nothing is moved and no milestone is made. Claude failing gives no suggestion and a note.
+    /// </summary>
+    public const string SuggestMilestones = "suggest-milestones";
+
+    /// <summary>
+    /// <c>accept-milestones issue/&lt;repo&gt;/#&lt;n&gt;</c> accepts the suggestion kept for that issue; <c>accept-milestones repo/&lt;repo&gt; all</c> (or the numbers
+    /// <c>12 14</c>) accepts the suggestions kept for the repo. A new milestone is made on GitHub first, once however many issues go in it; each issue is then moved
+    /// as <see cref="SetMilestone"/> moves it, guarded on the <c>updated_at</c> the suggestion was made from. One that cannot be moved is reported and stays suggested.
+    /// The result's <see cref="CommandResult.Made"/> is the issues moved, <c>&lt;repo&gt; #&lt;n&gt; #&lt;n&gt;</c>.
+    /// </summary>
+    public const string AcceptMilestones = "accept-milestones";
+
+    /// <summary>What a section target starts with: <c>section/&lt;repo&gt;/unsorted</c> (see <see cref="IssueIds.SectionTarget"/>).</summary>
+    public const string SectionTargetPrefix = "section/";
+
+    /// <summary>The section of the open issues that sit in the Ideas milestone, not yet sorted into a milestone of work.</summary>
+    public const string SectionUnsorted = "unsorted";
+
+    /// <summary>The arg of <see cref="AcceptMilestones"/> that accepts every suggestion kept for the repo.</summary>
+    public const string AllArg = "all";
 
     /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
@@ -649,7 +750,21 @@ public static class IdeaEditWays
 }
 
 /// <summary>What Claude proposes for an idea's text (<see cref="Verbs.TidyIdea"/>), beside the text it read, and the <c>updated_at</c> of the issue it read, which saving it goes from.</summary>
-public sealed record IdeaTidyProposal(string Title, string Body, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt);
+public sealed record IdeaTidyProposal(string Title, string Body, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt)
+{
+    /// <summary>Where Claude proposes the idea be planned (<see cref="Verbs.ProposeMilestone"/>), beside its text; null when the proposal was not asked for.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MilestoneProposal? Milestone { get; init; }
+}
+
+/// <summary>An open milestone of a repo, as a choice for planning an idea into.</summary>
+public sealed record MilestoneChoice(string Title, string Description, DateTimeOffset? DueOn, int OpenIssues);
+
+/// <summary>
+/// The answer to <see cref="Verbs.ProposeMilestone"/>: the repo's open milestones but Ideas, and Claude's proposal, which is one of them
+/// (<see cref="Title"/>), or a new one (<see cref="NewTitle"/> with <see cref="NewDescription"/>), or nothing, with <see cref="Note"/> saying why.
+/// </summary>
+public sealed record MilestoneProposal(MilestoneChoice[] Open, string? Title = null, string? NewTitle = null, string? NewDescription = null, string? Reason = null, string? Note = null);
 
 /// <summary>The ways a <c>say</c> reaches a session (<see cref="CommandResult.Way"/>).</summary>
 public static class SayWays

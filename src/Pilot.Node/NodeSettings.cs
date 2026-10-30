@@ -33,9 +33,13 @@ public sealed record NodeSettings
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
+    public const string ReviewDeepFirstKey = "review-deep-first";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
+    public const string SubTaskReposKey = "sub-task-repos";
+    public const string MergeBatchKey = "merge-batch";
     /// <summary>The strongest model a leg's worker steps up to (<see cref="RoleModels.WorkerFor"/>); opus unless set.</summary>
     public const string WorkerModelMaxKey = "worker-model-max";
     /// <summary>The highest effort a leg's worker steps up to; max unless set.</summary>
@@ -49,7 +53,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -63,8 +67,14 @@ public sealed record NodeSettings
     /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<see cref="AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool? AcceptFleetFlights { get; init; }
 
+    /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
+    public bool? MergeBatch { get; init; }
+
     /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
     public bool? Autopilot { get; init; }
+
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
+    public bool? ReviewDeepFirst { get; init; }
 
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
@@ -103,6 +113,9 @@ public sealed record NodeSettings
 
     /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
     public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
+
+    /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>
+    public IReadOnlyList<string>? SubTaskRepos { get; init; }
 
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
@@ -152,11 +165,13 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
+                    ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
+                    MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
@@ -178,6 +193,8 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
+        ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
+        MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
@@ -194,6 +211,7 @@ public sealed record NodeSettings
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
+        SubTaskReposKey => SubTaskRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -244,6 +262,22 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } autopilot
                     ? (settings with { Autopilot = autopilot }, null)
                     : (null, "autopilot takes on or off");
+            case ReviewDeepFirstKey:
+                if (clear)
+                {
+                    return (settings with { ReviewDeepFirst = null }, null);
+                }
+                return OnOff(One()) is { } deepFirst
+                    ? (settings with { ReviewDeepFirst = deepFirst }, null)
+                    : (null, "review-deep-first takes on or off");
+            case MergeBatchKey:
+                if (clear)
+                {
+                    return (settings with { MergeBatch = null }, null);
+                }
+                return OnOff(One()) is { } mergeBatch
+                    ? (settings with { MergeBatch = mergeBatch }, null)
+                    : (null, "merge-batch takes on or off");
             case WorkerLadderKey:
                 if (clear)
                 {
@@ -346,6 +380,15 @@ public sealed record NodeSettings
                 }
                 var (noMerge, noMergeError) = RepoNames(given);
                 return noMerge is null ? (null, noMergeError) : (settings with { NoAutoMergeRepos = noMerge }, null);
+            }
+            case SubTaskReposKey:
+            {
+                if (clear)
+                {
+                    return (settings with { SubTaskRepos = null }, null);
+                }
+                var (subTask, subTaskError) = RepoNames(given);
+                return subTask is null ? (null, subTaskError) : (settings with { SubTaskRepos = subTask }, null);
             }
             case RepoTrackersKey:
             {

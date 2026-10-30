@@ -105,9 +105,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     private const float UpdatedWidth = 104f;
 
     // The row's actions sit in three slots of fixed widths, so a row with fewer buttons leaves its gaps and nothing moves: the card's
-    // button (Merge or Go around), Review, and Open, which is always at the right.
+    // button (Merge or Go around), Review, and Open, which is always at the right. The review slot is as wide as its longest word
+    // ("Starting review…") and a chip's padding.
     private const float CardSlot = 80f;
-    private const float ReviewSlot = 64f;
+    private const float ReviewSlot = 120f;
     private const float OpenSlot = 64f;
     private const float SlotGap = 6f;
 
@@ -149,6 +150,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>Starts a review of a PR (<c>review-pr</c>); throws <see cref="InvalidOperationException"/> with the node's words when it refuses. Null hides Review.</summary>
     public Func<PullRequestRow, CancellationToken, Task>? OnReview { get; set; }
 
+    /// <summary>Starts a fixer on a PR no flight owns (<c>fix-pr</c>, <c>pilot review fix</c>); throws <see cref="InvalidOperationException"/> with the node's words when it refuses. Null hides Address review there.</summary>
+    public Func<PullRequestRow, CancellationToken, Task>? OnFixReview { get; set; }
+
     /// <summary>What the node said to the last press on a card, by card id (the panel keeps it); null when it did not refuse.</summary>
     public Func<string, string?>? RefusedOf { get; set; }
 
@@ -176,10 +180,22 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>What the node said to the last Review pressed, when it refused: its words, with the PR; null when it did not.</summary>
     public string? ReviewRefused { get; private set; }
 
-    // A Review's press, working with the node, taken (the row says "reviewing" at once, until a read shows the review, which takes
-    // over; it lapses after StartedFor so the row cannot say "reviewing" for a review that never ran) or refused: the shared helper's, by PR URL.
+    // A Review's or an Address review's press, working with the node, taken (the row says "reviewing" or "fixing" at once, until a read shows
+    // the outcome, which takes over; it lapses after StartedFor so the row cannot say so for a review that never ran) or refused: the shared
+    // helper's, by PR URL (a fix's by FixKey).
     internal Presses Presses { get; } = new();
     internal TimeSpan StartedFor { get => Presses.TakenFor; set => Presses.TakenFor = value; }
+
+    /// <summary>What the node said to the last Address review pressed, when it refused: its words, with the PR; null when it did not.</summary>
+    public string? FixRefused { get; private set; }
+
+    private static string FailedWhy(string said, string prefix) => said.StartsWith(prefix, StringComparison.Ordinal) ? said[prefix.Length..] : said;
+
+    private static string FixKey(string url) => "fix:" + url;
+
+    private bool IsStarted(string url) => Presses.IsTaken(url);
+
+    private bool IsFixStarted(string url) => Presses.IsTaken(FixKey(url));
 
     // The cards the last frame offered a Merge or a Go around from.
     private IReadOnlyList<CardRow> _cards = [];
@@ -390,9 +406,16 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         Changed?.Invoke();
     }
 
-    /// <summary>The actions <paramref name="pr"/> offers now: what <see cref="PullRequestActions.Offered"/> says, less Review where the host has none or a review was just started.</summary>
+    /// <summary>The actions <paramref name="pr"/> offers now: what <see cref="PullRequestActions.Offered"/> says, less Review where the host has none.</summary>
     internal IReadOnlyList<PullRequestAction> ActionsOf(PullRequestRow pr) =>
-        [.. PullRequestActions.Offered(pr, _cards).Where(a => a.Kind != PullRequestActionKind.Review || (OnReview is not null && !Presses.IsTaken(pr.Url)))];
+        [.. PullRequestActions.Offered(pr, _cards).Where(a => a.Kind switch
+        {
+            PullRequestActionKind.Review => OnReview is not null,
+            // A plain PR needs the host's fix-pr (a flight's goes through its card). Once the node took a press the action stays, drawn as
+            // what the node is doing, until a read shows another review word.
+            PullRequestActionKind.AddressReview => a.Card is not null || OnFixReview is not null,
+            _ => true,
+        })];
 
     /// <summary>Presses <paramref name="action"/> of <paramref name="pr"/>. The row is not changed by it: the node's next answer is what shows.</summary>
     public void Press(PullRequestRow pr, PullRequestAction action)
@@ -405,8 +428,12 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             case PullRequestActionKind.Review:
                 _ = ReviewAsync(pr);
                 break;
+            case PullRequestActionKind.AddressReview when action.Card is null:
+                _ = FixReviewAsync(pr);
+                break;
             default:
                 ReviewRefused = null;
+                FixRefused = null;
                 if (action.Card is { } card)
                 {
                     OnAnswer?.Invoke(card, action.Choice);
@@ -434,14 +461,32 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }, say: why => $"review {pr.Repo}#{pr.Number} refused: {why}");
     }
 
+    /// <summary>Asks the node to fix <paramref name="pr"/>'s review findings through <see cref="OnFixReview"/>; a refusal is said in the node's words above the list.</summary>
+    public async Task FixReviewAsync(PullRequestRow pr)
+    {
+        if (OnFixReview is not { } fix || Presses.PendingOf(FixKey(pr.Url)) is not null)
+        {
+            return;
+        }
+        FixRefused = null;
+        ReviewRefused = null;
+        FixRefused = await Presses.PressAsync(FixKey(pr.Url), FixHit(pr), async ct =>
+        {
+            await fix(pr, ct);
+            return null;
+        }, say: why => $"review fix {pr.Repo}#{pr.Number} refused: {why}");
+    }
+
     private static string ReviewHit(PullRequestRow pr) => $"pr:{pr.Url}:{ActionId(PullRequestActionKind.Review)}";
+
+    private static string FixHit(PullRequestRow pr) => $"pr:{pr.Url}:{ActionId(PullRequestActionKind.AddressReview)}";
 
     /// <summary>
     /// What the node refused of the last action pressed on the list, in its words: a Review's, or a card's (the one a row's Merge or
     /// Go around pressed, which the panel shows too). Null when nothing was refused.
     /// </summary>
     internal string? Refusal() =>
-        ReviewRefused ?? _cards.Where(c => c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround))
+        ReviewRefused ?? FixRefused ?? _cards.Where(c => c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround))
             .Select(c => RefusedOf?.Invoke(c.Id) is { } why ? $"{c.Title}: {why}" : null).FirstOrDefault(r => r is not null);
 
     // The colours come from the palette handed to the page, so night repaints the same builders.
@@ -614,7 +659,13 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         [
             .. (row with { PullRequests = [.. kept] }).OrgGroups()
                 .Where(o => o.Repos.Length > 0 || o.Error is not null || !narrowed)
-                .Select(o => o with { Counts = counts.GetValueOrDefault(o.Org, o.Counts) }),
+                .Select(o => o with
+                {
+                    Counts = counts.GetValueOrDefault(o.Org, o.Counts),
+                    // A clicked title's order, within each repo's group: the groups keep theirs, and the rows (and the selection, which
+                    // follows its PR by URL) follow what is drawn.
+                    Repos = [.. o.Repos.Select(g => g with { PullRequests = [.. Table.Order(g.PullRequests, _ => "", SortKeys)] })],
+                }),
         ];
     }
 
@@ -794,8 +845,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         }
         var columns = new List<(ListColumn, Func<PullRequestRow, Layout.Node>)>
         {
-            (ListColumn.Fixed("State", StateWidth), StateCell),
-            (ListColumn.Star("Pull request", titleMin), TitleCell),
+            (Sorted(ListColumn.Fixed("State", StateWidth)), StateCell),
+            (Sorted(ListColumn.Star("Pull request", titleMin)), TitleCell),
         };
         // In the order they are read: the flight, the author, the review, the age.
         foreach (var header in new[] { "Flight", "Author", "Review", "Updated" })
@@ -803,7 +854,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             if (kept.Contains(header))
             {
                 var (_, columnWidth, cell) = optional.First(o => o.Header == header);
-                columns.Add((ListColumn.Fixed(header, columnWidth), cell));
+                columns.Add((Sorted(ListColumn.Fixed(header, columnWidth), descendingFirst: header == "Updated"), cell));
             }
         }
         // The row's actions go here, untitled: the buttons its state offers, in slots that hold their width when it offers fewer.
@@ -814,6 +865,26 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         return columns;
     }
 
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // What each column sorts by: the state by how much it asks of the person, the number as a number, the age as a time.
+    private static readonly IReadOnlyDictionary<string, Func<PullRequestRow, object?>> SortKeys = new Dictionary<string, Func<PullRequestRow, object?>>(StringComparer.Ordinal)
+    {
+        ["State"] = pr => (PullRequestStates.Rank(pr.Kind), pr.Label),
+        ["Pull request"] = pr => pr.Number,
+        ["Flight"] = pr => pr.Flight ?? "",
+        ["Author"] = pr => pr.Author ?? "",
+        ["Review"] = pr => pr.Review switch { PullRequestReview.Passed => 3, PullRequestReview.Changes => 2, PullRequestReview.Reviewing => 1, _ => 0 },
+        ["Updated"] = pr => pr.UpdatedAt ?? pr.CreatedAt,
+    };
+
     // The row's buttons in three slots (the card's Merge or Go around, Review, Open) of fixed widths, each as tall as a chip and in
     // the row's middle; a slot the state does not offer stays empty, so the buttons left do not shift and the columns line up.
     private Layout.Node ActionsCell(PullRequestRow pr)
@@ -821,9 +892,14 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         var actions = ActionsOf(pr);
         Layout.Node Slot(float width, params PullRequestActionKind[] kinds) =>
             actions.FirstOrDefault(a => kinds.Contains(a.Kind)) is { } action ? ActionButton(pr, action, width) : Layout.Builder.Spacer().WFixed(width);
+        // A review the row itself reads as running has no Review to offer; its slot says so, as the one for a press the node took does.
+        Layout.Node ReviewSlotNode() =>
+            pr.Review == PullRequestReview.Reviewing && actions.All(a => a.Kind is not (PullRequestActionKind.Review or PullRequestActionKind.AddressReview))
+                ? Said("Reviewing…", $"Pilot is reviewing {pr.Repo}#{pr.Number}", P.Bright, P.Button, ReviewSlot)
+                : Slot(ReviewSlot, PullRequestActionKind.Review, PullRequestActionKind.AddressReview);
         var slots = Layout.Builder.HStack(
                 Slot(CardSlot, PullRequestActionKind.Merge, PullRequestActionKind.GoAround),
-                Slot(ReviewSlot, PullRequestActionKind.Review),
+                ReviewSlotNode(),
                 Slot(OpenSlot, PullRequestActionKind.Open))
             .WithGap(SlotGap);
         return Middle(slots);
@@ -842,34 +918,60 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         } : null;
         var bg = tint?.Bg ?? P.Button;
         var hover = tint?.Hover ?? P.ButtonHover;
-        Layout.Node Idle() => Layout.Builder.Text(action.Label, ChipSize, P.Bright, TextAlign.Center, TextAlign.Center)
+        // A press the node refused leaves the button saying so, pressable again (which retries); the words are in the tooltip and the bar.
+        var prName = $"{pr.Repo}#{pr.Number}";
+        var failed = action.Kind switch
+        {
+            PullRequestActionKind.Review => Presses.RefusedOf(pr.Url) is { } why ? $"The node did not start the review of {prName}: {FailedWhy(why, $"review {prName} refused: ")}. Press to try again" : null,
+            PullRequestActionKind.AddressReview when action.Card is null => Presses.RefusedOf(FixKey(pr.Url)) is { } why ? $"The node did not start a fixer on {prName}: {FailedWhy(why, $"review fix {prName} refused: ")}. Press to try again" : null,
+            _ => null,
+        };
+        Layout.Node Idle() => Layout.Builder.Text(failed is null ? action.Label : "Failed", ChipSize, failed is null ? P.Bright : P.Held, TextAlign.Center, TextAlign.Center)
             .Bg(bg)
             .BgHover(hover)
             .Follows(new HitResult.ButtonHit($"pr:{pr.Url}:{ActionId(action.Kind)}"), _ => Press(pr, action))
-            .WithTooltip(action.Tooltip)
+            .WithTooltip(failed ?? action.Tooltip)
             .WFixed(width)
             .HStar();
-        if (action.Kind != PullRequestActionKind.Review)
+        var name = $"{pr.Repo}#{pr.Number}";
+        if (action.Kind == PullRequestActionKind.Review)
         {
-            // Merge and Go around ask through the card, whose own press says the card is with the node.
-            return action.Card is { } card
-                ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
-                    _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
-                : Idle();
+            if (Presses.IsTaken(pr.Url))
+            {
+                return Said("Reviewing…", $"The node took the review of {name}; the next read of the PRs shows it", P.Bright, bg, width);
+            }
+            // Pressed, the node not yet answered: said, and not pressed again.
+            return Presses.Button(pr.Url, ReviewHit(pr), Idle, _ => Said("Starting review…", $"Asking the node to review {name}", P.Dim, bg, width));
         }
-        // Pressed, the node not yet answered: said, and not pressed again.
-        return Presses.Button(pr.Url, ReviewHit(pr), Idle, _ => Layout.Builder.Text("Starting…", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center)
-            .Bg(bg)
-            .WithTooltip($"Asking the node to review {pr.Repo}#{pr.Number}")
-            .WFixed(width)
-            .HStar());
+        if (action.Kind == PullRequestActionKind.AddressReview && action.Card is null)
+        {
+            if (IsFixStarted(pr.Url))
+            {
+                return Said("Addressing…", $"The node took the fixer on {name}'s review findings; the next read of the PRs shows the result", P.Bright, bg, width);
+            }
+            return Presses.Button(FixKey(pr.Url), FixHit(pr), Idle, _ => Said("Starting fix…", $"Asking the node to fix {name}'s review findings", P.Dim, bg, width));
+        }
+        // Merge and Go around ask through the card, whose own press says the card is with the node.
+        return action.Card is { } card
+            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
+                _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
+            : Idle();
     }
+
+    // A button that says what the node is doing and takes no press: asking, or taken.
+    private static Layout.Node Said(string label, string tooltip, RGBAColor32 color, RGBAColor32 bg, float width) =>
+        Layout.Builder.Text(label, ChipSize, color, TextAlign.Center, TextAlign.Center)
+            .Bg(bg)
+            .WithTooltip(tooltip)
+            .WFixed(width)
+            .HStar();
 
     private static string ActionId(PullRequestActionKind kind) => kind switch
     {
         PullRequestActionKind.Merge => "merge",
         PullRequestActionKind.GoAround => "go-around",
         PullRequestActionKind.Review => "start-review",
+        PullRequestActionKind.AddressReview => "address-review",
         _ => "open",
     };
 
@@ -1004,7 +1106,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         {
             Presses.ClearTaken(pr.Url);
         }
-        else if (Presses.IsTaken(pr.Url))
+        if (pr.Review != PullRequestReview.Changes)
+        {
+            Presses.ClearTaken(FixKey(pr.Url));
+        }
+        else if (IsFixStarted(pr.Url))
+        {
+            return Layout.Builder.Text("fixing", SecondarySize, BodyText).WithTooltip("The node has started on the review's findings; the next read of the PRs shows the result");
+        }
+        if (pr.Review is null && IsStarted(pr.Url))
         {
             return Layout.Builder.Text("reviewing", SecondarySize, BodyText).WithTooltip("The node has started its review; the next read of the PRs shows it");
         }

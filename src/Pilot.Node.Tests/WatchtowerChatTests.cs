@@ -122,6 +122,22 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public void TheBriefMakesTheChatTheFleetChatPassingWorkOnInTheBackgroundWithLimits()
+    {
+        var brief = Briefs.Watchtower("du1-watchtower", [], [], [], "pilot", null, "DU1");
+
+        brief.ShouldContain("the Chat is the fleet chat, held here");
+        brief.ShouldContain("pilot tell --node <name>");
+        brief.ShouldContain("Say at once in the chat that you passed it on, and end your turn");
+        brief.ShouldContain("never wait on the answer");
+        brief.ShouldContain("post the outcome in the chat");
+        brief.ShouldContain("[From the watchtower of node <name>]");
+        brief.ShouldContain("A report back to a tell you sent is not a request: post it in the chat");
+        brief.ShouldContain("do not answer it, no thanks or acknowledgement tells");
+        brief.ShouldContain("Never edit or push another node's plane from here");
+    }
+
+    [Fact]
     public async Task TheNodesOwnMessagesAreNotesAndAPersonsAreNot()
     {
         await TwoWatchtowersAsync();
@@ -407,7 +423,16 @@ public sealed class WatchtowerChatTests : IDisposable
         // And the fixer is among what it may do on autopilot.
         brief.ShouldContain("start a fixer on a PR outside a flight whose review asked for changes (`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`)");
         brief.ShouldContain("The node refuses it past its third round, on a design question and on another author's PR");
-        // Nothing promised that the node refuses it: a design question and a capped flight stay the person's.
-        brief.ShouldContain("are the person's: say so on the card and leave it to them.");
+        // Nothing promised that the node refuses it: a design question and a capped flight stay the person's unless they ask
+        // for it in the chat (#473).
+        brief.ShouldContain("are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+    }
+
+    [Fact]
+    public void The_watchtower_brief_says_to_verify_a_failed_leg_first()
+    {
+        var brief = Briefs.Watchtower("de1-watchtower", [], [], [], "pilot", machine: "DE1");
+
+        brief.ShouldContain("On a leg-failed card, run `pilot leg finish verified --leg <code>/<leg>` for that leg first");
     }
 }

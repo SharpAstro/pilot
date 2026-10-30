@@ -176,7 +176,7 @@ public sealed class PackageHoldPageTests
             if (detail)
             {
                 // The page's own action buttons share a height and a middle, and none is zero-sized.
-                var verbs = FlightAction.For(line).Select(a => $"flight:{line.Code}:{a.Verb}").ToHashSet();
+                var verbs = FlightAction.For(line).Select(a => $"flight:{line.Code}:{a.Key}").ToHashSet();
                 var buttons = regions.Where(r => r.Result is HitResult.ButtonHit b && verbs.Contains(b.Action)).ToList();
                 buttons.Count.ShouldBe(verbs.Count, name);
                 buttons.ShouldAllBe(b => b.Width > 0 && b.Height > 0, name);

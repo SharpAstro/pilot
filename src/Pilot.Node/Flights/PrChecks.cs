@@ -13,7 +13,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
-    // A PR head the node has tried to rebase: tried once, not every look.
+    // A PR head the node has tried to bring up to date (the base merged in): tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
     // A PR head whose failed checks were sent back as changes: once, not every look.
@@ -40,24 +40,44 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
     public const string QueueDropped = "queue-dropped";
 
+    private readonly TaskCompletionSource _firstLook = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes once the first look the loop makes at start is over (it found something, failed, or the node stopped).
+    /// A test node awaits it before it hands out its state, so that look never runs against a test's half-made state
+    /// (MergedUnderLegTests on windows, run 40817578891: it landed a flight before the leg that should have kept it flying).
+    /// </summary>
+    public Task FirstLook => _firstLook.Task;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
-        while (!stopping.IsCancellationRequested)
+        // Merge entries a node that went away left open have no command behind them: they end before anything else is looked at.
+        legs?.EndLeftMerges("the node restarted while it waited: merge again");
+        try
         {
-            try
+            while (!stopping.IsCancellationRequested)
             {
-                await LookAsync(stopping);
-                await Task.Delay(Interval, time, stopping);
+                try
+                {
+                    await LookAsync(stopping);
+                    _firstLook.TrySetResult();
+                    await Task.Delay(Interval, time, stopping);
+                }
+                catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _firstLook.TrySetResult();
+                    await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
+                    await Task.Delay(Interval, time, stopping);
+                }
             }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
-                await Task.Delay(Interval, time, stopping);
-            }
+        }
+        finally
+        {
+            _firstLook.TrySetResult();
         }
     }
 
@@ -175,6 +195,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 state.PutFlight(now with { MergeQueue = said });
             }
+            if (queue is { State: "CLOSED" })
+            {
+                legs?.EndLeftQueue(flight.Code, $"#{number} was closed unmerged");
+            }
             if (queue is not { State: "OPEN" })
             {
                 continue;
@@ -185,6 +209,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.CloseCardsAbout(subject, "queued again", QueueDropped);
                 continue;
             }
+            // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
+            if (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))
+            {
+                legs?.EndLeftQueue(flight.Code, $"GitHub took #{number} out of the merge queue unmerged: {(queue.RemovedReason is { Length: > 0 } removed ? removed : "no reason given")}");
+            }
             // Its PR-ready card offers the merge already; a removal it has been carded for is not carded again.
             if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
                 || state.Cards().Any(c => c.Kind == QueueDropped && c.Subject == subject && c.At >= removedAt))
@@ -192,20 +221,20 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Taken out for a conflict with its base (main moved while it waited): Merge would only be refused again. The
-            // plane is rebased and reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
+            // base is merged into the plane and it is reviewed afresh, which offers the merge again, as a PR found conflicting is (PIL207's
             // #238, SE1 2026-10-25: a For-you card offered Merge on a merge_conflict).
             if (queue.RemovedReason?.Contains("conflict", StringComparison.OrdinalIgnoreCase) == true && legs is not null)
             {
                 if (_rebased.Add($"{flight.Code} {queue.Head}"))
                 {
-                    if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } notRebased)
+                    if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
-                        // Resolved by a worker the node sends, not rung: a conflict is pilot's to fix (#344 rang for one, 2026-10-27).
-                        await GoAroundOnConflictAsync(flight.Code, number, notRebased, flight.PullRequestUrl, cancellationToken);
+                        // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
+                        await HandConflictOverAsync(flight.Code, notUpdated, cancellationToken);
                     }
                     else
                     {
-                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: {(await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge ? "brought up to date with" : "rebased onto")} its base and reviewed afresh");
+                        state.RaiseCard(CardBin.Handled, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue on a conflict: brought up to date with its base and reviewed afresh");
                     }
                 }
                 continue;
@@ -251,9 +280,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     }
 
     /// <summary>
-    /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are rebased
-    /// from the card): rebased by the node, once a head, while no leg flies and no reviewer reads; a rebase that conflicts
-    /// sends the last leg around to resolve it. Only a passed PR's card did this, so a PR that conflicted under a review
+    /// A flight's PR that conflicts with its base, whatever its review said and with no merge card open (those are updated
+    /// from the card): the base merged in by the node, once a head, while no leg flies and no reviewer reads; a merge that conflicts
+    /// goes to the watchtower to resolve in the plane. Only a passed PR's card did this, so a PR that conflicted under a review
     /// asking for changes, or still flying, sat DIRTY until someone said so (#339, #340, 2026-10-27).
     /// </summary>
     private async Task ResolveConflictsAsync(string code, PullRequest pr, CancellationToken cancellationToken)
@@ -267,37 +296,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return;
         }
-        if (await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+        if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
-            await GoAroundOnConflictAsync(code, number, why, pr.Url, cancellationToken);
+            await HandConflictOverAsync(code, why, cancellationToken);
         }
     }
 
     /// <summary>
-    /// The node's rebase of a flight conflicted: its last leg goes around to resolve it, told what its review still asks for
-    /// too. A passed review is turned to Changes first, as a go-around of a done leg needs. Rung only when that is refused.
+    /// The node's merge of the base into a flight conflicted: the watchtower is told to resolve it in the plane (a card), merge the
+    /// base in, rerun the check and push plain. The last leg goes round only if the watchtower says the conflict is real work, so a
+    /// merge is never a fresh worker's whole leg of tokens.
     /// </summary>
-    private async Task GoAroundOnConflictAsync(string code, int number, string why, string? url, CancellationToken cancellationToken)
+    private async Task HandConflictOverAsync(string code, string why, CancellationToken cancellationToken)
     {
-        if (legs is null || state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || state.Legs(code) is not { Length: > 0 } flown)
+        if (legs is not null)
         {
-            return;
-        }
-        var asked = flight.Review is { State: ReviewState.Changes, Report: { Length: > 0 } report } ? $" Its review also asks for changes, make them too: {report}" : "";
-        var refused = flight.Review is { State: ReviewState.Passed } ? await legs.ConflictsAsync(code, why, cancellationToken) : null;
-        if (refused is null)
-        {
-            var result = await legs.RunAsync(new CommandRequest
-            {
-                Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, flown[^1].Name), Who = "node",
-                Args = [$"{await legs.ConflictBriefAsync(code, why, cancellationToken)}.{asked}"],
-            }, cancellationToken);
-            refused = result.Ok ? null : result.Error ?? "the go-around did not start";
-        }
-        if (refused is not null)
-        {
-            state.RaiseCard(CardBin.Ring, "pr-conflicts", Verbs.FlightTarget(code), $"{code}'s PR #{number} conflicts with its base", $"{why} ({refused})", link: url,
-                summary: $"The PR #{number} of {code} conflicts with its base and could not be rebased by the node, nor sent back. Redo the last leg from the flight page or with pilot leg go-around, or resolve it by hand.");
+            await legs.ConflictsAsync(code, why, cancellationToken);
         }
     }
 
@@ -382,7 +396,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // queue cleared is told only that it was.
             string Said(string line) => merge?.DroppedFromQueue is not { } thrownOut ? line
                 : thrownOut.Contains("conflict", StringComparison.OrdinalIgnoreCase) && method.Equals("rebase", StringComparison.OrdinalIgnoreCase)
-                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone; a branch brought up to date by merging its base loses those fixes in a rebase merge, so rebase it."
+                    ? $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass, and drops it again until the conflict is gone. The watchtower merges the base into the plane to resolve it; a merge queue that merges by rebase may still drop a branch brought up to date that way."
                     : $"{line} Dropped from the merge queue: {thrownOut}. GitHub queues it again when the checks pass.";
             if (dropped is null && merge is { AwaitsCheck: true } && checks?.Status != ChoiceStatus.Failing)
             {
@@ -437,11 +451,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
                 // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
                 state.PutFlight(flight with { MergeWhenGreen = null });
+                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {head[..Math.Min(8, head.Length)]}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
                     state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url,
                         summary: $"The PR #{number} of {flight.Code} fails its checks. The node could not send the last leg back to fix them (the detail says why). Redo the last leg from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.");
                 }
+                continue;
+            }
+            // Another merge of its repo holds the turn (a batch holds it through its CI): asked at a later look, as the merge stays armed,
+            // rather than waited on here while every other PR goes unlooked at.
+            if (dropped is null && legs is not null && legs.TurnHeld(flight.Repo))
+            {
                 continue;
             }
             var armed = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Armed)).Select(c => c.Id).ToList();
@@ -477,6 +498,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
+            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {head[..Math.Min(8, head.Length)]}" : dropped);
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
                 ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
@@ -493,8 +515,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>
     /// A merge armed on the flight whose PR GitHub no longer shows as waiting for it (<paramref name="merge"/> is anything but
     /// armed, checks running, or merged; a failed check is <see cref="MergeWhenGreenAsync"/>'s own path, and a node that polls also
-    /// merges a ready one itself): the arm is cleared, GitHub's auto-merge turned off where a rebase is due, and the card says
-    /// what GitHub says. Conflicts and behind are shown by the card loop, which rebases. True when the merge is no longer armed.
+    /// merges a ready one itself): the arm is cleared, GitHub's auto-merge turned off where an update is due, and the card says
+    /// what GitHub says. Conflicts and behind are shown by the card loop, which merges the base in. True when the merge is no longer armed.
     /// </summary>
     private async Task<bool> LeftArmedAsync(FlightRow flight, PullRequest pr, MergeState merge, bool native, CancellationToken cancellationToken)
     {
@@ -520,7 +542,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             catch (FlightException ex)
             {
-                // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's rebase refuses meanwhile.
+                // Still armed on GitHub, so still armed here: the next look turns it off again, and the node's update refuses meanwhile.
                 await Error.WriteLineAsync($"pr checks: {flight.Code}'s auto-merge could not be turned off: {ex.Message}");
                 if (legs is not null)
                 {
@@ -534,6 +556,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             state.PutFlight(now with { MergeWhenGreen = null });
         }
         var subject = Verbs.FlightTarget(flight.Code);
+        // The arm is gone, so its entry leaves the queue too: a conflicting or behind PR is brought up to date by the card loop and
+        // offered again, never merged from this entry.
+        legs?.DropMerge(flight.Code, merge.Kind switch
+        {
+            MergeKinds.Ready => "GitHub's auto-merge was turned off",
+            MergeKinds.ChangesRequested => "a review asks for changes",
+            MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
+            MergeKinds.Conflicts => "it conflicts with its base: the base is merged in, and the merge offered again once that stands",
+            MergeKinds.Behind => "it is behind its base: the base is merged in, and the merge offered again once that stands",
+            _ => $"GitHub shows it as {merge.Kind}",
+        });
         if (legs is not null && ShowingMerge(subject) is { } card)
         {
             legs.ShowMergeState(card, merge, pr.Head);
@@ -562,6 +595,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await MergeWhenGreenAsync(cancellationToken);
+        if (legs is not null)
+        {
+            await legs.LookAtMergesAsync(cancellationToken);
+        }
         await LandMergedWithoutCardAsync(cancellationToken);
         await LookAtQueuesAsync(cancellationToken);
         if (legs is not null)
@@ -628,27 +665,26 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 continue;
             }
-            // Reviewed and passed, but no longer merging into its base: main moved. Rebased by itself, once a head, and
-            // reviewed afresh; a rebase that conflicts rings with what to do. The card says so meanwhile, offering the go-around
+            // Reviewed and passed, but no longer merging into its base: main moved. The base is merged in by itself, once a head, and
+            // it is reviewed afresh; a merge that conflicts goes to the watchtower. The card says so meanwhile, offering the go-around
             // that does it by hand, not a Merge GitHub would refuse.
             var conflicts = pr is { Mergeable: "CONFLICTING" } && pr.Number == number || merge is { Kind: MergeKinds.Conflicts };
             if (conflicts || merge is { Kind: MergeKinds.Behind })
             {
                 if (legs is not null && _rebased.Add($"{flight.Code} {head}")
-                    && await legs.RebaseOntoBaseAsync(flight.Code, cancellationToken) is { } why)
+                    && await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
                 {
-                    await GoAroundOnConflictAsync(flight.Code, number, why, pr?.Url, cancellationToken);
+                    await HandConflictOverAsync(flight.Code, why, cancellationToken);
                 }
-                // The rebase closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
+                // The update closes the card when it starts a fresh review; one still open says what is wrong and offers the go-around.
                 if (legs is not null && state.Cards(openOnly: true).Any(c => c.Id == card.Id))
                 {
                     var what = conflicts ? "conflicts with its base" : "is behind its base";
-                    var merges = await github.UpdateWayAsync(flight.RepoPath, legs.Models.MergeMethod, cancellationToken) == UpdateWay.Merge;
                     legs.ShowMergeFailed(flight.Code, head, "", $"{flight.Code}'s PR #{number} {what}",
-                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node {(merges ? "merges the base in" : "rebases it")} by itself, once a head; one that conflicts is a redo of the leg (a go-around): the last leg resolves it."
-                            : $"GitHub will not merge it until it is {(merges ? "up to date with" : "rebased onto")} its base. The node {(merges ? "merges the base in" : "rebases it")} by itself, once a head; redoing the leg (a go-around) does it by hand.",
+                        conflicts ? $"GitHub cannot merge it until the conflict is resolved. The node merges the base in by itself, once a head; one that conflicts goes to the watchtower to resolve in the plane."
+                            : $"GitHub will not merge it until it is up to date with its base. The node merges the base in by itself, once a head; redoing the leg (a go-around) does it by hand.",
                         pr?.Url ?? card.Link, rerun: false,
-                        goAroundWhy: $"the PR {what}: {await legs.UpdateInstructionAsync(flight.Code, cancellationToken)}",
+                        goAroundWhy: $"the PR {what}: {LegCommander.UpdateInstruction}",
                         mergeAgain: false, kind: LegCommander.PrReady);
                 }
                 continue;
@@ -691,9 +727,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (merge is null || legs is null)
             {
                 // Read again after the awaits above: a Merge pressed meanwhile armed or queued it, and writing the choices read
-                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI).
+                // before that back with the checks' status turned "armed" into "pending" (MergeArmTests, flaky in CI). Merged too:
+                // a merge done between its stamp and the card's closing read "passing" again (MergeMirrorTests, flaky in CI, #434).
                 if (state.Cards(openOnly: true).FirstOrDefault(c => c.Id == card.Id) is not { } current
-                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued)
+                    || current.Choices.Any(c => c.Verb == Verbs.Merge && c.Status is ChoiceStatus.Armed or ChoiceStatus.Queued or ChoiceStatus.Merged)
                     || state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeWhenGreen is not null)
                 {
                     continue;
@@ -724,6 +761,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         if (legs is not { Models.Autopilot: true } || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
+            // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
+            || legs.TurnHeld(flight.Repo)
             || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
         {
             return;

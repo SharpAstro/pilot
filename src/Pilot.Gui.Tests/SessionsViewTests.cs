@@ -14,13 +14,13 @@ public sealed class SessionsViewTests
     /// <summary>The sample's six sessions as the view shows them, as of the snapshot's own moment (09:41:09 UTC).</summary>
     private static readonly string[] ExpectedRows =
     [
-        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k",
-        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M",
-        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58%",
-        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64%",
-        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0%",
-        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
-        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65%",
+        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k over 20 m",
+        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M over 3 h 41 m",
+        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58% over 1 h 35 m",
+        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64% over 12 h 10 m",
+        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0% over 38 m",
+        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
+        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
     ];
 
     private static SessionsScreen SampleScreen()
@@ -121,6 +121,68 @@ public sealed class SessionsViewTests
         third.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
 
         view.Selected.ShouldBe(2);
+    }
+
+    private static void Click(SessionsView<RgbaImage> view, SessionsScreen screen, string action)
+    {
+        var bounds = new RectF32(0f, 0f, 1500f, 800f);
+        view.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnContextSortsByTokensBiggestFirstAndASecondClickFlipsIt()
+    {
+        var screen = SampleScreen();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        Click(view, screen, "sessions:table:Context");
+        view.Shown.Select(l => l.Row.ContextTokens).ShouldBe([.. screen.Lines.Select(l => l.Row.ContextTokens).OrderByDescending(t => t)]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Context", Descending: true));
+
+        Click(view, screen, "sessions:table:Context");
+        view.Shown.Select(l => l.Row.ContextTokens).ShouldBe([.. screen.Lines.Select(l => l.Row.ContextTokens).Order()]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Context", Descending: false));
+    }
+
+    [Fact]
+    public void ASortKeepsEachNodesRowsTogetherAndSortsWithinThem()
+    {
+        var screen = SampleScreen();
+        screen = screen with { Lines = [.. screen.Lines.Select((l, i) => l with { Node = new NodeMark(i % 2 == 0 ? "s" : "s9", "node.sock", i % 2 == 0 ? "SE1" : "LE1", Here: i % 2 == 0) })] };
+        using var renderer = new RgbaImageRenderer(1500, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+
+        Click(view, screen, "sessions:table:Spend");
+
+        var groups = view.Shown.GroupBy(l => l.Node!.Name).ToList();
+        view.Shown.Select(l => l.Node!.Name).Distinct().Count().ShouldBe(2);
+        view.Shown.Select(l => l.Node!.Name).ShouldBe([.. view.Shown.Select(l => l.Node!.Name).OrderBy(n => n, StringComparer.Ordinal)], "a node's rows are not split");
+        foreach (var group in groups)
+        {
+            group.Select(l => l.Row.SpendWeighted).ShouldBe([.. group.Select(l => l.Row.SpendWeighted).OrderByDescending(s => s)]);
+        }
+    }
+
+    [Fact]
+    public void TheSelectionFollowsItsRowThroughASort()
+    {
+        var screen = SampleScreen();
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        view.Render(screen, new RectF32(0f, 0f, 1280f, 800f));
+        view.Select(4);
+        var key = view.SelectedId.ShouldNotBeNull();
+
+        Click(view, screen, "sessions:table:Spend");
+
+        view.SelectedId.ShouldBe(key);
+        view.Shown[view.Selected].Key.ShouldBe(key);
+        view.Selected.ShouldNotBe(4, "the sort moved the row, and the selection went with it");
     }
 
     [Fact]

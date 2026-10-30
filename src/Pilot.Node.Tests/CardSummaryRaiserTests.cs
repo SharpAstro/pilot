@@ -101,7 +101,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == "pr-conflicts");
-        card.Summary.ShouldNotBeNull().ShouldContain("could not be rebased by the node");
-        card.Summary.ShouldNotContain("The node could not rebase it");
+        card.Summary.ShouldNotBeNull().ShouldContain("watchtower merges the base into the plane");
+        card.Summary.ShouldNotContain("rebase");
     }
 }

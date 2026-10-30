@@ -382,9 +382,13 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
     private readonly Dictionary<string, TranscriptTail> _subagents = new Dictionary<string, TranscriptTail>(StringComparer.Ordinal);
     private TranscriptTail? _main;
     private long _spend;
+    private MessageUsage _usage;
     private bool _dirty = true;
 
     public string SessionId { get; } = sessionId;
+
+    /// <summary>The four token counts summed over every message of the files read so far, each counted once: what <see cref="TranscriptFacts.SpendWeighted"/> weighs.</summary>
+    public MessageUsage Usage => _usage;
 
     /// <summary>The main transcript's path once found.</summary>
     public string? Path => _main?.Path;
@@ -448,6 +452,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
                 }
             }
             _spend = once.Values.Sum(u => u.WeightedTwentieths) / 20;
+            _usage = new MessageUsage(once.Values.Sum(u => u.Input), once.Values.Sum(u => u.CacheCreation), once.Values.Sum(u => u.CacheRead), once.Values.Sum(u => u.Output));
             _dirty = false;
         }
 
