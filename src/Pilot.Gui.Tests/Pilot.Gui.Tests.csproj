@@ -28,6 +28,11 @@
     <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
   </ItemGroup>
 
+  <!-- The two-node flight-map fixture (DE1 and SE1), in the shape the GUI snapshot option reads; see FlightMapFixtureTests. -->
+  <ItemGroup>
+    <Content Include="Fixtures\flightmap.*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Pilot.Ui" />
   </ItemGroup>

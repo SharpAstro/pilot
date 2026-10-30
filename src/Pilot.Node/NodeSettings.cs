@@ -36,6 +36,8 @@ public sealed record NodeSettings
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
+    public const string SubTaskReposKey = "sub-task-repos";
     /// <summary>The strongest model a leg's worker steps up to (<see cref="RoleModels.WorkerFor"/>); opus unless set.</summary>
     public const string WorkerModelMaxKey = "worker-model-max";
     /// <summary>The highest effort a leg's worker steps up to; max unless set.</summary>
@@ -49,7 +51,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -104,6 +106,9 @@ public sealed record NodeSettings
     /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
     public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
 
+    /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>
+    public IReadOnlyList<string>? SubTaskRepos { get; init; }
+
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
 
@@ -156,7 +161,7 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
@@ -194,6 +199,7 @@ public sealed record NodeSettings
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
+        SubTaskReposKey => SubTaskRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -346,6 +352,15 @@ public sealed record NodeSettings
                 }
                 var (noMerge, noMergeError) = RepoNames(given);
                 return noMerge is null ? (null, noMergeError) : (settings with { NoAutoMergeRepos = noMerge }, null);
+            }
+            case SubTaskReposKey:
+            {
+                if (clear)
+                {
+                    return (settings with { SubTaskRepos = null }, null);
+                }
+                var (subTask, subTaskError) = RepoNames(given);
+                return subTask is null ? (null, subTaskError) : (settings with { SubTaskRepos = subTask }, null);
             }
             case RepoTrackersKey:
             {

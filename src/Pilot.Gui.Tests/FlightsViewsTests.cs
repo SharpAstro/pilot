@@ -87,7 +87,7 @@ public sealed class FlightsViewsTests
             var narrowRow = PerRow(narrowView);
             wideRow.ShouldBeGreaterThan(narrowRow);
             narrowRow.ShouldBeGreaterThan(0);
-            wideView.Canvas.Edges.ShouldBeEmpty();
+            wideView.Map.Connections.ShouldBeEmpty();
         }
     }
 
@@ -207,31 +207,17 @@ public sealed class FlightsViewsTests
             (r >= g && r >= b && g == 0 && b == 0).ShouldBeTrue($"pixel {i} is {r:x2}{g:x2}{b:x2}");
         }
         painted.ShouldBeGreaterThan(1000);
-        // An arrow is dashed: a row of several horizontal runs of the held red, each longer than a card's 4-wide stripe.
-        var dashes = 0;
-        for (var y = 0; y < image.Height; y++)
+        // The held connection and the gate are in the held red, over the map's other reds.
+        var heldRed = 0;
+        for (var i = 0; i < image.Width * image.Height; i++)
         {
-            var run = 0;
-            var inRow = 0;
-            for (var x = 0; x <= image.Width; x++)
+            if (image.Pixels[i * 4] == 0xe0 && image.Pixels[i * 4 + 1] == 0 && image.Pixels[i * 4 + 2] == 0)
             {
-                var held = x < image.Width && image.Pixels[(y * image.Width + x) * 4] == 0xe0
-                    && image.Pixels[(y * image.Width + x) * 4 + 1] == 0 && image.Pixels[(y * image.Width + x) * 4 + 2] == 0;
-                if (held)
-                {
-                    run++;
-                    continue;
-                }
-                if (run >= 5)
-                {
-                    inRow++;
-                }
-                run = 0;
+                heldRed++;
             }
-            dashes = Math.Max(dashes, inRow);
         }
-        dashes.ShouldBeGreaterThan(2);
-        view.Canvas.Edges.Count.ShouldBe(2);
+        heldRed.ShouldBeGreaterThan(60);
+        view.Map.Connections.Count.ShouldBe(1);
     }
 
     [Fact]

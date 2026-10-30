@@ -13,10 +13,14 @@ internal sealed record GuiSettings
 
     /// <summary>Whether the window is painted red on black (the header's Night switch).</summary>
     public bool Night { get; init; }
+
+    /// <summary>Which layers of the Flights page's map are on.</summary>
+    public MapLayerSettings? MapLayers { get; init; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(GuiSettings))]
+[JsonSerializable(typeof(MapLayerSettings))]
 internal sealed partial class GuiSettingsJsonContext : JsonSerializerContext;
 
 /// <summary>
@@ -37,11 +41,14 @@ internal sealed class GuiSettingsFile : IDisposable
     private readonly Timer _pending;
     private int _dirty;
     private volatile bool _night;
+    private MapLayerSettings? _layers;
+    private FlightMapLayerState? _layerState;
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night, MapLayerSettings? layers)
     {
         Path = path;
         _night = night;
+        _layers = layers;
         _tables = tables.ToImmutableDictionary(t => t.Key, t => (IReadOnlyDictionary<string, float>)t.Value, StringComparer.Ordinal);
         _pending = new Timer(_ => Flush(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
@@ -58,11 +65,13 @@ internal sealed class GuiSettingsFile : IDisposable
         path ??= DefaultPath;
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         var night = false;
+        MapLayerSettings? layers = null;
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
+                layers = settings.MapLayers;
                 foreach (var (page, widths) in settings.Tables)
                 {
                     if (widths is not null)
@@ -76,8 +85,9 @@ internal sealed class GuiSettingsFile : IDisposable
         {
             tables.Clear();
             night = false;
+            layers = null;
         }
-        return new GuiSettingsFile(path, tables, night);
+        return new GuiSettingsFile(path, tables, night, layers);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -105,6 +115,14 @@ internal sealed class GuiSettingsFile : IDisposable
         table.Changed += Touch;
     }
 
+    /// <summary>Gives <paramref name="layers"/> the choice this file holds, and keeps the file current: a toggle writes it a moment later.</summary>
+    public void Attach(FlightMapLayerState layers)
+    {
+        layers.Restore(_layers);
+        _layerState = layers;
+        layers.Changed += Touch;
+    }
+
     private void Touch()
     {
         Interlocked.Exchange(ref _dirty, 1);
@@ -119,8 +137,9 @@ internal sealed class GuiSettingsFile : IDisposable
             return;
         }
         ImmutableInterlocked.Update(ref _tables, held => held.SetItems(Volatile.Read(ref _attached).Select(t => KeyValuePair.Create(t.Page, t.Saved))));
+        _layers = _layerState?.Snapshot() ?? _layers;
         var json = JsonSerializer.Serialize(
-            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night },
+            new GuiSettings { MapLayers = _layers, Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night },
             GuiSettingsJsonContext.Default.GuiSettings);
 
         try

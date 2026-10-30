@@ -943,4 +943,242 @@ public sealed class FlightDetailTests
 
         FlightDetail.From(line, Now).Legs.Single(l => l.Name == "render").State.ShouldBe(@"waiting for C:\x\done.txt");
     }
+
+    private const string SubTaskBase = "https://github.com/x/tianwen/issues/";
+
+    // Five legs in mixed states: two done, one flying, one failed, one planned. Sub-tasks on the first, third and fourth when asked for.
+    private static LegRow[] FiveLegs(bool subTasks, string? goal = null)
+    {
+        LegRow Leg(int order, string name, LegState state, int done, int total) => new()
+        {
+            Flight = "TIA1611", Name = name, Order = order, State = state,
+            Goal = goal ?? $"Goal of {name}.", DoneWhen = $"{name} is done.",
+            Checklist = [.. Enumerable.Range(0, total).Select(i => new CheckItem { Text = $"step {i}", Done = i < done })],
+            SubTask = subTasks && order is 1 or 3 or 4 ? new SubTask { Id = $"{order}", Url = $"{SubTaskBase}{order}" } : null,
+        };
+        return
+        [
+            Leg(1, "parser", LegState.Done, 3, 3),
+            Leg(2, "ephemeris-reader-with-a-rather-long-name-for-a-leg", LegState.Done, 2, 2),
+            Leg(3, "render", LegState.Flying, 1, 4),
+            Leg(4, "polish", LegState.Failed, 0, 2),
+            Leg(5, "ship", LegState.Planned, 0, 0),
+        ];
+    }
+
+    private static readonly SubTaskItem[] ByHand =
+    [
+        new("41", "Ask Sam about the ephemeris licence", false, SubTaskBase + "41"),
+        new("42", "Done by hand: a very long title that goes on and on past what a narrow page has room for in one line of text", true, SubTaskBase + "42"),
+    ];
+
+    private static FlightLine LineOf(LegRow[] legs, SubTaskItem[]? others = null) =>
+        FlightLine.Build([Flight() with { OtherSubTasks = others }], [], Now, legs).Single();
+
+    private sealed record Shown(List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions, IReadOnlyList<TextFault> Faults, FlightsView<RgbaImage> View);
+
+    // The page as the window draws it at <width> x <height> and <dpi>, with the text-over-text check run over the arrangement.
+    private static Shown Show(FlightLine line, int width, int height = 900, float dpi = 1f, Action<string>? onOpen = null, Func<FlightsView<RgbaImage>, bool>? act = null, Action<FlightsView<RgbaImage>>? painted = null)
+    {
+        using var vessel = new RgbaImageRenderer((uint)width, (uint)height);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+        var flights = chrome.Flights;
+        flights.OnOpen = onOpen;
+        var screen = new FlightsScreen([line], "test", Now);
+        var bounds = new RectF32(0, 0, width, height);
+        flights.Render(screen, bounds);
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, bounds);
+        if (act?.Invoke(flights) == true)
+        {
+            flights.Render(screen, bounds);
+        }
+        // Read before the tree below is built again: the view finds a leg's block in the arrangement it last painted.
+        painted?.Invoke(flights);
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, dpi));
+        var leaves = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        return new Shown(leaves, regions, TextOverlap.Faults(arranged), flights);
+    }
+
+    [Fact]
+    public void TheChecklistHasOneLineAPerLegInOrderWithItsTickStateStepsAndSubTaskUrl()
+    {
+        var detail = FlightDetail.From(LineOf(FiveLegs(subTasks: true), ByHand), Now);
+
+        detail.Checklist.Select(c => (c.Mark, c.Title, c.State, c.StepsText, c.SubTaskUrl)).ShouldBe(
+        [
+            ("[x]", "1. parser", "done", "3/3 steps", SubTaskBase + "1"),
+            ("[x]", "2. ephemeris-reader-with-a-rather-long-name-for-a-leg", "done", "2/2 steps", null),
+            ("[ ]", "3. render", "flying", "1/4 steps", SubTaskBase + "3"),
+            ("[!]", "4. polish", "failed", "0/2 steps", SubTaskBase + "4"),
+            ("[ ]", "5. ship", "planned", null, null),
+        ]);
+        detail.OtherSubTasks.Select(s => s.Id).ShouldBe(["41", "42"]);
+        // A leg whose tracker gave no URL has no link, and a flight with no legs has no lines.
+        FlightDetail.From(LineOf([FiveLegs(true)[0] with { SubTask = new SubTask { Id = "9" } }]), Now).Checklist.Single().SubTaskUrl.ShouldBeNull();
+        FlightDetail.From(LineOf([]), Now).Checklist.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADumpWritesTheChecklistAndTheSubTasksAPersonAdded()
+    {
+        var dump = FlightDetail.From(LineOf(FiveLegs(subTasks: true), ByHand), Now).ToDump();
+
+        dump.ShouldContain("checklist: 2/5 legs done");
+        dump.ShouldContain($"  [x] 1. parser | done · 3/3 steps | {SubTaskBase}1");
+        dump.ShouldContain("  [!] 4. polish | failed · 0/2 steps | " + SubTaskBase + "4");
+        dump.ShouldContain("  [ ] 5. ship | planned");
+        dump.ShouldContain("other sub-tasks:");
+        dump.ShouldContain($"  [ ] Ask Sam about the ephemeris licence | {SubTaskBase}41");
+        // The leg blocks stay as the detail, after the checklist.
+        dump.IndexOf("checklist:", StringComparison.Ordinal).ShouldBeLessThan(dump.IndexOf("1. parser | done", StringComparison.Ordinal));
+        dump.ShouldContain("   goal: Goal of render.");
+        FlightDetail.From(LineOf([]), Now).ToDump().ShouldNotContain("checklist:");
+    }
+
+    [Theory]
+    [InlineData(900, 1f)]
+    [InlineData(1900, 1f)]
+    [InlineData(700, 1.5f)]
+    public void ThePageLeadsWithTheChecklistAboveTheLegBlocksAndNothingOverlaps(int width, float dpi)
+    {
+        var shown = Show(LineOf(FiveLegs(subTasks: true), ByHand), width, dpi: dpi);
+
+        shown.Faults.Select(f => f.Line).ShouldBeEmpty();
+        var texts = shown.Leaves.Select(t => t.Value).ToList();
+        var heading = texts.FindIndex(t => t.StartsWith("Checklist · 2/5 legs done", StringComparison.Ordinal));
+        heading.ShouldBeGreaterThanOrEqualTo(0);
+        // The first leg block's own head ("1. parser" in 15pt prose) comes after the whole checklist, the sub-tasks of a person included.
+        var blockHead = shown.Leaves.FindIndex(t => t.Value == "1. " && t.FontSize >= 15f);
+        blockHead.ShouldBeGreaterThan(texts.FindIndex(t => t.StartsWith("Sub-tasks added in the tracker", StringComparison.Ordinal)));
+        texts.ShouldContain("planned");
+        texts.ShouldContain("failed");
+        texts.ShouldContain("[!]");
+        // Every sub-task link leaves the app and says so.
+        shown.Leaves.Count(t => t.Value == "sub-task" + Followable.Away).ShouldBe(3 + ByHand.Length);
+    }
+
+    [Fact]
+    public void ALineOpensItsLegsBlockAndASubTaskLinkOpensTheBrowser()
+    {
+        var legs = Enumerable.Range(1, 12).Select(i => FiveLegs(true)[2] with { Name = $"leg{i}", Order = i, State = i < 9 ? LegState.Done : LegState.Flying }).ToArray();
+        var opened = new List<string>();
+        var line = LineOf(legs);
+        (int Offset, bool Leg9, bool Leg1) seen = default;
+
+        // 700 high: leg9's block lies far below the fold, as a long flight's does.
+        var before = Show(line, 900, 700, onOpen: opened.Add, painted: v => seen = (v.DetailOffset, v.LegBlockInView("leg9"), v.LegBlockInView("leg1")));
+        seen.ShouldBe((0, false, true));
+        before.Regions.Count(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("flight:TIA1611:checklist:", StringComparison.Ordinal)).ShouldBe(12);
+        before.Regions.Count(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("subtask:TIA1611:", StringComparison.Ordinal)).ShouldBe(12);
+
+        var after = Show(line, 900, 700, onOpen: opened.Add, act: v =>
+        {
+            var regions = new List<ClickableRegion>();
+            v.CollectPaintedRegions(regions);
+            regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:checklist:leg9" }).OnClick!.Invoke(InputModifier.None);
+            return true;
+        }, painted: v => seen = (v.DetailOffset, v.LegBlockInView("leg9"), v.LegBlockInView("leg1")));
+        seen.Offset.ShouldBeGreaterThan(0);
+        seen.Leg9.ShouldBeTrue();
+        seen.Leg1.ShouldBeFalse();
+        after.Faults.Select(f => f.Line).ShouldBeEmpty();
+
+        // The checklist has scrolled out of view by now, so the link is pressed on the page as first painted.
+        before.Regions.Single(r => r.Result is HitResult.ButtonHit { Action: "subtask:TIA1611:leg3" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe([SubTaskBase + "3"]);
+    }
+
+    [Fact]
+    public void ASubTaskAPersonAddedIsListedReadOnlyWithItsOwnLinkAndNoLegToReveal()
+    {
+        var shown = Show(LineOf(FiveLegs(subTasks: false), ByHand), 1600);
+
+        shown.Leaves.Select(t => t.Value).ShouldContain("Ask Sam about the ephemeris licence");
+        // Only its link is a control: no checklist line for it, and the legs' lines carry no sub-task link here.
+        shown.Regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("subtask:", StringComparison.Ordinal))
+            .ShouldBe([$"subtask:TIA1611:other:41", "subtask:TIA1611:other:42"]);
+        shown.Regions.Count(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("flight:TIA1611:checklist:", StringComparison.Ordinal)).ShouldBe(5);
+        shown.Faults.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(700, 1.5f)]
+    [InlineData(900, 1f)]
+    [InlineData(1900, 1f)]
+    public void ALongGoalAtANarrowWidthWrapsInItsBlockAndTheChecklistStaysOnItsLines(int width, float dpi)
+    {
+        var goal = string.Join(" ", Enumerable.Repeat("a goal that goes on and on and wraps over many lines", 8)) + " LASTWORD";
+
+        var shown = Show(LineOf(FiveLegs(subTasks: true, goal), ByHand), width, 1400, dpi);
+
+        shown.Faults.Select(f => f.Line).ShouldBeEmpty();
+        // One row height for every line: the checklist's tick cells share a height and a top apart from the line's own place.
+        shown.Leaves.Count(t => t.Value is "[x]" or "[ ]" or "[!]").ShouldBeGreaterThanOrEqualTo(5);
+        shown.Leaves.Any(t => t.Value.StartsWith("LASTWORD", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AFlightWithNoLegsAndNoSubTasksHasNoChecklistAndNothingOverlaps()
+    {
+        var shown = Show(LineOf([]), 900);
+
+        shown.Faults.Select(f => f.Line).ShouldBeEmpty();
+        shown.Leaves.Any(t => t.Value.StartsWith("Checklist", StringComparison.Ordinal)).ShouldBeFalse();
+        shown.Leaves.Any(t => t.Value.StartsWith("Sub-tasks added", StringComparison.Ordinal)).ShouldBeFalse();
+        shown.Regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":checklist:", StringComparison.Ordinal)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ALongStateEndsInAnEllipsisNotInAnOverlapAndTheChecklistsColoursReadOnThePanel()
+    {
+        var legs = FiveLegs(true).Select(l => l.Name == "render" ? l with { Wait = new LegWait { Path = @"C:\a\very\long\path\to\a\file\that\the\leg\waits\for\done.txt", Since = Live.At } } : l).ToArray();
+
+        var narrow = Show(LineOf(legs), 700, dpi: 1.5f);
+
+        narrow.Faults.Select(f => f.Line).ShouldBeEmpty();
+        // Each state colour reads on the panel it is drawn on, beside the word that says it. (The night palette is dim reds by design,
+        // for the dark-adapted eye, and holds its own ratios; this checks the standard one.)
+        var palette = Palette.Standard;
+        foreach (var (name, color) in new[] { ("Dim", palette.Dim), ("Flying", palette.Flying), ("Held", palette.Held), ("Landed", palette.Landed), ("Failed", palette.Failed), ("Link", palette.Landed) })
+        {
+            Contrast(color, palette.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5, name);
+        }
+    }
+
+    [Fact]
+    public void CapturesOfTheChecklistAtNarrowAndWideWindowsInBothPalettes()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var long_ = string.Join(" ", Enumerable.Repeat("a goal that goes on and wraps over several lines", 4));
+        var cases = new (string Name, FlightLine Line)[]
+        {
+            ("many", LineOf(FiveLegs(subTasks: true, long_), ByHand)),
+            ("nosub", LineOf(FiveLegs(subTasks: false))),
+            ("empty", LineOf([])),
+        };
+        foreach (var (width, dpi, night) in new[] { (900, 1.5f, false), (1900, 1f, false), (900, 1.5f, true) })
+        {
+            foreach (var (name, line) in cases)
+            {
+                const int height = 1100;
+                using var renderer = new RgbaImageRenderer((uint)width, height);
+                var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+                if (night)
+                {
+                    chrome.Night.On = true;
+                }
+                chrome.Show(PilotPage.Flights);
+                chrome.Flights.OpenDetail("TIA1611");
+                chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([line], "test", Now), new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"checklist-{name}-{width}{(night ? "-night" : "")}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
 }
