@@ -1079,7 +1079,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
 public sealed class ReviewTests3 : ReviewTestsBase
 {
     [Fact]
-    public async Task APassedPrRebasedOverASpentWindowIsReviewedAfreshOnlyOnceItHasReset()
+    public async Task APassedPrRebasedOverASpentWindowKeepsItsPassOnTheNewHeadWithNoReviewer()
     {
         var flight = await NewFlight("10", "parser");
         await Fly(flight, "parser");
@@ -1095,17 +1095,13 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         (await _legs.RebaseOntoBaseAsync("TIA10", Ct)).ShouldBeNull();
 
-        // Rebased and pushed, its old pass is of a head that is gone: no review stands, so no merge goes by it.
-        Git(F("TIA10").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        F("TIA10").Review.ShouldBeNull();
+        // Rebased and pushed, its own diff is the same as the passed head's (only the base came in): the pass moves to the new
+        // head with no reviewer, even in a spent window.
+        var worktree = F("TIA10").Worktree;
+        Git(worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
+        var review = F("TIA10").Review.ShouldNotBeNull();
+        (review.State, review.ReviewedHead).ShouldBe((ReviewState.Passed, Git(worktree, "rev-parse", "HEAD")));
         _workers.Started.Count.ShouldBe(startedBefore);
-        Open().ShouldBeEmpty();
-        (await Run(Verbs.Merge, "flight/TIA10", "controller", "cafe0000")).Error.ShouldNotBeNull().ShouldContain("has not been reviewed");
-
-        Window(4, TimeSpan.FromHours(6));
-        await _legs.AdvanceAllAsync(Ct);
-
-        F("TIA10").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
     }
 
     [Fact]
@@ -1424,7 +1420,9 @@ public sealed class ReviewTests3 : ReviewTestsBase
         newHead.ShouldNotBe(head);
         Git(flight.Worktree, "merge-base", "--is-ancestor", "origin/main", newHead);
         Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(newHead);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        // Only the base came in: the pass is kept at the new head, no reviewer starts.
+        var review = F(flight.Code).Review.ShouldNotBeNull();
+        (review.State, review.ReviewedHead).ShouldBe((ReviewState.Passed, newHead));
     }
 
     [Fact]
@@ -1447,10 +1445,9 @@ public sealed class ReviewTests3 : ReviewTestsBase
         MainMoves();
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("is behind its base");
 
-        // The update is pushed and reviewed afresh; the review passes on the new head, and the merge is offered again.
+        // The update is pushed and its pass kept at the new head (only the base came in); the merge is offered again.
         var newHead = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Pr = _github.Pr! with { Head = newHead };
-        (await Run(Verbs.Review, $"flight/{flight.Code}", Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", newHead[..8])).Error.ShouldBeNull();
 
         // Its checks still run on the new head: armed to merge when they pass, not sent to the queue.
