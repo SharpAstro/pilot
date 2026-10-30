@@ -111,6 +111,8 @@ public sealed class Watchtower(
     // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
     private string? _resumeRefused;
     private bool _adopted;
+    // Rows this node has stopped as a second watchtower; the sweep leaves them alone until the tracker shows them ended.
+    private readonly HashSet<string> _stopped = new(StringComparer.Ordinal);
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
     private DateTimeOffset? _watchingAt;
 
@@ -144,16 +146,41 @@ public sealed class Watchtower(
     }
 
     /// <summary>
-    /// Whether a row is this node's watchtower: by its name, or by the role the tracker kept for it when it was renamed
-    /// (then its name still starts with the machine's code, which the tracker put back).
+    /// Whether a row is a watchtower of this node, by id and not by name (pilot #517): its row id is a <see cref="Generation"/>'s
+    /// job, or its session id (or an earlier one) is a generation's session. Renamed, it is still the node's. A background row
+    /// of the watchtower's name counts too, which is how one an older node started is adopted into <see cref="Generations"/>.
     /// </summary>
-    private bool IsWatchtower(SessionRow row) =>
-        row.Name == Name || (row.Role == SessionRole.Watchtower && row.Name.StartsWith($"{options.Machine.ToLowerInvariant()}-", StringComparison.Ordinal));
+    private bool IsWatchtower(SessionRow row)
+    {
+        if (row.Name == Name)
+        {
+            return true;
+        }
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            return _generations.Any(g => g.Job == row.Id
+                || g.SessionId is { } session && (row.SessionId == session || row.EarlierSessionIds?.Contains(session) == true));
+        }
+    }
 
-    /// <summary>The watchtower's row now: the one it started, else the newest of its name, live first.</summary>
+    /// <summary>Whether <paramref name="id"/> is a row id or a session id of a watchtower the node has had, whatever it is called now.</summary>
+    public bool KnowsId(string id)
+    {
+        lock (_generationsLock)
+        {
+            _generations ??= LoadGenerations();
+            return _generations.Any(g => g.Job == id || g.SessionId == id);
+        }
+    }
+
+    /// <summary>
+    /// The watchtower's row now: the one it started, else the newest of its name, live first. One renamed is not current: it
+    /// is still the node's, but stopped (<see cref="StopOthersAsync"/>), and cards go to the current one only.
+    /// </summary>
     public SessionRow? Current()
     {
-        var rows = state.Sessions().Where(IsWatchtower).ToList();
+        var rows = state.Sessions().Where(r => IsWatchtower(r) && r.Name == Name).ToList();
         return rows.FirstOrDefault(r => r.Id == _job)
             ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
@@ -524,9 +551,10 @@ public sealed class Watchtower(
                 {
                     _job = row.Id;
                     TellAllOpen();
-                    await StopOthersAsync(row.Id, null, cancellationToken);
                 }
             }
+            // Every look: a watchtower of this node but the current, renamed or not, is stopped.
+            await StopOthersAsync(row?.Id, null, cancellationToken);
 
             if (watching is null)
             {
@@ -665,7 +693,7 @@ public sealed class Watchtower(
 
     /// <summary>
     /// The name the row this node started has now, when it is not <see cref="Name"/>: noted on the row as <c>renamed to
-    /// &lt;name&gt;</c>, which is why it no longer counts as the watchtower. Null when it is under its own name, or gone.
+    /// &lt;name&gt;</c>: still the node's, so it is stopped, never left running. Null when it is under its own name, or gone.
     /// </summary>
     private string? NoteRename()
     {
@@ -702,6 +730,7 @@ public sealed class Watchtower(
             {
                 // Gone already: the fresh one starts all the same.
             }
+            _stopped.Add(replacing.Id);
         }
 
         var folder = options.WatchtowerFolder;
@@ -745,10 +774,10 @@ public sealed class Watchtower(
     /// </summary>
     private async Task StopOthersAsync(string? keep, string? replaced, CancellationToken cancellationToken)
     {
+        // Known by id (IsWatchtower), whatever its name or role now: a renamed one is still the node's. Ones already stopped
+        // wait for the tracker to show them ended, and are not stopped and reported again on every look.
         var others = state.Sessions()
-            .Where(r => r.Role == SessionRole.Watchtower && r.Kind == SessionKind.Background && Live(r) && r.Id != keep && r.Id != replaced
-                // One the person renamed (NoteRename) is theirs now, no longer the watchtower.
-                && r.EndedBecause?.StartsWith("renamed to ", StringComparison.Ordinal) != true)
+            .Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.Id != keep && r.Id != replaced && !_stopped.Contains(r.Id))
             .OrderBy(r => r.StartedAt)
             .ToList();
         if (others.Count == 0)
@@ -765,6 +794,7 @@ public sealed class Watchtower(
             {
                 // Gone already: nothing to stop.
             }
+            _stopped.Add(other.Id);
         }
         state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
             $"Stopped {(others.Count == 1 ? "another watchtower" : $"{others.Count} other watchtowers")} (one per node): {string.Join(", ", others.Select(r => $"{r.Name} ({r.Id})"))}");
@@ -781,6 +811,7 @@ public sealed class Watchtower(
         {
             // Gone already: there is nothing to stop.
         }
+        _stopped.Add(row.Id);
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
