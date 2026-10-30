@@ -228,7 +228,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 if (_rebased.Add($"{flight.Code} {queue.Head}"))
                 {
                     // Nothing to merge in: found out why before anything is queued again (laid on its base, or rung once).
-                    if (await legs.HandleConflictDropAsync(flight.Code, queue.Head, cancellationToken))
+                    if (await legs.HandleConflictDropAsync(flight.Code, queue.Head, removedAt, cancellationToken))
                     {
                         continue;
                     }

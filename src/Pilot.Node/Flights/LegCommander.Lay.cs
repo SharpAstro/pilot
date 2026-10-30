@@ -10,12 +10,6 @@ public sealed record RebaseProbe(bool Clean, IReadOnlyList<string> Files, string
 
 public sealed partial class LegCommander
 {
-    /// <summary>
-    /// Whether the branch of the plane at <paramref name="plane"/> rebases onto <c>origin/&lt;baseBranch&gt;</c>, as a merge queue that
-    /// rebases would do. A PR can merge cleanly (merge-tree is clean) and still not rebase: a keep-ours merge in its history, with later
-    /// commits touching the same lines, stops a replay one commit at a time. The test runs in a detached throwaway worktree in a
-    /// temp folder at the plane's HEAD, which is aborted and removed whatever happens; the plane and its branch are never touched.
-    /// </summary>
     /// <summary>The kind of card that says a PR could not be laid on its base.</summary>
     public const string LayFailedKind = "lay-failed";
 
@@ -50,6 +44,7 @@ public sealed partial class LegCommander
                 Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = laid, StatusState = null } : null });
                 await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
             }
+            _laidAt[$"{flight.Code} {laid}"] = DateTimeOffset.UtcNow;
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} laid on {flight.Base}; its review carries to {Short(laid)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             state.RaiseCard(CardBin.Handled, LaidKind, Verbs.FlightTarget(flight.Code),
                 $"{flight.Code} laid on {flight.Base} as one commit",
@@ -116,7 +111,16 @@ public sealed partial class LegCommander
         return (laid, old);
     }
 
-    // Heads GitHub's queue dropped for a conflict, by "code head": none of them is queued again until the head moves.
+    private int _probes;
+
+    /// <summary>How many rebase probes have run (for tests that show a queue is never probed).</summary>
+    public int RebaseProbes => Volatile.Read(ref _probes);
+
+    // When the node laid a head, by "code head": a removal of that head older than this is the old head's drop, not GitHub's verdict on the laid commit.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _laidAt = new(StringComparer.Ordinal);
+
+    // Heads GitHub's queue dropped for a conflict, by "code head": none of them is queued again until the head moves. Kept in memory
+    // only (with _dropRung): after a node restart a dropped head is met again and rung once more, which is intended.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _droppedHeads = new(StringComparer.Ordinal);
 
     // The heads a drop was rung for: one ring per flight and head.
@@ -135,26 +139,38 @@ public sealed partial class LegCommander
     /// is not is laid on its base and queued once; otherwise one Ring card says why and the head is not queued. Returns false when the
     /// base has something to merge in, which the caller's update then does (it moves the head).
     /// </summary>
-    public async Task<bool> HandleConflictDropAsync(string code, string head, CancellationToken cancellationToken)
+    public async Task<bool> HandleConflictDropAsync(string code, string head, DateTimeOffset removedAt, CancellationToken cancellationToken)
     {
+        if (_laidAt.TryGetValue($"{code} {head}", out var laidAt) && removedAt <= laidAt)
+        {
+            // The removal is the old head's: the node laid this one itself and it is not a GitHub drop.
+            return true;
+        }
         _droppedHeads[$"{code} {head}"] = true;
-        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } flight || !Directory.Exists(flight.Worktree))
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } first || !Directory.Exists(first.Worktree))
         {
             return false;
         }
-        var baseRef = $"origin/{BaseBranch(flight)}";
-        await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
-        var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
+        var baseRef = $"origin/{BaseBranch(first)}";
+        await git.RunAsync(["fetch", "--quiet", "origin"], first.Worktree, cancellationToken);
+        var plane = (await git.RunAsync(["rev-parse", "HEAD"], first.Worktree, cancellationToken)).Output.Trim();
         if (!string.Equals(plane, head, StringComparison.OrdinalIgnoreCase)
-            || !(await git.RunAsync(["merge-base", "--is-ancestor", baseRef, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+            || !(await git.RunAsync(["merge-base", "--is-ancestor", baseRef, "HEAD"], first.Worktree, cancellationToken)).Ok)
         {
             return false;
         }
+        FlightRow flight;
         string laid;
         // The lay lets the lock go for its git and GitHub asks, so it is made holding it; the merge after it takes the lock itself.
         var call = await EnterAsync(code, "being laid on its base", cancellationToken);
         try
         {
+            // Read again: the flight may have moved while another command held the lock.
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying } now || Moved(first) is not null)
+            {
+                return true;
+            }
+            flight = now;
             laid = await LayIfNotRebaseableAsync(flight, head, cancellationToken);
         }
         catch (FlightException)
@@ -178,9 +194,15 @@ public sealed partial class LegCommander
                     await github.MergeAsync(flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
                 }
             }
-            catch (FlightException ex) when (_dropRung.TryAdd($"{code} {laid}", true))
+            catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.Ring, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued", ex.Message);
+                // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
+                // once they pass. The laid head is the node's own, never marked as a GitHub drop.
+                RaiseReadyAtLaid(flight, laid, ex.Message);
+                if (_dropRung.TryAdd($"{code} {laid}", true))
+                {
+                    state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", ex.Message);
+                }
             }
             return true;
         }
@@ -203,8 +225,23 @@ public sealed partial class LegCommander
         return true;
     }
 
+    /// <summary>A PR-ready card at the laid head, for when the queue would not take it yet: its Merge is offered there.</summary>
+    private void RaiseReadyAtLaid(FlightRow flight, string laid, string why) =>
+        state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}'s PR #{flight.PullRequest} is ready to merge",
+            $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,
+            summary: $"{flight.Code} was laid on its base and is reviewed; its PR is ready. Merge lands it.");
+
+    /// <summary>
+    /// Whether the branch of the plane at <paramref name="plane"/> rebases onto <c>origin/&lt;baseBranch&gt;</c>, as a merge queue that
+    /// rebases would do. A PR can merge cleanly (merge-tree is clean) and still not rebase: a keep-ours merge in its history, with later
+    /// commits touching the same lines, stops a replay one commit at a time. The test runs in a detached throwaway worktree in a
+    /// temp folder at the plane's HEAD, which is aborted and removed whatever happens; the plane and its branch are never touched.
+    /// </summary>
     public async Task<RebaseProbe> ProbeRebaseAsync(string plane, string baseBranch, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _probes);
         var folder = Path.Combine(Path.GetTempPath(), "pilot-rebase-probe-" + Guid.NewGuid().ToString("N")[..12]);
         var added = false;
         try

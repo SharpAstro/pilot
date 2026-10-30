@@ -1860,9 +1860,19 @@ public sealed partial class LegCommander(
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
         var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
-        return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
-            ? (false, QueuedLine(flight.Code), MergeWays.Queued)
-            : (true, null, null);
+        try
+        {
+            return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
+                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
+                : (true, null, null);
+        }
+        catch (FlightException ex) when (!string.Equals(queueHead, pr.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
+            // merge waits for the checks there, as for any head whose checks run.
+            RaiseReadyAtLaid(flight, queueHead, ex.Message);
+            return await ArmAsync(flight, pr with { Head = queueHead }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
+        }
     }
 
     /// <summary>What an armed merge says while every check shown is green and one GitHub requires has yet to be created.</summary>

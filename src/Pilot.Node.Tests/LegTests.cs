@@ -430,9 +430,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
+    /// <summary>When set, MergeAsync refuses any head other than the first it took, as a queue does a PR pushed since, whose checks have not run.</summary>
+    public bool MergeRefusesLaid { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefusesLaid && Pr is { } shown && head != shown.Head)
+        {
+            throw new FlightException("the merge queue takes no PR whose required checks have not passed");
+        }
         Merged.Add((number, head, method));
         return Queues;
     }

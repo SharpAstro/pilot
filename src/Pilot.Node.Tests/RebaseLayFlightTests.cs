@@ -77,6 +77,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         Should.Throw<InvalidOperationException>(() => Git(flight.Worktree, "rev-parse", "--verify", "--quiet", $"refs/pilot/laid/{flight.Code}"));
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(_github.Pr.Head);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.LaidKind);
+        _legs.RebaseProbes.ShouldBe(0);
     }
 
     [Fact]
@@ -153,5 +154,49 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head)).Ok.ShouldBeFalse();
         _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALaidHeadTheQueueRefusesIsNotMarkedDroppedAndAMergeIsOfferedAtIt()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        _github.MergeRefusesLaid = true;
+        var (flight, old) = await KeepOursFlight();
+        Drop(flight, old);
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        var laid = Git(flight.Worktree, "rev-parse", "HEAD");
+        laid.ShouldNotBe(old);
+        // GitHub still shows the old removal against the laid head.
+        _github.Queue = _github.Queue! with { Head = laid };
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        _legs.DroppedForConflict(flight.Code, laid).ShouldBeFalse();
+        _github.Merged.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.SequenceEqual(new[] { laid })));
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.DropUnexplainedKind && c.Bin == CardBin.Ring);
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(laid);
+    }
+
+    [Fact]
+    public async Task AMergeCommandWhoseQueueRefusesTheLaidHeadArmsItThereInsteadOfFailing()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        _github.MergeRefusesLaid = true;
+        var (flight, old) = await KeepOursFlight();
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head);
+
+        merge.Error.ShouldBeNull();
+        var laid = Git(flight.Worktree, "rev-parse", "HEAD");
+        laid.ShouldNotBe(old);
+        F(flight.Code).MergeWhenGreen![0].ShouldBe(laid);
+        _legs.DroppedForConflict(flight.Code, laid).ShouldBeFalse();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Choices.Any(ch => ch.Args.SequenceEqual(new[] { laid })));
     }
 }
