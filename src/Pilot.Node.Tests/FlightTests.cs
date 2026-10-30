@@ -527,4 +527,33 @@ internal sealed class FakeShortcut : ITracker
         Comments.Add((id, body));
         return Task.CompletedTask;
     }
+
+    /// <summary>The tasks of each story, by id.</summary>
+    public Dictionary<int, List<SubTaskItem>> Tasks { get; } = [];
+
+    public Task<SubTask> AddSubTaskAsync(string repoPath, int id, string title, CancellationToken cancellationToken)
+    {
+        var list = Tasks.TryGetValue(id, out var have) ? have : Tasks[id] = [];
+        var task = (list.Count == 0 ? 1 : list.Max(t => int.Parse(t.Id)) + 1).ToString();
+        list.Add(new SubTaskItem(task, title, false, ""));
+        return Task.FromResult(new SubTask { Id = task });
+    }
+
+    public Task CompleteSubTaskAsync(string repoPath, int id, SubTask subTask, CancellationToken cancellationToken)
+    {
+        if (Tasks.TryGetValue(id, out var list) && list.FindIndex(t => t.Id == subTask.Id) is var at and >= 0)
+        {
+            list[at] = list[at] with { Done = true };
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveSubTaskAsync(string repoPath, int id, SubTask subTask, CancellationToken cancellationToken)
+    {
+        Tasks.GetValueOrDefault(id)?.RemoveAll(t => t.Id == subTask.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken) =>
+        Task.FromResult(Tasks.TryGetValue(id, out var list) ? list.ToArray() : []);
 }

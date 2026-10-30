@@ -102,6 +102,13 @@ public sealed record LegRow
     public LegWait? Wait { get; init; }
 
     /// <summary>
+    /// Where the node wrote this leg in the flight's work item (a sub-issue, a Shortcut task); null when it has not, as for a leg
+    /// written before sub-tasks or in a repo that has them off.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SubTask? SubTask { get; init; }
+
+    /// <summary>
     /// The check <c>pilot leg finish done</c> reruns, while it runs (it is a bare process of the node, not a job, so nothing else
     /// shows it): which check, since when, and later its outcome. Null when no rerun is on the leg.
     /// </summary>
