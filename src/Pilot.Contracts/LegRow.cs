@@ -120,8 +120,28 @@ public sealed record LegRecheck
 
     public required DateTimeOffset Since { get; init; }
 
-    /// <summary>How the rerun ended; null while it runs.</summary>
+    /// <summary>
+    /// How the rerun ended, worded for the worker whose finish it was, when that worker may not have been told (the run outlasted the
+    /// node's reply deadline, or a retry was refused meanwhile, or the node restarted); the leg watch says it once and clears it.
+    /// Null while the rerun runs.
+    /// </summary>
     public string? Outcome { get; init; }
+
+    /// <summary>The outcome of a rerun that died with the node that ran it.</summary>
+    public static string RestartedOutcome(string check) =>
+        $"The node restarted while it was rerunning your leg's check `{check}`, so the rerun never finished and the leg is still flying. Run `leg finish done` again.";
+
+    /// <summary>The outcome of a rerun that failed.</summary>
+    public static string FailedOutcome(string check, int exitCode, string tail) =>
+        $"The rerun of your leg's check `{check}` failed ({exitCode}); the leg is still flying. Last of its output:\n{tail}\nFix what it shows, then run `leg finish done` again.";
+
+    /// <summary>The outcome of a rerun whose leg changed while it ran, so nothing was recorded.</summary>
+    public static string ChangedOutcome(string check) =>
+        $"Your leg changed while its check `{check}` was rerun, so nothing was recorded and the leg is still flying. Look at it, then run `leg finish done` again.";
+
+    /// <summary>The outcome of a rerun that threw instead of passing or failing.</summary>
+    public static string ThrewOutcome(string check, string error) =>
+        $"The rerun of your leg's check `{check}` could not be run ({error}); the leg is still flying. Run `leg finish done` again.";
 }
 
 /// <summary>A leg's worker waiting on a file or a time, with no job: what it waits for, why, and since when.</summary>

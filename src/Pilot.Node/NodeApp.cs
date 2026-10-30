@@ -154,6 +154,8 @@ public static class NodeApp
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
+            // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
+            legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             return legs;

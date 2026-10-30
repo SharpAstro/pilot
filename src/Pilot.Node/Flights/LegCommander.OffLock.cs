@@ -22,6 +22,9 @@ public sealed partial class LegCommander
         /// <summary>What a command refused for it is told to do instead.</summary>
         public string Advice { get; } = advice;
 
+        /// <summary>Set when a command was refused because of this call: its holder's own answer may not be the one its worker hears.</summary>
+        public bool Refused { get; set; }
+
         /// <summary>Completed when the calls are done with: what the node's own rebase waits on.</summary>
         public TaskCompletionSource Free { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -41,9 +44,12 @@ public sealed partial class LegCommander
         var call = new FlightCall(this, code, what, advice);
         if (!_calling.TryAdd(code, call))
         {
-            throw _calling.TryGetValue(code, out var busy)
-                ? new FlightException($"{code} is {busy.What} already: {busy.Advice}")
-                : new FlightException($"{code} is being changed already: wait for its answer, then ask again");
+            if (!_calling.TryGetValue(code, out var busy))
+            {
+                throw new FlightException($"{code} is being changed already: wait for its answer, then ask again");
+            }
+            busy.Refused = true;
+            throw new FlightException($"{code} is {busy.What} already: {busy.Advice}");
         }
         return call;
     }
