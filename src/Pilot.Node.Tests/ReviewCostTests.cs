@@ -209,8 +209,9 @@ public sealed class ReviewCostTests : IDisposable
     };
 
     private static string Assistant(string id, long input, long creation, long read, long output) =>
-        string.Create(CultureInfo.InvariantCulture,
-            $$$"""{"type":"assistant","timestamp":"2026-10-25T10:00:01.000Z","message":{"id":"{{{id}}}","model":"claude-sonnet-5-5","usage":{"input_tokens":{{{input}}},"cache_creation_input_tokens":{{{creation}}},"cache_read_input_tokens":{{{read}}},"output_tokens":{{{output}}}}}}""");
+        "{\"type\":\"assistant\",\"timestamp\":\"2026-10-25T10:00:01.000Z\",\"message\":{\"id\":\"" + id + "\",\"model\":\"claude-sonnet-5-5\",\"usage\":{\"input_tokens\":" + input.ToString(CultureInfo.InvariantCulture)
+        + ",\"cache_creation_input_tokens\":" + creation.ToString(CultureInfo.InvariantCulture) + ",\"cache_read_input_tokens\":" + read.ToString(CultureInfo.InvariantCulture)
+        + ",\"output_tokens\":" + output.ToString(CultureInfo.InvariantCulture) + "}}}";
 
     private void Write(string sessionPrefix, string[] lines)
     {
