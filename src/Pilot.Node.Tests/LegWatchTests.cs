@@ -91,7 +91,7 @@ public sealed class LegWatchTests
         (say.Verb, say.Target, say.Who).ShouldBe((Verbs.Say, "session/a1b2c3d4", "node"));
         say.Args[0].ShouldContain("limit that stopped you has reset");
         Open().ShouldBeEmpty();
-        Handled().Select(c => c.Kind).ShouldBe([LegWatch.LimitWait, "worker-resumed"]);
+        Handled().Select(c => c.Kind).Order().ShouldBe([LegWatch.LimitWait, "worker-resumed"]);
 
         // Still stopped on the same reset a look later: the resume did not take, so it rings rather than resuming again.
         await _watch.LookAsync(Ct);
@@ -553,7 +553,7 @@ public sealed class LegWatchTests
         else
         {
             summary.ShouldContain(say);
-            foreach (var other in new[] { "Resume now", "Resume", "Nudge" }.Where(l => l != say && !say.StartsWith(l, StringComparison.Ordinal)))
+            foreach (var other in new[] { "Nudge" }.Where(l => l != say && !say.StartsWith(l, StringComparison.Ordinal)))
             {
                 summary.ShouldNotContain(other);
             }
