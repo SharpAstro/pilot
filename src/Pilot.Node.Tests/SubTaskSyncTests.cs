@@ -223,7 +223,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
         {
             var url = request.RequestUri!.ToString();
             Asked.Add((request.Method, url));
-            var body = request.Content is null ? null : JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken)).RootElement;
+            JsonElement? body = request.Content is null ? null : JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken)).RootElement;
             if (Refuse && request.Method != HttpMethod.Get)
             {
                 return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
