@@ -406,25 +406,14 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Layout.Node PullRequestLink(FlightLine line, string url, string action)
     {
         var flight = line.Row;
+        var pr = PullRequestLinks.Of(flight);
         // A PR the node does not list (landed or closed, or not read yet) has no row: the browser link it always was.
-        if (OnPullRequest is not { } open || PullRequestLinks.Of(flight) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
-        {
-            return Link($"PR #{flight.PullRequest}", url, action).WAuto();
-        }
-        // Both carry the Copy URL menu: the URL is the PR's on GitHub, whichever of the two is right-clicked.
-        return Layout.Builder.HStack(
-                _links.OnLink(Layout.Builder.Text($"PR #{flight.PullRequest}", 12f, Landed)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit(action), _ => open(pr.Repo, pr.Number))
-                    .WithTooltip($"Show {pr} on the Pull requests page")
-                    .WAuto(), url),
-                _links.OnLink(Layout.Builder.Text("↗", 11f, Landed, TextAlign.Center, TextAlign.Center)
-                    .Pad(6f, 0f)
-                    .BgHover(RowHoverBg)
-                    .Follows(new HitResult.ButtonHit($"{action}:browser"), _ => OnOpen?.Invoke(url))
-                    .WithTooltip($"Open {pr} on GitHub")
-                    .WAuto(), url))
-            .WAuto()
+        var route = OnPullRequest is { } open && pr is not null && PullRequestLinks.Lists(PullRequests, pr)
+            ? (Action?)(() => open(pr.Repo, pr.Number))
+            : null;
+        // Qualified: this method is named PullRequestLink too.
+        return Pilot.Ui.PullRequestLink.Of(_links, action, $"PR #{flight.PullRequest}", pr?.ToString() ?? url, url, OnOpen, route, "the Pull requests page",
+                Landed, RowHoverBg, mayBeCut: false, fill: false)
             // HFixed, not RowH: RowH makes the width a star, which a flow's cell measures as nothing.
             .HFixed(20f);
     }
