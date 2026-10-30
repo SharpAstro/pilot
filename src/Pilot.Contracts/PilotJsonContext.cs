@@ -35,6 +35,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(PackageWait))]
 [JsonSerializable(typeof(PeerConnection))]
 [JsonSerializable(typeof(LegWait))]
+[JsonSerializable(typeof(LegRecheck))]
 [JsonSerializable(typeof(LegRow))]
 [JsonSerializable(typeof(CardRow))]
 [JsonSerializable(typeof(UsageRow))]
