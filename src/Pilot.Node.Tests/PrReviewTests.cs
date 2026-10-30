@@ -688,8 +688,14 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     [Fact]
     public async Task ADraftQueuesNothing()
     {
+        _github.Login = "ada";
+        _github.Queue = new MergeQueueState("OPEN", _widgetHead, false);
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        // A review's start marks a draft ready (PIL483); a PR made a draft again meanwhile is still not queued.
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
-        await ReviewedWidget("approve");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+        await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -795,13 +801,14 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     public async Task AReviewOfAFlightsPrSetsItsStatusButLeavesTheFlightsLabel()
     {
         // acme/widget#7 is a flight's PR: its pilot: label (passed, conflicts, queued) is the flight's, which PrMarks would
-        // not write again over one a review left.
+        // not write again over one a review left. A review cannot start on a flight's PR (PIL483), so the PR becomes the
+        // flight's after its review has started.
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         _state.PutFlight(new FlightRow
         {
             Code = "WID7", Repo = "widget", RepoPath = "/r/widget", Issue = 3, Branch = "flight/wid7", Worktree = "/r/widget/w", Base = "main",
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
         });
-        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "changes", "One defect.")).Error.ShouldBeNull();
 
         _github.Statuses.Last().State.ShouldBe("failure");
