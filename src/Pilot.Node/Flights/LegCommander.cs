@@ -1839,7 +1839,8 @@ public sealed partial class LegCommander(
         }
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
-        return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken))
+        var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
+        return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
             ? (false, QueuedLine(flight.Code), MergeWays.Queued)
             : (true, null, null);
     }
