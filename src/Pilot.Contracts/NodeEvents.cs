@@ -39,6 +39,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(IdeaMovedEvent), "ideaMoved")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
+[JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -162,6 +163,9 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before it has read any.</summary>
     public PullRequestsRow? PullRequests { get; init; }
+
+    /// <summary>Where every repo the node knows stands, as last read (or marked not read yet); null from an older node.</summary>
+    public ReposRow? Repos { get; init; }
 }
 
 /// <summary>An idea was moved to another repo: its old id now points to the new one.</summary>

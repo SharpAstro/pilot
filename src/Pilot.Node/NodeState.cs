@@ -53,6 +53,7 @@ public sealed class NodeState
     private UsageRow? _usage;
     private MachineRow? _machine;
     private PullRequestsRow? _pullRequests;
+    private ReposRow? _repos;
     private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
@@ -844,6 +845,33 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>Where every repo the node knows stands as last read, or marked not read yet; null before any.</summary>
+    public ReposRow? Repos()
+    {
+        lock (_gate)
+        {
+            return _repos;
+        }
+    }
+
+    /// <summary>
+    /// Puts the repos read, when their statuses differ from those held (their own read times aside), or when the held read is 2
+    /// minutes old: a read every few minutes that finds nothing new would fill the journal with a row of every repo, yet a
+    /// client dates the row by its read, so the read time is renewed well within that.
+    /// </summary>
+    public void PutRepos(ReposRow read)
+    {
+        lock (_gate)
+        {
+            if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
+                && held.Repos.Select(r => r with { UpdatedAt = default }).SequenceEqual(read.Repos.Select(r => r with { UpdatedAt = default })))
+            {
+                return;
+            }
+            Publish(new ReposChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+
     /// <summary>Removes a session row; nothing happens when there is none.</summary>
     public void RemoveSession(string id)
     {
@@ -1034,6 +1062,9 @@ public sealed class NodeState
             case PullRequestsChangedEvent pullRequests:
                 _pullRequests = pullRequests.Row;
                 break;
+            case ReposChangedEvent repos:
+                _repos = repos.Row;
+                break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
                 break;
@@ -1093,6 +1124,7 @@ public sealed class NodeState
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
         _pullRequests = snapshot.PullRequests;
+        _repos = snapshot.Repos;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -1127,6 +1159,7 @@ public sealed class NodeState
         Usage = _usage,
         Machine = _machine,
         PullRequests = _pullRequests,
+        Repos = _repos,
         Jobs = [.. _jobs.Values],
         Merges = [.. _merges.Values],
         PrReviews = [.. _prReviews.Values],

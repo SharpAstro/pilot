@@ -41,6 +41,9 @@ public sealed class NodeMirror
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before any.</summary>
     public PullRequestsRow? PullRequests { get; private set; }
 
+    /// <summary>Where every repo the node knows stands, as last read or marked not read yet; null before any.</summary>
+    public ReposRow? Repos { get; private set; }
+
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     /// <summary>The jobs, by id.</summary>
@@ -107,6 +110,7 @@ public sealed class NodeMirror
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
             PullRequests = snapshot.PullRequests;
+            Repos = snapshot.Repos;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -216,6 +220,9 @@ public sealed class NodeMirror
                 break;
             case PullRequestsChangedEvent pullRequests:
                 PullRequests = pullRequests.Row;
+                break;
+            case ReposChangedEvent repos:
+                Repos = repos.Row;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

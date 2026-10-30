@@ -239,7 +239,7 @@ public sealed class RepoStatusTests : IDisposable
     }
 
     [Fact]
-    public async Task TheCacheRefreshesItselfOnItsTimerOnceSomethingHasAsked()
+    public async Task TheCacheRefreshesItselfOnItsTimerFromBootWithoutAnyoneAsking()
     {
         var tianwen = Clone("tianwen");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
@@ -250,11 +250,7 @@ public sealed class RepoStatusTests : IDisposable
         await ((IHostedService)watch).StartAsync(Ct);
         try
         {
-            // Nobody has asked: nothing is read.
-            await Task.Delay(150, Ct);
-            git.Count("worktree list --porcelain").ShouldBe(0);
-
-            await watch.StatusAsync(refresh: false, Ct);
+            // Nobody asks: the timer reads from boot.
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (git.Count("worktree list --porcelain") < 3 && DateTime.UtcNow < deadline)
             {
