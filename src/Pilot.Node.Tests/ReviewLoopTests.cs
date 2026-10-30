@@ -75,6 +75,36 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ThePersonsGoAroundAtAHeldLoopLetsTheFourthRoundStartWhenTheWorkerFinishes()
+    {
+        var code = await Looping("1", 3);
+        var flight = F(code);
+
+        (await Run(Verbs.GoAround, $"flight/{code}/parser", "controller", "fix the findings")).Error.ShouldBeNull();
+        F(code).ReviewRoundsAllowed.ShouldBe(4);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewLoopKind);
+
+        var worker = _state.Legs(code).Single(l => l.Name == "parser").Worker!;
+        Commit(flight.Worktree, "fix4.txt");
+        (await Run(Verbs.Check, $"flight/{code}/parser", worker, "1")).Ok.ShouldBeTrue();
+        var before = _workers.Started.Count;
+        (await Run(Verbs.FinishLeg, $"flight/{code}/parser", worker, "done", "fixed")).Error.ShouldBeNull();
+        await Started(_legs, code);
+
+        _workers.Started.Count.ShouldBeGreaterThan(before);
+        _workers.Started.Last().Name.ShouldBe(Reviewer(code));
+    }
+
+    [Fact]
+    public async Task OnlyTheWatchtowerOrThePersonMayAllowARound()
+    {
+        var code = await Looping("1", 3);
+
+        (await Run(Verbs.AllowRound, Verbs.FlightTarget(code), Reviewer(code), "me")).Error.ShouldNotBeNull();
+        (await Run(Verbs.AllowRound, Verbs.FlightTarget(code), "node", "me")).Error.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task TheWatchtowersWordAllowsExactlyOneMoreRound()
     {
         var code = await Looping("1", 3);

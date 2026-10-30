@@ -54,6 +54,28 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AReReviewOfALargePrIsNotDeepAndStartsNoSubagents()
+    {
+        var first = await FirstReview("1", deepFirst: true, lines: 500);
+        first.Brief.ShouldContain("Review deeply");
+        var code = _state.Flights().Single().Code;
+        var flight = F(code);
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "## Blocking\n- the parser drops the last line")).Error.ShouldBeNull();
+
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "more\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        await Started(_legs, code);
+
+        var again = _workers.Started.Last();
+        again.Brief.ShouldContain("Read only what changed since");
+        again.Brief.ShouldNotContain("Review deeply");
+        again.Brief.ShouldNotContain("start up to");
+        again.Effort.ShouldBe(_legs.Models.ReviewerEffort(ReviewDepth.Standard));
+    }
+
+    [Fact]
     public async Task TheFirstReviewOfALargeDiffGoesToTheDeepModelWhenTheSettingIsOn()
     {
         (await FirstReview("1", deepFirst: true, lines: 500)).Model.ShouldBe("opus");

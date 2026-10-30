@@ -1483,6 +1483,12 @@ public sealed partial class LegCommander(
         {
             throw new FlightException(RoundRefusal(flight));
         }
+        // The person's go-around at a held loop is their word for one more round: the finished worker's review must start.
+        if (leg.State == LegState.Done && ReviewLoopHeld(flight))
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
 
         // A go-around on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the go-around.
         // This turns a passed review back too, so the block below finds it Changes and leaves it.
@@ -2308,6 +2314,11 @@ public sealed partial class LegCommander(
             }
             throw new FlightException(RoundRefusal(flight));
         }
+        if (ReviewLoopHeld(flight))
+        {
+            AllowedByPerson(flight);
+            flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        }
         RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
@@ -2350,6 +2361,11 @@ public sealed partial class LegCommander(
                 var numstat = await git.RunAsync(["diff", "--numstat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 plan = ReviewPlan.Choose(state.Usage(), Models.IsPriority(flight.Repo), numstat.Ok ? ReviewPlan.ParseNumstat(numstat.Output) : null, time.GetUtcNow());
                 var again = await ReReviewOfAsync(flight, CancellationToken.None);
+                // A re-review reads only the range since the last reviewed head, so the whole PR's size must not buy it a deep fan-out.
+                if (again is not null && plan.Depth == ReviewDepth.Deep)
+                {
+                    plan = new ReviewPlan(ReviewDepth.Standard, "a re-review reads only what changed since the last round");
+                }
                 var brief = Briefs.Review(flight, legs, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Briefs.Run(Cli, Socket), plan, options.Machine, again, await PilotMdOfAsync(flight));
                 // The head the reviewer reads, from the plane it reads: the pilot/review status goes on it, whatever the branch moves to.
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
@@ -2788,6 +2804,14 @@ public sealed partial class LegCommander(
     private bool IsPerson(string? who) =>
         !string.IsNullOrWhiteSpace(who) && who != "node" && who != LegWatch.Who && !IsWatchtower(who);
 
+    /// <summary>The person's own go-around or start-review at a held loop is their word for one more round: recorded, and the loop card closed.</summary>
+    private void AllowedByPerson(FlightRow flight)
+    {
+        var rounds = flight.ReviewRounds?.Length ?? 0;
+        Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the person allowed one more round", ReviewLoopKind);
+    }
+
     private static string RoundRefusal(FlightRow flight) =>
         $"{flight.Code}'s review has had {flight.ReviewRounds?.Length ?? 0} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
 
@@ -2795,6 +2819,10 @@ public sealed partial class LegCommander(
     private void AllowRound(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
+        if (!IsWatchtower(command.Who) && !IsPerson(command.Who))
+        {
+            throw new FlightException("only the watchtower or the person may allow another review round");
+        }
         if (!ReviewLoopHeld(flight))
         {
             throw new FlightException($"{flight.Code}'s review is not held at its round limit: nothing to allow");
