@@ -1469,7 +1469,7 @@ is fail-open (input it cannot read passes, exit 0 always) and never calls the no
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
 
-## The wire (`NodeWire.Version` 2)
+## The wire (`NodeWire.Version` 3)
 
 | Route | What it does |
 | --- | --- |

@@ -464,6 +464,20 @@ public static class Verbs
     public const string IdeaTargetPrefix = "idea/";
 
     /// <summary>
+    /// <c>set-milestone issue/&lt;repo&gt;/#&lt;n&gt; &lt;milestone&gt; [&lt;updated_at&gt;]</c>: the open issue moved into the open milestone of that name, or out of
+    /// every milestone with <see cref="NoMilestone"/>. The optional <c>updated_at</c> (ISO 8601) is the issue's as the caller saw it: when GitHub has
+    /// moved it on since, nothing is written. The write is guarded on the <c>updated_at</c> read just before it, as <see cref="PlanIdea"/>'s is.
+    /// A milestone that is not open is refused, naming the open ones. The result's <see cref="CommandResult.Made"/> is <c>&lt;repo&gt; #&lt;n&gt;</c>.
+    /// </summary>
+    public const string SetMilestone = "set-milestone";
+
+    /// <summary>The milestone of <see cref="SetMilestone"/> that takes the issue out of every milestone.</summary>
+    public const string NoMilestone = "none";
+
+    /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
+    public const string IssueTargetPrefix = "issue/";
+
+    /// <summary>
     /// <c>plan-flight flight/&lt;code&gt;</c>: a planner worker, <c>&lt;machine&gt;-&lt;flight&gt;-plan</c>, in the flight's plane:
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
     /// </summary>

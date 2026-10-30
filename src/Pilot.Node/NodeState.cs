@@ -57,6 +57,8 @@ public sealed class NodeState
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
     private IdeaRow[] _ideas = [];
     private IdeaMoveRow[] _ideaMoves = [];
+    private MilestoneRow[] _milestones = [];
+    private IssueRow[] _issues = [];
     private readonly Dictionary<string, SummaryRow> _summaries = new Dictionary<string, SummaryRow>(StringComparer.Ordinal);
 
     // The latest deltas, oldest first, serialised once: what a resuming client is sent.
@@ -616,6 +618,57 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The open milestones of every repo the node reads, the earliest due first within a repo.</summary>
+    public MilestoneRow[] Milestones()
+    {
+        lock (_gate)
+        {
+            return _milestones;
+        }
+    }
+
+    /// <summary>The open issues of every repo the node reads, in a milestone or in none, the newest change first.</summary>
+    public IssueRow[] Issues()
+    {
+        lock (_gate)
+        {
+            return _issues;
+        }
+    }
+
+    /// <summary>
+    /// Puts the open milestones of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the milestones when they differ, nothing when they are the same.
+    /// </summary>
+    public void PutMilestones(string repo, IEnumerable<MilestoneRow> read)
+    {
+        lock (_gate)
+        {
+            var next = IssueIds.OrderMilestones([.. _milestones.Where(m => !string.Equals(m.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]).ToArray();
+            if (!next.SequenceEqual(_milestones))
+            {
+                Publish(new MilestonesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Milestones = next });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts the open issues of one repo (<paramref name="repo"/>, its folder name) as just read, leaving every other repo's as they are:
+    /// a delta with all the issues when they differ, nothing when they are the same.
+    /// </summary>
+    public void PutIssues(string repo, IEnumerable<IssueRow> read)
+    {
+        lock (_gate)
+        {
+            var next = IssueIds.OrderIssues([.. _issues.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]).ToArray();
+            // Age moves with the clock alone: a read that changes nothing else is no delta.
+            if (next.Length != _issues.Length || next.Zip(_issues).Any(pair => pair.First with { Age = "" } != pair.Second with { Age = "" }))
+            {
+                Publish(new IssuesChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Issues = next });
+            }
+        }
+    }
+
     /// <summary>The summaries made, one per scope: the fleet's first, then each flight's by code.</summary>
     public SummaryRow[] Summaries()
     {
@@ -959,6 +1012,12 @@ public sealed class NodeState
             case IdeaMovedEvent moved:
                 _ideaMoves = [.. _ideaMoves, moved.Move];
                 break;
+            case MilestonesChangedEvent milestones:
+                _milestones = milestones.Milestones;
+                break;
+            case IssuesChangedEvent issues:
+                _issues = issues.Issues;
+                break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;
                 break;
@@ -1001,6 +1060,8 @@ public sealed class NodeState
         }
         _ideas = snapshot.Ideas;
         _ideaMoves = snapshot.IdeaMoves;
+        _milestones = snapshot.Milestones;
+        _issues = snapshot.Issues;
         foreach (var summary in snapshot.Summaries ?? [])
         {
             _summaries[summary.Scope] = summary;
@@ -1025,6 +1086,8 @@ public sealed class NodeState
         PrReviews = [.. _prReviews.Values],
         Ideas = _ideas,
         IdeaMoves = _ideaMoves,
+        Milestones = _milestones,
+        Issues = _issues,
         Summaries = [.. _summaries.Values],
     };
 

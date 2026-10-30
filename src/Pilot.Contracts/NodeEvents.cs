@@ -34,6 +34,8 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
 [JsonDerivedType(typeof(IdeasChangedEvent), "ideasChanged")]
 [JsonDerivedType(typeof(IdeaMovedEvent), "ideaMoved")]
+[JsonDerivedType(typeof(MilestonesChangedEvent), "milestonesChanged")]
+[JsonDerivedType(typeof(IssuesChangedEvent), "issuesChanged")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 public abstract record NodeEvent
@@ -139,6 +141,24 @@ public sealed record SnapshotEvent : NodeEvent
 
     private readonly IdeaMoveRow[]? _ideaMoves;
 
+    /// <summary>The open milestones of every repo the node reads ideas for, as it last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MilestoneRow[] Milestones
+    {
+        get => _milestones ?? [];
+        init => _milestones = value;
+    }
+
+    private readonly MilestoneRow[]? _milestones;
+
+    /// <summary>The open issues of those repos, in a milestone or in none, as the node last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IssueRow[] Issues
+    {
+        get => _issues ?? [];
+        init => _issues = value;
+    }
+
+    private readonly IssueRow[]? _issues;
+
     /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
     public SummaryRow[] Summaries
     {
@@ -162,6 +182,18 @@ public sealed record IdeaMovedEvent : NodeEvent
 public sealed record IdeasChangedEvent : NodeEvent
 {
     public required IdeaRow[] Ideas { get; init; }
+}
+
+/// <summary>The milestones the node reads changed (one made, due, counted again, or closed on GitHub): all of them, as they are now.</summary>
+public sealed record MilestonesChangedEvent : NodeEvent
+{
+    public required MilestoneRow[] Milestones { get; init; }
+}
+
+/// <summary>The open issues the node reads changed (one opened, closed, moved to a milestone, or seen changed on GitHub): all of them, as they are now.</summary>
+public sealed record IssuesChangedEvent : NodeEvent
+{
+    public required IssueRow[] Issues { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

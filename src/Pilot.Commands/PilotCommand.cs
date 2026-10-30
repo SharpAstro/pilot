@@ -313,7 +313,22 @@ public static class PilotCommand
         var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
             (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
                 p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
-        var issueCommand = new Command("issue", "Issues: create") { Subcommands = { issueCreate } };
+        var issueRef = Arg("issue", "The issue: #12 or 12 in the repo, or tianwen#12 in another");
+        var issueMilestone = Words("milestone", $"The open milestone to put the issue in, or {Verbs.NoMilestone} to take it out of every milestone");
+        var issueSetMilestone = Action(new Command("milestone", $"Put an issue in an open milestone, or in none ({Verbs.NoMilestone}): GitHub sets it, guarded on the issue as the node last read it; a milestone that is not open is refused, naming the open ones") { Arguments = { issueRef, issueMilestone }, Options = { issueRepo } },
+            async (p, client, ct) =>
+            {
+                var parsed = IssueIds.Parse(p.GetValue(issueRef) ?? "")
+                    ?? throw new UsageException($"{p.GetValue(issueRef)} is no issue: write #12, 12 or tianwen#12");
+                var repoGiven = parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd);
+                var repoName = Path.GetFileName(repoGiven.TrimEnd('/', '\\'));
+                // The node compares the updated_at the row showed with GitHub's, so a move from a stale row is refused rather than made.
+                var seen = (await SnapshotAsync(client, ct)).Issues.FirstOrDefault(i => i.Number == parsed.Number && string.Equals(i.Repo, repoName, StringComparison.OrdinalIgnoreCase));
+                var milestoneName = Join(p, issueMilestone);
+                return await Send(client, Verbs.SetMilestone, IssueIds.Target(repoGiven, parsed.Number),
+                    seen is null ? [milestoneName] : [milestoneName, seen.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)], who, ct);
+            });
+        var issueCommand = new Command("issue", "Issues: create, milestone") { Subcommands = { issueCreate, issueSetMilestone } };
 
         // idea, ideas: issues in a repo's Ideas milestone, id I<issue number>
         var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");

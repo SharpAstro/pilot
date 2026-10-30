@@ -43,7 +43,8 @@ public sealed partial class GhCli
         TextOf(m, "title") ?? "",
         TextOf(m, "due_on") is { } due && DateTimeOffset.TryParse(due, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null,
         TextOf(m, "description") ?? "",
-        m.TryGetProperty("open_issues", out var openIssues) && openIssues.TryGetInt32(out var open) ? open : 0);
+        m.TryGetProperty("open_issues", out var openIssues) && openIssues.TryGetInt32(out var open) ? open : 0,
+        m.TryGetProperty("closed_issues", out var closedIssues) && closedIssues.TryGetInt32(out var closed) ? closed : 0);
 
     public async Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
     {
@@ -66,6 +67,17 @@ public sealed partial class GhCli
                 || error.Contains("no milestone", StringComparison.OrdinalIgnoreCase)
                 ? []
                 : throw new FlightException($"gh could not list the {milestone} milestone's issues: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        using var doc = JsonDocument.Parse(output);
+        return [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)];
+    }
+
+    public async Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "list", "--state", "open", "--limit", "500", "--json", IssueFields], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the open issues: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         using var doc = JsonDocument.Parse(output);
         return [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)];
@@ -130,6 +142,24 @@ public sealed partial class GhCli
         if (exit != 0)
         {
             throw new FlightException($"GitHub refused to move #{number} to the milestone {milestone}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        return true;
+    }
+
+    public async Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (milestone is not null)
+        {
+            return await MoveIssueAsync(repoPath, number, milestone, ifUpdatedAt, cancellationToken);
+        }
+        if (!await UnchangedAsync(repoPath, number, ifUpdatedAt, cancellationToken))
+        {
+            return false;
+        }
+        var (exit, output, error) = await RunAsync(["issue", "edit", Text(number), "--remove-milestone"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"GitHub refused to take #{number} out of its milestone: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         return true;
     }

@@ -232,10 +232,10 @@ internal sealed class FakeGitHub : IGitHub
     public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
-    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0)
+    public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0, int closedIssues = 0)
     {
         var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues);
+        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues, closedIssues);
         list.Add(milestone);
         return milestone;
     }
@@ -317,6 +317,24 @@ internal sealed class FakeGitHub : IGitHub
         BeforeNextWrite = null;
         before?.Invoke();
         return MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number).UpdatedAt == ifUpdatedAt;
+    }
+
+    public Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken) =>
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number)] : []);
+
+    public Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
+    {
+        if (milestone is not null)
+        {
+            return MoveIssueAsync(repoPath, number, milestone, ifUpdatedAt, cancellationToken);
+        }
+        if (!Guard(repoPath, number, ifUpdatedAt))
+        {
+            return Task.FromResult(false);
+        }
+        Moves.Add((number, ""));
+        ChangeElsewhere(repoPath, number, i => i with { Milestone = null });
+        return Task.FromResult(true);
     }
 
     public Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
