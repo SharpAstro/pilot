@@ -545,4 +545,59 @@ public sealed class ReposPageTests
         }
         condition().ShouldBeTrue();
     }
+
+    private static void ClickTitle(ReposView<RgbaImage> repos, ReposScreen screen, string title)
+    {
+        var bounds = new RectF32(0f, 0f, 1400f, 800f);
+        repos.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        repos.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "repos:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        repos.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnATitleSortsTheReposByItsValueAndASecondFlipsItWithTheWorktreesStayingUnderTheirRepo()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var (_, repos) = Chrome(renderer);
+        var screen = Screen();
+        repos.ShowAll = true;
+        repos.ExpandAll(screen);
+
+        ClickTitle(repos, screen, "Repo · worktree");
+        repos.Lines.Select(l => l.Name).ShouldBe(["orbit", "stargazer", "widgets"]);
+        ClickTitle(repos, screen, "Repo · worktree");
+        repos.Lines.Select(l => l.Name).ShouldBe(["widgets", "stargazer", "orbit"]);
+        repos.Table.Sort.ShouldBe(new ListTable.SortState("Repo · worktree", Descending: true));
+
+        // The widgets repo's one worktree is drawn under it, ahead of the repo drawn next.
+        var text = CellLayout.Describe(Arrange(repos, screen));
+        var lib117 = text.IndexOf("flight/lib117", StringComparison.Ordinal);
+        lib117.ShouldBeGreaterThan(text.IndexOf("widgets", StringComparison.Ordinal));
+        lib117.ShouldBeLessThan(text.IndexOf("stargazer", StringComparison.Ordinal));
+
+        // Counts sort as numbers, the biggest first on a first click.
+        ClickTitle(repos, screen, "Open PRs · session");
+        repos.Lines.Select(l => l.Pulls.Count).ShouldBe([.. repos.Lines.Select(l => l.Pulls.Count).OrderByDescending(n => n)]);
+        repos.Lines[0].Name.ShouldBe("orbit");
+    }
+
+    [Fact]
+    public void TheSelectedRepoStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var (_, repos) = Chrome(renderer);
+        var screen = Screen();
+        repos.ShowAll = true;
+        repos.Render(screen, new RectF32(0f, 0f, 1400f, 800f));
+        repos.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None)).ShouldBeTrue();
+        repos.Lines[repos.Selected].Name.ShouldBe("widgets");
+
+        ClickTitle(repos, screen, "Repo · worktree");
+
+        repos.Lines.Select(l => l.Name).ShouldBe(["orbit", "stargazer", "widgets"]);
+        repos.Lines[repos.Selected].Name.ShouldBe("widgets");
+        repos.Selected.ShouldBe(2);
+    }
 }
