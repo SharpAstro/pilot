@@ -790,7 +790,7 @@ public sealed class JobTests : IDisposable
         clock.Advance(TimeSpan.FromMinutes(31));
 
         var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
-        (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes and was stopped"));
+        (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes of running and was stopped"));
         await jobs.StopAsync(CancellationToken.None);
     }
 
@@ -808,8 +808,7 @@ public sealed class JobTests : IDisposable
         // The withdraw is a signal on the dispatcher, which here is the test.
         jobs.Dispatch(new JobRunner.Withdrawn(row.Id, "the check's caller"));
 
-        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
-        run.ExitCode.ShouldBe(-1);
+        await Should.ThrowAsync<OperationCanceledException>(check.WaitAsync(TimeSpan.FromSeconds(30), Ct));
         _state.Jobs().Single(j => j.Id == row.Id).State.ShouldBe(JobState.Cancelled);
         await gone(first);
         await jobs.StopAsync(CancellationToken.None);
@@ -1628,6 +1627,146 @@ public sealed class JobTests : IDisposable
         _jobs.Pause(Verb(Verbs.PauseJob, queued)).Error.ShouldBe($"job {queued} is not running");
         _jobs.Resume(Verb(Verbs.ResumeJob, first)).Error.ShouldBe($"job {first} is not running");
     }
+
+    // Starts a grandchild that sleeps and writes its pid to a marker, then sleeps itself: a check that leaves a process under it.
+    private static string Grandchild(string marker) => OperatingSystem.IsWindows()
+        ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; Start-Sleep 120"
+        : $"sleep 120 & echo $! > '{marker}'; wait";
+
+    private async Task<int> GrandchildPid(string marker, Task run)
+    {
+        while (!File.Exists(marker) || ReadLog(marker).Trim().Length == 0)
+        {
+            run.IsCompleted.ShouldBeFalse();
+            await Task.Delay(100, Ct);
+        }
+        return int.Parse(ReadLog(marker).Trim());
+    }
+
+    private async Task GoneWithin(int pid)
+    {
+        using var gone = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (IsAlive(pid))
+        {
+            await Task.Delay(100, gone.Token);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task ACancelledCheckJobEndsTheProcessesItStarted()
+    {
+        var marker = Path.Combine(_root, "grandchild.pid");
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var run = _jobs.RunCheckAsync("TIA1", "parser", Grandchild(marker), _root, TimeSpan.FromMinutes(30), cancel.Token);
+        var child = await GrandchildPid(marker, run);
+
+        await cancel.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(run);
+
+        await GoneWithin(child);
+        _state.Jobs().Single(j => j.Kind == JobKind.Check).State.ShouldBe(JobState.Cancelled);
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task ACheckJobOverItsBudgetEndsTheProcessesItStartedAndSaysSo()
+    {
+        var marker = Path.Combine(_root, "grandchild.pid");
+        var run = _jobs.RunCheckAsync("TIA1", "parser", Grandchild(marker), _root, TimeSpan.FromSeconds(6), Ct);
+        var child = await GrandchildPid(marker, run);
+
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
+
+        result.ExitCode.ShouldBe(-1);
+        result.Tail.ShouldContain("of running and was stopped");
+        await GoneWithin(child);
+        _state.Jobs().Single(j => j.Kind == JobKind.Check).State.ShouldBe(JobState.Failed);
+    }
+
+    [Fact(Timeout = 90_000)]
+    public async Task TheNodeStoppingEndsRunningChecksAndDropsWaitingOnesButLeavesAnOrdinaryJobRunning()
+    {
+        var marker = Path.Combine(_root, "grandchild-stop.pid");
+        using var node = await Node.StartAsync(_root);
+        node.Jobs.MaxRunning = 2;
+        var jobId = node.Run(_root, "sleep 4; " + Echo("still going")).Made!;
+        var job = await node.UntilAsync(jobId, j => j.State == JobState.Running, Ct);
+        var running = node.Jobs.RunCheckAsync("TIA1", "one", Grandchild(marker), _root, TimeSpan.FromMinutes(30), Ct);
+        var waiting = node.Jobs.RunCheckAsync("TIA1", "two", Echo("never"), _root, TimeSpan.FromMinutes(30), Ct);
+        var child = await GrandchildPid(marker, running);
+        var rows = node.State.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
+        rows.Count.ShouldBe(2);
+
+        await node.StopAsync();
+
+        (await running.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
+        (await waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
+        foreach (var row in rows)
+        {
+            var ended = node.State.Jobs().Single(j => j.Id == row.Id);
+            (ended.State, ended.EndedAt is not null, ended.Error).ShouldBe((JobState.Failed, true, ended.Error));
+            ended.Error!.ShouldContain("node stopped");
+        }
+        await GoneWithin(child);
+        // The ordinary job is the node's to leave behind.
+        node.Job(jobId).State.ShouldBe(JobState.Running);
+        IsAlive(job.Pid!.Value).ShouldBeTrue();
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task RecoveryFailsACheckRowItFindsRunningOrQueuedKillingALiveTreeAndStillFollowsAnOrdinaryJob()
+    {
+        string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];
+        System.Diagnostics.Process Spawn()
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(program[0]) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var arg in program.Skip(1))
+            {
+                start.ArgumentList.Add(arg);
+            }
+            return System.Diagnostics.Process.Start(start)!;
+        }
+        using var checkProcess = Spawn();
+        using var jobProcess = Spawn();
+        try
+        {
+            JobRow Row(string id, JobKind kind, JobState state, System.Diagnostics.Process? process) => new()
+            {
+                Id = id, Command = "dotnet test", Cwd = _root, Kind = kind, Flight = kind == JobKind.Check ? "TIA1" : null, Leg = kind == JobKind.Check ? "parser" : null,
+                Owner = kind == JobKind.Check ? null : "a1b2c3d4", OwnerName = kind == JobKind.Check ? null : "se1-tia1-parser", State = state,
+                LogPath = Path.Combine(_root, id + ".log"), Pid = process?.Id,
+                ProcessStartedAt = process is null ? null : new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero),
+                Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow, QueuedAt = DateTimeOffset.UtcNow,
+            };
+            _state.PutJob(Row("jc1", JobKind.Check, JobState.Running, checkProcess));
+            _state.PutJob(Row("jc2", JobKind.Check, JobState.Queued, null));
+            _state.PutJob(Row("jo1", JobKind.Run, JobState.Running, jobProcess));
+
+            await _jobs.RecoverAsync(Ct);
+
+            await GoneWithin(checkProcess.Id);
+            foreach (var id in new[] { "jc1", "jc2" })
+            {
+                var row = _state.Jobs().Single(j => j.Id == id);
+                (row.State, row.EndedAt is not null).ShouldBe((JobState.Failed, true));
+                _jobs.IsRunning(id).ShouldBeFalse();
+            }
+            _jobs.IsRunning("jo1").ShouldBeTrue();
+            _state.Jobs().Single(j => j.Id == "jo1").State.ShouldBe(JobState.Running);
+            IsAlive(jobProcess.Id).ShouldBeTrue();
+        }
+        finally
+        {
+            try
+            {
+                jobProcess.Kill(entireProcessTree: true);
+                checkProcess.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+    }
+
 }
 
 /// <summary>Kills a job's process from its row, for a test that must not leave one running.</summary>
