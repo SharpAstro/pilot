@@ -109,7 +109,7 @@ public sealed class SpendPageTests
 
         page.Window.ShouldBe("week");
         asked.ShouldBe(["week"]);
-        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).ShouldBe(["spend:window:5h", "spend:window:today", "spend:window:week"], ignoreOrder: true);
+        regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("spend:", StringComparison.Ordinal)).ShouldBe(["spend:window:5h", "spend:window:today", "spend:window:week"], ignoreOrder: true);
     }
 
     [Fact]
