@@ -28,13 +28,13 @@ public sealed class ButtonFeedbackTests
         var node = new TaskCompletionSource<string?>();
         var asked = 0;
 
-        var press = presses.PressAsync("k", "k:go", _ => { asked++; return node.Task; });
+        var press = presses.PressAsync("k", "k:go", _ => { asked++; return node.Task; }, TestContext.Current.CancellationToken);
 
         // The node has not answered: the press is said, and a redraw was asked at the press.
         presses.PendingOf("k").ShouldBe("k:go");
         redraws.Count.ShouldBe(1);
         // A second press meanwhile does nothing, and asks nothing.
-        (await presses.PressAsync("k", "k:go", _ => { asked++; return Task.FromResult<string?>(null); })).ShouldBeNull();
+        (await presses.PressAsync("k", "k:go", _ => { asked++; return Task.FromResult<string?>(null); }, TestContext.Current.CancellationToken)).ShouldBeNull();
         asked.ShouldBe(1);
         redraws.Count.ShouldBe(1);
 
@@ -57,7 +57,7 @@ public sealed class ButtonFeedbackTests
             pressed => Layout.Builder.Text(pressed ? "Going…" : "Go", 12f));
 
         Make("k").Hit.ShouldBeOfType<HitResult.ButtonHit>();
-        var press = presses.PressAsync("k", "k:go", _ => node.Task);
+        var press = presses.PressAsync("k", "k:go", _ => node.Task, TestContext.Current.CancellationToken);
         var working = Make("k");
         working.Hit.ShouldNotBeOfType<HitResult.ButtonHit>();
         Presses.Made.ShouldContain("k:go");
@@ -72,7 +72,7 @@ public sealed class ButtonFeedbackTests
     {
         var presses = Counting(out _);
         var node = new TaskCompletionSource<string?>();
-        var press = presses.PressAsync("k", "k:go", _ => node.Task);
+        var press = presses.PressAsync("k", "k:go", _ => node.Task, TestContext.Current.CancellationToken);
         node.SetResult("head moved past what was reviewed");
 
         (await press).ShouldBe("head moved past what was reviewed");
@@ -82,7 +82,7 @@ public sealed class ButtonFeedbackTests
 
         // Pressed again: the old words go while the node thinks, and the next answer replaces them.
         var again = new TaskCompletionSource<string?>();
-        var second = presses.PressAsync("k", "k:go", _ => again.Task);
+        var second = presses.PressAsync("k", "k:go", _ => again.Task, TestContext.Current.CancellationToken);
         presses.RefusedOf("k").ShouldBeNull();
         again.SetResult(null);
         await second;
@@ -98,7 +98,7 @@ public sealed class ButtonFeedbackTests
     public async Task AThrownFaultOfTheNodesWireIsARefusalInItsMessage(Type fault)
     {
         var presses = Counting(out _);
-        var why = await presses.PressAsync("k", "k:go", _ => throw (Exception)Activator.CreateInstance(fault, "the node is gone")!);
+        var why = await presses.PressAsync("k", "k:go", _ => throw (Exception)Activator.CreateInstance(fault, "the node is gone")!, TestContext.Current.CancellationToken);
 
         why.ShouldBe("the node is gone");
         presses.RefusedOf("k").ShouldBe("the node is gone");
@@ -109,8 +109,8 @@ public sealed class ButtonFeedbackTests
     public async Task ATakenMarkLapsesAfterItsTimeOrGivesWayToTheNextRead()
     {
         var presses = Counting(out _);
-        await presses.PressAsync("lapses", "lapses:go", _ => Task.FromResult<string?>(null));
-        await presses.PressAsync("read", "read:go", _ => Task.FromResult<string?>(null));
+        await presses.PressAsync("lapses", "lapses:go", _ => Task.FromResult<string?>(null), TestContext.Current.CancellationToken);
+        await presses.PressAsync("read", "read:go", _ => Task.FromResult<string?>(null), TestContext.Current.CancellationToken);
         presses.IsTaken("lapses").ShouldBeTrue();
 
         // A read that shows the outcome takes over.
