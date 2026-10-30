@@ -907,6 +907,12 @@ public sealed class NodeState
         }
     }
 
+    // Compared as written, read times aside: a status holds arrays (worktrees, PRs, ideas), which a record compares by reference.
+    private static bool SameRepos(ReposRow held, ReposRow read) =>
+        held.Repos.Length == read.Repos.Length
+        && held.Repos.Zip(read.Repos).All(pair => System.Text.Json.JsonSerializer.Serialize(pair.First with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus)
+            == System.Text.Json.JsonSerializer.Serialize(pair.Second with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus));
+
     /// <summary>What the node last said it is (<see cref="NodeRow"/>); null before any.</summary>
     public NodeRow? Node()
     {
@@ -974,7 +980,7 @@ public sealed class NodeState
                 return;
             }
             if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
-                && held.Repos.Select(r => r with { UpdatedAt = default }).SequenceEqual(read.Repos.Select(r => r with { UpdatedAt = default })))
+                && SameRepos(held, read))
             {
                 return;
             }
