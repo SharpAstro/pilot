@@ -35,6 +35,7 @@ public sealed record NodeSettings
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
+    public const string ReviewDeepFirstKey = "review-deep-first";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
@@ -54,7 +55,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -73,6 +74,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
     public bool? Autopilot { get; init; }
+
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
+    public bool? ReviewDeepFirst { get; init; }
 
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
@@ -169,6 +173,7 @@ public sealed record NodeSettings
                     MaintenanceKey => JsonValue.Create(Maintenance),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
+                    ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
@@ -196,6 +201,7 @@ public sealed record NodeSettings
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
+        ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
@@ -266,6 +272,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } autopilot
                     ? (settings with { Autopilot = autopilot }, null)
                     : (null, "autopilot takes on or off");
+            case ReviewDeepFirstKey:
+                if (clear)
+                {
+                    return (settings with { ReviewDeepFirst = null }, null);
+                }
+                return OnOff(One()) is { } deepFirst
+                    ? (settings with { ReviewDeepFirst = deepFirst }, null)
+                    : (null, "review-deep-first takes on or off");
             case MergeBatchKey:
                 if (clear)
                 {

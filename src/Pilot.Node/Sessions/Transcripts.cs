@@ -391,9 +391,13 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
     private readonly Dictionary<string, TranscriptTail> _subagents = new Dictionary<string, TranscriptTail>(StringComparer.Ordinal);
     private TranscriptTail? _main;
     private long _spend;
+    private MessageUsage _usage;
     private bool _dirty = true;
 
     public string SessionId { get; } = sessionId;
+
+    /// <summary>The four token counts summed over every message of the files read so far, each counted once: what <see cref="TranscriptFacts.SpendWeighted"/> weighs.</summary>
+    public MessageUsage Usage => _usage;
 
     /// <summary>The main transcript's path once found.</summary>
     public string? Path => _main?.Path;
@@ -460,6 +464,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
                 Take(tail);
             }
             _spend = once.Values.Sum(m => m.Usage.WeightedTwentieths) / 20;
+            _usage = new MessageUsage(once.Values.Sum(m => m.Usage.Input), once.Values.Sum(m => m.Usage.CacheCreation), once.Values.Sum(m => m.Usage.CacheRead), once.Values.Sum(m => m.Usage.Output));
             // What the ledger is told: once per message id, and only when something was read since it was last told.
             spend = [.. once.Values.Where(m => m.Model != "<synthetic>")];
             _dirty = false;

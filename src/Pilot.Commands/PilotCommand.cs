@@ -505,6 +505,10 @@ public static class PilotCommand
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
+        var allowWhy = Words("why", "Why one more round is worth it", required: false);
+        var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
+            (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
+
         // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
         var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -526,7 +530,7 @@ public static class PilotCommand
         var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, merge, land } };
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, allowRound, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -994,6 +998,24 @@ public static class PilotCommand
         var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
         var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) with one Haiku call: what needs you, where it is") { Arguments = { summariseFlight } },
             (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
+        // review-cost: what reviews cost per landed flight, from the reviewer transcripts; a read, nothing is changed.
+        var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
+        var costUntil = new Option<string?>("--until") { Description = "Flights landed on or before this date" };
+        var costRepo = new Option<string?>("--repo") { Description = "Only this repo's flights (its name, as in pilot status)" };
+        var reviewCost = Action(new Command("review-cost", "What reviews cost per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and a per-flight average")
+            { Options = { costSince, costUntil, costRepo } },
+            (p, client, ct) =>
+            {
+                List<string> args = [];
+                foreach (var (flag, option) in new[] { ("--since", costSince), ("--until", costUntil), ("--repo", costRepo) })
+                {
+                    if (p.GetValue(option) is { Length: > 0 } value)
+                    {
+                        args.AddRange([flag, value]);
+                    }
+                }
+                return Send(client, Verbs.ReviewCost, Verbs.NodeTarget, [.. args], who, ct);
+            });
         // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
         var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
         var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (one Haiku call) instead of showing the kept one" };
@@ -1269,7 +1291,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1748,7 +1770,7 @@ public static class PilotCommand
                     await output.WriteLineAsync($"{edited} {result.Way}");
                 }
             }
-            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise or Verbs.ReviewCost && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
