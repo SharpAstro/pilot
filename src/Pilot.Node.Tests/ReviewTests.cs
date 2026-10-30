@@ -1429,6 +1429,25 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AMergeOnAPrBehindMainIntoABaseWithAMergeQueueJoinsTheQueueWithoutMergingMainIn()
+    {
+        // pilot #507 and #509, 2026-10-30: main merged into each waiting PR at every landing, its checks run again before it joined
+        // the queue, which builds it on the latest main anyway.
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var (flight, _) = await Passed("39");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        MainMoves();
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Error.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        // Nothing merged in or pushed: the head reviewed is the head queued (the plane went with the landing, so the remote says).
+        Git(Repo, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
     public async Task AMergeOnAnUpToDatePrWithGreenChecksIsQueuedAsBefore()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1481,6 +1500,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
         var (flight, _) = await Passed("37");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        // A PR GitHub has queued is one whose base has a merge queue, as GitHub reads both.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 1);
         MainMoves();
 
         var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
