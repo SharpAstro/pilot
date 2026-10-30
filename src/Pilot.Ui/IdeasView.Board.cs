@@ -25,6 +25,7 @@ internal sealed partial class IdeasView<TSurface>
     private const float SplitGrab = 16f;
     private const string SectionHit = "ideas:section:";
     private const float HeadHeight = 24f;
+    private const float MarkWidth = 16f;
 
     private static readonly ViewChoice<IdeasViewMode>[] ViewChoices =
     [
@@ -115,14 +116,30 @@ internal sealed partial class IdeasView<TSurface>
 
     // ---- Sections ----
 
-    // A section's header, then what the node suggested for its items: the new milestones and Accept all.
-    private IEnumerable<Layout.Node> SectionHead(BoardSection section)
+    // A section's header, then what the node suggested for its items: the new milestones and Accept all. A header that is
+    // collapsible shows its mark and folds the section on a press; one that is a target answers a drop (its region is what
+    // SectionAt finds). In the list the pinned section is neither; the tree grid has every section both; a canvas column is a
+    // target only. Only the list says "Drop to move it into" on a line of its own: a line that comes and goes under the pointer
+    // would move the rows below it, so the other views light the header and put an arrow in the mark's place.
+    private IEnumerable<Layout.Node> SectionHead(BoardSection section, bool collapsible, bool target, bool hint)
     {
         var dropping = _dropOn == section.Key && _dragging is not null;
         var parts = new List<Layout.Node>();
-        var mark = section.Kind == BoardSectionKind.Unsorted ? "" : _collapsed.Contains(section.Key) ? "▸ " : "▾ ";
+        var mark = !collapsible ? "" : _collapsed.Contains(section.Key) ? "▸ " : "▾ ";
         var where = section.Kind == BoardSectionKind.Milestone && !string.Equals(section.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? $" · {section.Repo}" : "";
-        parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+        if (hint)
+        {
+            parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+        }
+        else
+        {
+            // Over a section it takes, the mark is an arrow into it and the header is lit. The mark has a slot of its own, of one width
+            // whatever it holds: a line of words that came and went, or a mark of another width, would rewrap the header and move the
+            // rows under the pointer.
+            var slot = dropping && section.Accepts ? "→" : mark.Trim();
+            parts.Add(Layout.Builder.Text(slot, 14f, P.Bright, TextAlign.Center).WFixed(MarkWidth).HFixed(HeadHeight));
+            parts.Add(Layout.Builder.Text(section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+        }
         var facts = new List<string>
         {
             section.Kind switch
@@ -153,10 +170,14 @@ internal sealed partial class IdeasView<TSurface>
                 : CardsView<TSurface>.Pill("Suggest milestones", $"ideas:suggest-section:{section.Key}", () => Run(() => SuggestSectionAsync(section), $"suggest milestones for {section.Title}"), Tint, P.Bright));
         }
         var head = Layout.Builder.WrapH([.. parts]).WithGap(10f).WithLineGap(4f).WStar().HAuto().Pad(10f, 6f).Bg(dropping ? Lit.Bg : P.PanelBg);
-        if (section.Kind != BoardSectionKind.Unsorted)
+        if (collapsible || target)
         {
             head = head.Clickable(new HitResult.ButtonHit(SectionHit + section.Key), _ =>
             {
+                if (!collapsible)
+                {
+                    return;
+                }
                 if (!_collapsed.Remove(section.Key))
                 {
                     _collapsed.Add(section.Key);
@@ -166,7 +187,7 @@ internal sealed partial class IdeasView<TSurface>
         }
         yield return head;
 
-        if (dropping && section.Accepts)
+        if (dropping && section.Accepts && hint)
         {
             yield return WrappedProse.Of($"Drop to move it into {section.Title}", 12f, P.Bright).WStar();
         }
@@ -203,11 +224,11 @@ internal sealed partial class IdeasView<TSurface>
 
     // ---- Items ----
 
-    private Layout.Node ItemRow(BoardItem item, BoardSection section)
+    private Layout.Node ItemRow(BoardItem item, BoardSection section, bool compact = false)
     {
         _ = section;
         var idea = item.Idea;
-        var parts = new List<Layout.Node> { ItemHead(item) };
+        var parts = new List<Layout.Node> { ItemHead(item, compact) };
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
         if (meta.Length > 0)
         {
@@ -228,24 +249,35 @@ internal sealed partial class IdeasView<TSurface>
     }
 
     // The handle to drag it by, its id, its title and, once a flight flies it, the flight's code as a link.
-    private Layout.Node ItemHead(BoardItem item)
+    // A compact head (a canvas card, in a column too narrow to share a line with the id) has its title on a line of its own under them.
+    private Layout.Node ItemHead(BoardItem item, bool compact = false)
     {
         var parts = new List<Layout.Node>();
-        if (Send is not null && _board.Rest.Any(s => s.Accepts))
+        if (Grip(item) is { } grip)
         {
-            parts.Add(Layout.Builder.Text("≡", 15f, P.Dim, TextAlign.Center).Pad(4f, 0f).WAuto().BgHover(Tint.Hover)
-                .WithTooltip("Drag onto a milestone to move it there")
-                .Pressable(new HitResult.ButtonHit($"ideas:drag:{item.Key}"), press => BeginDrag(item, press), CursorKind.Move));
+            parts.Add(grip);
         }
         parts.Add(Layout.Builder.Text(Label(item), 13f, Link).WAuto());
-        parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
+        if (!compact)
+        {
+            parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
+        }
         if (item.Flight is { } flight)
         {
             parts.Add(Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
                 .Follows(new HitResult.ButtonHit($"ideas:flight:{item.Key}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto().WithTooltip($"Open the flight {flight}"));
         }
-        return Layout.Builder.HStack([.. parts]).WithGap(10f).WStar().HAuto();
+        var line = Layout.Builder.HStack([.. parts]).WithGap(10f).WStar().HAuto();
+        return compact ? Layout.Builder.VStack(line, WrappedProse.Of(item.Title, 15f, P.Bright)).WithGap(2f).WStar().HAuto() : line;
     }
+
+    // The handle an item is dragged by, in every view; none where nothing can be moved (a read-only window, or no milestone to drop on).
+    private Layout.Node? Grip(BoardItem item, string hit = "ideas:drag:") =>
+        Send is not null && _board.Rest.Any(s => s.Accepts)
+            ? Layout.Builder.Text("≡", 15f, P.Dim, TextAlign.Center).Pad(4f, 0f).WAuto().BgHover(Tint.Hover)
+                .WithTooltip("Drag onto a milestone to move it there")
+                .Pressable(new HitResult.ButtonHit(hit + item.Key), press => BeginDrag(item, press), CursorKind.Move)
+            : null;
 
     private IEnumerable<Layout.Node> Buttons(BoardItem item)
     {
@@ -545,7 +577,7 @@ internal sealed partial class IdeasView<TSurface>
         return new DragCapture(
             move =>
             {
-                var over = SectionAt(move.Y)?.Key;
+                var over = SectionAt(move.X, move.Y)?.Key;
                 if (over != _dropOn)
                 {
                     _dropOn = over;
@@ -554,7 +586,7 @@ internal sealed partial class IdeasView<TSurface>
             },
             release =>
             {
-                var target = SectionAt(release.Y);
+                var target = SectionAt(release.X, release.Y);
                 _dragging = null;
                 _dropOn = null;
                 Changed?.Invoke();
@@ -565,14 +597,32 @@ internal sealed partial class IdeasView<TSurface>
             });
     }
 
-    // The section a pointer height is over, from what was painted: under the divider, the last section header above it, so the whole
-    // section answers and not only its header. Null above the divider (the pinned section takes no drop).
-    internal BoardSection? SectionAt(float y)
+    // The section a pointer is over, from what was painted. In the list: under the divider, the last section header above the pointer,
+    // so the whole section answers and not only its header; above the divider (the pinned section) nothing takes a drop. In the tree
+    // grid: the last section row above the pointer, none from the detail's handle down. On the canvas: the header of the column the
+    // pointer is over (the nearest above it, where the columns wrap into lines). Null where nothing takes it.
+    internal BoardSection? SectionAt(float x, float y)
     {
         var regions = new List<ClickableRegion>();
         CollectPaintedRegions(regions);
-        var divider = regions.FindIndex(r => r is { Result: HitResult.ButtonHit { Action: SplitHit } });
-        if (divider < 0 || y < regions[divider].Y + regions[divider].Height)
+        var limit = float.MaxValue;
+        switch (ViewMode)
+        {
+            case IdeasViewMode.List:
+                var divider = regions.FindIndex(r => r is { Result: HitResult.ButtonHit { Action: SplitHit } });
+                if (divider < 0 || y < regions[divider].Y + regions[divider].Height)
+                {
+                    return null;
+                }
+                break;
+            case IdeasViewMode.Tree:
+                if (regions.FirstOrDefault(r => r is { Result: HitResult.ButtonHit { Action: DetailSplitHit } }) is { } detail)
+                {
+                    limit = detail.Y;
+                }
+                break;
+        }
+        if (y >= limit)
         {
             return null;
         }
@@ -580,10 +630,11 @@ internal sealed partial class IdeasView<TSurface>
         var best = float.MinValue;
         foreach (var region in regions)
         {
-            if (region is { Result: HitResult.ButtonHit hit } && hit.Action.StartsWith(SectionHit, StringComparison.Ordinal) && region.Y <= y && region.Y > best)
+            if (region is { Result: HitResult.ButtonHit hit } && hit.Action.StartsWith(SectionHit, StringComparison.Ordinal) && region.Y <= y && region.Y > best
+                && (ViewMode != IdeasViewMode.Canvas || (region.X <= x && x < region.X + region.Width)))
             {
                 best = region.Y;
-                found = _board.Rest.FirstOrDefault(s => SectionHit + s.Key == hit.Action);
+                found = _board.Sections.FirstOrDefault(s => SectionHit + s.Key == hit.Action);
             }
         }
         return found is { Accepts: true } ? found : null;

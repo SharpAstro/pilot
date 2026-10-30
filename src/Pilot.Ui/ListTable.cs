@@ -162,11 +162,11 @@ internal sealed class ListTable
     }
 
     /// <summary>The header row: titles over the columns, a divider in each gap, the stripe's cell ahead of them.</summary>
-    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null)
+    public Layout.Node Header(IReadOnlyList<ListColumn> columns, DesignScale scale, Palette? night = null, Layout.TableSort? sort = null, Action<Layout.TableSort>? onSort = null)
     {
         var specs = Lay(columns);
         var style = night is null ? Style : Style with { HeaderFill = night.Ground, HeaderText = night.Faint, HoverFill = night.Ground, SortIndicator = night.Dim };
-        var header = Dropping(Layout.Builder.TableHeader(specs, null, null, in style, Widths, scale, TitleSize, _hitPrefix), columns);
+        var header = Dropping(Layout.Builder.TableHeader(specs, sort, onSort, in style, Widths, scale, TitleSize, _hitPrefix), columns);
         return Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(StripeWidth), header.WStar())
             .WithGap(ColumnGap)
             .PadX(EndPad)

@@ -793,7 +793,7 @@ public sealed class IdeasPaneTests
         regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action);
 
     [Fact]
-    public void TheListIsTheDefaultViewOnTheSharedSwitchAndItsOtherViewsShowTheListForNow()
+    public void TheListIsTheDefaultViewOnTheSharedSwitchAndEachOtherViewIsItsOwn()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (chrome, _, _) = Chrome(renderer);
@@ -807,8 +807,19 @@ public sealed class IdeasPaneTests
 
         Click(regions, "ideas:view:tree");
         chrome.Ideas.ViewMode.ShouldBe(IdeasViewMode.Tree);
-        Spoken(renderer, chrome, screen, 1280).ShouldContain("Tree grid is not built yet: showing the list");
+        var tree = Regions(chrome, screen);
+        Actions(tree).ShouldContain("ideas:table:Title");
+        Actions(tree).ShouldNotContain(SplitHitId);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("Unsorted (Ideas)");
+
+        Click(tree, "ideas:view:canvas");
+        chrome.Ideas.ViewMode.ShouldBe(IdeasViewMode.Canvas);
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:table:Title");
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain("not built yet");
+
+        Click(Regions(chrome, screen), "ideas:view:list");
+        chrome.Ideas.ViewMode.ShouldBe(IdeasViewMode.List);
+        Actions(Regions(chrome, screen)).ShouldContain(SplitHitId);
     }
 
     [Fact]
@@ -1144,6 +1155,448 @@ public sealed class IdeasPaneTests
                 if (dir is { Length: > 0 })
                 {
                     File.WriteAllBytes(Path.Combine(dir, $"ideas-board-list-{size}-{(night ? "night" : "dark")}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+                }
+            }
+        }
+    }
+
+    // ---- The Canvas and the Tree grid, on the same board ----
+
+    private static PointerPress PressAt(ClickableRegion grip) => new(grip.X + 2, grip.Y + 2, MouseButton.Left, InputModifier.None, 1);
+
+    private static PointerMove MoveTo(ClickableRegion at, float dx = 20f, float dy = 4f) => new(at.X + dx, at.Y + dy, MouseButton.Left, InputModifier.None);
+
+    // Many issues with long titles, in several milestones and in none, so each view is held at a size the node's real repos reach.
+    private static IdeasScreen ManyScreen(int issues = 36)
+    {
+        var board = BoardScreen();
+        return board with
+        {
+            Issues =
+            [
+                .. board.Issues,
+                .. Enumerable.Range(100, issues).Select(n => Issue(n, n % 3 == 0 ? $"Issue {n} " + LongTitle : $"Issue {n}: a title of some length",
+                    n % 4 == 0 ? null : n % 4 == 1 ? "v2.3" : "Rings", flight: n % 7 == 0 ? $"PIL{n}" : null,
+                    readiness: n % 5 == 0 ? new IssueReadiness(n % 2 == 0, ["a reason"], Live.At.AddHours(-n)) : null)),
+            ],
+        };
+    }
+
+    [Fact]
+    public void TheCanvasHasAColumnForEachSectionUnsortedAndNoMilestoneFirstAndEachCardHasTheItemButtons()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        var screen = BoardScreen();
+        var regions = Regions(chrome, screen);
+
+        // One column for each section, side by side in the board's order: every header on one line, left to right.
+        var headers = new[] { "unsorted", "none", "m:pilot/v2.3", "m:pilot/Rings" }.Select(k => Region(regions, "ideas:section:" + k)).ToList();
+        headers.Select(h => h.Y).Distinct().Count().ShouldBe(1, string.Join(" ", headers.Select(h => $"{h.X},{h.Y},{h.Width}")));
+        headers.Select(h => h.X).ShouldBe([.. headers.Select(h => h.X).Order()]);
+        headers.Select(h => h.X).Distinct().Count().ShouldBe(4);
+        foreach (var header in headers)
+        {
+            header.Width.ShouldBe(IdeasView<RgbaImage>.ColumnWidth, 0.5f);
+        }
+        // An empty milestone is still a column to drop on.
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("No open issues");
+
+        // A card is the item's row: the same buttons on the same ids as the list's, under the column of its section.
+        var chat = new List<string>();
+        chrome.Ideas.OnChatAbout = chat.Add;
+        regions = Regions(chrome, screen);
+        foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
+        {
+            Actions(regions).ShouldContain(action);
+        }
+        var card = Region(regions, "ideas:ready:pilot#12");
+        card.X.ShouldBeGreaterThanOrEqualTo(headers[2].X);
+        card.X.ShouldBeLessThan(headers[2].X + headers[2].Width);
+        card.Y.ShouldBeGreaterThan(headers[2].Y);
+        Click(regions, "ideas:chat:pilot#12");
+        chat.Single().ShouldContain("Resize the split");
+        // The ideas' own buttons ride on their cards in the Unsorted column.
+        foreach (var kept in new[] { "ideas:plan:pilot I380", "ideas:drop:pilot I380", "ideas:edit:pilot I380", "ideas:tidy:pilot I380", "ideas:move:pilot I380" })
+        {
+            Actions(regions).ShouldContain(kept);
+        }
+        // The columns do not scroll across: nothing is left of the page's gutter or right of its edge.
+        Region(regions, "ideas:section:m:pilot/Rings").X.ShouldBeLessThan(1280f);
+    }
+
+    [Fact]
+    public void TheCanvasColumnsWrapIntoLinesOnANarrowPageAndNothingRunsPastItsEdge()
+    {
+        // Tall, so every stacked column is painted and its header has a region.
+        using var renderer = new RgbaImageRenderer(480, 5000);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        var screen = BoardScreen();
+        Draw(chrome, screen, 480, 5000);
+        var regions = new List<ClickableRegion>();
+        chrome.Ideas.CollectPaintedRegions(regions);
+        var headers = new[] { "unsorted", "none", "m:pilot/v2.3", "m:pilot/Rings" }.Select(k => Region(regions, "ideas:section:" + k)).ToList();
+        // One column to a line: stacked, the board's order top to bottom, each inside the page.
+        headers.Select(h => h.Y).ShouldBe([.. headers.Select(h => h.Y).Order()]);
+        headers.Select(h => h.Y).Distinct().Count().ShouldBe(4);
+        foreach (var header in headers)
+        {
+            (header.X + header.Width).ShouldBeLessThanOrEqualTo(480f);
+        }
+    }
+
+    [Fact]
+    public async Task DraggingACardToAnotherColumnAsksTheNodeAndTheCardStaysUntilTheNodeReadsItMoved()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        var screen = BoardScreen();
+        var grip = Region(Regions(chrome, screen), "ideas:drag:pilot#20");
+        var capture = grip.OnPress!(PressAt(grip)).ShouldNotBeNull();
+        chrome.Ideas.Dragging.ShouldBe("pilot#20");
+
+        // Over the milestone's column: its header lights with an arrow into it, in the header, so no row moves under the pointer.
+        var target = Region(Regions(chrome, screen), "ideas:section:m:pilot/v2.3");
+        var cardBefore = Region(Regions(chrome, screen), "ideas:ready:pilot#12").Y;
+        capture.Move(MoveTo(target, 30f, 200f));
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("→v2.3");
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain("Drop to move it into");
+        Region(Regions(chrome, screen), "ideas:ready:pilot#12").Y.ShouldBe(cardBefore);
+        sent.ShouldBeEmpty();
+
+        capture.Release(MoveTo(target, 30f, 200f));
+        await Task.WhenAll(tasks);
+        (sent.Single().Verb, sent.Single().Target).ShouldBe((Verbs.SetMilestone, "issue/pilot/#20"));
+        sent.Single().Args.ShouldBe(["v2.3", Updated.AddMinutes(20).ToString("O", System.Globalization.CultureInfo.InvariantCulture)]);
+        chrome.Ideas.Dragging.ShouldBeNull();
+        chrome.Ideas.Said.ShouldBe("the node moved #20 to v2.3");
+        chrome.Ideas.Board.SectionOf("pilot#20")!.Key.ShouldBe("none");
+        Draw(chrome, screen with { Issues = [.. screen.Issues.Select(i => i.Number == 20 ? i with { Milestone = "v2.3" } : i)] });
+        chrome.Ideas.Board.SectionOf("pilot#20")!.Key.ShouldBe("m:pilot/v2.3");
+
+        // Letting go over its own column, over the Unsorted column (which takes no drop) or over nothing asks nothing; another repo's milestone is refused.
+        sent.Clear();
+        screen = BoardScreen();
+        grip = Region(Regions(chrome, screen), "ideas:drag:pilot#20");
+        var own = Region(Regions(chrome, screen), "ideas:section:none");
+        var unsorted = Region(Regions(chrome, screen), "ideas:section:unsorted");
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(own));
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(unsorted));
+        grip.OnPress!(PressAt(grip))!.Release(new PointerMove(5f, 5f, MouseButton.Left, InputModifier.None));
+        await Task.WhenAll(tasks);
+        sent.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACardDroppedOnNoMilestoneInTheCanvasIsTakenOutOfItsMilestone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        var screen = BoardScreen();
+        var grip = Region(Regions(chrome, screen), "ideas:drag:pilot#12");
+        var none = Region(Regions(chrome, screen), "ideas:section:none");
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(none));
+        await Task.WhenAll(tasks);
+        (sent.Single().Verb, sent.Single().Target).ShouldBe((Verbs.SetMilestone, "issue/pilot/#12"));
+        sent.Single().Args[0].ShouldBe(Verbs.NoMilestone);
+    }
+
+    [Fact]
+    public void TheTreeGridSortsEachColumnAndKeepsItsSectionsWhereTheyAre()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        var regions = Regions(chrome, screen);
+        foreach (var title in new[] { "Title", "Kind", "Readiness", "Flight", "Age" })
+        {
+            Actions(regions).ShouldContain($"ideas:table:{title}");
+        }
+        // The sections are rows of the grid, in the board's order.
+        foreach (var section in new[] { "unsorted", "none", "m:pilot/v2.3", "m:pilot/Rings" })
+        {
+            Actions(regions).ShouldContain("ideas:section:" + section);
+        }
+        var sectionKeys = chrome.Ideas.Board.Sections.Select(s => s.Key).ToList();
+        var v23 = chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3");
+        var unsorted = chrome.Ideas.Board.Unsorted;
+        int[] Numbers(BoardSection s) => [.. chrome.Ideas.SortedItems(s).Select(i => i.Number)];
+        chrome.Ideas.Sort.ShouldBeNull();
+        Numbers(v23).ShouldBe([14, 13, 12]);
+
+        // Title: ascending, then descending on the second press.
+        Click(regions, "ideas:table:Title");
+        chrome.Ideas.Sort.ShouldBe((0, false));
+        Numbers(v23).ShouldBe([14, 13, 12]);
+        Numbers(unsorted).ShouldBe([381, 380, 1829]);
+        Click(Regions(chrome, screen), "ideas:table:Title");
+        chrome.Ideas.Sort.ShouldBe((0, true));
+        Numbers(v23).ShouldBe([12, 13, 14]);
+        Numbers(unsorted).ShouldBe([1829, 380, 381]);
+
+        // Flight: the flown first, the rest after them in the node's order, whichever way it goes.
+        Click(Regions(chrome, screen), "ideas:table:Flight");
+        chrome.Ideas.Sort.ShouldBe((3, false));
+        Numbers(v23).ShouldBe([13, 14, 12]);
+        Click(Regions(chrome, screen), "ideas:table:Flight");
+        Numbers(v23).ShouldBe([13, 14, 12]);
+
+        // Readiness: ready, then not ready, then not checked; a ready idea leads the Unsorted ones.
+        Click(Regions(chrome, screen), "ideas:table:Readiness");
+        chrome.Ideas.Sort.ShouldBe((2, false));
+        Numbers(v23).ShouldBe([14, 13, 12]);
+        Numbers(unsorted).First().ShouldBe(381);
+        Click(Regions(chrome, screen), "ideas:table:Readiness");
+        Numbers(v23).ShouldBe([14, 13, 12]);
+
+        // Age: ascending is the youngest first (the last updated), as an age reads.
+        Click(Regions(chrome, screen), "ideas:table:Age");
+        chrome.Ideas.Sort.ShouldBe((4, false));
+        Numbers(v23).ShouldBe([14, 13, 12]);
+        Click(Regions(chrome, screen), "ideas:table:Age");
+        Numbers(v23).ShouldBe([12, 13, 14]);
+
+        // Kind: the ideas before the issues.
+        Click(Regions(chrome, screen), "ideas:table:Kind");
+        chrome.Ideas.Sort.ShouldBe((1, false));
+
+        // However it was sorted, the sections kept their order and their rows: the same rows, none moved between sections.
+        chrome.Ideas.Board.Sections.Select(s => s.Key).ShouldBe(sectionKeys);
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).Order().ShouldBe([12, 13, 14]);
+    }
+
+    [Fact]
+    public void ThePaintedRowsFollowTheSortAndASectionRowFoldsItsRows()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        chrome.Ideas.DetailSplit = 1100f;
+        int[] RowOrder() => [.. Regions(chrome, screen).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("ideas:row:pilot#1", StringComparison.Ordinal) && b.Action.Length <= 18)
+            .OrderBy(r => r.Y).Select(r => int.Parse(((HitResult.ButtonHit)r.Result).Action["ideas:row:pilot#".Length..], System.Globalization.CultureInfo.InvariantCulture))];
+        RowOrder().ShouldBe([14, 13, 12]);
+        Click(Regions(chrome, screen), "ideas:table:Title");
+        Click(Regions(chrome, screen), "ideas:table:Title");
+        RowOrder().ShouldBe([12, 13, 14]);
+
+        // A section row folds its rows, and opens them again.
+        Click(Regions(chrome, screen), "ideas:section:m:pilot/v2.3");
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:row:pilot#12");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:row:pilot#20");
+        Click(Regions(chrome, screen), "ideas:section:m:pilot/v2.3");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:row:pilot#12");
+    }
+
+    [Fact]
+    public async Task ThePickedRowsDetailAndItsButtonsAreBelowTheGridAndThePickIsDroppedWhenTheNodeNoLongerHoldsTheRow()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Readiness: new ReadinessResult(new IssueReadiness(false, ["two goals in one issue"], Live.At))));
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        var regions = Regions(chrome, screen);
+        // Nothing picked: the detail says so, and no button is drawn for a row.
+        Actions(regions).ShouldNotContain("ideas:ready:pilot#12");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("Pick a row to see it here");
+        chrome.Ideas.Selected.ShouldBeNull();
+
+        Click(regions, "ideas:row:pilot#12");
+        chrome.Ideas.Selected.ShouldBe("pilot#12");
+        regions = Regions(chrome, screen);
+        foreach (var action in new[] { "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:open:pilot#12" })
+        {
+            Actions(regions).ShouldContain(action);
+        }
+        // The detail is below the grid's rows, under the handle, and says the whole title the row may have cut.
+        Region(regions, "ideas:ready:pilot#12").Y.ShouldBeGreaterThan(Region(regions, SplitDetail).Y);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("Resize the split");
+
+        // Its buttons are the list's verbs on the node, and the node's answer is shown in the detail.
+        Click(regions, "ideas:ready:pilot#12");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.CheckReady, "issue/pilot/#12"));
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("two goals in one issue");
+
+        // The node's read closes it: nothing is picked any more, and nothing of it is left on the page.
+        Draw(chrome, screen with { Issues = [.. screen.Issues.Where(i => i.Number != 12)] });
+        chrome.Ideas.Selected.ShouldBeNull();
+        Actions(Regions(chrome, screen with { Issues = [.. screen.Issues.Where(i => i.Number != 12)] })).ShouldNotContain("ideas:ready:pilot#12");
+
+        // An idea's detail has its own buttons beside them.
+        Click(Regions(chrome, screen), "ideas:row:pilot#380");
+        foreach (var kept in new[] { "ideas:plan:pilot I380", "ideas:drop:pilot I380", "ideas:tidy:pilot I380", "ideas:ready:pilot#380" })
+        {
+            Actions(Regions(chrome, screen)).ShouldContain(kept);
+        }
+    }
+
+    private const string SplitDetail = IdeasView<RgbaImage>.DetailSplitHit;
+
+    [Fact]
+    public async Task DraggingARowOntoAMilestoneRowAsksTheNodeAndTheRowStaysUntilTheNodeReadsItMoved()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        chrome.Ideas.DetailSplit = 1000f;
+        var grip = Region(Regions(chrome, screen), "ideas:tree-drag:pilot#20");
+        var capture = grip.OnPress!(PressAt(grip)).ShouldNotBeNull();
+        chrome.Ideas.Dragging.ShouldBe("pilot#20");
+
+        var target = Region(Regions(chrome, screen), "ideas:section:m:pilot/v2.3");
+        var rowBefore = Region(Regions(chrome, screen), "ideas:row:pilot#12").Y;
+        capture.Move(MoveTo(target));
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("→v2.3");
+        // The hint is in the header: nothing under the pointer moved to make room for it.
+        Region(Regions(chrome, screen), "ideas:row:pilot#12").Y.ShouldBe(rowBefore);
+        sent.ShouldBeEmpty();
+
+        capture.Release(MoveTo(target));
+        await Task.WhenAll(tasks);
+        (sent.Single().Verb, sent.Single().Target).ShouldBe((Verbs.SetMilestone, "issue/pilot/#20"));
+        sent.Single().Args[0].ShouldBe("v2.3");
+        chrome.Ideas.Said.ShouldBe("the node moved #20 to v2.3");
+        chrome.Ideas.Board.SectionOf("pilot#20")!.Key.ShouldBe("none");
+        Draw(chrome, screen with { Issues = [.. screen.Issues.Select(i => i.Number == 20 ? i with { Milestone = "v2.3" } : i)] });
+        chrome.Ideas.Board.SectionOf("pilot#20")!.Key.ShouldBe("m:pilot/v2.3");
+
+        // The rows of a milestone take the drop too (the section answers whole, not only its row); the Unsorted rows, the detail and the title row take none.
+        sent.Clear();
+        screen = BoardScreen();
+        grip = Region(Regions(chrome, screen), "ideas:tree-drag:pilot#21");
+        var inside = Region(Regions(chrome, screen), "ideas:row:pilot#13");
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(inside, 40f, 6f));
+        await Task.WhenAll(tasks);
+        sent.Single().Args[0].ShouldBe("v2.3");
+
+        sent.Clear();
+        var unsorted = Region(Regions(chrome, screen), "ideas:section:unsorted");
+        var detail = Region(Regions(chrome, screen), SplitDetail);
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(unsorted));
+        grip.OnPress!(PressAt(grip))!.Release(new PointerMove(40f, detail.Y + 40f, MouseButton.Left, InputModifier.None));
+        grip.OnPress!(PressAt(grip))!.Release(new PointerMove(40f, 10f, MouseButton.Left, InputModifier.None));
+        await Task.WhenAll(tasks);
+        sent.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusalToMoveIsSaidInTheTreeGridToo()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(false, "pilot has no open milestone Rings"));
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        chrome.Ideas.DetailSplit = 1000f;
+        var grip = Region(Regions(chrome, screen), "ideas:tree-drag:pilot#20");
+        var rings = Region(Regions(chrome, screen), "ideas:section:m:pilot/Rings");
+        grip.OnPress!(PressAt(grip))!.Release(MoveTo(rings));
+        await Task.WhenAll(tasks);
+        sent.Single().Args[0].ShouldBe("Rings");
+        chrome.Ideas.Said.ShouldBe("#20 not moved: pilot has no open milestone Rings");
+        chrome.Ideas.Board.SectionOf("pilot#20")!.Key.ShouldBe("none");
+    }
+
+    [Fact]
+    public async Task TheTreeGridsSectionRowsKeepTheSuggestionsAndAcceptAllOfTheList()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var suggestions = new MilestoneSuggestions("pilot",
+        [
+            new ItemSuggestion(20, "Loose issue", "v2.3", null, "it touches the split", Updated.AddMinutes(20)),
+            new ItemSuggestion(21, "Another loose one", null, "Observatory", "dome work", Updated.AddMinutes(21)),
+        ], [new NewMilestoneSuggestion("Observatory", "Dome and roof control", [21])]);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Suggestions: suggestions));
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        chrome.Ideas.DetailSplit = 1000f;
+        Click(Regions(chrome, screen), "ideas:suggest-section:none");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "section/pilot/none"));
+        var spoken = Spoken(renderer, chrome, screen, 1280);
+        spoken.ShouldContain("New milestone “Observatory”: Dome and roof control (#21)");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:accept-all:none");
+        sent.Any(s => s.Verb == Verbs.SetMilestone || s.Verb == Verbs.AcceptMilestones).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(true, 480f)]
+    [InlineData(true, 1280f)]
+    [InlineData(false, 480f)]
+    [InlineData(false, 1280f)]
+    public void TheCanvasAndTheTreeGridDrawNoTextOverTextWithManyAndLongItems(bool canvas, float width)
+    {
+        var mode = canvas ? IdeasViewMode.Canvas : IdeasViewMode.Tree;
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = mode;
+        chrome.Ideas.PageWidth = width;
+        // Every row is held against its neighbours: the tree grid's panes shown whole, the folded ideas open.
+        chrome.Ideas.DetailSplit = 5000f;
+        chrome.Ideas.ShowFolded = true;
+        var screen = ManyScreen();
+        chrome.Ideas.Select(chrome.Ideas.Board.Find("pilot#12"));
+        chrome.Ideas.Tree(screen);
+        chrome.Ideas.Select(chrome.Ideas.Board.Find("pilot#12"));
+        var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 12000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > TopBar.Height).Select(f => f.Line).ShouldBeEmpty($"{mode} at {width} wide");
+        foreach (var a in arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y > TopBar.Height))
+        {
+            (a.Bounds.X + a.Bounds.Width).ShouldBeLessThanOrEqualTo(width + 0.5f, $"{mode} at {width} wide");
+        }
+    }
+
+    [Fact]
+    public void ALongTitleInTheTreeGridKeepsItsRowOneLineHighAndItsWholeTitleIsOnHover()
+    {
+        using var renderer = new RgbaImageRenderer(480, 900);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        chrome.Ideas.PageWidth = 480f;
+        var screen = BoardScreen();
+        var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, 480, 3000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        // Every row of one height (a cut title is cut by its ellipsis, not wrapped into the row below), none wider than the page.
+        var rows = arranged.Where(a => a.Node is Layout.Node.Stack && a.Bounds.Height >= 33f && a.Bounds.Height <= 35f).ToList();
+        rows.ShouldNotBeEmpty();
+        foreach (var row in rows)
+        {
+            (row.Bounds.X + row.Bounds.Width).ShouldBeLessThanOrEqualTo(480.5f);
+        }
+    }
+
+    [Fact]
+    public void CapturesOfTheCanvasAndTheTreeGridAtNarrowAndWideSizesInBothPalettes()
+    {
+        var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR");
+        foreach (var mode in new[] { IdeasViewMode.Canvas, IdeasViewMode.Tree })
+        {
+            foreach (var (size, width, height) in new[] { ("narrow", 480, 1100), ("wide", 1280, 1000) })
+            {
+                foreach (var night in new[] { false, true })
+                {
+                    using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                    var (chrome, _, _) = Chrome(renderer);
+                    chrome.Night.On = night;
+                    chrome.Ideas.ViewMode = mode;
+                    var screen = ManyScreen(14);
+                    Draw(chrome, screen, width, height);
+                    chrome.Ideas.Select(chrome.Ideas.Board.Find("pilot#12"));
+                    chrome.Ideas.Dragging.ShouldBeNull();
+                    Draw(chrome, screen, width, height);
+                    if (dir is { Length: > 0 })
+                    {
+                        File.WriteAllBytes(Path.Combine(dir, $"ideas-board-{mode.ToString().ToLowerInvariant()}-{size}-{(night ? "night" : "dark")}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+                    }
                 }
             }
         }
