@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -363,5 +364,105 @@ public sealed class FlightsCanvasTests
         {
             (measure.MeasureText(text, 9f).Width / 2f).ShouldBeLessThan(FlightMap.DropOffset, text);
         }
+    }
+
+    private static ClickableRegion Hit(FlightsView<RgbaImage> view, string action)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Single(r => Equals(r.Result, new HitResult.ButtonHit(action)));
+    }
+
+    // The pixels exactly the palette's Bright inside a target's square. Inside a stop's ring only a plane's glyph (fuselage, wing,
+    // tail) is: the stop's disc or sign is in its state's colour, and the code over it and the words under it stay outside.
+    private static int BrightIn(RgbaImage image, ClickableRegion r, RGBAColor32 bright)
+    {
+        var n = 0;
+        for (var y = (int)r.Y; y < (int)(r.Y + r.Height); y++)
+        {
+            for (var x = (int)r.X; x < (int)(r.X + r.Width); x++)
+            {
+                var i = (y * image.Width + x) * 4;
+                if (image.Pixels[i] == bright.Red && image.Pixels[i + 1] == bright.Green && image.Pixels[i + 2] == bright.Blue)
+                {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void APlaneIsDrawnInItsRingAndNotOnceItsFlightHasLanded(bool parked, bool night)
+    {
+        // On its flying leg, or parked on its destination with every leg done and the PR open; then the same flight landed, which
+        // has no plane and keeps its stops where they were.
+        LegRow[] legs = parked
+            ? [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)]
+            : [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Flying), Leg("A", "polish", 3, LegState.Planned)];
+        FlightLine[] Line(FlightState state) => [FlightLine.Build([WithPr(Flight("A", state))], [], Live.At, legs)[0]];
+        var (flying, view) = Show(FlightsViewMode.Canvas, 1280, Line(FlightState.Flying), v => v.Night = new NightSwitch { On = night });
+        using var _ = flying;
+        var (landed, landedView) = Show(FlightsViewMode.Canvas, 1280, Line(FlightState.Landed), v => v.Night = new NightSwitch { On = night });
+        using var __ = landed;
+        var bright = (night ? Palette.Night : Palette.Standard).Bright;
+
+        view.Map.Route("A")!.PlaneAtDestination.ShouldBe(parked);
+        landedView.Map.Route("A")!.Plane.ShouldBeNull();
+        // The plane's own target, or for one parked on its sign the sign's, which is as wide as the ring.
+        var ring = Hit(view, parked ? "map:A:destination" : "map:A:plane");
+        ring.Width.ShouldBe(2f * FlightMap.PlaneRadius, 0.5f);
+        BrightIn(flying.Surface, ring, bright).ShouldBeGreaterThan(10);
+        // The landed flight's stop under it is centred where the plane was, and nothing in the ring's square is Bright.
+        var stop = Hit(landedView, parked ? "map:A:destination" : "map:A:leg:drawing");
+        (stop.X + stop.Width / 2f).ShouldBe(ring.X + ring.Width / 2f, 0.5f);
+        (stop.Y + stop.Height / 2f).ShouldBe(ring.Y + ring.Height / 2f, 0.5f);
+        BrightIn(landed.Surface, ring, bright).ShouldBe(0);
+    }
+
+    [Fact]
+    public void AMapOfThousandsOfTargetsIsAShallowTree()
+    {
+        // A thousand flights of five legs over two nodes, each with its PR: seven targets a flight (five airports, the destination
+        // and the plane). Nested one an Overlay, the tree was as deep as that, and the engine's recursion overflowed at about 2,400.
+        var de1 = new NodeMark("de1", "DE1", "DE1", Here: true);
+        var se1 = new NodeMark("se1", "SE1", "SE1", Here: false);
+        var rows = Enumerable.Range(0, 1000).Select(i => WithPr(Flight("F" + i))).ToArray();
+        var legs = rows.SelectMany(f => new[]
+        {
+            Leg(f.Code, "a", 1, LegState.Done), Leg(f.Code, "b", 2, LegState.Done), Leg(f.Code, "c", 3, LegState.Flying), Leg(f.Code, "d", 4, LegState.Planned), Leg(f.Code, "e", 5, LegState.Planned),
+        });
+        var lines = FlightLine.Build(rows, [], Live.At, legs).Select(l => l with { Node = int.Parse(l.Code[1..]) % 2 == 0 ? de1 : se1 }).ToArray();
+        using var renderer = new RgbaImageRenderer(1800, 1000);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, PageWidth = 1800f };
+
+        // Arranged on a thread with room to recurse, so a tree as deep as its targets fails the depth below rather than killing the
+        // test host with a stack overflow.
+        IReadOnlyList<Layout.ArrangedNode<float>> arranged = [];
+        Exception? failed = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                arranged = Layout.Engine.Arrange(view.Tree(new FlightsScreen(lines, "test", Live.At)), new Rect<float>(0, 0, 1800, 1000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            }
+            catch (Exception e)
+            {
+                failed = e;
+            }
+        }, 64 * 1024 * 1024);
+        thread.Start();
+        thread.Join();
+
+        failed.ShouldBeNull(failed?.ToString());
+        view.MapShown.ShouldBeTrue();
+        view.Map.Continents.Count.ShouldBe(2);
+        view.Map.Routes.Count.ShouldBe(1000);
+        arranged.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action.StartsWith("map:", StringComparison.Ordinal)).ShouldBeGreaterThan(6000);
+        arranged.Max(a => a.Depth).ShouldBeLessThan(64);
     }
 }

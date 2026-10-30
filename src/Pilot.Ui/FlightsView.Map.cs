@@ -61,12 +61,8 @@ internal sealed partial class FlightsView<TSurface>
         var k = MapScale;
         var width = MathF.Max(1f, _map.Width * k);
         var height = MathF.Max(1f, _map.Height * k);
-        Layout.Node surface = Layout.Builder.Fill(key: CanvasKey).WFixed(width).HFixed(height);
-        foreach (var hit in MapTargets(screen, k))
-        {
-            surface = Layout.Builder.Overlay(surface, hit);
-        }
-        surface = surface.WFixed(width).HFixed(height);
+        List<Layout.Node> stack = [Layout.Builder.Fill(key: CanvasKey).WFixed(width).HFixed(height), .. MapTargets(screen, k)];
+        var surface = Stacked(stack, 0, stack.Count).WFixed(width).HFixed(height);
         var map = Layout.Builder.VStack(surface)
             .WithScroll(_scroll)
             .Pad(Gutter, 8f)
@@ -74,6 +70,14 @@ internal sealed partial class FlightsView<TSurface>
         // The layer menu floats over the map, outside its scroll, as the sky map's does over the sky.
         return Layout.Builder.Overlay(map, layers).Stretch();
     }
+
+    // The map's leaf and its targets, overlaid in list order, as a tree as deep as the log of their number. An Overlay holds two
+    // nodes, and one per target nested in the last made the tree as deep as the targets were many: the layout engine measures
+    // it by recursion, and a page of about 400 flights overflowed its stack and killed the window. Halves keep the order, so a
+    // later target still paints over and is hit before an earlier one, and the planes, last, stay on top.
+    private static Layout.Node Stacked(List<Layout.Node> nodes, int from, int count) => count == 1
+        ? nodes[from]
+        : Layout.Builder.Overlay(Stacked(nodes, from, count / 2), Stacked(nodes, from + count / 2, count - count / 2));
 
     // The panel is the node carrying the palette's own hit, which FloatingPalette puts on it; its parent, the Anchored, was given
     // the rect the palette floats in (the map's body, under the page's header), and its offset is measured from that rect's top.
