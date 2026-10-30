@@ -630,6 +630,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private const int TitleFits = 34;
     private const int DetailFits = 120;
 
+    /// <summary>
+    /// What a line of a card's text is judged to hold when its words are made: generous for the panel (about sixty characters at
+    /// 11pt, 340 wide), so a capped text is cut only well past what its lines could show, and a frame fits a bounded few leaves.
+    /// </summary>
+    internal const int LineChars = 75;
+
+    /// <summary>The longest summary made into leaves (it has no line cap); its whole text is on hover past this.</summary>
+    internal const int SummaryChars = 240;
+
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
     private static readonly char[] SentencePunctuation = ['\'', '"', '`', '(', ')', ',', '.', ':', ';', '!', '?'];
@@ -726,7 +735,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
+            lines.Add(Whole(WrappedProse.Of(WrappedProse.Bound(summary, SummaryChars), 12f, Body, SummaryLines, linker(12f), lineChars: LineChars), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -750,7 +759,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
                 // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
                 // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
         }
@@ -762,7 +771,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
         if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
         {
-            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines));
+            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines, LineChars));
         }
 
         var buttons = new List<Layout.Node>();

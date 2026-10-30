@@ -213,6 +213,7 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                Transcripts = services.GetRequiredService<TranscriptBook>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
