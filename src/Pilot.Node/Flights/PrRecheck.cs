@@ -510,6 +510,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
             return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
         }
+        if (noFixer is not null && review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null)
+        {
+            reviews.RingNoFixer(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number), review, noFixer);
+        }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
             : review.Verdict == "changes" ? (noFixer is null ? "its review asks for changes, and its fixer is on it" : $"its review asks for changes, and no fixer starts: {noFixer}")
             : "its checks are still running";

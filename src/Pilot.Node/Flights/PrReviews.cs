@@ -1165,12 +1165,23 @@ public sealed class PrReviews(
     /// </summary>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
-        if (Of(pr) is not { Verdict: "changes", Fixer: null } review || TrackedClone(pr) is null || FlightOwns(pr))
+        if (Of(pr) is not { Fixer: null } review || FlightOwns(pr))
         {
             return;
         }
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
-        if (review.Findings.Any(IsDesign))
+        var asksDesign = review.Findings.Any(IsDesign);
+        if (review.Verdict != "changes" && !asksDesign)
+        {
+            return;
+        }
+        if (TrackedClone(pr) is null)
+        {
+            // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
+            RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
+            return;
+        }
+        if (asksDesign)
         {
             var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
             RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
@@ -1203,6 +1214,28 @@ public sealed class PrReviews(
                 [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
+
+    /// <summary>The Ring card of a review that asks for changes while no fixer works on the PR: the report, the findings and why none runs (pilot #527).</summary>
+    public const string NoFixerKind = "pr-review-no-fixer";
+
+    /// <summary>
+    /// Rings the owner with the review's report and findings and the reason no fixer runs. Once per review (<see cref="RaiseOnce"/>), so a
+    /// dismissal sticks. It is never closed as handled: it closes only when its cause is gone, saying which (the head moved, a newer
+    /// review, a fixer started), as <see cref="ReviewCardKinds"/> and <c>StartFixerAsync</c> do.
+    /// </summary>
+    public void RingNoFixer(PrRef pr, PrReviewRow review, string why)
+    {
+        // A review that raised its own card for this reason (design, cap, offer, failed start) is not rung a second time.
+        if ((Of(pr) ?? review).Raised.Any(k => k is DesignKind or FixCappedKind or FixOfferKind or FixFailedKind))
+        {
+            return;
+        }
+        RaiseNoFixer(pr, review, Verbs.PrTarget(pr.Repo, pr.Number), why);
+    }
+
+    private void RaiseNoFixer(PrRef pr, PrReviewRow review, string subject, string why) =>
+        RaiseOnce(pr, review, CardBin.Ring, NoFixerKind, subject, $"{pr}: the review asks for changes, and no fixer works on it",
+            $"No fixer started: {why}.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}".TrimEnd());
 
     /// <summary>
     /// Why a fixer must not start on its own for this review, or null when one may: the guards <see cref="FixAfterPostAsync"/> keeps
@@ -1316,7 +1349,7 @@ public sealed class PrReviews(
             throw;
         }
         state.PutPrReview(fixing with { FixerJob = job });
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
         return $"started {fixer} at {Short(read.Head)}";
@@ -1381,7 +1414,7 @@ public sealed class PrReviews(
     private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
 
     /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
-    private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, ReadyKind];
+    private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
 
     /// <summary>
     /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a

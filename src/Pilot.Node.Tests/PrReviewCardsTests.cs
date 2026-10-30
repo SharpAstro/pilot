@@ -65,6 +65,52 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         state.Cards().Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem().Outcome.ShouldBe("dismissed");
     }
 
+    private CardRow? OpenNoFixer(NodeState state) => state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReviews.NoFixerKind);
+
+    [Fact]
+    public async Task AChangesVerdictWithNoFixerRingsAndNoSweepOrTheReviewsEndClosesItAsHandled()
+    {
+        var row = await Review("acme/gadget#9", "changes", "README.md:1 wrong");
+        var ring = OpenNoFixer(_state).ShouldNotBeNull();
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Detail.ShouldNotBeNull().ShouldContain("README.md:1 wrong");
+        ring.Detail.ShouldContain("Two things are wrong.");
+        ring.Detail.ShouldContain("not a repo the node tracks");
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _reviews.Of(PrRef.Parse("acme/gadget#9")!)!.State.ShouldBe(PrReviewState.Closed);
+        _state.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
+
+        _github.Prs["acme/gadget#9"] = _github.Prs["acme/gadget#9"] with { Head = "feedface00000000000000000000000000000000" };
+        await _reviews.SweepAsync(Ct);
+        _state.Cards().Single(c => c.Id == ring.Id).Outcome.ShouldNotBeNull().ShouldContain("the head moved past");
+        row.Head.ShouldNotBe("feedface00000000000000000000000000000000");
+    }
+
+    [Fact]
+    public async Task ADismissedNoFixerRingIsNotRaisedAgain()
+    {
+        await Review("acme/gadget#9", "changes", "README.md:1 wrong");
+        _state.CloseCard(OpenNoFixer(_state).ShouldNotBeNull().Id, "dismissed", "controller");
+
+        await _reviews.SweepAsync(Ct);
+        var restarted = Restarted(out var state);
+        await restarted.SweepAsync(Ct);
+
+        OpenNoFixer(_state).ShouldBeNull();
+        OpenNoFixer(state).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ADesignQuestionOnAnApproveStillRingsTheOwner()
+    {
+        await Review("acme/widget#7", "approve", Design);
+
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.DesignKind && c.Bin == CardBin.Ring);
+    }
+
     [Fact]
     public async Task AFreshReviewClosesTheEarlierReviewsDesignCardSayingANewerReviewStarted()
     {
