@@ -268,9 +268,11 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
     }
 
     [Fact]
-    public async Task AFixPrWithNoReviewWritesAFixPrLineThatSaysItWasRefused()
+    public async Task AFixPrWhoseReviewCannotStartWritesAFixPrLineThatSaysItWasRefused()
     {
         _reviews.Error = _log;
+        // With no review here fix-pr starts one, so it is refused only when that start is: a closed PR has none.
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "CLOSED" };
 
         (await Run(Verbs.FixPr, "pr/acme/widget#7", "controller")).Error.ShouldNotBeNull();
 
