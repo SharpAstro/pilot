@@ -532,6 +532,12 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
+        // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
+        if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
+        {
+            Flights.NotePointer(move.X, move.Y);
+        }
+
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
         switch (NavigationInput.Classify(evt))
         {
@@ -827,6 +833,9 @@ internal sealed class PilotChrome<TSurface>
         }
         file.Attach(Night);
         Night.Changed += _ => redraw();
+        // The map's layers, kept in the same file and asking for a frame when one is toggled.
+        file.Attach(Flights.MapLayers);
+        Flights.MapLayers.Changed += redraw;
     }
 
     /// <summary>The session a waiting-session <paramref name="card"/> (subject <c>session/&lt;id&gt;</c>) is about on <paramref name="node"/>, whose ids are its own, or null.</summary>
