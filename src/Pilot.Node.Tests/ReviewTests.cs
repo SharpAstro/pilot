@@ -909,7 +909,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         // A clean merge of the base alone: the pass goes with the head, and the PR-ready card offers the merge at it.
-        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        F("TIA6").Review.ShouldNotBeNull().ShouldSatisfyAllConditions(r => r.State.ShouldBe(ReviewState.Passed), r => r.ReviewedHead.ShouldBe(Git(F("TIA6").Worktree, "rev-parse", "HEAD")));
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
@@ -1366,6 +1366,42 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(flight.Worktree, "ls-remote", "origin", "flight/tia16").ShouldStartWith(pushed);
     }
 
+    [Fact]
+    public async Task AGoAroundsLegFailedWithItsFixPushedIsFinishedByTheNodeAndReviewedAfresh()
+    {
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "20", "Flight 20")).Ok.ShouldBeTrue();
+        var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
+        (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=Its check passes",
+            "check=dotnet test", "item=The step")).Ok.ShouldBeTrue();
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var leg = _state.Legs(flight.Code).Single();
+        var worker = leg.Worker!;
+        var started = _workers.Started.Count;
+
+        // The worker made the fix and pushed it itself, then lost its way at the end and said it failed.
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the fix");
+        Git(flight.Worktree, "push", "-q", "origin", $"HEAD:{flight.Branch}");
+        for (var step = 1; step <= leg.Checklist.Count(); step++)
+        {
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, $"{step}")).Ok.ShouldBeTrue();
+        }
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "lost my way")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        Open().ShouldNotContain(c => c.Kind == "leg-failed");
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.SelfFinishedKind);
+        _workers.Started.Skip(started).Select(w => w.Name).ShouldContain(Reviewer(flight.Code));
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+    }
+
     [Theory]
     [InlineData("18")]
     [InlineData("19")]
@@ -1434,6 +1470,25 @@ public sealed class ReviewTests4 : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AMergeOnAPrBehindMainIntoABaseWithAMergeQueueJoinsTheQueueWithoutMergingMainIn()
+    {
+        // pilot #507 and #509, 2026-10-30: main merged into each waiting PR at every landing, its checks run again before it joined
+        // the queue, which builds it on the latest main anyway.
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var (flight, _) = await Passed("39");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        MainMoves();
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Error.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        // Nothing merged in or pushed: the head reviewed is the head queued (the plane went with the landing, so the remote says).
+        Git(Repo, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
     public async Task AMergeOnAnUpToDatePrWithGreenChecksIsQueuedAsBefore()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1486,6 +1541,8 @@ public sealed class ReviewTests4 : ReviewTestsBase
         var (flight, _) = await Passed("37");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        // A PR GitHub has queued is one whose base has a merge queue, as GitHub reads both.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 1);
         MainMoves();
 
         var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);

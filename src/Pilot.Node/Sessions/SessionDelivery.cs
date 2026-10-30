@@ -11,7 +11,9 @@ namespace Pilot.Node.Sessions;
 /// <param name="Cwd">Its working folder, where the copy runs.</param>
 /// <param name="Text">The user turn.</param>
 /// <param name="RemoteControl">Whether the session had Remote Control on, so the copy keeps it: a resume drops it otherwise.</param>
-public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text, bool RemoteControl = false);
+/// <param name="StartOptions">The session options the node started it with, when it has them on record (<see cref="Flights.ClaudeWorkerLauncher.SessionArguments"/>).</param>
+/// <param name="OptionsOnFile">Whether Claude Code has respawn flags on file for this session id: then it wakes with them and the resume passes none.</param>
+public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, string Text, bool RemoteControl = false, IReadOnlyList<string>? StartOptions = null, bool OptionsOnFile = false);
 
 /// <summary>A session to reach over the intercom: the name SendMessage knows it by, and its kind, which tells its row in a listing from another of the same name.</summary>
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
@@ -196,14 +198,23 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     }
 
     /// <summary>
-    /// The resume's arguments: the full session id and nothing else. A background session keeps the options it was started
-    /// with (its name, permission mode, model, effort, Remote Control, and a worker's --strict-mcp-config), and Claude
-    /// Code wakes it with them under its own id; any flag passed here makes it start a copy under a new id with those
-    /// flags alone. A worker's copy lost --strict-mcp-config and sat "blocked" on the repo's MCP approval, which a
-    /// background session has no one to ask (TIA1658's and TIA1774's workers, compacted, 2026-10-23). The session id
-    /// must be the full one: the short job id starts a copy too.
+    /// The resume's arguments. A session Claude Code has respawn flags on file for gets the full session id and nothing
+    /// else: a background session keeps the options it was started with (its name, permission mode, model, effort, Remote
+    /// Control, and a worker's --strict-mcp-config), and Claude Code wakes it with them under its own id; any flag passed
+    /// here makes it start a copy under a new id with those flags alone. A worker's copy lost --strict-mcp-config and sat
+    /// "blocked" on the repo's MCP approval, which a background session has no one to ask (TIA1658's and TIA1774's
+    /// workers, compacted, 2026-10-23). The session id must be the full one: the short job id starts a copy too.
+    /// <para>
+    /// A session id with nothing on file gets the options the node started the session with after the id. A compaction
+    /// continues a session under a new id with no respawn flags: the watchtower 484c1141 was continued as 9f042ff7 and
+    /// woke on opus[1m] (the person's default, not its own model) with no name, no --strict-mcp-config and no Remote
+    /// Control (2026-10-28).
+    /// </para>
     /// </summary>
-    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) => ["--bg", "--resume", request.SessionId];
+    public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) =>
+        request.OptionsOnFile || request.StartOptions is not { Count: > 0 } options
+            ? ["--bg", "--resume", request.SessionId]
+            : ["--bg", "--resume", request.SessionId, .. options];
 
     /// <summary>v1's relay arguments, with ListAgents added for a name that is not enough.</summary>
     public static IReadOnlyList<string> RelayArguments(string from) =>

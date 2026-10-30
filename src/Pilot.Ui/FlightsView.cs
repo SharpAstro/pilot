@@ -194,6 +194,15 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
     /// <summary>What the why field under its button asks (<c>why go around parser?</c>); null when the verb needs no words.</summary>
     public string? WhyPrompt { get; init; }
 
+    /// <summary>
+    /// True when <see cref="WhyPrompt"/> asks to be confirmed rather than answered: Enter sends the action's own <see cref="Args"/>
+    /// whatever was typed (a disconnect of an answered overlap sends the other's code and --anyway, never words).
+    /// </summary>
+    public bool Confirm { get; init; }
+
+    /// <summary>What names the action's button: its verb, and the other flight where several share a verb (one Remove wait for each connection).</summary>
+    public string Key => Verb == Verbs.Disconnect && Args.Length > 0 ? $"{Verb}:{Args[0]}" : Verb;
+
     /// <summary>The start of the message it puts in the chat's box, for the person to finish; null when it is not said in the chat.</summary>
     public string? ChatMessage { get; init; }
 
@@ -244,6 +253,18 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         if (allDone && flight.Review is { State: ReviewState.Changes or ReviewState.Reviewing })
         {
             actions.Add(new FlightAction("Review again", Verbs.StartReview, target, []));
+        }
+        // Each wait it holds for, here or on a peer, can be dropped. One the controller answered an overlap with asks once first.
+        foreach (var other in flight.Connections.Concat(flight.PeerConnections.Select(c => c.Code)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var overlap = flight.Overlaps.FirstOrDefault(o => string.Equals(o.Other, other, StringComparison.OrdinalIgnoreCase) && o.Answer == OverlapAnswer.Connect);
+            actions.Add(overlap is null
+                ? new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other])
+                : new FlightAction($"Remove wait for {other}", Verbs.Disconnect, target, [other, Verbs.AnywayFlag])
+                {
+                    WhyPrompt = $"overlap with {other}: remove anyway?",
+                    Confirm = true,
+                });
         }
         // The next planned leg only: a button is named by its verb, so one a flight. It needs words (why), so it asks for them
         // under its button rather than taking a leg out on one click.
@@ -718,12 +739,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private Task SendWhy(string text)
     {
         var why = text.Trim();
-        if (why.Length == 0 || _asking is not { } asking)
+        if (_asking is not { } asking || (why.Length == 0 && !asking.Action.Confirm))
         {
             return Task.CompletedTask;
         }
         CloseWhy();
-        OnAction?.Invoke(asking.Action with { Args = [why] });
+        OnAction?.Invoke(asking.Action.Confirm ? asking.Action : asking.Action with { Args = [why] });
         return Task.CompletedTask;
     }
 
@@ -732,7 +753,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     private IEnumerable<Layout.Node> WhyRow(FlightLine line)
     {
         if (_asking is not { } asking || asking.Code != line.Code || line.Stale is not null
-            || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target))
+            || !FlightAction.For(line).Any(a => a.Verb == asking.Action.Verb && a.Target == asking.Action.Target && a.Args.SequenceEqual(asking.Action.Args)))
         {
             yield break;
         }
@@ -916,7 +937,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             // Retry move is in the flight's red band, not said twice.
             foreach (var action in FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight))
             {
-                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Verb}"));
+                buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Key}"));
             }
         }
 

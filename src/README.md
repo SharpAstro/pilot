@@ -43,9 +43,20 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   `PILOT_NODE_SOCKET` is only connected to.
 - **Rail:** the left rail, as tianwen's, its chords counting down it: Home (Ctrl+1), Chat (Ctrl+2), Sessions (Ctrl+3),
   Flights (Ctrl+4), Repos (Ctrl+5), Background tasks (Ctrl+6), Fleet (Ctrl+7), Settings (Ctrl+8) and 💡 Ideas (Ctrl+9), whose entry carries the count of noted ideas. The Ideas page
-  notes an idea from a one-line box (Claude picks its repo, and asks inline with "File in <repo>" buttons when two fit), lists the
-  noted ideas newest first with their bodies as Markdown, and per idea offers Plan, Drop, Edit, Tidy, Move to repo… and Open on
-  GitHub; planned and dropped ideas are folded below.
+  notes an idea from a one-line box (Claude picks its repo, and asks inline with "File in <repo>" buttons when two fit), and shows
+  the repos' ideas and open issues by milestone in three views, picked on the same view switch the Flights page has: **List** (the
+  default), **Tree grid** and **Canvas**. All three are one board the node's read builds: *Unsorted (Ideas)* first (the noted
+  ideas, newest first, bodies as Markdown), then *No milestone*, then every open milestone with its open and closed counts, due
+  date and progress. The List pins Unsorted above a handle that resizes the split; the Tree grid has sortable Title, Kind,
+  Readiness, Flight and Age columns with the sections as foldable rows (a sort orders the rows inside each section, never the
+  sections) and the picked row's detail with its buttons below; the Canvas has a column for each section, wrapping into lines on a
+  narrow window, with a card for each item. Every item has Chat about this, Suggest milestone, Ready? and Open on GitHub, an idea
+  also Plan, Drop, Edit, Tidy and Move to repo…; a ready issue offers Plan flight, and a flown one shows its flight's code as a
+  link. **Ready?** asks the node whether the item can fly as a flight and shows its answer (✓ ready or ✗ not ready, with the
+  reasons); **Suggest milestone**, and Suggest milestones on a section, ask the node for an existing milestone or a new one
+  (title and a one-line goal) for each item, and nothing moves until it is accepted, per item or with Accept all. An item dragged
+  by its ≡ handle onto a milestone (or onto No milestone) in any view is moved by the node (`set-milestone`); the row stays where
+  it is until the node's next read of the repo says it moved. Planned and dropped ideas are folded below.
 - **Back:** one Back and Forward for the whole window: **←** and **→** at the top of the rail (disabled when there is nothing to
   go back or forward to), Alt+Left and Alt+Right, and the mouse's back and forward buttons. Every move between places (a
   rail page, a transcript or a flight's page, a link from Home, Fleet, a card, Jobs or Repos) is recorded with the page,
@@ -653,6 +664,7 @@ pilot flight overlap <code> <other> [--pick fold|connect] [--file <path>…] <wh
 pilot flight separate <code> <other>           # plan it in parallel: a fresh planner is started, told the answer
 pilot flight connect-overlap <code> <other>    # the answer to connect: held until <other> (any node) lands, a fresh planner is started, told the answer
 pilot flight connect <code> <other>            # holds until <other>, a flight of this node or of a reachable one, has landed
+pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this node or a peer): the waits it made go, the flight flies when nothing else holds it, a Handled card says who; an overlap's connect is refused with why, and goes with --anyway (the person's)
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
@@ -675,6 +687,7 @@ pilot compact <session> [focus…]               # an idle background session's 
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
 pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
@@ -1405,7 +1418,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | Standing | Known by | May do |
 |---|---|---|
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
-| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
+| **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card) but at the person's word in its chat (below), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `connect-overlap`, `create-issue`, `create-flight` or `sync-repos` |
 | **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
@@ -1420,6 +1433,21 @@ The watchtower is told apart by what began its turn: the node notes who sent the
 chat, a `tell`, or the node's own card and nudge, which are not theirs), and while that was the person's and the session has
 not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "merge TIA1" said in the chat gets the Allow card
 (autopilot off) or runs at once with a Handled card (on). Any other turn it is the lookout.
+
+A third route is the person's word in its chat (#473), which on Remote Control reaches the session past the node. The
+watchtower's `answer` or `dismiss` of an open card whose `--why` quotes the person's latest message (equal, or one holding
+the other on word boundaries, at least six characters) runs **as the person**, while its turn runs, and leaves a Handled
+card of kind `persons-word` with their words. From the CLI that is `pilot answer <card> <choice> --why "<their words>"`, or
+`pilot dismiss <card> <reason> --why "<their words>"`, where the reason stays the dismissal's own; `--why` is the
+command's `Why`, as on the person's own commands. The node reads the latest line that fed the turn from its transcript, meta
+lines included: it is the person's only when Claude Code records it as typed or resumed text (`origin.kind` human) or as
+a cross-session message from `controller`, it is not the session's first prompt (the brief the node started it with, which
+Claude Code records as typed), and its text is not the node's voice (`[node] `), another node's watchtower
+(`[From the watchtower of node `), or a say the node routed to it from anyone but the person (a say names the watchtower by
+row id or by name). A message from any other session, the node's own envelope, a task finishing, a scheduled wake, a
+hand-back or a compaction leaves the watchtower fenced. The match binds the press to the person's message, not to the card or the choice: any message of theirs in the
+turn lifts every fence for whichever card's choice the watchtower answers (`update`, `answer-grant` and `post-review`
+included), so the brief tells it to press only the choice the person asked for and to say which.
 
 ### An assistant's your-only request: the autopilot rule
 
@@ -1528,7 +1556,7 @@ is fail-open (input it cannot read passes, exit 0 always) and never calls the no
 A session the API stopped (its transcript's `apiError`, `usage_limit_reached` with when the limit resets) shows as
 **stopped** with why and when it can go on, hooks or not.
 
-## The wire (`NodeWire.Version` 2)
+## The wire (`NodeWire.Version` 3)
 
 | Route | What it does |
 | --- | --- |

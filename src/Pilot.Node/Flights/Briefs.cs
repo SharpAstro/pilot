@@ -26,6 +26,9 @@ public static class Briefs
     /// <summary>What the plane holds so far, for a go-around's brief: its commits past the base and the files they touch.</summary>
     public sealed record PlaneState(string Commits, string DiffStat);
 
+    /// <summary>A re-review's brief: the last round, and the commits and stat of its head to the plane's HEAD.</summary>
+    public sealed record ReReview(ReviewRound Last, PlaneState Range);
+
     /// <summary>
     /// The <c>pilot</c> CLI a worker runs, by its full path: beside the node (a publish puts them together), else the source
     /// tree's build of the same configuration, else <c>pilot</c> on <c>PATH</c>.
@@ -186,12 +189,24 @@ public static class Briefs
         text.AppendLine($"  Give `{run} run --` the command itself (`{run} run -- dotnet test ...`); the node runs it in its own shell, so");
         text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which is refused: several steps are a job each, one after the other. Run");
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
+        text.Append(BranchHistoryRule);
         text.AppendLine();
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
         return text.ToString();
     }
+
+    /// <summary>
+    /// How a branch takes the base, for the worker and both reviewers: merging it in is the way, and merge commits on a
+    /// working branch are never a finding, because the merge queue rebases each PR and lands it linear. A review that called
+    /// them a defect sent TIA1874's worker to rewrite its pushed branch, which then needed a force push only the owner could
+    /// allow (DE1, 2026-10-30); TIA1910 and TIA1915 stalled the same way.
+    /// </summary>
+    internal const string BranchHistoryRule =
+        "- A branch takes its base by a merge (`git fetch origin` then `git merge origin/<base>`). Merge commits on a working branch are\n" +
+        "  fine and never a finding: the merge queue rebases each PR, so main stays linear whatever the branch holds. Never rebase a\n" +
+        "  pushed branch, never push with --force or --force-with-lease, and never ask for either.\n";
 
     /// <summary>
     /// What the worker and the planner (whose legs' Done-when may wait on outside work) are told about waiting: a leg waits on a
@@ -481,7 +496,8 @@ public static class Briefs
     }
 
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, string? pilotMd = null)
+    /// <param name="again">The last round and what changed since its head: a re-review reads only that range; null reads the whole diff.</param>
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, ReReview? again = null, string? pilotMd = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -489,8 +505,18 @@ public static class Briefs
         text.AppendLine($"You review flight {flight.Code} ({flight.Repo} {flight.Item.Display}{title}) before it is offered for merging.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the flight's plane ({flight.Worktree}), on its branch `{flight.Branch}`, against `{flight.Base}`.");
-        text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        if (again is null)
+        {
+            text.AppendLine("Read the whole diff (`git diff " + flight.Base + "...HEAD`), and rerun what proves each leg's Done-when. Do not edit,");
+        }
+        else
+        {
+            text.AppendLine($"This is round {again.Last.Round + 1}: round {again.Last.Round} read {(again.Last.Head is { Length: > 0 } h ? $"`{h}`" : "an earlier head")} and said {again.Last.Verdict.ToString().ToLowerInvariant()}.");
+            text.AppendLine($"Read only what changed since: `git diff {again.Last.Head}..HEAD`, not the whole PR. First check that each finding of round {again.Last.Round}");
+            text.AppendLine("below was dealt with, then read the new code for bugs it brings, and rerun what proves each leg's Done-when. Do not edit,");
+        }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
+        text.Append(BranchHistoryRule);
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
@@ -528,17 +554,38 @@ public static class Briefs
         {
             text.AppendLine($"- {leg.Name}: {leg.Goal} Done when: {leg.DoneWhen}{(leg.Check is { Length: > 0 } c ? $" (check: `{c}`)" : "")}");
         }
-        if (plane.Commits.Trim().Length > 0)
+        if (again is not null)
         {
             text.AppendLine();
-            text.AppendLine("Commits:");
-            text.AppendLine(plane.Commits.Trim());
+            text.AppendLine($"Findings of round {again.Last.Round} ({again.Last.Verdict.ToString().ToLowerInvariant()}):");
+            text.AppendLine(again.Last.Findings.Trim());
+            if (again.Range.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits since:");
+                text.AppendLine(again.Range.Commits.Trim());
+            }
+            if (again.Range.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files changed since:");
+                text.AppendLine(again.Range.DiffStat.Trim());
+            }
         }
-        if (plane.DiffStat.Trim().Length > 0)
+        else
         {
-            text.AppendLine();
-            text.AppendLine("Files:");
-            text.AppendLine(plane.DiffStat.Trim());
+            if (plane.Commits.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Commits:");
+                text.AppendLine(plane.Commits.Trim());
+            }
+            if (plane.DiffStat.Trim().Length > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("Files:");
+                text.AppendLine(plane.DiffStat.Trim());
+            }
         }
         text.AppendLine();
         // TIA1814's reviewers ran tianwen's whole suite themselves (10,127 tests, 40 minutes on a busy machine) while CI had it
@@ -548,11 +595,18 @@ public static class Briefs
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");
+        text.AppendLine();
+        text.AppendLine("Sort every finding under one of two headings. `## Blocking`: what must change before the merge (a Done-when that does");
+        text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
+        text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
+        text.AppendLine("pass with notes: the notes stay on the PR-ready card and the watchtower makes the small ones in the plane; no leg goes round.");
         text.AppendLine(AttachmentRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
-        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`.");
-        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`. A fresh worker is told it as is.");
+        text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`. With only not blocking findings, still `pass`, and");
+        text.AppendLine("  put them under `## Not blocking` in the report: a pass with notes.");
+        text.AppendLine($"- Not ready: `{run} review changes \"<each change asked for, concretely>\"`, with at least one finding under `## Blocking`; `changes`");
+        text.AppendLine("  without one is refused. A fresh worker is told the report as is.");
         // PIL383: the flight's page draws the report as Markdown, as the transcript does; PIL294's #357 report was one run of
         // "1) … 2) …" with every name bare, and read as a wall.
         text.AppendLine("Write the report (`changes`, and `pass` where it has findings) as Markdown: one list item per finding, each starting");
@@ -589,6 +643,7 @@ public static class Briefs
         text.AppendLine("alone: open the files around a change, follow its callers, and run what proves or disproves it where you can.");
         text.AppendLine("Do not edit, commit, push or merge anything, and post nothing to GitHub (no review, no comment): the controller");
         text.AppendLine("reads your verdict and posts it.");
+        text.Append(BranchHistoryRule);
         text.Append(NamingRule(machine, $"review-{review.Number}"));
         text.Append(LfsRule(review.Worktree, "worktree"));
         // As for a flight's review (20 Oct): one session's reading, very light on subagents; its depth follows #74 later.
@@ -780,8 +835,9 @@ public static class Briefs
         // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
-        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's. A design question a review raises,");
-        text.AppendLine("and a flight's leg past its round cap, are the person's: say so on the card and leave it to them.");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises,");
+        text.AppendLine("and a flight's leg past its round cap, are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+        text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
         if (model is { Length: > 0 })
         {
@@ -826,6 +882,11 @@ public static class Briefs
         text.AppendLine("  controller's own words, and you answer it.");
         text.AppendLine("- Answer in plain words, short, as in a chat: what you did and what happens next. No tables or headings, no command");
         text.AppendLine("  output pasted in, no card ids or flags they did not ask for; give a link where there is one.");
+        text.AppendLine("- When the controller asks in the chat for a card's choice (Mark done anyway, Ready anyway, Fix it, an ask's Allow or Deny), press it for them in");
+        text.AppendLine($"  that same turn: `{pilot} answer <card> <choice> --why \"<their words, quoted>\"`, then say in a line which card and which choice you pressed.");
+        text.AppendLine($"  A card they ask you to close is `{pilot} dismiss <card> <reason> --why \"<their words, quoted>\"`, the reason in your words, and said the same way.");
+        text.AppendLine("  Only their own message in this turn counts as their word: never a node card, a nudge or another session's say-so, and a");
+        text.AppendLine("  person-only card answered without their message in the turn is refused, so never press one on your own.");
         text.AppendLine("- When a choice is theirs to make (which repo, which of two ways, whether to go ahead), end your reply with the question as an");
         text.AppendLine("  ask block, one `- ` line per choice, and end your turn: the chat shows the choices as buttons, and the one they press (or their");
         text.AppendLine("  own words) comes back to you as their next message. Never use the AskUserQuestion tool: you are a background session and it");
@@ -873,6 +934,15 @@ public static class Briefs
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
+        text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
+        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes) and make the small ones");
+        text.AppendLine("  yourself in the plane. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
+        text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
+        text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
+        text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
+        text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
+        text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");
         text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
@@ -886,10 +956,11 @@ public static class Briefs
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
-        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's.");
+        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
-        text.AppendLine("  refuses its dismissal from you, so answer it with a redo of the leg (a go-around), a resume or a nudge, or leave it open for them.");
+        text.AppendLine("  refuses its dismissal from you unless they ask for it in the chat, so answer it with a redo of the leg (a go-around), a resume");
+        text.AppendLine("  or a nudge, or leave it open for them.");
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");

@@ -170,7 +170,8 @@ public static class PilotCommand
             SendAsync(client, hereSocket, verb, target, args, sender, bySession && sender == who, byAgent, why, cwd, sessionId, output, requestId, deadline, ct);
 
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
-        // update): the node keeps it in the black box and on the card it raises (autopilot off) or the Handled line it leaves (on).
+        // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)
+        // or the Handled line it leaves (on).
         var actingOn = new Option<string?>("--why") { Description = "The message you are acting on, in your words: recorded with a command only the person may do, whose card or Handled line shows it" };
 
         Argument<string> Arg(string name, string description) => new(name) { Description = description };
@@ -313,7 +314,67 @@ public static class PilotCommand
         var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
             (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
                 p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
-        var issueCommand = new Command("issue", "Issues: create") { Subcommands = { issueCreate } };
+        var issueRef = Arg("issue", "The issue: #12 or 12 in the repo, or tianwen#12 in another");
+        var issueMilestone = Words("milestone", $"The open milestone to put the issue in, or {Verbs.NoMilestone} to take it out of every milestone");
+        var issueSetMilestone = Action(new Command("milestone", $"Put an issue in an open milestone, or in none ({Verbs.NoMilestone}): GitHub sets it, guarded on the issue as the node last read it; a milestone that is not open is refused, naming the open ones") { Arguments = { issueRef, issueMilestone }, Options = { issueRepo } },
+            async (p, client, ct) =>
+            {
+                var parsed = IssueIds.Parse(p.GetValue(issueRef) ?? "")
+                    ?? throw new UsageException($"{p.GetValue(issueRef)} is no issue: write #12, 12 or tianwen#12");
+                var repoGiven = parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd);
+                var repoName = Path.GetFileName(repoGiven.TrimEnd('/', '\\'));
+                // The node compares the updated_at the row showed with GitHub's, so a move from a stale row is refused rather than made.
+                var seen = (await SnapshotAsync(client, ct)).Issues.FirstOrDefault(i => i.Number == parsed.Number && string.Equals(i.Repo, repoName, StringComparison.OrdinalIgnoreCase));
+                var milestoneName = Join(p, issueMilestone);
+                return await Send(client, Verbs.SetMilestone, IssueIds.Target(repoGiven, parsed.Number),
+                    seen is null ? [milestoneName] : [milestoneName, seen.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)], who, ct);
+            });
+        // An issue as a person writes it, with the repo of the call when it names none: the repo as the node is given it, and the number.
+        (string Repo, int Number) ParseIssue(NodeClient client, ParseResult p, string? text)
+        {
+            var parsed = IssueIds.Parse(text ?? "") ?? throw new UsageException($"{text} is no issue: write #12, 12 or tianwen#12");
+            return (parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd), parsed.Number);
+        }
+        var issueReady = Action(new Command("ready", "Ask Claude whether an issue (an idea too) is ready to fly as a flight: one leg-sized goal, tests that can be named, no open questions. The answer, with its reasons and the time, is kept on the issue's row; nothing is written to GitHub") { Arguments = { issueRef }, Options = { issueRepo } },
+            (p, client, ct) =>
+            {
+                var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueRef));
+                return Send(client, Verbs.CheckReady, IssueIds.Target(repoGiven, number), [], who, ct);
+            });
+        var issueSuggestRefs = Words("issue", "The issue to suggest a milestone for: #12 or 12 in the repo, or tianwen#12 in another; none with --section", required: false);
+        var issueSection = new Option<string?>("--section") { Description = $"Suggest for every open issue of a section instead: {Verbs.SectionUnsorted} (the {IdeaIds.Milestone} milestone) or {Verbs.NoMilestone} (no milestone)" };
+        var issueSuggest = Action(new Command("suggest", "Ask Claude for a milestone for an issue, or for each issue of a section: an open milestone, or a new one (title and goal) with the issues that would go in it. Nothing is moved or made until pilot issue accept") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueSection } },
+            (p, client, ct) =>
+            {
+                if (p.GetValue(issueSection) is { Length: > 0 } section)
+                {
+                    section = section.Trim().ToLowerInvariant();
+                    return section is Verbs.SectionUnsorted or Verbs.NoMilestone
+                        ? Send(client, Verbs.SuggestMilestones, IssueIds.SectionTarget(RepoPath(client, p.GetValue(issueRepo), cwd), section), [], who, ct)
+                        : throw new UsageException($"--section is {Verbs.SectionUnsorted} or {Verbs.NoMilestone}, not {section}");
+                }
+                var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueSuggestRefs)?.FirstOrDefault());
+                return Send(client, Verbs.SuggestMilestones, IssueIds.Target(repoGiven, number), [], who, ct);
+            });
+        var issueAcceptAll = new Option<bool>("--all") { Description = "Accept every suggestion kept for the repo" };
+        var issueAccept = Action(new Command("accept", "Apply the suggestions the node kept from pilot issue suggest: one issue, several, or --all. A suggested new milestone is made first, once; each issue is then moved as pilot issue milestone moves it") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueAcceptAll } },
+            (p, client, ct) =>
+            {
+                var refs = p.GetValue(issueSuggestRefs) ?? [];
+                if (p.GetValue(issueAcceptAll))
+                {
+                    return Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)), [Verbs.AllArg], who, ct);
+                }
+                if (refs.Length == 0)
+                {
+                    throw new UsageException("name the issue to accept the suggestion of, or --all");
+                }
+                var parsed = refs.Select(r => ParseIssue(client, p, r)).ToArray();
+                return parsed.Length == 1
+                    ? Send(client, Verbs.AcceptMilestones, IssueIds.Target(parsed[0].Repo, parsed[0].Number), [], who, ct)
+                    : Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(parsed[0].Repo), [.. parsed.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))], who, ct);
+            });
+        var issueCommand = new Command("issue", "Issues: create, milestone, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issueReady, issueSuggest, issueAccept } };
 
         // idea, ideas: issues in a repo's Ideas milestone, id I<issue number>
         var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");
@@ -406,6 +467,10 @@ public static class PilotCommand
         var connect = Action(new Command("connect", "The flight holds until the other, a flight of this node or of a reachable one, has landed") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.Connect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
 
+        var disconnectAnyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Drop a connection the controller chose as the answer to an overlap (the person's to give)" };
+        var disconnect = Action(new Command("disconnect", "Undo a connect: the flight stops waiting for the other (on this node or another) and flies when nothing else holds it") { Arguments = { code, other }, Options = { disconnectAnyway } },
+            (p, client, ct) => Send(client, Verbs.Disconnect, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!, .. p.GetValue(disconnectAnyway) ? new[] { Verbs.AnywayFlag } : []], who, ct));
+
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
@@ -440,6 +505,10 @@ public static class PilotCommand
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
+        var allowWhy = Words("why", "Why one more round is worth it", required: false);
+        var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
+            (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
+
         // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
         var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -460,8 +529,8 @@ public static class PilotCommand
             (p, client, ct) => Send(client, Verbs.Separate, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
-        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, fly, move, pr, reviewStart, merge, land } };
+        var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, allowRound, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -500,10 +569,10 @@ public static class PilotCommand
         var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
             (p, client, ct) => Send(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, ct));
 
-        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on)");
-        outcome.AcceptOnlyFromAmong("done", "failed", "accepted");
+        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on), or verified (anyone's: the node finishes a failed leg only if its plane matches its pushed branch and its check passes)");
+        outcome.AcceptOnlyFromAmong("done", "failed", "accepted", "verified");
         var report = Words("report", "A line on what was done, or why not", required: false);
-        var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around") { Arguments = { outcome, report }, Options = { leg } },
+        var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around, unless its work is pushed and checks out, when the node finishes it") { Arguments = { outcome, report }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.FinishLeg, _ => [p.GetValue(outcome)!, .. p.GetValue(report) ?? []], ct));
 
         var verdict = Arg("outcome", "go (the brief is still true of the tree) or no-go (a fact it rests on is stale)");
@@ -649,11 +718,13 @@ public static class PilotCommand
         });
         var card = Arg("card", "The card's id, as c3");
         var choice = Words("choice", "The choice's number or label");
-        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice } },
-            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct));
-        var dismissWhy = Words("why", "Why it needs nothing", required: false);
-        var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissWhy } },
-            (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissWhy) ?? [], who, ct));
+        // --why is the message acted on, as for the person's own commands: the watchtower quotes the person's words in its chat
+        // with it, and the node takes such an answer or dismissal as theirs. A dismissal's reason stays its own words.
+        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct, p.GetValue(actingOn)));
+        var dismissReason = Words("reason", "Why it needs nothing", required: false);
+        var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissReason }, Options = { actingOn } },
+            (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissReason) ?? [], who, ct, p.GetValue(actingOn)));
 
         // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
         var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
@@ -860,6 +931,24 @@ public static class PilotCommand
         var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
         var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) with one Haiku call: what needs you, where it is") { Arguments = { summariseFlight } },
             (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
+        // review-cost: what reviews cost per landed flight, from the reviewer transcripts; a read, nothing is changed.
+        var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
+        var costUntil = new Option<string?>("--until") { Description = "Flights landed on or before this date" };
+        var costRepo = new Option<string?>("--repo") { Description = "Only this repo's flights (its name, as in pilot status)" };
+        var reviewCost = Action(new Command("review-cost", "What reviews cost per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and a per-flight average")
+            { Options = { costSince, costUntil, costRepo } },
+            (p, client, ct) =>
+            {
+                List<string> args = [];
+                foreach (var (flag, option) in new[] { ("--since", costSince), ("--until", costUntil), ("--repo", costRepo) })
+                {
+                    if (p.GetValue(option) is { Length: > 0 } value)
+                    {
+                        args.AddRange([flag, value]);
+                    }
+                }
+                return Send(client, Verbs.ReviewCost, Verbs.NodeTarget, [.. args], who, ct);
+            });
         // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
         var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
         var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (one Haiku call) instead of showing the kept one" };
@@ -1135,7 +1224,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1312,6 +1401,45 @@ public static class PilotCommand
             var due = m.DueOn is { } at ? $", due {at.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" : "";
             await output.WriteLineAsync($"  {m.Title} ({m.OpenIssues} open{due}){(m.Description.Length > 0 ? $": {m.Description}" : "")}");
         }
+    }
+
+    /// <summary>What a readiness check found: ready or not, its reasons and when; or why nothing was checked.</summary>
+    internal static async Task WriteReadinessAsync(TextWriter output, string id, ReadinessResult result)
+    {
+        if (result.Readiness is not { } readiness)
+        {
+            await output.WriteLineAsync($"{id}: {result.Note ?? "not checked"}");
+            return;
+        }
+        await output.WriteLineAsync($"{id}: {(readiness.Ready ? "ready" : "not ready")} (checked {readiness.CheckedAt.ToString("u", CultureInfo.InvariantCulture)})");
+        foreach (var reason in readiness.Reasons)
+        {
+            await output.WriteLineAsync($"  - {reason}");
+        }
+    }
+
+    /// <summary>A milestone suggested for each issue, and the new milestones with the issues that would go in them; nothing is moved.</summary>
+    internal static async Task WriteSuggestionsAsync(TextWriter output, MilestoneSuggestions suggestions)
+    {
+        if (suggestions.Items.Length == 0)
+        {
+            await output.WriteLineAsync($"{suggestions.Repo}: {suggestions.Note ?? "no suggestion"}");
+            return;
+        }
+        foreach (var item in suggestions.Items)
+        {
+            var where = item.Milestone is { } open ? open : item.NewMilestone is { } fresh ? $"new milestone {fresh}" : item.Note ?? "no suggestion";
+            await output.WriteLineAsync($"#{item.Number}  {item.Title}: {where}{(item.Reason.Length > 0 && (item.Milestone ?? item.NewMilestone) is not null ? $" ({item.Reason})" : "")}");
+        }
+        foreach (var made in suggestions.New)
+        {
+            await output.WriteLineAsync($"new milestone {made.Title}{(made.Description.Length > 0 ? $" ({made.Description})" : "")}: {string.Join(' ', made.Issues.Select(n => "#" + n.ToString(CultureInfo.InvariantCulture)))}");
+        }
+        if (suggestions.Note is { Length: > 0 } note)
+        {
+            await output.WriteLineAsync(note);
+        }
+        await output.WriteLineAsync("nothing is moved: pilot issue accept <issue> (or --all) applies the suggestions");
     }
 
     /// <summary>The ideas, newest first, a line each: <c>I381  pilot  noted  3d  Title</c>; the dropped ones only with <paramref name="all"/>.</summary>
@@ -1513,6 +1641,18 @@ public static class PilotCommand
                 await WriteMilestonesAsync(output, result.Made ?? target, proposed);
                 await output.WriteLineAsync($"nothing is planned: pilot idea {result.Made ?? target} plan --milestone <name> (or --new-milestone <title> [--milestone-description <line>]) plans it");
             }
+            if (verb == Verbs.CheckReady && result.Readiness is { } checkedReady)
+            {
+                await WriteReadinessAsync(output, result.Made ?? target, checkedReady);
+            }
+            if (verb == Verbs.SuggestMilestones && result.Suggestions is { } suggested)
+            {
+                await WriteSuggestionsAsync(output, suggested);
+            }
+            if (verb == Verbs.AcceptMilestones && result.Made is { Length: > 0 } accepted)
+            {
+                await output.WriteLineAsync($"moved: {accepted}");
+            }
             if (verb == Verbs.TidyIdea && result.Tidy is { } tidy)
             {
                 var id = result.Made ?? target;
@@ -1563,7 +1703,7 @@ public static class PilotCommand
                     await output.WriteLineAsync($"{edited} {result.Way}");
                 }
             }
-            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise or Verbs.ReviewCost && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }

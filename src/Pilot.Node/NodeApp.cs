@@ -133,6 +133,8 @@ public static class NodeApp
         builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
         builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
         builder.Services.AddSingleton<IIdeaMilestoner, ClaudeIdeaMilestoner>();
+        builder.Services.AddSingleton<IIssueReadinessChecker, ClaudeIssueReadinessChecker>();
+        builder.Services.AddSingleton<IMilestoneSuggester, ClaudeMilestoneSuggester>();
         builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
         builder.Services.AddSingleton(services =>
         {
@@ -142,6 +144,7 @@ public static class NodeApp
             return ideas;
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
+        builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
@@ -167,6 +170,7 @@ public static class NodeApp
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Error = logWriter;
+            reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
@@ -209,6 +213,7 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                Transcripts = services.GetRequiredService<TranscriptBook>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
@@ -262,6 +267,24 @@ public static class NodeApp
         if (options.MachineSampling)
         {
             builder.Services.AddHostedService(services => services.GetRequiredService<MachineSampler>());
+            // The node's own row rides the same tick of the clock (a settings change has no event to hook).
+            builder.Services.AddHostedService(services =>
+            {
+                var state = services.GetRequiredService<NodeState>();
+                var models = services.GetRequiredService<RoleModels>();
+                var watchtower = services.GetRequiredService<Watchtower>();
+                return new NodeRowPublisher(state, () => new NodeRow
+                {
+                    Maintenance = models.Maintenance,
+                    Autopilot = models.Autopilot,
+                    AcceptsFleetFlights = models.AcceptsFleetFlights,
+                    Account = state.Usage()?.Account,
+                    Watchtower = watchtower.Health(),
+                }, services.GetRequiredService<TimeProvider>())
+                {
+                    Logger = services.GetService<ILogger<NodeRowPublisher>>(),
+                };
+            });
         }
         builder.Services.AddSingleton(services =>
         {
@@ -334,6 +357,9 @@ public static class NodeApp
         {
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
+            Starts = services.GetRequiredService<StartOptionsBook>(),
+            Error = logWriter,
+            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
@@ -343,7 +369,8 @@ public static class NodeApp
             services.GetRequiredService<NodeState>(),
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
-            logWriter));
+            logWriter,
+            services.GetRequiredService<StartOptionsBook>()));
         configure?.Invoke(builder);
 
         var app = builder.Build();

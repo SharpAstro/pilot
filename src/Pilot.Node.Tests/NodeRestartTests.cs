@@ -35,6 +35,7 @@ public sealed class NodeRestartTests
         var restarter = new NodeRestarter(lifetime, NullLogger<NodeRestarter>.Instance)
         {
             NodePath = nodePath,
+            RestartedBySystemd = _ => false,
             StartSuccessor = path =>
             {
                 successors.Add(path);

@@ -37,8 +37,12 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
 [JsonDerivedType(typeof(IdeasChangedEvent), "ideasChanged")]
 [JsonDerivedType(typeof(IdeaMovedEvent), "ideaMoved")]
+[JsonDerivedType(typeof(MilestonesChangedEvent), "milestonesChanged")]
+[JsonDerivedType(typeof(IssuesChangedEvent), "issuesChanged")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
+[JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
+[JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -151,6 +155,24 @@ public sealed record SnapshotEvent : NodeEvent
 
     private readonly IdeaMoveRow[]? _ideaMoves;
 
+    /// <summary>The open milestones of every repo the node reads ideas for, as it last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MilestoneRow[] Milestones
+    {
+        get => _milestones ?? [];
+        init => _milestones = value;
+    }
+
+    private readonly MilestoneRow[]? _milestones;
+
+    /// <summary>The open issues of those repos, in a milestone or in none, as the node last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IssueRow[] Issues
+    {
+        get => _issues ?? [];
+        init => _issues = value;
+    }
+
+    private readonly IssueRow[]? _issues;
+
     /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
     public SummaryRow[] Summaries
     {
@@ -162,6 +184,12 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before it has read any.</summary>
     public PullRequestsRow? PullRequests { get; init; }
+
+    /// <summary>Where every repo the node knows stands, as last read (or marked not read yet); null from an older node.</summary>
+    public ReposRow? Repos { get; init; }
+
+    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before it has said, and from an older node.</summary>
+    public NodeRow? Node { get; init; }
 }
 
 /// <summary>An idea was moved to another repo: its old id now points to the new one.</summary>
@@ -174,6 +202,18 @@ public sealed record IdeaMovedEvent : NodeEvent
 public sealed record IdeasChangedEvent : NodeEvent
 {
     public required IdeaRow[] Ideas { get; init; }
+}
+
+/// <summary>The milestones the node reads changed (one made, due, counted again, or closed on GitHub): all of them, as they are now.</summary>
+public sealed record MilestonesChangedEvent : NodeEvent
+{
+    public required MilestoneRow[] Milestones { get; init; }
+}
+
+/// <summary>The open issues the node reads changed (one opened, closed, moved to a milestone, or seen changed on GitHub): all of them, as they are now.</summary>
+public sealed record IssuesChangedEvent : NodeEvent
+{
+    public required IssueRow[] Issues { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

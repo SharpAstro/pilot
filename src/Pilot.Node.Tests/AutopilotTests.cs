@@ -62,7 +62,7 @@ public sealed class AutopilotTests
     /// <summary>The one assistant's ask among the open cards, with other cards (a ring) open beside it.</summary>
     private static CardRow AskAmong(NodeHarness node) => node.State.Cards(openOnly: true).Single(c => c.Kind == CardKinds.AssistantAsk);
 
-    private static BlackBoxLine[] BlackBox(NodeHarness node)
+    internal static BlackBoxLine[] BlackBox(NodeHarness node)
     {
         using var box = new StreamReader(new FileStream(Path.Combine(node.Options.DataFolder, "store", FileJournal.BlackBoxFile), FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
         return [.. box.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => System.Text.Json.JsonSerializer.Deserialize(l, PilotJsonContext.Default.BlackBoxLine)!)];

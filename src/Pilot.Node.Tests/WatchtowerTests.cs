@@ -87,6 +87,19 @@ public sealed class WatchtowerTests : IDisposable
     private CardRow[] Open() => _state.Cards(openOnly: true);
 
     [Fact]
+    public async Task UnreadHeadBriefNamesTheShapeAndTheReviewCommand()
+    {
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
+
+        await _tower.LookAsync(Ct);
+
+        var brief = _workers.Started.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
+        brief.ShouldContain("`read head`");
+        brief.ShouldContain("start it yourself with `pilot flight review <code>`");
+    }
+
+    [Fact]
     public async Task OneIsStartedWhenNoneRunsWithRemoteControlInItsOwnFolderBriefedFromTheState()
     {
         _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
@@ -107,17 +120,19 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task ARenamedWatchtowerIsStillTheWatchtowerAndNoSecondOneStarts()
+    public async Task ARenamedWatchtowerIsStillTheNodesSoItIsStoppedAndAFreshOneStarts()
     {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Idle);
         _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
-        Directory.CreateDirectory(_data);
-        File.WriteAllText(_tower.BriefFile, CurrentBrief());
 
         await _tower.LookAsync(Ct);
 
-        _workers.Started.ShouldBeEmpty();
-        _tower.Current()!.Id.ShouldBe("job00001");
+        _workers.Stopped.ShouldContain("job00001");
+        _workers.Started.Count.ShouldBe(2);
+        _tower.Current().ShouldBeNull();
     }
 
     [Fact]

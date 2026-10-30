@@ -59,6 +59,13 @@ internal sealed class PageData
         _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
     };
 
+    /// <summary>
+    /// A handful of every row, fixed at <see cref="Now"/>, as the pages show them at <paramref name="at"/>: the same rows a second
+    /// or a minute on, for a test of what turns over with the clock alone.
+    /// </summary>
+    public static PageData At(DateTimeOffset at) =>
+        Build("moment", sessions: 6, flights: 3, legs: 3, jobs: 6, cards: 3, repos: 3, chat: 4, transcript: 4, wizard: 0, nodes: 2, lengthen: false, at);
+
     private static PageData Empty() => new()
     {
         State = "empty",
@@ -104,7 +111,7 @@ internal sealed class PageData
     }
 
     // Row i of a list, its words stretched when `lengthen` is on: a title past a column, a path with no break to wrap at, a report of a paragraph.
-    private static PageData Build(string state, int sessions, int flights, int legs, int jobs, int cards, int repos, int chat, int transcript, int wizard, int nodes, bool lengthen)
+    private static PageData Build(string state, int sessions, int flights, int legs, int jobs, int cards, int repos, int chat, int transcript, int wizard, int nodes, bool lengthen, DateTimeOffset? at = null)
     {
         string Title(string what, int i) => lengthen ? $"{what} {i}: {LongTitle}" : $"{what} {i}";
         var path = lengthen ? LongPath : @"C:\work\pilot";
@@ -123,7 +130,9 @@ internal sealed class PageData
             ApiError = lengthen && i % 4 == 3 ? "API Error: 529 overloaded_error: " + LongTitle : null,
         }).ToList();
         var now = Now;
-        var sessionsScreen = new SessionsScreen(SessionLine.Build(sessionRows, now), "test", now);
+        // The rows are fixed at Now; the screens are as of `at`, a later moment at which the same rows are shown.
+        var asOf = at ?? Now;
+        var sessionsScreen = new SessionsScreen(SessionLine.Build(sessionRows, asOf), "test", asOf);
 
         var flightRows = Enumerable.Range(0, flights).Select(i => new FlightRow
         {
@@ -166,7 +175,7 @@ internal sealed class PageData
             Report = j % 4 is 2 or 3 ? (lengthen ? LongReport : "Done.") : null,
             StartedAt = now.AddMinutes(-60),
         })).ToList();
-        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, now, legRows), "test", now);
+        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, asOf, legRows), "test", asOf);
 
         var jobRows = Enumerable.Range(0, jobs).Select(i => new JobRow
         {
@@ -186,7 +195,7 @@ internal sealed class PageData
             QueuedAt = now.AddMinutes(-i - 6),
             EndedAt = i % 5 is 1 or 2 or 3 ? now.AddMinutes(-i) : null,
         }).ToList();
-        var jobsScreen = new JobsScreen(JobLine.Build(jobRows, now), "test", now);
+        var jobsScreen = new JobsScreen(JobLine.Build(jobRows, asOf), "test", asOf);
 
         var fleetLines = Enumerable.Range(0, nodes).Select(i => FleetLine.From(i == 0 ? Here.Where : $"10.0.0.{i + 8}:47731", here: i == 0, canCommand: i % 2 == 0, null,
             new NodeSummary
@@ -207,8 +216,8 @@ internal sealed class PageData
                     WireVersion = 1, Version = "2.0.9", MachineName = lengthen ? $"DESKTOP-{LongWord}-{i}" : $"DESKTOP-{i}", MachinePrefix = $"SE{i + 1}", ProcessId = 1, StartedAt = now,
                     DataFolder = path, SocketPath = path, Stream = $"s{i}",
                 },
-            }, now)).ToList();
-        var fleetScreen = new FleetScreen(fleetLines, now);
+            }, asOf)).ToList();
+        var fleetScreen = new FleetScreen(fleetLines, asOf);
 
         var repoStatuses = Enumerable.Range(0, repos).Select(i => new RepoStatus
         {
@@ -227,7 +236,7 @@ internal sealed class PageData
             Errors = lengthen && i % 2 == 0 ? [LongReport] : [],
             UpdatedAt = now,
         }).ToList();
-        var reposScreen = new ReposScreen(RepoLine.Build(repoStatuses, flightRows, sessionRows, [], legRows, now), "test", now);
+        var reposScreen = new ReposScreen(RepoLine.Build(repoStatuses, flightRows, sessionRows, [], legRows, asOf), "test", asOf);
 
         var cardRows = Enumerable.Range(0, cards).Select(i => new CardRow
         {
@@ -244,7 +253,7 @@ internal sealed class PageData
             AskedBy = lengthen ? LongWord : "se1-pil380-worker",
             Why = lengthen ? LongReport : null,
         }).ToList();
-        var cardsScreen = cards == 0 ? CardsScreen.Empty : CardsScreen.From(cardRows, sessionRows, now);
+        var cardsScreen = cards == 0 ? CardsScreen.Empty : CardsScreen.From(cardRows, sessionRows, asOf);
 
         var chatEntries = ChatFeed(chat, lengthen);
         var transcriptEntries = ChatFeed(transcript, lengthen);
@@ -261,7 +270,7 @@ internal sealed class PageData
             Jobs = jobsScreen,
             Fleet = fleetScreen,
             Repos = reposScreen,
-            PullRequests = PullRequestsFor(state),
+            PullRequests = PullRequestsFor(state, asOf),
             Cards = cardsScreen,
             Machines = null,
             Chat = chatEntries,
@@ -273,7 +282,7 @@ internal sealed class PageData
 
     // The Pull requests page's read: a handful of every kind (sample), titles, repos and chips far past a column (long), rows enough to
     // scroll across many repos (many), and a read with no open PR (empty).
-    private static PullRequestsScreen PullRequestsFor(string state)
+    private static PullRequestsScreen PullRequestsFor(string state, DateTimeOffset? at = null)
     {
         var lengthen = state == "long";
         var kinds = Enum.GetValues<PullRequestKind>();
@@ -308,7 +317,7 @@ internal sealed class PageData
             }
         }
         var row = new PullRequestsRow { Orgs = ["SharpAstro", "example-org"], ReadAt = Now.AddSeconds(-40), Viewer = "ada", PullRequests = [.. rows] };
-        return new PullRequestsScreen(row, "live from the node on node.sock", Now);
+        return new PullRequestsScreen(row, "live from the node on node.sock", at ?? Now);
     }
 
     // A feed of n entries: replies, a person's messages, tool calls with their results, as the chat and a transcript show them.

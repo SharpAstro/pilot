@@ -87,6 +87,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
     private const float SpendWidth = 160f;
+    private const float AgeWidth = 70f;
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;
 
@@ -739,6 +740,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Sorted(ListColumn.Optional("Last response", LastWidth), descendingFirst: true),
             Sorted(ListColumn.Fixed(StateTitle, StateWidth, StateMin)),
             Sorted(ListColumn.Optional("Spend", SpendWidth), descendingFirst: true),
+            Sorted(ListColumn.Optional("Age", AgeWidth)),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
@@ -767,6 +769,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         ["Last response"] = l => l.Row.LastResponseAt ?? DateTimeOffset.MinValue,
         [StateTitle] = l => SessionLine.StateOrder(l.Row.State),
         ["Spend"] = l => l.Row.SpendWeighted,
+        ["Age"] = l => l.Row.StartedAt,
     };
 
     private const string StateTitle = "State";
@@ -787,6 +790,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
                 (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),
+            Cell(Layout.Builder.Text(line.Age, 14f, body)),
             Act(line, index),
         };
         if (_marked)

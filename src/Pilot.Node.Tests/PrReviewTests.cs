@@ -95,7 +95,8 @@ public abstract class PrReviewTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2p-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly NodeOptions _options;
@@ -132,6 +133,7 @@ public abstract class PrReviewTestsBase : IDisposable
         _github.Prs["acme/widget#7"] = Pr("acme/widget", 7, widgetHead, author: "ada");
         _github.Prs["acme/gadget#9"] = Pr("acme/gadget", 9, gadgetHead, author: "bob");
 
+        _state = new NodeState(_journal, TimeProvider.System);
         var git = new GitCli();
         _options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
@@ -208,6 +210,157 @@ public abstract class PrReviewTestsBase : IDisposable
             await Task.Delay(10, Ct);
         }
         condition().ShouldBeTrue();
+    }
+}
+
+/// <summary>
+/// A review-pr says in node.log who asked and what came of it, and a review the node took is never left saying reviewing with no
+/// reviewer after a restart: started afresh at the first sweep, or its marks taken back with a card saying why (pilot #499).
+/// </summary>
+public sealed class PrReviewTests4 : PrReviewTestsBase
+{
+    private readonly StringWriter _log = new();
+
+    private string[] Lines => _log.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+
+    private static SessionRow Session(string id, SessionState state) => new()
+    {
+        Id = id, SessionId = id + "-0000", Name = "du1-review-widget-7", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
+        ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+    };
+
+    /// <summary>A node started on the store this one wrote, as after a restart: its own state, reviews and log, the same fakes.</summary>
+    private (NodeState State, PrReviews Reviews) Restarted()
+    {
+        var state = new NodeState(_journal, TimeProvider.System);
+        var git = new GitCli();
+        var reviews = new PrReviews(state, _workers, _github, git, new Planes(git), new RepoCatalog(state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            PostsItself = false,
+            Error = _log,
+        };
+        return (state, reviews);
+    }
+
+    [Fact]
+    public async Task AStartedReviewPrWritesOneLineNamingTheVerbThePrWhoAskedAndTheReviewerAtTheHead()
+    {
+        _reviews.Error = _log;
+
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Lines.ShouldBe([$"review-pr pr/acme/widget#7, asked by controller: started du1-review-widget-7 at {_widgetHead[..8]}"]);
+    }
+
+    [Fact]
+    public async Task ARefusedReviewPrWritesOneLineWithWhyAndAVerdictWritesNone()
+    {
+        _reviews.Error = _log;
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "CLOSED" };
+
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "du1-watchtower")).Error.ShouldNotBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", "du1-review-widget-7", "approve", "Fine.")).Error.ShouldNotBeNull();
+
+        var line = Lines.ShouldHaveSingleItem();
+        line.ShouldStartWith("review-pr pr/acme/widget#7, asked by du1-watchtower: refused: ");
+        line.ShouldContain("is closed, not open");
+    }
+
+    [Fact]
+    public async Task AFixPrWhoseReviewCannotStartWritesAFixPrLineThatSaysItWasRefused()
+    {
+        _reviews.Error = _log;
+        // With no review here fix-pr starts one, so it is refused only when that start is: a closed PR has none.
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "CLOSED" };
+
+        (await Run(Verbs.FixPr, "pr/acme/widget#7", "controller")).Error.ShouldNotBeNull();
+
+        Lines.ShouldHaveSingleItem().ShouldStartWith("fix-pr pr/acme/widget#7, asked by controller: refused: ");
+    }
+
+    [Fact]
+    public async Task AReviewPrCutOffBeforeItsRowWasWrittenLeavesNoPendingStatusRowOrWorktree()
+    {
+        _reviews.Error = _log;
+        _workers.Fail = new OperationCanceledException();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller"));
+
+        _github.Statuses.ShouldBeEmpty();
+        _reviews.Of(new PrRef("acme", "widget", 7)).ShouldBeNull();
+        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "review-widget-7")).ShouldBeFalse();
+        Lines.ShouldHaveSingleItem().ShouldContain("asked by controller: refused: ");
+    }
+
+    [Fact]
+    public async Task AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        var (state, reviews) = Restarted();
+        var before = reviews.Of(new PrRef("acme", "widget", 7)).ShouldNotBeNull();
+        (before.State, before.ReviewerJob).ShouldBe((PrReviewState.Reviewing, "job00001"));
+
+        await reviews.SweepAsync(Ct);
+
+        var row = reviews.Of(new PrRef("acme", "widget", 7)).ShouldNotBeNull();
+        (row.State, row.ReviewerJob).ShouldBe((PrReviewState.Reviewing, "job00002"));
+        _workers.Started.Count.ShouldBe(2);
+        _workers.Stopped.ShouldContain("job00001");
+        var card = state.Cards().Where(c => c.Kind == PrReviews.RestartedKind).ShouldHaveSingleItem();
+        (card.Bin, card.Title).ShouldBe((CardBin.Handled, "acme/widget#7's review started afresh after a node restart"));
+        _github.Statuses.Select(s => s.State).ShouldBe(["pending", "pending"]);
+        Lines.ShouldContain(l => l.Contains("started du1-review-widget-7"));
+
+        // Once: the sweeps after the first leave a review that is working to its reviewer, and the ladder to a stalled one.
+        await reviews.SweepAsync(Ct);
+        _workers.Started.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AReviewingRowWhoseSessionEndedAfterARestartIsStartedAfreshButOneStillWorkingIsLeft()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        var (state, reviews) = Restarted();
+        state.PutSession(Session("job00001", SessionState.Working));
+
+        await reviews.SweepAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(1);
+        state.Cards().ShouldNotContain(c => c.Kind == PrReviews.RestartedKind);
+
+        // A node starts again: the session has ended meanwhile.
+        var (ended, again) = Restarted();
+        ended.PutSession(Session("job00001", SessionState.Ended));
+
+        await again.SweepAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(2);
+        ended.Cards().ShouldContain(c => c.Kind == PrReviews.RestartedKind);
+    }
+
+    [Fact]
+    public async Task AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain()
+    {
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        _github.Labels[7] = [PilotMarks.Reviewing];
+        var (state, reviews) = Restarted();
+        _workers.Fail = new FlightException("claude is not logged in");
+
+        await reviews.SweepAsync(Ct);
+
+        var row = reviews.Of(new PrRef("acme", "widget", 7)).ShouldNotBeNull();
+        row.State.ShouldBe(PrReviewState.Closed);
+        var status = _github.Statuses.Last();
+        (status.Sha, status.State).ShouldBe((_widgetHead, "error"));
+        _github.RemoveCalls.ShouldContain((7, PilotMarks.Reviewing));
+        _github.Labels[7].ShouldNotContain(PilotMarks.Reviewing);
+        var card = state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.LostKind).ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");
+        var choice = card.Choices.ShouldHaveSingleItem();
+        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Review again", Verbs.ReviewPr, "pr/acme/widget#7"));
+        Directory.Exists(row.Worktree).ShouldBeFalse();
     }
 }
 
@@ -535,8 +688,14 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     [Fact]
     public async Task ADraftQueuesNothing()
     {
+        _github.Login = "ada";
+        _github.Queue = new MergeQueueState("OPEN", _widgetHead, false);
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
+        // A review's start marks a draft ready (PIL483); a PR made a draft again meanwhile is still not queued.
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Draft = true };
-        await ReviewedWidget("approve");
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+        await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -642,13 +801,14 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
     public async Task AReviewOfAFlightsPrSetsItsStatusButLeavesTheFlightsLabel()
     {
         // acme/widget#7 is a flight's PR: its pilot: label (passed, conflicts, queued) is the flight's, which PrMarks would
-        // not write again over one a review left.
+        // not write again over one a review left. A review cannot start on a flight's PR (PIL483), so the PR becomes the
+        // flight's after its review has started.
+        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         _state.PutFlight(new FlightRow
         {
             Code = "WID7", Repo = "widget", RepoPath = "/r/widget", Issue = 3, Branch = "flight/wid7", Worktree = "/r/widget/w", Base = "main",
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
         });
-        (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "changes", "One defect.")).Error.ShouldBeNull();
 
         _github.Statuses.Last().State.ShouldBe("failure");

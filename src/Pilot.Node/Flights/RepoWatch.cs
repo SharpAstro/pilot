@@ -5,8 +5,9 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// Keeps a <see cref="RepoStatus"/> for every repo the <see cref="RepoCatalog"/> lists, read from git and gh (no fetch, no
-/// model) and cached with the time it was read, so <c>GET /api/v1/repos/status</c> never waits on them. Refreshed every
-/// <see cref="Interval"/> once something has asked, and on demand; never more than one refresh runs at once, and one asked
+/// model) and cached with the time it was read, so <c>GET /api/v1/repos/status</c> never waits on them. Every read goes into
+/// <see cref="NodeState"/> as a <see cref="ReposRow"/> on the event stream, and a node with no row yet puts one at boot with the
+/// repos the catalog knows, each marked <see cref="RepoStatus.Unread"/>. Refreshed every <see cref="Interval"/> from boot, and on demand; never more than one refresh runs at once, and one asked
 /// for while another runs gets that one's answer. A git or gh call that fails leaves its part of the repo's status empty
 /// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest.
 /// </summary>
@@ -16,7 +17,6 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
     public TextWriter Error { get; set; } = TextWriter.Null;
 
     private readonly object _gate = new();
-    private readonly TaskCompletionSource _asked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<RepoStatus[]>? _running;
     private RepoStatus[]? _latest;
     private CancellationToken _stopping;
@@ -30,12 +30,10 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
     public int Parallelism { get; init; } = 4;
 
     /// <summary>
-    /// The cached statuses, or a first read when there is none yet; a fresh read when <paramref name="refresh"/>. The first
-    /// ask starts the timer: a node nobody asks of reads no repo.
+    /// The cached statuses, or a first read when there is none yet; a fresh read when <paramref name="refresh"/>.
     /// </summary>
     public Task<RepoStatus[]> StatusAsync(bool refresh, CancellationToken cancellationToken)
     {
-        _asked.TrySetResult();
         return !refresh && _latest is { } cached ? Task.FromResult(cached) : RefreshAsync(cancellationToken);
     }
 
@@ -50,12 +48,18 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         return run.WaitAsync(cancellationToken);
     }
 
+    /// <remarks>The seed is put here, not in the background loop, so it is on the stream before anything starts after it.</remarks>
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        Seed();
+        return base.StartAsync(cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         _stopping = stopping;
         try
         {
-            await _asked.Task.WaitAsync(stopping);
             while (!stopping.IsCancellationRequested)
             {
                 try
@@ -74,18 +78,42 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         }
     }
 
+    /// <summary>Puts the repos the catalog knows, marked not read yet, when the node holds no row (a fresh node; a restored one keeps its last).</summary>
+    private void Seed()
+    {
+        if (state.Repos() is not null)
+        {
+            return;
+        }
+        var known = repos.Repos();
+        if (known.Length == 0)
+        {
+            return;
+        }
+        state.PutRepos(new ReposRow
+        {
+            Repos = [.. known.Select(r => new RepoStatus { Name = r.Name, Path = r.Path, GitHub = r.GitHub, Flights = r.Flights, Tracked = r.Flights > 0, Unread = true })],
+            ReadAt = null,
+            Since = time.GetUtcNow(),
+        });
+    }
+
     private async Task<RepoStatus[]> ReadAllAsync()
     {
         try
         {
             var flights = state.Flights();
             var catalog = repos.Repos();
+            // Every clone is read from git for the Repos page; only the repos pilot works in are read on GitHub too.
+            var tracked = new HashSet<string>(repos.Tracked().Select(r => r.Path), StringComparer.OrdinalIgnoreCase);
             var now = time.GetUtcNow();
             var statuses = new RepoStatus[catalog.Length];
             await Parallel.ForEachAsync(Enumerable.Range(0, catalog.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Parallelism), CancellationToken = _stopping },
-                async (i, token) => statuses[i] = await ReadAsync(catalog[i], flights, now, token));
-            return _latest = statuses;
+                async (i, token) => statuses[i] = await ReadAsync(catalog[i], flights, now, tracked.Contains(catalog[i].Path), token));
+            _latest = statuses;
+            state.PutRepos(new ReposRow { Repos = statuses, ReadAt = time.GetUtcNow() });
+            return statuses;
         }
         finally
         {
@@ -96,7 +124,7 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         }
     }
 
-    private async Task<RepoStatus> ReadAsync(RepoInfo repo, FlightRow[] allFlights, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<RepoStatus> ReadAsync(RepoInfo repo, FlightRow[] allFlights, DateTimeOffset now, bool onGitHub, CancellationToken cancellationToken)
     {
         var errors = new List<string>();
         var flights = allFlights.Where(f => SamePath(f.RepoPath, repo.Path)).ToArray();
@@ -161,13 +189,30 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
 
         var prs = new List<PullRequestStatus>();
         var ideas = new List<IdeaRow>();
-        if (repo.GitHub is not null)
+        if (repo.GitHub is not null && !onGitHub)
+        {
+            // A clone pilot does not work in (RepoCatalog.Tracked) asks GitHub nothing, and what an earlier read kept of it goes.
+            state.PutMilestones(repo.Name, []);
+            state.PutIssues(repo.Name, []);
+        }
+        if (repo.GitHub is not null && onGitHub)
         {
             // Its Ideas milestone, as the issues are read: a read that fails leaves the node's rows of the repo as they were.
             if (await Ref("ideas", async () => await github.MilestoneIssuesAsync(repo.Path, IdeaIds.Milestone, cancellationToken)) is { } milestone)
             {
                 ideas.AddRange(IdeaRows.Of(repo.Name, milestone, allFlights, now));
                 state.PutIdeas(repo.Name, ideas);
+            }
+
+            // Beside it, the repo's open milestones and open issues (the ones with no milestone too), each read on its own, so one that
+            // fails leaves its own rows as they were.
+            if (await Ref("milestones", async () => await github.MilestonesAsync(repo.Path, cancellationToken)) is { } openMilestones)
+            {
+                state.PutMilestones(repo.Name, IssueRows.OfMilestones(repo.Name, openMilestones));
+            }
+            if (await Ref("open issues with their milestones", async () => await github.OpenMilestoneIssuesAsync(repo.Path, cancellationToken)) is { } openIssues)
+            {
+                state.PutIssues(repo.Name, IssueRows.OfIssues(repo.Name, openIssues, allFlights, now));
             }
 
             var listed = await Ref("open PRs", async () => await github.OpenPullRequestsAsync(repo.Path, cancellationToken));

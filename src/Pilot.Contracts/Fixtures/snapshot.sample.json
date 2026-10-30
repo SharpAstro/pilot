@@ -186,6 +186,8 @@
   "usage": null,
   "machine": null,
   "pullRequests": null,
+  "repos": null,
+  "node": null,
   "jobs": [
     {
       "id": "j14",
@@ -375,7 +377,7 @@
       "newRepo": "orbit",
       "newId": "I398"
     }
-  ],
+  ],"milestones":[{"repo":"pilot","number":3,"title":"v2.1","description":"The Ideas pane v2","dueOn":"2026-11-15T00:00:00+00:00","openIssues":4,"closedIssues":9},{"repo":"pilot","number":1,"title":"Ideas","description":"Ideas noted with pilot idea","dueOn":null,"openIssues":1,"closedIssues":0}],"issues":[{"repo":"pilot","number":412,"title":"Show the job queue on the Flights page","body":"A line under the flights: what runs, what waits.","milestone":"Ideas","updatedAt":"2026-10-18T08:52:10+00:00","age":"1h","author":"ada","url":"https://github.com/example-org/pilot/issues/412","flight":null},{"repo":"pilot","number":430,"title":"Group the Flights page by milestone","body":"","milestone":"v2.1","updatedAt":"2026-10-17T10:00:00+00:00","age":"1d","author":"ada","url":"https://github.com/example-org/pilot/issues/430","flight":"ORB204"},{"repo":"pilot","number":435,"title":"A loose end with no milestone","body":"","milestone":null,"updatedAt":"2026-10-16T10:00:00+00:00","age":"2d","author":"ada","url":"https://github.com/example-org/pilot/issues/435","flight":null}],
   "summaries": [
     {
       "scope": "*",

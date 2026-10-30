@@ -41,6 +41,12 @@ public sealed class NodeMirror
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before any.</summary>
     public PullRequestsRow? PullRequests { get; private set; }
 
+    /// <summary>Where every repo the node knows stands, as last read or marked not read yet; null before any.</summary>
+    public ReposRow? Repos { get; private set; }
+
+    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before any.</summary>
+    public NodeRow? Node { get; private set; }
+
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
     /// <summary>The jobs, by id.</summary>
@@ -65,6 +71,16 @@ public sealed class NodeMirror
 
     /// <summary>The ideas of every repo the node reads, newest first.</summary>
     public IReadOnlyList<IdeaRow> Ideas => _ideas;
+
+    private MilestoneRow[] _milestones = [];
+
+    private IssueRow[] _issues = [];
+
+    /// <summary>The open milestones of every repo the node reads ideas for.</summary>
+    public IReadOnlyList<MilestoneRow> Milestones => _milestones;
+
+    /// <summary>The open issues of those repos, in a milestone or in none.</summary>
+    public IReadOnlyList<IssueRow> Issues => _issues;
 
     /// <summary>How many of <see cref="Ideas"/> are noted.</summary>
     public int NotedIdeas => _ideas.Count(i => i.State == IdeaState.Noted);
@@ -107,6 +123,8 @@ public sealed class NodeMirror
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
             PullRequests = snapshot.PullRequests;
+            Repos = snapshot.Repos;
+            Node = snapshot.Node;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -124,6 +142,8 @@ public sealed class NodeMirror
             }
             _ideas = snapshot.Ideas;
             _ideaMoves = snapshot.IdeaMoves;
+            _milestones = snapshot.Milestones;
+            _issues = snapshot.Issues;
             _summaries.Clear();
             foreach (var summary in snapshot.Summaries ?? [])
             {
@@ -205,6 +225,12 @@ public sealed class NodeMirror
             case IdeaMovedEvent moved:
                 _ideaMoves = [.. _ideaMoves, moved.Move];
                 break;
+            case MilestonesChangedEvent milestones:
+                _milestones = milestones.Milestones;
+                break;
+            case IssuesChangedEvent issues:
+                _issues = issues.Issues;
+                break;
             case SummaryChangedEvent summary:
                 _summaries[summary.Summary.Scope] = summary.Summary;
                 break;
@@ -216,6 +242,12 @@ public sealed class NodeMirror
                 break;
             case PullRequestsChangedEvent pullRequests:
                 PullRequests = pullRequests.Row;
+                break;
+            case ReposChangedEvent repos:
+                Repos = repos.Row;
+                break;
+            case NodeChangedEvent node:
+                Node = node.Row;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

@@ -33,13 +33,14 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     [GeneratedRegex(@"(?:backgrounded\s*\S\s*|claude stop\s+)([0-9a-f]{8})", RegexOptions.CultureInvariant)]
     private static partial Regex Job();
 
+    /// <summary>The start's whole arguments: what only a start takes (<c>--bg</c>, <c>-w</c>), then its session options.</summary>
     public static IReadOnlyList<string> Arguments(WorkerStart start)
     {
         var args = new List<string> { "--bg" };
@@ -47,6 +48,18 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             args.AddRange(["-w", plane]);
         }
+        args.AddRange(SessionArguments(start));
+        return args;
+    }
+
+    /// <summary>
+    /// The options a session keeps for its life: Remote Control, name, permission mode, <c>--strict-mcp-config</c>, model,
+    /// effort and disallowed tools. A start passes them, and a resume of a session Claude Code no longer has them on file
+    /// for passes them again (<see cref="ClaudeCliDelivery.ResumeArguments"/>).
+    /// </summary>
+    public static IReadOnlyList<string> SessionArguments(WorkerStart start)
+    {
+        var args = new List<string>();
         if (start.RemoteControl)
         {
             // Documented for interactive sessions; a background one takes it too (its record gains a bridgeSessionId).
@@ -90,6 +103,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust) : IWorkerLau
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         return job.Groups[1].Value;
     }
 
@@ -132,6 +146,8 @@ public sealed class ShellCheckRunner : ICheckRunner
         start.CreateNoWindow = true;
 
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
+        // Held in a job that ends with the node, so a restart or crash mid-check leaves no test host holding the plane.
+        using var hold = KillOnCloseJob.Hold(process);
         var lines = new Queue<string>();
         void Keep(string? line)
         {
@@ -159,14 +175,32 @@ public sealed class ShellCheckRunner : ICheckRunner
         {
             await process.WaitForExitAsync(budget.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            // A check given up for any reason ends with its whole tree: only the time budget's was killed before, and a
+            // cancelled one went on running its tests behind the node.
+            Stop(process);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             return new CheckRun(-1, $"the check ran past {Timeout.TotalMinutes:0} minutes and was stopped");
         }
         lock (lines)
         {
             return new CheckRun(process.ExitCode, string.Join('\n', lines));
+        }
+    }
+
+    private static void Stop(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // It ended on its own between the cancel and the kill.
         }
     }
 }
@@ -506,6 +540,17 @@ public interface IGitHub
     /// </summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<bool> MoveIssueAsync(string repoPath, int number, string milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
+
+    /// <summary>The repo's open issues, in a milestone or in none, newest first.</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts issue <paramref name="number"/> in the milestone called <paramref name="milestone"/>, or in none when it is null, when its
+    /// <c>updated_at</c> is still <paramref name="ifUpdatedAt"/>; false (nothing written) when GitHub has moved it on since.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken);
 
     /// <summary>
     /// Transfers issue <paramref name="number"/> to <paramref name="toRepo"/> (<c>owner/name</c>), when its <c>updated_at</c> is still

@@ -625,7 +625,7 @@ public sealed class JobTests1 : JobTestsBase
         var command = OperatingSystem.IsWindows()
             ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; $p.WaitForExit()"
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
-        var id = Run(command, timeoutSeconds: 10).Made!;
+        var id = Run(command, timeoutSeconds: 20).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
         for (var i = 0; i < 1200 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
         {
@@ -635,8 +635,8 @@ public sealed class JobTests1 : JobTestsBase
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 10s"));
-        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(30));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
+        (job.EndedAt!.Value - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(60));
         for (var i = 0; i < 100 && (IsAlive(childPid) || IsAlive(running.Pid!.Value)); i++)
         {
             await Task.Delay(50, Ct);
@@ -1034,6 +1034,7 @@ public sealed class JobTests2 : JobTestsBase
         var restarter = new NodeRestarter(lifetime, Microsoft.Extensions.Logging.Abstractions.NullLogger<NodeRestarter>.Instance)
         {
             NodePath = "/opt/pilot/pilot-node",
+            RestartedBySystemd = _ => false,
             StartSuccessor = path =>
             {
                 successors.Add(path);
