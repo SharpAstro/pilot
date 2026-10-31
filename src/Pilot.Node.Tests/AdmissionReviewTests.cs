@@ -29,6 +29,7 @@ internal static class AdmissionHeld
 public sealed class AdmissionFlightReviewTests : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightReviewAtTheOpusCapWaitsWithItsWhyOnTheFlightRingsNothingAndStartsOnTheSweepOnceTheSlotFrees()
     {
         var flight = await NewFlight("1", "parser");
