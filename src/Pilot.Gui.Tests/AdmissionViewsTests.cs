@@ -154,12 +154,13 @@ public sealed class AdmissionViewsTests
         {
             // Every colour the new text is drawn in: the priority mark on a row, card, page and Home (Held); the queued reason on a row
             // and Home (Body); the queued state word on a row, card and page (Held, as StateColor gives a queued flight).
-            // Well is the Home page ground, where the queue is Body (the mark rides inside its text); Held is drawn on the rows, cards and page.
+            // Well and Ground are the bare page grounds: the queue there is Body (the mark rides inside its text), and Held is only ever
+            // drawn on a row or card (PanelBg and the row backgrounds), never straight on a ground.
             foreach (var (name, fg) in new[] { ("Held", palette.Held), ("Body", palette.Body) })
             {
                 foreach (var (bgName, bg) in new[] { ("Well", palette.Well), ("Ground", palette.Ground), ("PanelBg", palette.PanelBg), ("RowHoverBg", palette.RowHoverBg), ("RowFocusBg", palette.RowFocusBg), ("RowAltBg", palette.RowAltBg) })
                 {
-                    if (name == "Held" && bgName == "Well")
+                    if (name == "Held" && bgName is "Well" or "Ground")
                     {
                         continue;
                     }
