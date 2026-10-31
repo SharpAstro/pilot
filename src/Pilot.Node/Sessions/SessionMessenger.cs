@@ -70,6 +70,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null) =>
         await StopCoreAsync(command, cancellationToken, reason, cancelJobs: false);
 
+    /// <summary>The kind of the Ring card a stop that was not confirmed raises.</summary>
+    public const string StopUnconfirmedKind = "stop-unconfirmed";
+
     /// <summary>Cancels the queued and running jobs a session owns, by its row ids and who asked; set by the node. Null: none are cancelled.</summary>
     public Func<IReadOnlyCollection<string>, string, int>? CancelJobs { get; init; }
 
@@ -111,9 +114,17 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
         catch (Exception ex) when (ex is SessionDeliveryException or TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
+            var pid = tracker.PidOf(row.Id);
+            var message = $"{row.Name} ({row.Id}{(pid is { } p ? $", process {p}" : "")}) could not be stopped: {ex.Message}. Not confirmed: the session may still run.";
+            // One card per session: the person sees which session, which process, what was tried, and ends it again from the card.
+            state.RaiseCard(CardBin.Ring, StopUnconfirmedKind, Verbs.SessionTarget(row.Id), $"{row.Name} was told to stop and did not",
+                $"{message} Tried: claude stop on its job, then ending its process by pid, then waiting for it to go.",
+                [new CardChoice { Label = "End it again", Verb = Verbs.EndSession, Target = Verbs.SessionTarget(row.Id), Args = [string.IsNullOrEmpty(reason) ? "stop again" : reason] }]);
+            return state.Complete(command, message);
         }
         string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
+        // The process is gone: the row says ended at once, not when a later listing happens to agree.
+        tracker.MarkStopped(row.Id, reason);
         ledger?.Stopped(ids, reason, command.Who);
         var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();

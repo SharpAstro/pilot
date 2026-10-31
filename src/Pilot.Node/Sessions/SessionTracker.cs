@@ -39,6 +39,35 @@ public sealed class SessionTracker : BackgroundService
     // By row id: that a background row's session turned up listed under a new session id, which this tracker did not resume.
     private readonly Dictionary<string, string> _resumedAs = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    // By row id: rows the node stopped and saw gone, with why. Claude Code keeps a stopped session's last status ("busy") in the
+    // listing with no process, which read as working for minutes (DE1, 2026-10-31); the row stays ended while it has no process.
+    private readonly Dictionary<string, string> _stopped = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The node stopped row <paramref name="id"/> and its delivery saw the process gone: the row is ended now, with
+    /// <paramref name="why"/>, and stays so while the listing gives its session no process. A resume that does clears it.
+    /// </summary>
+    public void MarkStopped(string id, string why)
+    {
+        _gate.Wait();
+        try
+        {
+            _stopped[id] = why;
+            if (_state.Sessions().FirstOrDefault(r => r.Id == id) is { } row)
+            {
+                _endedAt[id] = _time.GetUtcNow();
+                Put(row with { State = SessionState.Ended, WaitingFor = null, EndedBecause = why });
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>The pid the last listing gave row <paramref name="id"/>, or null when it has no process.</summary>
+    public int? PidOf(string id) => _pids.TryGetValue(id, out var pid) ? pid : null;
+
     private static bool HasProcess(IReadOnlyList<ClaudeAgentRow> listed, string sessionId) =>
         listed.Any(a => a.SessionId == sessionId && a.Pid is not null);
 
@@ -286,6 +315,7 @@ public sealed class SessionTracker : BackgroundService
             _superseded.Remove(newSessionId);
             _rowOf[newSessionId] = id;
             _endedAt.Remove(id);
+            _stopped.Remove(id);
             // A user turn has just been given to it: it is working on it.
             Put(previous with
             {
@@ -479,9 +509,14 @@ public sealed class SessionTracker : BackgroundService
             _pids.TryRemove(id, out _);
         }
         var live = agent.Pid is not null;
-        var ended = !live && SessionStates.Map(agent.Status, agent.State, live) is SessionState.Ended or SessionState.Failed;
+        if (live)
+        {
+            _stopped.Remove(id);
+        }
+        var stopped = !live && _stopped.ContainsKey(id);
+        var ended = stopped || !live && SessionStates.Map(agent.Status, agent.State, live) is SessionState.Ended or SessionState.Failed;
 
-        if (ended && _stale.TryGetValue(agent.SessionId, out var checkedAt) && now - checkedAt < StaleRecheck)
+        if (ended && !stopped && _stale.TryGetValue(agent.SessionId, out var checkedAt) && now - checkedAt < StaleRecheck)
         {
             return;
         }
@@ -496,14 +531,14 @@ public sealed class SessionTracker : BackgroundService
             // An ended session is listed while it is recent: by its transcript's last write, else by when it started.
             transcripts.Locate();
             var since = transcripts.LastWrite ?? agent.StartedAt ?? DateTimeOffset.MinValue;
-            if (now - since > _options.EndedRetention)
+            if (!stopped && now - since > _options.EndedRetention)
             {
                 _stale[agent.SessionId] = now;
                 Forget(id, agent.SessionId, keepStale: true);
                 return;
             }
             _stale.Remove(agent.SessionId);
-            _endedAt.TryAdd(id, since);
+            _endedAt.TryAdd(id, stopped ? now : since);
         }
         else
         {
@@ -562,6 +597,10 @@ public sealed class SessionTracker : BackgroundService
         if (renamed is not null)
         {
             built = built with { Name = renamed };
+        }
+        if (stopped)
+        {
+            built = built with { State = SessionState.Ended, WaitingFor = null, EndedBecause = _stopped[id] };
         }
         Put(built with
         {
@@ -669,6 +708,11 @@ public sealed class SessionTracker : BackgroundService
         }
         _rows[row.Id] = row;
         _state.PutSession(row);
+        if (row.State is SessionState.Ended or SessionState.Failed)
+        {
+            // The stop that did not take has taken after all: its card has nothing left to ask.
+            _state.CloseCardsAbout(Verbs.SessionTarget(row.Id), "the session is seen ended", SessionMessenger.StopUnconfirmedKind);
+        }
     }
 
     private void Forget(string id, string sessionId, bool keepStale = false)
