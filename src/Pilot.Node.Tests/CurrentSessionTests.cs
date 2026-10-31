@@ -194,6 +194,9 @@ public sealed class CurrentSessionTests : IDisposable
         // The older ended session is not adopted as current.
         _tower.Current().ShouldBeNull();
 
+        // The first look past the show-up grace notes the loss; the retry time later a fresh one is started.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(11));
         await _tower.LookAsync(Ct);
 
