@@ -499,6 +499,15 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>The width, in design units, the page is laid out for when its host does not say: wide enough for every column.</summary>
     internal const float WideEnough = 1400f;
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(PullRequestsScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -585,6 +594,7 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
                 ? Layout.Builder.VStack(Header(screen), Waiting(waiting), main)
                 : Layout.Builder.VStack(Header(screen), main))
             .Bg(P.Ground).Stretch();
+        page = WithSelection(page);
         return About?.Over(page, NightOrNull) ?? page;
     }
 

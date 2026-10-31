@@ -301,9 +301,10 @@ public sealed class UpdateTests : IDisposable
         await ask.CheckAsync(Ct);
 
         var card = state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Kind.ShouldBe(NodeUpdater.Kind);
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
-            c => c.Label.ShouldBe("Update"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
+            c => c.Label.ShouldBe("Install pilot 2.0.2 and restart the node"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
 
         Read(node).ShouldBe("old " + node);
     }

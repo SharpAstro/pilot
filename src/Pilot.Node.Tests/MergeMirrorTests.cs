@@ -204,7 +204,7 @@ public sealed class MergeMirrorTests
         card.State.ShouldBe(CardState.Open);
         card.Kind.ShouldBe(LegCommander.PrReady);
         card.Title.ShouldContain(title);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR unmergeable)", Verbs.GoAround)]);
         card.Choices[0].Args.Single().ShouldContain("merge origin/<base> into the plane");
         node.GitHub.Merged.ShouldBeEmpty();
     }

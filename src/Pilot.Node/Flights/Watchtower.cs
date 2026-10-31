@@ -714,13 +714,14 @@ public sealed class Watchtower(
     {
         if (row.ApiErrorResetsAt is not { } resets)
         {
-            state.RaiseCard(CardBin.Ring, Stopped, Verbs.WatchtowerTarget, "The watchtower was stopped by the API", $"{error}, with no time it clears",
-                [new CardChoice { Label = "Restart it", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["stopped by the API"] }]);
+            state.RaiseCard(CardBin.Ring, Stopped, Verbs.WatchtowerTarget, $"The watchtower was stopped by the API with no time it clears: {LegCommander.OneLine(error)}", $"{error}. The node cannot tell when it can resume it, so rings come straight to you until it runs again.",
+                [new CardChoice { Label = "Start a fresh watchtower now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["stopped by the API"] }]);
             return;
         }
         if (now < resets + ResetMargin)
         {
-            state.RaiseCard(CardBin.ForYou, Stopped, Verbs.WatchtowerTarget, $"The watchtower hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
+            // The node resumes it by itself at the reset: a Handled line, not a card that needs someone.
+            state.RaiseCard(CardBin.Handled, Stopped, Verbs.WatchtowerTarget, $"The watchtower hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
                 $"{error}; until then no card reaches it, so rings come straight to you");
             return;
         }
@@ -810,11 +811,11 @@ public sealed class Watchtower(
                 return false;
             }
             var untrusted = ex.Message.Contains("not trusted", StringComparison.OrdinalIgnoreCase);
-            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, "The watchtower could not be started",
+            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, untrusted ? $"The watchtower could not be started: {folder} was never trusted by Claude Code" : $"The watchtower could not be started: {LegCommander.OneLine(ex.Message)}",
                 untrusted
                     ? $"Claude Code starts no background session in a folder never trusted. Run `claude` in {folder} once and accept the prompt (or start the node with --watchtower-folder <a trusted folder>); the node tries again every {RetryAfter.TotalMinutes:0} minutes."
                     : $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes",
-                [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
+                [new CardChoice { Label = "Start the watchtower now instead of waiting for the next try", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
             return false;
         }
 

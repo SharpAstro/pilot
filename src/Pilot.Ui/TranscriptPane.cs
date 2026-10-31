@@ -151,6 +151,12 @@ internal sealed class TranscriptPane
     /// <summary>The links' menu: its open items and its notice.</summary>
     internal LinkMenu Links => _links;
 
+    /// <summary>The rect the open transcript's list shows through, for the page's text selection to cut at.</summary>
+    internal RectF32 Viewport => (_at is not null ? _atScroll : _scroll).Viewport;
+
+    /// <summary>Whether the chips' dropdown is open: its presses are its own.</summary>
+    internal bool MenuOpen => IsOpen && _menu.IsOpen;
+
     /// <summary>Opens a link in what the assistant wrote. Null leaves links as coloured text.</summary>
     public Action<string>? OpenLink
     {
@@ -288,7 +294,7 @@ internal sealed class TranscriptPane
             rows.AddRange(queued.Select(q => TranscriptEntryView.Waiting(q).WStar()));
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
+            ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
         // The banner is a row of the page, not of the list: it stays under the entries, whatever is scrolled.
         var banner = Banner(current, now ?? DateTimeOffset.UtcNow);

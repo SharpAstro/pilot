@@ -76,7 +76,8 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
         if (usage.FiveHour is { UsedPercent: var used, ResetsAt: var resets } && used >= HighPercent && resets is { } at && at > time.GetUtcNow() && _warnedFor != at)
         {
             _warnedFor = at;
-            state.RaiseCard(CardBin.ForYou, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; it resets at {at.ToLocalTime():HH:mm}",
+            // A reset-only notice: nothing to decide, the node resumes the workers itself, so it is a Handled line.
+            state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; it resets at {at.ToLocalTime():HH:mm}",
                 "workers stop when it runs out; the node resumes them once it resets");
         }
     }

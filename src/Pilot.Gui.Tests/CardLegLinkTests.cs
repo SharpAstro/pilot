@@ -146,10 +146,10 @@ public sealed class CardLegLinkTests
             }),
             ("leg-failed", new CardRow
             {
-                Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser failed",
-                Summary = "The worker of PIL355/parser gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.",
-                Detail = "the last worker gave up: dotnet test failed with 3 errors in ParserTests",
-                Choices = [redo, new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["accepted"] }], At = Live.At, State = CardState.Open,
+                Id = "c2", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/PIL355/parser", Title = "PIL355/parser stopped: dotnet test failed with 3 errors in ParserTests",
+                Summary = "The worker of PIL355/parser stopped. Send parser round again starts a fresh worker told why; Accept parser as it stands keeps the failure in its report and the flight goes on.",
+                Detail = "the last worker stopped: dotnet test failed with 3 errors in ParserTests",
+                Choices = [redo, new CardChoice { Label = "Accept parser as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("PIL355", "parser"), Args = ["accepted"] }], At = Live.At, State = CardState.Open,
             }),
             ("merge-failed", new CardRow
             {

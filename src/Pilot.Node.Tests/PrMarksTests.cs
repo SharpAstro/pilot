@@ -249,7 +249,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
         (review.StatusState, review.Label, review.ReviewUrl).ShouldBe(("pending", "pilot: reviewing", null));
         var card = Open().Single(c => c.Kind == PrMarks.RefusedKind);
         card.Bin.ShouldBe(CardBin.ForYou);
-        card.Title.ShouldBe("GitHub refused a mark on TIA1's PR #71");
+        card.Title.ShouldStartWith("GitHub refused a mark on TIA1's PR #71: the review comment: GitHub refused the review: Resource not accessible");
         // The merge is still offered: the review passed.
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
     }

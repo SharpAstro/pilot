@@ -139,17 +139,17 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
         await GoAround(1);
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "stuck")).Ok.ShouldBeTrue();
-        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Redo leg parser (redo 2, on Opus)");
+        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Send parser round again to stuck (round 2, on Opus)");
 
         await GoAround(1);
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "stuck again")).Ok.ShouldBeTrue();
-        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Redo leg parser (redo 3, on Opus at xhigh)");
+        _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed").Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Send parser round again to stuck again (round 3, on Opus at xhigh)");
     }
 
     [Theory]
-    [InlineData(0, "Redo leg parser")]
-    [InlineData(1, "Redo leg parser (redo 2, on Opus)")]
-    [InlineData(2, "Redo leg parser (redo 3, on Opus at xhigh)")]
+    [InlineData(0, "Start a fresh worker on parser (the last one went idle)")]
+    [InlineData(1, "Start a fresh worker on parser (the last one went idle; redo 2, on Opus)")]
+    [InlineData(2, "Start a fresh worker on parser (the last one went idle; redo 3, on Opus at xhigh)")]
     public void TheRedoLabelNamesTheNextAttemptOnceItIsASecondRedoOrLater(int goArounds, string label) =>
-        Models().RedoLabel(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, GoArounds = goArounds }).ShouldBe(label);
+        Models().RedoLabel(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, GoArounds = goArounds }, "went idle").ShouldBe(label);
 }

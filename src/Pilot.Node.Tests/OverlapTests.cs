@@ -120,7 +120,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         [
             ("Fold into TIA1", Verbs.Fold, "flight/TIA2", "TIA1"),
             ("Connect to TIA1", Verbs.ConnectOverlap, "flight/TIA2", "TIA1"),
-            ("Plan in parallel", Verbs.Separate, "flight/TIA2", "TIA1"),
+            ("Plan TIA2 in parallel with TIA1", Verbs.Separate, "flight/TIA2", "TIA1"),
         ]);
         card.Choices.ShouldNotContain(c => c.Label.Contains("Leave it"));
         var recorded = _state.Flights().Single(f => f.Code == "TIA2").Overlaps.ShouldHaveSingleItem();
@@ -178,7 +178,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var card = Cards().ShouldHaveSingleItem();
         card.Title.ShouldBe("Fold TIA2 into TIA1 (both change DetachedShell.cs, Parser.cs)");
         // Still all three choices: the title says what the planner leans to, the controller answers.
-        card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan in parallel"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Fold into TIA1", "Connect to TIA1", "Plan TIA2 in parallel with TIA1"]);
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
         (recorded.Pick, recorded.Why).ShouldBe((Verbs.OverlapPickFold, "same goal"));
         recorded.Files.ShouldBe(["src/DetachedShell.cs", "src/Parser.cs"]);

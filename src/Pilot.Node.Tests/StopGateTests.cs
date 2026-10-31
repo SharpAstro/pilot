@@ -129,7 +129,8 @@ public sealed class StopGateTests : IDisposable
         var ring = Rings().ShouldHaveSingleItem();
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Subject.ShouldBe(Verbs.LegTarget("TIA7", "parser"));
-        ring.Detail.ShouldNotBeNull().ShouldContain("stray.txt");
+        ring.Title.ShouldContain("stray.txt");
+        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit or drop them");
         var again = ring.Choices.ShouldHaveSingleItem();
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));

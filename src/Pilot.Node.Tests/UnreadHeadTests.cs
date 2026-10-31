@@ -247,7 +247,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
 
         _workers.Started.ShouldNotContain(s => s.Name == Reviewer(flight.Code));
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Title.ShouldBe($"{flight.Code}'s review did not start");
+        Open().Single(c => c.Kind == LegCommander.ReviewChanges).Title.ShouldStartWith($"{flight.Code}'s review did not start: ");
         _state.Cards().Count(c => c.Kind == LegCommander.ReviewChanges).ShouldBe(cards);
     }
 

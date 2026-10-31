@@ -129,7 +129,7 @@ internal sealed partial class IdeasView<TSurface>
         var where = section.Kind == BoardSectionKind.Milestone && !string.Equals(section.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? $" · {section.Repo}" : "";
         if (hint)
         {
-            parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+            parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).Selectable().WAuto().HFixed(HeadHeight));
         }
         else
         {
@@ -138,7 +138,7 @@ internal sealed partial class IdeasView<TSurface>
             // rows under the pointer.
             var slot = dropping && section.Accepts ? "→" : mark.Trim();
             parts.Add(Layout.Builder.Text(slot, 14f, P.Bright, TextAlign.Center).WFixed(MarkWidth).HFixed(HeadHeight));
-            parts.Add(Layout.Builder.Text(section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+            parts.Add(Layout.Builder.Text(section.Title, 14f, P.Bright).Selectable().WAuto().HFixed(HeadHeight));
         }
         var facts = new List<string>
         {
@@ -153,7 +153,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             facts.Add("due " + due.ToString("d MMM yyyy", CultureInfo.InvariantCulture));
         }
-        parts.Add(Layout.Builder.Text(string.Join(" · ", facts), 12f, P.Dim).WAuto().HFixed(HeadHeight));
+        parts.Add(Layout.Builder.Text(string.Join(" · ", facts), 12f, P.Dim).Selectable().WAuto().HFixed(HeadHeight));
         if (section.Kind == BoardSectionKind.Milestone && section.Open + section.Closed > 0)
         {
             parts.Add(Layout.Builder.VStack(
@@ -232,7 +232,7 @@ internal sealed partial class IdeasView<TSurface>
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
         if (meta.Length > 0)
         {
-            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).RowH(16f));
+            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).Selectable().RowH(16f));
         }
         if (idea is not null && idea.Body.Trim().Length > 0)
         {
@@ -265,7 +265,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(grip);
         }
-        parts.Add(Layout.Builder.Text(Label(item), 13f, Link).WAuto());
+        parts.Add(Layout.Builder.Text(Label(item), 13f, Link).Selectable().WAuto());
         if (!compact)
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
@@ -339,7 +339,7 @@ internal sealed partial class IdeasView<TSurface>
     {
         if (IsBusy("ready:" + item.Key))
         {
-            yield return Layout.Builder.Text("● checking whether it is ready to fly…", 12f, P.Held).RowH(18f);
+            yield return Layout.Builder.Text("● checking whether it is ready to fly…", 12f, P.Held).Selectable().RowH(18f);
         }
         if (ReadinessOf(item) is not { } readiness)
         {
@@ -347,8 +347,8 @@ internal sealed partial class IdeasView<TSurface>
         }
         var age = _screen.AsOf == default ? "" : IdeaIds.Age(readiness.CheckedAt, _screen.AsOf);
         yield return Layout.Builder.HStack(
-                Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 12f, readiness.Ready ? P.Flying : P.Failed).WAuto(),
-                Layout.Builder.Text(age.Length > 0 ? $"checked {age} ago" : "checked", 11f, P.Dim).WAuto())
+                Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 12f, readiness.Ready ? P.Flying : P.Failed).Selectable().WAuto(),
+                Layout.Builder.Text(age.Length > 0 ? $"checked {age} ago" : "checked", 11f, P.Dim).Selectable().WAuto())
             .WithGap(8f).RowH(18f);
         foreach (var reason in readiness.Reasons)
         {

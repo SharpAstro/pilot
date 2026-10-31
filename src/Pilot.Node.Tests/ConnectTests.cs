@@ -281,7 +281,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var card = Cards().ShouldHaveSingleItem();
         card.Title.ShouldBe("Connect TIA2 to PIL294 on DE1 (both change DetachedShell.cs)");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan in parallel", Verbs.Separate)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan TIA2 in parallel with PIL294", Verbs.Separate)]);
         card.Detail.ShouldNotBeNull().ShouldContain("which flies on DE1");
         card.Detail.ShouldContain("cannot be folded into it from here");
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
