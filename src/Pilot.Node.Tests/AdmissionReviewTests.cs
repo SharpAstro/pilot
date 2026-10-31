@@ -61,7 +61,7 @@ public sealed class AdmissionFlightReviewTests : ReviewTestsBase
 public sealed class AdmissionPrReviewTests : PrReviewTestsBase
 {
     [Fact]
-    public async Task APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndTheCardCloses()
+    public async Task APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce()
     {
         _reviews.Models = AdmissionHeld.CapOfOne();
         _state.PutSession(AdmissionHeld.Opus("du1-other-worker"));
@@ -70,13 +70,13 @@ public sealed class AdmissionPrReviewTests : PrReviewTestsBase
 
         answer.Error.ShouldBeNull();
         _workers.Started.ShouldBeEmpty();
-        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem();
+        var card = _state.Cards().Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Handled);
 
         // Still full: asked again by the sweep, said once, nothing started.
         await _reviews.SweepAsync(Ct);
         _workers.Started.ShouldBeEmpty();
-        _state.Cards(openOnly: true).Count(c => c.Kind == PrReviews.WaitingKind).ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == PrReviews.WaitingKind).ShouldBe(1);
         _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring).ShouldBeEmpty();
 
         _state.PutSession(AdmissionHeld.Opus("du1-other-worker", SessionState.Ended));
@@ -84,14 +84,14 @@ public sealed class AdmissionPrReviewTests : PrReviewTestsBase
 
         _workers.Started.ShouldHaveSingleItem();
         Row("acme/widget", 7).State.ShouldBe(PrReviewState.Reviewing);
-        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == PrReviews.WaitingKind).ShouldBe(1, "admitted: no second line");
     }
 }
 
 public sealed class AdmissionPrFixTests : PrFixTestsBase
 {
     [Fact]
-    public async Task APrFixerAtTheOpusCapWaitsWithAHandledCardAndStartsOnTheSweepAndTheCardCloses()
+    public async Task APrFixerAtTheOpusCapWaitsWithAHandledCardAndStartsOnTheSweepAndSaysItOnce()
     {
         (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
         var row = Row;
@@ -100,17 +100,17 @@ public sealed class AdmissionPrFixTests : PrFixTestsBase
         (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, "changes", "Two things are wrong.", "README.md:1 no")).Error.ShouldBeNull();
 
         // A review the node posted goes on to its fixer after the post, not within the verdict's answer.
-        for (var i = 0; i < 500 && !_state.Cards(openOnly: true).Any(c => c.Kind == PrReviews.WaitingKind); i++)
+        for (var i = 0; i < 500 && !_state.Cards().Any(c => c.Kind == PrReviews.WaitingKind); i++)
         {
             await Task.Delay(10, Ct);
         }
         Fixers.ShouldBeEmpty();
-        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
+        _state.Cards().Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
 
         _state.PutSession(AdmissionHeld.Opus("du1-other-worker", SessionState.Ended));
         await _reviews.SweepAsync(Ct);
 
         Fixers.ShouldHaveSingleItem();
-        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == PrReviews.WaitingKind).ShouldBe(1, "admitted: no second line");
     }
 }
