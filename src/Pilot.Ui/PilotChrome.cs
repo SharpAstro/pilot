@@ -401,7 +401,10 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    public IPixelWidget PageWidget => PageViewOf(Page);
+
+    // The widget a page is drawn by, which hosts the page's text selection.
+    private PilotWidgetBase<TSurface> PageViewOf(PilotPage page) => page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -456,7 +459,7 @@ internal sealed class PilotChrome<TSurface>
         if (page != Page)
         {
             // Text selected on the flight's page stays on it: leaving the page lets it go.
-            Flights.ClearSelection();
+            PageViewOf(Page).ClearSelection();
         }
         Page = page;
         // The chat follows its feed while its page is the one shown, and only then.
@@ -581,9 +584,59 @@ internal sealed class PilotChrome<TSurface>
             case NavigationCommand.Swallow:
                 return true;
             default:
-                // The open flight page's text selection (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
-                return Page == PilotPage.Flights && Flights.HandleSelection(evt);
+                // The text selection of the page or the cards panel (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
+                return HandleSelection(evt);
         }
+    }
+
+    // The selection input goes to the widget under the pointer: the page or the cards panel beside it. A drag stays with the widget
+    // it began in, and a key goes to the one that holds a selection. The widget a press lands in is the only one that keeps its
+    // selection through it.
+    private bool HandleSelection(InputEvent evt)
+    {
+        var page = PageViewOf(Page);
+        PilotWidgetBase<TSurface>? panel = ShowsCards && CardsBounds is not null ? Cards : null;
+        if (panel is null)
+        {
+            // The panel is gone (closed, or no room): its text is not there to keep selected.
+            Cards.ClearSelection();
+        }
+        PilotWidgetBase<TSurface> target = page;
+        if (panel is not null)
+        {
+            if (page.Selection.Dragging)
+            {
+                target = page;
+            }
+            else if (panel.Selection.Dragging)
+            {
+                target = panel;
+            }
+            else if (PointerOf(evt) is var (px, py))
+            {
+                target = Over(CardsBounds!.Value, px, py) ? panel : page;
+            }
+            else if (!page.Selection.HasSelection && panel.Selection.HasSelection)
+            {
+                target = panel;
+            }
+        }
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left })
+        {
+            // A press in one lets go of the other's selection: only one thing on the screen is selected.
+            (target == page ? panel : page)?.ClearSelection();
+        }
+        return target.HandleSelection(evt);
+
+        static (float, float)? PointerOf(InputEvent e) => e switch
+        {
+            InputEvent.MouseMove m => (m.X, m.Y),
+            InputEvent.MouseDown d => (d.X, d.Y),
+            InputEvent.MouseUp u => (u.X, u.Y),
+            _ => null,
+        };
+
+        static bool Over(RectF32 r, float x, float y) => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height;
     }
 
     // Runs a move and records the place it left, unless it led nowhere new. Moves nest (a link's page switch is one too): the outer one records.

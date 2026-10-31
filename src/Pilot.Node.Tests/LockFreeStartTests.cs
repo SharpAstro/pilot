@@ -199,7 +199,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         await Until(() => _state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind));
         var choice = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.StartFailedKind).Choices.Single();
         choice.Verb.ShouldBe(Verbs.GoAround);
-        choice.Label.ShouldBe("Redo leg parser");
+        choice.Label.ShouldBe("Start a fresh worker on parser (the last one did not start)");
     }
 
     private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,

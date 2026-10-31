@@ -462,7 +462,9 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00001", SessionState.Idle, apiError: "rate_limit", resetsAt: Start.AddHours(1));
 
         await _tower.LookAsync(Ct);
-        Open().ShouldHaveSingleItem().Kind.ShouldBe(Watchtower.Stopped);
+        // A stop with a reset time needs no one: a Handled line, not an open card.
+        Open().ShouldBeEmpty();
+        _state.Cards(openOnly: false).Single(c => c.Kind == Watchtower.Stopped).Bin.ShouldBe(CardBin.Handled);
         _said.ShouldBeEmpty();
 
         _time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromMinutes(2));
