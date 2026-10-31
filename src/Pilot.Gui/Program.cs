@@ -209,7 +209,7 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -309,6 +309,7 @@ using var client = snapshot is null ? NewClient() : null;
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
+SpendReads? spendReads = null;
 if (feed is not null)
 {
     feed.Log = LogLine;
@@ -696,6 +697,10 @@ if (feed is not null && client is not null && clients is not null)
             return "the node did not answer in time, and a summary it made late still shows here";
         }
     };
+    // The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
+    spendReads = new SpendReads(client, loop.RequestRedraw);
+    chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
+    chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
@@ -867,6 +872,13 @@ ReposScreen? repos = null;
 IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At) { Milestones = snapshot.Milestones, Issues = snapshot.Issues };
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
+// A snapshot file's spend, if it holds any: what the page shows without a node.
+SpendScreen? fileSpend = snapshot?.Spend is { } fileData ? SpendScreen.From(fileData, "today", screen.Source, snapshot.At) : null;
+if (fileSpend is not null)
+{
+    chrome.Spend.OnWindow = window => fileSpend = SpendScreen.From(snapshot!.Spend!, window, screen.Source, snapshot.At);
+    chrome.Flights.Spend = snapshot!.Spend!.Flights;
+}
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
@@ -1026,7 +1038,20 @@ void RenderFrame()
 
     view.Ui.FrameId++;
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas);
+    if (spendReads is not null)
+    {
+        // The pages ask again once their read is 30 s old, only while they are the ones shown.
+        if (chrome.Page == PilotPage.Spend)
+        {
+            spendReads.Ask(chrome.Spend.Window, screen.Source);
+        }
+        if (chrome.Page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
+        {
+            spendReads.AskFlight(openCode);
+        }
+        chrome.Flights.Spend = spendReads.Flights;
+    }
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();

@@ -136,9 +136,13 @@ internal sealed record FlightDetail
             .Select(a => new AttachmentRef(a.Attachment!, Legs.Count > 1 ? $"{l.Name}: {a.Title}" : a.Title, a.AttachmentExt!, Line.Node))),
     ];
 
-    public static FlightDetail From(FlightLine line, DateTimeOffset now) => new()
+    /// <summary>What the ledger says the flight has spent so far, per leg and round; null where the node has not told or the flight has spent nothing.</summary>
+    public SpendFlightReport? Spend { get; init; }
+
+    public static FlightDetail From(FlightLine line, DateTimeOffset now, SpendFlightReport? spend = null) => new()
     {
         Line = line,
+        Spend = spend is { Messages: > 0 } ? spend : null,
         Legs = [.. line.LegRows.OrderBy(l => l.Order).Select(l => LegDetail.From(l, now))],
     };
 
@@ -150,6 +154,10 @@ internal sealed record FlightDetail
         {
             lines.Add($"checklist: {Checklist.Count(c => c.Done)}/{Checklist.Count} legs done");
             lines.AddRange(Checklist.Select(c => $"  {c.Mark} {c.Title} | {string.Join(" · ", new[] { c.State, c.StepsText }.OfType<string>())}{(c.SubTaskUrl is { } url ? $" | {url}" : "")}"));
+        }
+        if (Spend is { } spend)
+        {
+            lines.AddRange(SpendText.FlightLines(spend).Select(l => $"spend: {new string(' ', l.Indent * 2)}{l.Text}"));
         }
         if (OtherSubTasks.Count > 0)
         {
