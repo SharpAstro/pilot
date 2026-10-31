@@ -48,6 +48,7 @@ public static partial class CardSummaries
             LegWatch.LimitWait => $"The worker of {what} hit the usage limit. The node resumes it by itself after the window resets; nothing to do.",
             LegWatch.Idle => $"The worker of {what} has been idle with its leg unfinished and the node's nudges did not help. Nudge it to finish or say why not, or start a fresh worker on the leg.",
             LegWatch.Waiting => $"The worker of {what} waits on you for an answer. Answer it in its own session, or start a fresh worker on the leg.",
+            LegWatch.NeverTurned => $"The worker of {what} took no first turn after two starts. Tell it to carry on if it is there, or start a fresh worker on the leg.",
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Tell it to carry on if it is still there, or start a fresh worker on the leg.",
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
             LegWatch.ReviewStalled => $"The reviewer of {what} stalled twice. Start a fresh reviewer, or dismiss this once it moves.",

@@ -225,6 +225,12 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Error = logWriter,
+                StartedPlanner = legs.StartedPlanner,
+                RestartPlanner = legs.RestartPlannerAsync,
+                StopPlanner = legs.StopPlannerAsync,
+                RestartWorker = legs.RestartWorkerAsync,
+                RestartValidator = legs.RestartValidatorAsync,
+                StopSession = legs.StopSessionAsync,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());

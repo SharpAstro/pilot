@@ -201,4 +201,66 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         choice.Verb.ShouldBe(Verbs.GoAround);
         choice.Label.ShouldBe("Start a fresh worker on parser (the last one did not start)");
     }
+
+    private LegCommander Bounded(TimeSpan bound) => new(_state, _workers, _checks, _github, new GitCli(), new Planes(new GitCli()), _flights,
+        new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), TimeProvider.System)
+    {
+        StartBound = bound,
+    };
+
+    private Task<CommandResult> Run(LegCommander legs, string verb, string target) =>
+        legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Who = "tests" }, Ct);
+
+    [Fact]
+    public async Task APlannerRowListedIdleWithNoProcessDoesNotMakePlanFlightRefuse()
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        _state.PutSession(new SessionRow
+        {
+            Id = "e5f6a7b8", SessionId = "e5f6a7b8-0000-4000-8000-000000000000", Name = "du1-tia1-plan", Kind = SessionKind.Background,
+            Cwd = "/x", Role = SessionRole.Planner, Flight = "TIA1", ContextTokens = 0, ContextWindow = 200_000,
+            State = SessionState.Idle, Gone = true, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        });
+
+        var plan = await Flight(Verbs.PlanFlight, "TIA1");
+
+        plan.Ok.ShouldBeTrue(plan.Error);
+        await Until(() => _state.Cards().Any(c => c.Kind == "planner-started"));
+    }
+
+    [Fact]
+    public async Task APlanStartOutLongerThanItsBoundIsGivenUpOnACardAndAFreshOneIsAccepted()
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        var legs = Bounded(TimeSpan.FromMilliseconds(300));
+        var gate = Hold();
+        (await Run(legs, Verbs.PlanFlight, "flight/TIA1")).Made.ShouldNotBeNull().ShouldStartWith("started");
+        // (That a start within its bound refuses a second is the test above; readying the plane is real git, which can outlast a bound this short.)
+        await Task.Delay(500, Ct);
+        var again = await Run(legs, Verbs.PlanFlight, "flight/TIA1");
+
+        again.Ok.ShouldBeTrue(again.Error);
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.StartFailedKind);
+        card.Title.ShouldContain("stuck starting");
+        card.Title.ShouldContain("du1-tia1-plan");
+        // The stuck one's late result is stopped quietly: it no longer holds the place.
+        gate.SetResult();
+        await Until(() => _workers.Stopped.Count > 0);
+    }
+
+    [Fact]
+    public async Task ALegStartOutLongerThanItsBoundIsGivenUpAndTheLegStartsAgain()
+    {
+        await FlightWithTwoLegs();
+        var legs = Bounded(TimeSpan.FromMilliseconds(300));
+        var gate = Hold();
+        (await Run(legs, Verbs.StartLeg, "flight/TIA1/parser")).Made.ShouldNotBeNull().ShouldStartWith("started");
+        await Task.Delay(500, Ct);
+        var again = await Run(legs, Verbs.StartLeg, "flight/TIA1/parser");
+
+        again.Ok.ShouldBeTrue(again.Error);
+        _state.Cards().Any(c => c.Kind == LegCommander.StartFailedKind && c.Title.Contains("stuck starting")).ShouldBeTrue();
+        gate.SetResult();
+        await Until(() => _workers.Stopped.Count > 0);
+    }
 }

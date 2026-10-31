@@ -28,7 +28,46 @@ public sealed partial class LegCommander
 
     // What is being started, by reservation: one planner, one leg session (validator, worker, go-around) and one reviewer at a time
     // a flight. The value is the reservation itself, so a start that was replaced meanwhile finds it is no longer the current one.
-    private readonly ConcurrentDictionary<string, object> _starting = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Reservation> _starting = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How long a start reservation may be out before it is given up (PIL530): longer than the launcher's own timeout (two
+    /// minutes) plus <see cref="StartReadyWithin"/>. A start whose task never ends (a launcher that hangs) otherwise holds its
+    /// key, and so the role, for good.
+    /// </summary>
+    public TimeSpan StartBound { get; init; } = TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(15);
+
+    /// <summary>One start's hold on its key: the reservation itself (a replaced start finds it is no longer the current one), when it was made and what it was for.</summary>
+    private sealed class Reservation(DateTimeOffset at, string what, string subject, CardChoice? again)
+    {
+        public DateTimeOffset At { get; } = at;
+        public string What { get; } = what;
+        public string Subject { get; } = subject;
+        public CardChoice? Again { get; } = again;
+    }
+
+    /// <summary>
+    /// Whether a start is out for the key. A reservation out longer than <see cref="StartBound"/> is given up here: its key is
+    /// cleared (its late result, if it ever comes, stops its session quietly) and a card says what was stuck and for how long.
+    /// </summary>
+    private bool IsStarting(string key)
+    {
+        if (!_starting.TryGetValue(key, out var held))
+        {
+            return false;
+        }
+        var outFor = time.GetUtcNow() - held.At;
+        if (outFor < StartBound)
+        {
+            return true;
+        }
+        if (_starting.TryRemove(KeyValuePair.Create(key, held)))
+        {
+            state.RaiseCard(CardBin.Ring, StartFailedKind, held.Subject, $"{held.What} was stuck starting for {(int)outFor.TotalSeconds} s and was given up",
+                $"Its start did not answer within {(int)StartBound.TotalSeconds} s, so it no longer holds its place: the next start is accepted.", held.Again is null ? null : [held.Again]);
+        }
+        return false;
+    }
 
     // The starts the command running on this flow began, for it to wait on; null outside a command.
     private readonly AsyncLocal<List<Launch>?> _launched = new();
@@ -40,11 +79,11 @@ public sealed partial class LegCommander
     private static string ReviewKey(string code) => $"review:{code}";
 
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
-    internal bool Starting(string code) => _starting.ContainsKey(LegsKey(code)) || _starting.ContainsKey(ReviewKey(code));
+    internal bool Starting(string code) => IsStarting(LegsKey(code)) || IsStarting(ReviewKey(code));
 
     private void RefuseIfStarting(string key, string what)
     {
-        if (_starting.ContainsKey(key))
+        if (IsStarting(key))
         {
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
@@ -79,8 +118,8 @@ public sealed partial class LegCommander
         Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null, string? model = null)
     {
         RefuseIfMoving(key, what);
-        var token = new object();
-        if (!replacing && _starting.ContainsKey(key))
+        var token = new Reservation(time.GetUtcNow(), what, subject, again);
+        if (!replacing && IsStarting(key))
         {
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
