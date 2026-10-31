@@ -21,11 +21,12 @@ internal sealed record LabelUse(string File, int Line, string Expr, IReadOnlyLis
 internal static class CardSource
 {
     /// <summary>The call forms that raise a card: its name, the argument holding the kind, the one holding the title, and its bin if fixed.</summary>
-    private static readonly (Regex Open, string Form, int Kind, int Title, string? Bin, string? OnlyIn)[] Forms =
+    private static readonly (Regex Open, string Form, int Kind, int Title, string? Bin, string? OnlyIn, int BinAt)[] Forms =
     [
-        (new Regex(@"\bRaiseCard\("), "RaiseCard", 1, 3, null, null),
-        (new Regex(@"(?<![\w.])Ring\("), "Ring", 1, 2, "Ring", "LegWatch.cs"),
-        (new Regex(@"\bGate\.Hold\("), "Hold", 3, 5, "Handled", null),
+        (new Regex(@"\bRaiseCard\("), "RaiseCard", 1, 3, null, null, 0),
+        (new Regex(@"(?<![\w.])Ring\("), "Ring", 1, 2, "Ring", "LegWatch.cs", 0),
+        (new Regex(@"\bGate\.Hold\("), "Hold", 3, 5, "Handled", null, 0),
+        (new Regex(@"\bRaiseOnce\("), "RaiseOnce", 3, 5, null, null, 2),
     ];
 
     /// <summary>The calls of <paramref name="source"/> that raise a card; a definition of the method itself is not one.</summary>
@@ -34,7 +35,7 @@ internal static class CardSource
         var text = Mask(source);
         var code = Mask(source, blankStrings: true);
         var calls = new List<CardCall>();
-        foreach (var (open, form, kindAt, titleAt, fixedBin, onlyIn) in Forms)
+        foreach (var (open, form, kindAt, titleAt, fixedBin, onlyIn, binAt) in Forms)
         {
             if (onlyIn is not null && !file.EndsWith(onlyIn, StringComparison.Ordinal))
             {
@@ -48,13 +49,13 @@ internal static class CardSource
                     continue;
                 }
                 var first = Slice(text, args[0]);
-                if (first.StartsWith("CardBin ", StringComparison.Ordinal) || first.StartsWith("LegRow ", StringComparison.Ordinal))
+                if (first.StartsWith("CardBin ", StringComparison.Ordinal) || first.StartsWith("LegRow ", StringComparison.Ordinal) || first.StartsWith("PrRef ", StringComparison.Ordinal))
                 {
                     continue;
                 }
                 string[] bins = fixedBin is not null
                     ? [fixedBin]
-                    : [.. Regex.Matches(first, @"CardBin\.(\w+)").Select(b => b.Groups[1].Value).Distinct()];
+                    : [.. Regex.Matches(args.Count > binAt ? Slice(text, args[binAt]) : first, @"CardBin\.(\w+)").Select(b => b.Groups[1].Value).Distinct()];
                 var kind = args.Count > kindAt ? Slice(text, args[kindAt]) : "";
                 (int Start, int End) title = args.Count > titleAt ? args[titleAt] : (0, 0);
                 var titleExpr = Slice(text, title);

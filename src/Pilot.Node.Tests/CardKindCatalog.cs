@@ -62,6 +62,11 @@ internal static class CardKindCatalog
         new("pilot-md-too-long", "Ring", [Leg], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount"),
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough"),
         new("package-late", "Ring", ["Flights/PackageWatch.cs"], "PackageWaitTests.APublishRunThatFailedRaisesTheCardAtOnce"),
+        new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
+        new("spend-alert", "Ring", [Leg], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
+        new("review-kept", "Handled", [Leg], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
+        new("review-notes", "ForYou", [Leg], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
+        new("review-loop", "ForYou", [Leg], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings"),
 
         // Flights: landing, moving, PRs.
         new("review-changes", "Ring", [Leg], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
@@ -91,6 +96,8 @@ internal static class CardKindCatalog
 
         // PRs of the person's own, reviewed and rechecked.
         new("pr-review-ready", "ForYou", [Reviews], "PrReviewTests.OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses"),
+        new("pr-review-waiting", "Handled|ForYou", [Reviews], "AdmissionReviewTests.APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce"),
+        new("pr-fix-pushed-unreviewed", "ForYou", [Reviews], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
         new("pr-review-started", "Handled", [Reviews], "PrReviewTests.APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead"),
         new("pr-review-left", "Handled", [Reviews], "RemovalQueueTests.AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry"),
         new("pr-review-restarted", "Handled", [Reviews], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
@@ -100,6 +107,7 @@ internal static class CardKindCatalog
         new("pr-review-merge", "ForYou", [Reviews], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
         new("pr-review-queue-refused", "ForYou", [Reviews], SourcePinned),
         new("pr-review-design", "Ring", [Reviews], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer"),
+        new("pr-review-no-fixer", "Ring", [Reviews], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves"),
         new("pr-fix-started", "Handled", [Reviews], "PrFixTests.AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch"),
         new("pr-fix-offer", "ForYou", [Reviews], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),
         new("pr-fix-failed", "ForYou", [Reviews], SourcePinned),
@@ -149,6 +157,7 @@ internal static class CardKindCatalog
         "Flights/LegWatch.cs|kind",
         "Flights/StartGate.cs|kind",
         "Flights/FlightCommander.cs|card.Kind",
+        "Flights/PrReviews.cs|kind",
     ];
 
     /// <summary>
@@ -162,6 +171,7 @@ internal static class CardKindCatalog
         ["Flights/LegCommander.Overlap.cs|title"] = "the overlap title built in LegCommander.Overlap names both flights, the files they share and the choice",
         ["Flights/LegCommander.Move.cs|title"] = "the move's own failure text: its first part is the reason, built where the move is refused",
         ["Flights/LegCommander.Move.cs|text"] = "the move's own line: who handed the flight to whom",
+        ["Flights/PrReviews.cs|title"] = "the parameter of PrReviews.RaiseOnce, whose titles are the literals at each RaiseOnce( call, which the guard reads as it reads RaiseCard",
         ["Flights/PackageWatch.cs|late.Title"] = "PackageWatch.LateAsync names the package, its version and the run",
         ["Flights/FlightCommander.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
