@@ -30,6 +30,8 @@ public sealed record NodeSettings
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
     public const string WeekLimitKey = "week-limit";
+    public const string WeekPaceKey = "week-pace";
+    public const string SpendAlertKey = "spend-alert";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
@@ -53,7 +55,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -104,6 +106,12 @@ public sealed record NodeSettings
 
     /// <summary>The 7-day window's share past which a start rings, once per window, and goes ahead.</summary>
     public double? WeekLimit { get; init; }
+
+    /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
+    public double? WeekPace { get; init; }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next round rings; 3 when unset.</summary>
+    public double? SpendAlert { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -208,6 +216,8 @@ public sealed record NodeSettings
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
+        WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
+        SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -363,6 +373,29 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weekly) && weekly is > 0 and <= 100
                     ? (settings with { WeekLimit = weekly }, null)
                     : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
+            case WeekPaceKey:
+            {
+                var raw = clear ? "off" : One();
+                if (raw is "off" or "none")
+                {
+                    return (settings with { WeekPace = null }, null);
+                }
+                if (raw == "on")
+                {
+                    return (settings with { WeekPace = 10 }, null);
+                }
+                return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var margin) && margin is >= 0 and <= 100
+                    ? (settings with { WeekPace = margin }, null)
+                    : (null, "week-pace takes off, on (a margin of 10 points) or a margin in points, 0 to 100");
+            }
+            case SpendAlertKey:
+                if (clear)
+                {
+                    return (settings with { SpendAlert = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && share is > 0 and <= 100
+                    ? (settings with { SpendAlert = share }, null)
+                    : (null, "spend-alert takes the 7-day window's share in percent, above 0 and up to 100");
             case PriorityReposKey:
             {
                 if (clear)
