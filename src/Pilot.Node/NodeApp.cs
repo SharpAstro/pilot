@@ -98,6 +98,11 @@ public static class NodeApp
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
+            flights.Ledger = services.GetRequiredService<SessionLedger>();
+            // A landing tells each live session of the flight to finish and report, then cancels the jobs of the flight and its sessions.
+            flights.Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
+            flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -145,6 +150,7 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<ClaudeWorkerLauncher>();
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
@@ -217,6 +223,7 @@ public static class NodeApp
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
                 Error = logWriter,
             };
         });
@@ -244,6 +251,7 @@ public static class NodeApp
         {
             Models = services.GetRequiredService<RoleModels>(),
             Gate = services.GetRequiredService<StartGate>(),
+            Ledger = services.GetRequiredService<SessionLedger>(),
             Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
@@ -379,6 +387,7 @@ public static class NodeApp
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
+            Launched = services.GetRequiredService<SessionLedger>(),
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
@@ -392,7 +401,12 @@ public static class NodeApp
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
             logWriter,
-            services.GetRequiredService<StartOptionsBook>()));
+            services.GetRequiredService<StartOptionsBook>(),
+            services.GetRequiredService<SessionLedger>())
+        {
+            // Ending a session cancels the jobs it owns.
+            CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
+        });
         configure?.Invoke(builder);
 
         var app = builder.Build();

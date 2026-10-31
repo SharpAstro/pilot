@@ -42,6 +42,12 @@ public sealed class LoggingWorkerLauncher(IWorkerLauncher inner, TextWriter log,
         return inner.StopAsync(job, cancellationToken);
     }
 
+    public Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
+    {
+        _watching.TryRemove(job, out _);
+        return inner.StopAsync(job, reason, by, cancellationToken);
+    }
+
     /// <summary>What Claude Code's record of job <paramref name="job"/> said when it failed, as this launcher saw it; null otherwise.</summary>
     public ClaudeJobRecord? FailureOf(string? job) => job is not null && _failed.TryGetValue(job, out var record) ? record : null;
 
