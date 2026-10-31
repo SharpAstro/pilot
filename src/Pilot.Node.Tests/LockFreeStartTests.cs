@@ -235,8 +235,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var legs = Bounded(TimeSpan.FromMilliseconds(300));
         var gate = Hold();
         (await Run(legs, Verbs.PlanFlight, "flight/TIA1")).Made.ShouldNotBeNull().ShouldStartWith("started");
-        (await Run(legs, Verbs.PlanFlight, "flight/TIA1")).Error.ShouldNotBeNull().ShouldContain("is planning TIA1 already");
-
+        // (That a start within its bound refuses a second is the test above; readying the plane is real git, which can outlast a bound this short.)
         await Task.Delay(500, Ct);
         var again = await Run(legs, Verbs.PlanFlight, "flight/TIA1");
 
@@ -256,8 +255,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var legs = Bounded(TimeSpan.FromMilliseconds(300));
         var gate = Hold();
         (await Run(legs, Verbs.StartLeg, "flight/TIA1/parser")).Made.ShouldNotBeNull().ShouldStartWith("started");
-        (await Run(legs, Verbs.StartLeg, "flight/TIA1/parser")).Error.ShouldNotBeNull().ShouldContain("being started already");
-
         await Task.Delay(500, Ct);
         var again = await Run(legs, Verbs.StartLeg, "flight/TIA1/parser");
 
