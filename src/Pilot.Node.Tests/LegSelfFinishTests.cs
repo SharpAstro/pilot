@@ -47,12 +47,24 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         L("parser").State.ShouldBe(LegState.Failed);
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "leg-failed");
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Mark done anyway", Verbs.FinishLeg)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to ran out of road", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.SelfFinishedKind);
         if (detailPart is not null)
         {
             card.Detail.ShouldNotBeNull().ShouldContain(detailPart);
         }
+    }
+
+    // A clean plane with its steps ticked and its check passing, whose pushed branch is not an ancestor of its head, is not a
+    // failure: it gets the push-blocked card instead of leg-failed.
+    private async Task AssertPushBlockedAsync()
+    {
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road");
+        result.Ok.ShouldBeTrue();
+        L("parser").State.ShouldBe(LegState.Failed);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PushBlockedKind);
+        card.Bin.ShouldBe(CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.SelfFinishedKind);
     }
 
     [Fact]
@@ -94,7 +106,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         // Rewritten after its push (as a rebase does), not pushed again: the plane and origin hold different heads.
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--amend", "-m", "The parser, rebased", "--date=2001-01-01T00:00:00");
 
-        await AssertStillFailedAsync();
+        await AssertPushBlockedAsync();
     }
 
     [Fact]
@@ -104,8 +116,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         // Its pushed commit taken back out of the plane: origin holds work the plane does not.
         Git(flight.Worktree, "reset", "-q", "--hard", "HEAD~1");
 
-        await AssertStillFailedAsync();
-        _checks.Runs.ShouldBeEmpty();
+        await AssertPushBlockedAsync();
     }
 
     [Fact]

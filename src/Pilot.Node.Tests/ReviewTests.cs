@@ -348,7 +348,9 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Pr = _github.Pr! with { State = "MERGED" };
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
-        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA3 landed");
+        // Landing needs no one: a Handled line, so nothing is left open.
+        Open().ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == "landed").Title.ShouldBe("TIA3 landed");
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("merged on GitHub as #71");
         F("TIA3").State.ShouldBe(FlightState.Landed);
         _github.Merged.ShouldBeEmpty();
@@ -380,7 +382,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
+        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged: failed checks"));
         card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
         var merge = card.Choices.ShouldHaveSingleItem();
@@ -776,7 +778,8 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         F("TIA5").State.ShouldBe(FlightState.Landed);
         // An issue gh would not close is the person's, said once; the flight lands all the same.
-        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open", "TIA5 landed"], ignoreOrder: true);
+        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open"]);
+        _state.Cards().ShouldContain(c => c.Kind == "landed" && c.Title == "TIA5 landed");
     }
 
     [Fact]
