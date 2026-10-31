@@ -2622,7 +2622,7 @@ public sealed partial class LegCommander(
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
-            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}; its review starts by itself once they land");
         }
         // The person's word at a held loop allows the round, recorded once the refusals above have passed.
         if (loopHeld)

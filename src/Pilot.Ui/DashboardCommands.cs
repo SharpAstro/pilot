@@ -70,9 +70,11 @@ internal static class DashboardCommands
     public static CommandRequest AnswerRequest(CardRow card, int number, string who) =>
         CardRequest(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], who);
 
-    /// <summary>What <c>pilot review pr</c> sends for <paramref name="pr"/>: a fresh reviewer on it, pinned at its head.</summary>
-    public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) =>
-        new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
+    /// <summary>What a PR's Review sends: <c>pilot review pr</c>, a fresh reviewer pinned at its head, or a flight's own review for a flight's PR.</summary>
+    public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) => pr.Flight is { } flight
+        // A flight's PR has one review, the flight's own: `pilot review pr` on it is refused, so its Review is `pilot flight review`.
+        ? new() { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight), Args = [], Who = who }
+        : new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
 
     /// <summary>What <c>pilot review fix</c> sends for <paramref name="pr"/>: a fixer on its branch with the review's findings.</summary>
     public static CommandRequest FixPrRequest(PullRequestRow pr, string who) =>
