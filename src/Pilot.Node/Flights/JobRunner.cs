@@ -1128,12 +1128,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal string WakeTarget(string owner, string? ownerName)
     {
+        // By id only, never a namesake (#542): the owner's own row, or the row its id moved to (a continuation lists it among its
+        // earlier ids), else the owner as recorded.
         var sessions = state.Sessions();
-        if (sessions.FirstOrDefault(s => s.Id == owner) is { State: not SessionState.Ended } || ownerName is not { Length: > 0 } name)
+        if (sessions.FirstOrDefault(s => s.Id == owner) is not null)
         {
             return owner;
         }
-        return sessions.Where(s => s.State != SessionState.Ended && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+        return sessions.Where(s => s.SessionId == owner || s.EarlierSessionIds?.Contains(owner) == true)
             .OrderByDescending(s => s.StartedAt).FirstOrDefault()?.Id ?? owner;
     }
 

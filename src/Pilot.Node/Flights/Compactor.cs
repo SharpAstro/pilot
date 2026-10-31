@@ -86,8 +86,14 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     {
         var waiting = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
         var watching = watchtower.Watching() is not null;
+        var current = watchtower.Current()?.Id;
         foreach (var row in state.Sessions().Where(r => r is { Kind: SessionKind.Background, State: SessionState.Idle }))
         {
+            if (row.Name == watchtower.Name && row.Id != current)
+            {
+                // A replaced watchtower is never compacted or resumed: the role's current session is the only one the node wakes (#542).
+                continue;
+            }
             if (waiting.Contains(row.Id))
             {
                 yield return (row, row.Name == watchtower.Name ? WatchtowerFocus : JobFocus);

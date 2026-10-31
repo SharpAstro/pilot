@@ -135,6 +135,7 @@ public sealed class Watchtower(
     // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
     private string? _resumeRefused;
     private bool _adopted;
+    private bool _lastSayTransient;
     // Rows this node has stopped as a second watchtower; the sweep leaves them alone until the tracker shows them ended.
     private readonly HashSet<string> _stopped = new(StringComparer.Ordinal);
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
@@ -631,9 +632,10 @@ public sealed class Watchtower(
                     if (Warm(row, now))
                     {
                         _job = row.Id;
-                        if (await TellNewCardsAsync(row, cancellationToken) == false)
+                        if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)
                         {
-                            // Not delivered: the next look starts a fresh one rather than trying this one again.
+                            // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
+                            // was a transient read of the config file keeps the session: it is tried again after the retry time (#542).
                             _resumeRefused = row.Id;
                         }
                         return;
@@ -809,6 +811,7 @@ public sealed class Watchtower(
             return false;
         }
 
+        Error.WriteLine($"watchtower: the role moved to session {_job}{(replacing is null ? "" : $" from {replacing.Id}")}: {why}");
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
         _failCounted = null;
@@ -1020,6 +1023,7 @@ public sealed class Watchtower(
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {
             _unreachableId = null;
