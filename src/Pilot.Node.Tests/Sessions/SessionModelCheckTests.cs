@@ -145,7 +145,7 @@ public sealed class SessionModelCheckTests : IDisposable
             var time = new ManualTime(_now);
             var options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
             State = new NodeState(new InMemoryJournal(), time);
-            Watchtower = new Watchtower(State, Workers, (c, _) => Task.FromResult(State.Complete(c, null)), options, time) { Pilot = "pilot", Models = new RoleModels(null) };
+            Watchtower = new Watchtower(State, Workers, Workers.EndingRun(State), options, time) { Pilot = "pilot", Models = new RoleModels(null) };
             State.PutFlight(new FlightRow
             {
                 Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",

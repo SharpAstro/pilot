@@ -26,7 +26,7 @@ public sealed class OneWatchtowerTests : IDisposable
     {
         _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
-        _tower = new Watchtower(_state, _workers, (c, _) => Task.FromResult(_state.Complete(c, null)), _options, _time) { Pilot = "pilot" };
+        _tower = new Watchtower(_state, _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",

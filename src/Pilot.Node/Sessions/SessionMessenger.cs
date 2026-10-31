@@ -87,7 +87,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, "end-session needs a reason: pilot session end <id> <why>");
         }
-        var by = command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
+        // The node's own end (the watchtower's replacement of a session, run as the node) is the watchtower's, not a person's.
+        var by = command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) || command.Who == Flights.LegWatch.Who ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         return await StopCoreAsync(command, cancellationToken, $"{by}: {why}", cancelJobs: true);
     }
 

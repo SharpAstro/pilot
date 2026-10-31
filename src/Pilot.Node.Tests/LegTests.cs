@@ -43,6 +43,19 @@ internal sealed class FakeWorkers : IWorkerLauncher
         Stopped.Add(job);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// A command runner for a watchtower under test whose <c>end-session</c> (the node's end path) lands the session's row id in
+    /// <see cref="Stopped"/>, as the stop that path performs; every command completes ok.
+    /// </summary>
+    public Func<CommandRequest, CancellationToken, Task<CommandResult>> EndingRun(NodeState state) => (command, _) =>
+    {
+        if (command.Verb == Verbs.EndSession)
+        {
+            Stopped.Add(command.Target[Verbs.SessionTargetPrefix.Length..]);
+        }
+        return Task.FromResult(state.Complete(command, null));
+    };
 }
 
 internal sealed class FakeChecks : ICheckRunner
