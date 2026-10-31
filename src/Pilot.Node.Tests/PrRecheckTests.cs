@@ -404,7 +404,8 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 }
 
 /// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
-public sealed class PrRecheckTests2 : PrRecheckTestsBase
+[Trait("Category", "Slow")]
+public sealed class PrRecheckTests2 :PrRecheckTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
