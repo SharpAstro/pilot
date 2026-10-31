@@ -8,7 +8,17 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class JobsCollection
+{
+    public const string Name = "Jobs";
+}
+
 /// <summary>Jobs: a long run handed to the node, its owner woken with how it ended, so no worker polls.</summary>
+// PIL537 (merge-queue run 41114507855, windows: the 5 s pipe read was cancelled with the far end still open): a Windows child
+// started with redirected stdio inherits every inheritable handle of the testhost, so a process another test class started in
+// parallel held the handle test's pipe client end, not the job. These tests run apart from every other class.
+[Collection(JobsCollection.Name)]
 public sealed class JobTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -1552,8 +1562,11 @@ public sealed class JobTests : IDisposable
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         var paused = _state.Jobs().Single(j => j.Id == id);
         (paused.State, paused.PausedAt is not null).ShouldBe((JobState.Running, true));
+        // PIL537 (run 41144008663, windows: CpuSince 750 ms against < 100 ms while paused): half a core ran through the paused
+        // window, so a process of the tree was not frozen, one started between the node's read of the tree and its suspend.
+        // Pause now returns once a pass of the tree froze nothing new, so the sample is taken at once, on that event, not after
+        // a fixed delay that let a straggler's start-up CPU look like work.
         var tree = TreeOf(_jobs.PidOf(id)!.Value);
-        await Task.Delay(700, Ct);
         var (cpu, length) = (Cpu(tree), LogLength(log));
         await Task.Delay(1500, Ct);
         CpuSince(tree, cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
