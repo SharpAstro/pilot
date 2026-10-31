@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -136,6 +137,11 @@ public sealed partial class LegCommander
             if (failure is null || !current)
             {
                 return null;
+            }
+            // A start that failed: the ledger counts the second and later ones of a session as waste.
+            if (Ledger is not null && what.IndexOf(',') is > 0 and var comma)
+            {
+                Ledger.Mark(new WasteMark(WasteKinds.FailedStart, subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? subject[Verbs.FlightTargetPrefix.Length..].Split('/')[0] : null, null, what[..comma], null, 0, failure, time.GetUtcNow()));
             }
             if (quietFailure is not null)
             {

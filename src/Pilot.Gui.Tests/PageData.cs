@@ -30,6 +30,8 @@ internal sealed class PageData
     public required TranscriptEntry[] Transcript { get; init; }
     public required RepoInfo[] WizardRepos { get; init; }
     public required IssueInfo[] WizardIssues { get; init; }
+    public required SpendScreen Spend { get; init; }
+    public required SpendFlightReport[] FlightSpend { get; init; }
 
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
@@ -66,7 +68,9 @@ internal sealed class PageData
     public static PageData At(DateTimeOffset at) =>
         Build("moment", sessions: 6, flights: 3, legs: 3, jobs: 6, cards: 3, repos: 3, chat: 4, transcript: 4, wizard: 0, nodes: 2, lengthen: false, at);
 
-    private static PageData Empty() => new()
+    private static PageData Empty() => EmptyOf(SpendFor("empty", [], [], Now));
+
+    private static PageData EmptyOf(SpendSnapshot empty) => new()
     {
         State = "empty",
         Nodes = [Here],
@@ -82,6 +86,8 @@ internal sealed class PageData
         Transcript = [],
         WizardRepos = [],
         WizardIssues = [],
+        Spend = new SpendScreen("today", empty.Reports[0] with { Flights = [], Roles = [], Messages = 0, Tokens = 0, Weighted = 0 }, empty.Waste[0] with { Rows = [], WasteTokens = 0, WasteWeighted = 0, WasteShare = 0 }, "test", Now),
+        FlightSpend = [],
     };
 
     private static PageData Sample()
@@ -107,6 +113,8 @@ internal sealed class PageData
             Transcript = built.Transcript,
             WizardRepos = built.WizardRepos,
             WizardIssues = built.WizardIssues,
+            Spend = SpendScreen.From(snapshot.Spend!, "today", "sample", snapshot.At),
+            FlightSpend = built.FlightSpend,
         };
     }
 
@@ -261,6 +269,7 @@ internal sealed class PageData
         var wizardRepos = Enumerable.Range(0, wizard).Select(i => new RepoInfo { Name = lengthen ? $"{LongWord}-{i}" : $"repo-{i}", Path = path + $"\\r{i}", GitHub = $"SharpAstro/repo-{i}", Flights = i }).ToArray();
         var wizardIssues = Enumerable.Range(0, wizard).Select(i => new IssueInfo { Number = 100 + i, Title = lengthen ? $"{LongTitle} {LongTitle}" : $"Issue {i}", Labels = lengthen ? ["enhancement", LongWord] : ["bug"], UpdatedAt = now.AddDays(-i) }).ToArray();
 
+        var spendData = SpendFor(state, flightRows.Select(f => f.Code).ToArray(), legRows.Select(l => l.Name).Distinct().ToArray(), now);
         return new PageData
         {
             State = state,
@@ -277,7 +286,47 @@ internal sealed class PageData
             Transcript = transcriptEntries,
             WizardRepos = wizardRepos,
             WizardIssues = wizardIssues,
+            Spend = SpendScreen.From(spendData, "today", "test", now),
+            FlightSpend = spendData.Flights,
         };
+    }
+
+    // The spend pages' data for the flights and legs a state has: a report for each window with a row a flight (and a "-" for what no flight
+    // owns), the four roles, a waste row a flight, and each flight's spend per leg and round. Words are stretched in "long".
+    private static SpendSnapshot SpendFor(string state, string[] flights, string[] legs, DateTimeOffset now)
+    {
+        var lengthen = state == "long";
+        var codes = flights.Select(f => lengthen ? $"{f}-{LongWord}" : f).Append("-").ToArray();
+        SpendRow[] Rows(string[] keys) => [.. keys.Select((k, i) => new SpendRow { Key = k, Messages = 10 + i, Tokens = 1_234_567_890L / (i + 1), Weighted = 400_000_000L / (i + 1), Share = Math.Round(100.0 / keys.Length, 1) })];
+        var roles = new[] { "planner", "worker", "reviewer", "fixer", "watchtower", "adhoc" };
+        SpendReport Report(string window) => new()
+        {
+            Window = window, From = now.AddHours(-3), To = now, Messages = 420, Tokens = 4_200_000_000L, Weighted = 1_000_000_000L,
+            Flights = Rows(codes), Roles = Rows(roles),
+        };
+        var waste = flights.Select((f, i) => new SpendWasteRow
+        {
+            Kind = i % 2 == 0 ? "round" : "base-merge-review",
+            Reason = lengthen ? LongTitle : i % 2 == 0 ? "findings" : "only a base merge changed the head",
+            Flight = lengthen ? $"{f}-{LongWord}" : f,
+            Leg = legs.Length > 0 ? (lengthen ? $"{legs[0]}-{LongWord}" : legs[0]) : null,
+            Role = "worker", Model = "claude-opus-5-5", Messages = 5, Tokens = 700_000_000L / (i + 1), Weighted = 90_000_000L / (i + 1), Share = 1.5,
+        }).ToArray();
+        SpendWasteReport Waste(string window) => new()
+        {
+            Window = window, From = now.AddHours(-3), To = now, WindowWeighted = 1_000_000_000L, WasteTokens = waste.Sum(w => w.Tokens),
+            WasteWeighted = waste.Sum(w => w.Weighted), WasteShare = 9.0, Rows = waste,
+        };
+        var perFlight = flights.Select(f => new SpendFlightReport
+        {
+            Flight = f, From = now.AddHours(-30), To = now, Messages = 100, Tokens = 3_000_000_000L, Weighted = 700_000_000L,
+            Legs = [.. legs.Select(l => new SpendLegRow
+            {
+                Leg = lengthen ? $"{l}-{LongWord}" : l, Messages = 50, Tokens = 1_000_000_000L, Weighted = 300_000_000L,
+                Rounds = [new SpendRoundRow { Round = 0, Messages = 30, Tokens = 600_000_000L, Weighted = 150_000_000L }, new SpendRoundRow { Round = 1, Messages = 20, Tokens = 400_000_000L, Weighted = 150_000_000L }],
+            })],
+        }).ToArray();
+        return new SpendSnapshot { Reports = [Report("5h"), Report("today"), Report("week")], Waste = [Waste("5h"), Waste("today"), Waste("week")], Flights = perFlight };
     }
 
     // The Pull requests page's read: a handful of every kind (sample), titles, repos and chips far past a column (long), rows enough to

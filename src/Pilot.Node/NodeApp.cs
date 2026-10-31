@@ -145,13 +145,14 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<ClaudeWorkerLauncher>();
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<IWorkerLauncher>(services => services.GetRequiredService<LoggingWorkerLauncher>());
         builder.Services.AddHostedService(services => new StartWatch(services.GetRequiredService<IWorkerLauncher>()));
-        builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
+        builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
         builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
@@ -162,6 +163,7 @@ public static class NodeApp
             legs.Gate = services.GetRequiredService<StartGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.Ledger = services.GetRequiredService<SpendLedger>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
@@ -364,6 +366,7 @@ public static class NodeApp
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
+            Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
         });
@@ -558,6 +561,24 @@ public static class NodeApp
         // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
         app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
+
+        // What the token ledger says was spent over a window (5h, today, week): pilot spend. This machine only.
+        app.MapGet(NodeWire.SpendRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Report(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } report
+                ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
+                : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
+
+        // What of that was spent for nothing kept: pilot spend --waste.
+        app.MapGet(NodeWire.SpendWasteRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Waste(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } waste
+                ? Results.Json(ResponseEnvelope<SpendWasteReport>.Ok(waste), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport)
+                : Results.Json(ResponseEnvelope<SpendWasteReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, statusCode: 400));
+
+        // One flight's spend so far, per leg and round: the flight's page.
+        app.MapGet(NodeWire.SpendFlightRoute, (string? code, SpendLedger ledger, TimeProvider time) =>
+            !string.IsNullOrWhiteSpace(code)
+                ? Results.Json(ResponseEnvelope<SpendFlightReport>.Ok(ledger.FlightReport(code, time.GetUtcNow()) ?? new SpendFlightReport { Flight = code, From = time.GetUtcNow(), To = time.GetUtcNow(), Messages = 0, Tokens = 0, Weighted = 0, Legs = [] }), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport)
+                : Results.Json(ResponseEnvelope<SpendFlightReport>.Fail("Give a flight code: ?code=PIL515", 400), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, statusCode: 400));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.
