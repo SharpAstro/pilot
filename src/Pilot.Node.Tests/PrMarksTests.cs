@@ -10,23 +10,23 @@ namespace Pilot.Node.Tests;
 /// What a flight's review leaves on its PR (#222): the pilot/review status on the head the reviewer read, the one pilot:
 /// label, and the report as a COMMENT review once per go-around; and that a write GitHub refuses is a card, not a failed review.
 /// </summary>
-public sealed class PrMarksTests : IDisposable
+public abstract class PrMarksTestsBase : IDisposable
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>The head the reviewer reads: the flight's plane as it stands, which GitHub's own (stale for a moment after a push) is not.</summary>
-    private string Reviewed => Git(_state.Flights().Single().Worktree, "rev-parse", "HEAD");
+    private protected string Reviewed => Git(_state.Flights().Single().Worktree, "rev-parse", "HEAD");
 
-    private const string Moved = "beef1111beef1111";
+    private protected const string Moved = "beef1111beef1111";
 
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
-    private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
-    private readonly FakeWorkers _workers = new();
-    private readonly FakeGitHub _github = new();
-    private readonly FlightCommander _flights;
-    private readonly LegCommander _legs;
+    private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
+    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly FakeWorkers _workers = new();
+    private protected readonly FakeGitHub _github = new();
+    private protected readonly FlightCommander _flights;
+    private protected readonly LegCommander _legs;
 
-    public PrMarksTests()
+    protected PrMarksTestsBase()
     {
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
         SeedRepo.Make(_root);
@@ -39,7 +39,7 @@ public sealed class PrMarksTests : IDisposable
         };
     }
 
-    private string Repo => Path.Combine(_root, "tianwen");
+    private protected string Repo => Path.Combine(_root, "tianwen");
 
     public void Dispose()
     {
@@ -57,7 +57,7 @@ public sealed class PrMarksTests : IDisposable
         Directory.Delete(_root, recursive: true);
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
@@ -71,19 +71,19 @@ public sealed class PrMarksTests : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
+    private protected Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
         verb is Verbs.CreateFlight or Verbs.Connect or Verbs.Land
             ? _flights.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct)
             : _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
 
-    private FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
+    private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
 
-    private CardRow[] Open() => _state.Cards(openOnly: true);
+    private protected CardRow[] Open() => _state.Cards(openOnly: true);
 
-    private static string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
+    private protected static string Reviewer(string code) => $"du1-{code.ToLowerInvariant()}-review";
 
     /// <summary>A flight with one leg flown as a worker flies it, its PR opened and its reviewer started.</summary>
-    private async Task<FlightRow> Opened()
+    private protected async Task<FlightRow> Opened()
     {
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "1", "Flight 1")).Ok.ShouldBeTrue();
         var flight = _state.Flights().Single();
@@ -99,12 +99,17 @@ public sealed class PrMarksTests : IDisposable
         return F(flight.Code);
     }
 
-    private Task<CommandResult> Verdict(string code, string verdict, string report) =>
+    private protected Task<CommandResult> Verdict(string code, string verdict, string report) =>
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, report);
 
-    private static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+    private protected static string[] Pilot(HashSet<string>? labels) => [.. (labels ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
+}
 
+/// <summary>Part 1 of PrMarksTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrMarksTests1 : PrMarksTestsBase
+{
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OpeningAFlightsPrLabelsItWithThisNodesCodeAndAStateLabelChangeLeavesItBe()
     {
         var flight = await Opened();
@@ -128,6 +133,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr()
     {
         _github.IssueLabelFails = "label refused";
@@ -139,6 +145,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewStartsPendingOnTheHeadItReadsAndTheFlightRowKeepsWhatWasSet()
     {
         var flight = await Opened();
@@ -153,6 +160,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassIsPostedAsACommentReviewAndSetOnTheHeadTheReviewerReadNotALaterOne()
     {
         var flight = await Opened();
@@ -178,6 +186,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesSetFailureWithTheFirstFindingAndTheLabelsReplaceEachOther()
     {
         var flight = await Opened();
@@ -199,6 +208,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OneCommentReviewIsPostedPerGoAroundAndTheEarlierOnesAreLeftAlone()
     {
         var flight = await Opened();
@@ -215,8 +225,13 @@ public sealed class PrMarksTests : IDisposable
         _github.Posted[1].Payload.ShouldContain("second round");
         F(flight.Code).Review!.ReviewUrl.ShouldNotBeNull().ShouldEndWith("pullrequestreview-9002");
     }
+}
 
+/// <summary>Part 2 of PrMarksTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class PrMarksTests2 : PrMarksTestsBase
+{
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict()
     {
         var flight = await Opened();
@@ -240,6 +255,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusedWriteIsSetAtTheNextLookWithoutPostingTheReviewTwiceAndTheCardCloses()
     {
         var flight = await Opened();
@@ -265,6 +281,7 @@ public sealed class PrMarksTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewCommentThatWasRefusedIsPostedAtTheNextLook()
     {
         var flight = await Opened();
@@ -294,4 +311,5 @@ public sealed class PrMarksTests : IDisposable
         PrMarks.RepoOf("https://example.com/").ShouldBeNull();
         PrMarks.RepoOf(null).ShouldBeNull();
     }
+
 }

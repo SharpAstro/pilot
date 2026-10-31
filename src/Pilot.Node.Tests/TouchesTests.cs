@@ -107,6 +107,7 @@ public sealed class TouchesTests : IDisposable
         _legs.RunAsync(new CommandRequest { Verb = Verbs.Touches, Target = "flight/PIL375", Args = files, Who = "tests" }, Ct);
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnswersALinePerFlightOnThisNodeAndOnAPeerAndPerOpenPrWithTheSharedFilesAndAChoice()
     {
         // This node: one sharing a file (connect), one sharing none (parallel), one landed (not listed).
@@ -142,6 +143,7 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeWithTheSameFilesIsOfferedAFoldWithTheWaysToAnswerIt()
     {
         _state.PutFlight(Row("PIL294", 294, "flight/pil294", Repo));
@@ -154,6 +156,7 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeNotPushedIsReadFromItsLocalBranch()
     {
         _state.PutFlight(Row("PIL294", 294, "flight/pil294", Repo));
@@ -178,6 +181,7 @@ public sealed class TouchesTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WithNoOtherFlightAndNoOpenPrItSaysSoAndSendsTheFlightParallel()
     {
         var result = await Touches(Mine);

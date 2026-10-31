@@ -198,6 +198,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThroughARealNodeSyncFastForwardsARealCloneIsJournaledAndRefusedFromTheWatchtowerAndTheLan()
     {
         // A clone one commit behind its bare origin, on main.
@@ -256,6 +257,7 @@ public sealed class RepoSyncTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnlySyncTakesWhatWasAlreadyFetchedWhereTheFullSyncFailsOnAnUnreachableRemote()
     {
         // A clone one commit behind a bare origin, whose new commit it has fetched; then the origin goes away.

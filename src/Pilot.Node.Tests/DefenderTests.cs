@@ -304,6 +304,7 @@ public sealed class DefenderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSetupVerbListsDefenderAmongItsKeys()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

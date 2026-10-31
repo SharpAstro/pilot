@@ -11,6 +11,7 @@ namespace Pilot.Node.Tests;
 /// pilot flight pr): the base is merged in and the branch pushed plain, even where the queue rebases; a conflict is the
 /// watchtower's pr-conflicts card, not a ring that the flight could not open its PR by itself (PIL446, TIA1877 and TIA1894, DE1 2026-10-29).
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class OpenPrBaseTests : ReviewTestsBase
 {
     /// <summary>A flight whose branch is pushed, then main moves on by <paramref name="mainFile"/> holding <paramref name="mainText"/>.</summary>

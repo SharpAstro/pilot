@@ -10,6 +10,7 @@ namespace Pilot.Node.Tests;
 /// A PR review's cards belong to the review and the head it read (pilot #527): each is raised once from that review, a dismissal
 /// sticks across sweeps and a node restart, and a head that moves on or a newer review closes the old review's open cards.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class PrReviewCardsTests : PrFixTestsBase
 {
     private const string Design = "README.md:1 design: should this be a service at all?";

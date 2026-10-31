@@ -8,6 +8,7 @@ namespace Pilot.Node.Tests;
 /// The rebase probe and the merge queue method (pilot #523): a PR can merge cleanly and still not rebase onto its base, which a merge
 /// queue that rebases cannot land. The probe tells so in a throwaway worktree, never touching the plane.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class RebaseLayTests : LegCommanderTestsBase
 {
     [Theory]

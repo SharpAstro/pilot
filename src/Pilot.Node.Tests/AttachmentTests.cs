@@ -191,6 +191,7 @@ public sealed class AttachmentTests : IAsyncDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAFlightRemovesItsCopiesAndLeavesAnotherFlightsAlone()
     {
         var root = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);

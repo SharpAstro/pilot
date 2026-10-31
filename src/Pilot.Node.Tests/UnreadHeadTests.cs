@@ -31,6 +31,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadAfterARestartEndedAFinishCheckGetsItsReviewAtTheNewHeadWhenTheFinishRunsAgain()
     {
         var (flight, read) = await ReviewedWithChanges("401");
@@ -59,6 +60,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadOnTheSweepOfACommitAfterAChangesReviewStartsOneReviewer()
     {
         var (flight, read) = await ReviewedWithChanges("405");
@@ -76,6 +78,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadCommandFindingTheReviewRunningStartsNoSecondReviewer()
     {
         var flight = await NewFlight("406", "parser");
@@ -96,6 +99,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadCommandFindingTheHeadReadByNowStartsNoReviewer()
     {
         var (flight, _) = await ReviewedWithChanges("407");
@@ -109,6 +113,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadOfAPlaneWithUncommittedChangesIsLeftToTheNextSweep()
     {
         var (flight, read) = await ReviewedWithChanges("408");
@@ -130,6 +135,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadIsReviewedByTheFirstSweepAtNodeStartBeforeTheIntervalPasses()
     {
         var (flight, read) = await ReviewedWithChanges("409");
@@ -159,6 +165,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadOfAFailedLegMarkedDoneAnywayIsPushedAndReviewedBySweep()
     {
         var (flight, read) = await ReviewedWithChanges("402");
@@ -178,6 +185,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadIsNoneWhenTheChangesReviewReadTheCurrentHead()
     {
         var (flight, _) = await ReviewedWithChanges("403");
@@ -190,6 +198,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadNeverReplacesAReviewStillRunning()
     {
         var flight = await NewFlight("404", "parser");
@@ -223,6 +232,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadOfAReviewerThatDidNotStartIsNotRetriedBySweepsAndKeepsItsCard()
     {
         // A review that read no head is the controller's "Review again" card: a start tried every minute while the cause lasts would override it.
@@ -242,6 +252,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task UnreadHeadLeavesReadyAnywayOverAReviewThatDidNotStartPassed()
     {
         var flight = await ReviewerNotStarted("411");

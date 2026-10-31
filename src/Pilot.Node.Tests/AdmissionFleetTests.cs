@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// the fleet; and a node that cannot reach its peers counting its own and saying so. The nodes are real harness nodes (their own state, settings
 /// and admission gate); the peer path between them hands a command to the other node's gate where the LAN would carry it.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class AdmissionFleetTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

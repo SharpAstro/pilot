@@ -81,6 +81,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees()
     {
         await FlightWithTwoLegs();
@@ -104,6 +105,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACommandThatGetsTheLockWithinFiveSecondsAnswersAsBefore()
     {
         await FlightWithTwoLegs();
@@ -122,6 +124,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightCommandWaitingPastFiveSecondsIsQueuedAndARetryByItsIdRunsItOnce()
     {
         var node = await NodeWithTwoFlights();
@@ -147,6 +150,7 @@ public sealed class LockWaitTests : LegCommanderTestsBase, IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheCliPrintsWhatHoldsTheLockAndExitsAsQueued()
     {
         var node = await NodeWithTwoFlights();

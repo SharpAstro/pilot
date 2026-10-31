@@ -142,6 +142,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer()
     {
         var flight = await OwnFlight(7);
@@ -158,6 +159,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStartOfALegOnAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer()
     {
         var flight = await OwnFlight(8);
@@ -173,6 +175,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUnreachablePeerDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294"));
@@ -186,6 +189,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AUnreachablePeerDoesNotBlockAPlan()
     {
         var flight = await OwnFlight(9);
@@ -200,6 +204,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeersLandedFlightDoesNotBlockACreate()
     {
         _fleet.Peers.Add(Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294", FlightState.Landed)));
@@ -210,6 +215,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeersFlightOnAnotherRepoDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294", repoPath: "D:/src/other"));
@@ -222,6 +228,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerThatRefusesTheGrantDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294"));

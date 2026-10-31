@@ -21,10 +21,7 @@ public sealed class LfsTests : IDisposable
     {
         try
         {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
+            ClearReadOnly(_root);
             Directory.Delete(_root, recursive: true);
         }
         catch (IOException)
@@ -54,39 +51,86 @@ public sealed class LfsTests : IDisposable
         }
     }
 
-    private string Git(string cwd, params string[] args)
+    private static string Git(string cwd, params string[] args)
     {
         var (code, output) = Run(cwd, args);
         code.ShouldBe(0, $"git {string.Join(' ', args)}: {output}");
         return output.Trim();
     }
 
-    /// <summary>A bare remote, and a main clone of it holding one LFS file, pushed with its content to the remote's own LFS store.</summary>
+    /// <summary>The bare remote and main clone built once for the class (real git and git-lfs are slow to start), copied per test.</summary>
+    private static readonly Lazy<string> Template = new(BuildTemplate);
+
+    private static string BuildTemplate()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pilot-lfs-template-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        var remote = Path.Combine(root, "remote.git");
+        var main = Path.Combine(root, "main");
+        Git(root, "init", "--bare", "-b", "main", remote);
+        Git(root, "clone", remote, main);
+        Git(main, "config", "user.email", "t@example.com");
+        Git(main, "config", "user.name", "t");
+        Git(main, "config", "lfs.url", new Uri(remote).AbsoluteUri);
+        Git(main, "lfs", "install", "--local");
+        Git(main, "lfs", "track", "*.bin");
+        File.WriteAllText(Path.Combine(main, "big.bin"), "large content\n");
+        Git(main, "add", ".");
+        Git(main, "commit", "-m", "lfs file");
+        Git(main, "push", "origin", "HEAD:main");
+        Git(main, "lfs", "pull");
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try
+            {
+                ClearReadOnly(root);
+                Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        };
+        return root;
+    }
+
+    private static void ClearReadOnly(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+    }
+
+    private static void CopyTree(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, dir)));
+        }
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        {
+            File.Copy(file, Path.Combine(to, Path.GetRelativePath(from, file)), overwrite: true);
+        }
+    }
+
+    /// <summary>A bare remote, and a main clone of it holding one LFS file (content pulled), from the class template with its urls pointed at this test's copy.</summary>
     private void MakeRepoWithLfs()
     {
-        Git(_root, "init", "--bare", "-b", "main", Remote);
-        Git(_root, "clone", Remote, Main);
-        Git(Main, "config", "user.email", "t@example.com");
-        Git(Main, "config", "user.name", "t");
+        CopyTree(Template.Value, _root);
+        Git(Main, "remote", "set-url", "origin", Remote);
         Git(Main, "config", "lfs.url", new Uri(Remote).AbsoluteUri);
-        Git(Main, "lfs", "install", "--local");
-        Git(Main, "lfs", "track", "*.bin");
-        File.WriteAllText(Path.Combine(Main, "big.bin"), "large content\n");
-        Git(Main, "add", ".");
-        Git(Main, "commit", "-m", "lfs file");
-        Git(Main, "push", "origin", "HEAD:main");
-        Git(Remote, "lfs", "ls-files", "--all").ShouldNotBeNull();
     }
 
     private string StoreSnapshot() =>
         string.Join('\n', Directory.EnumerateFiles(Path.Combine(Main, ".git", "lfs", "objects"), "*", SearchOption.AllDirectories).Order());
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMadePlaneTransfersNoLfsAndLeavesTheStoreAlone()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
         MakeRepoWithLfs();
-        Git(Main, "lfs", "pull");
         var store = StoreSnapshot();
         store.ShouldNotBeEmpty();
 
@@ -103,11 +147,11 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushWithNoLfsChangeSkipsThePrePushUploadAndOneThatChangesLfsKeepsIt()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
         MakeRepoWithLfs();
-        Git(Main, "lfs", "pull");
         var git = new GitCli();
         await using var server = new LfsServer();
         Git(Main, "config", "lfs.url", server.Url);
@@ -128,11 +172,11 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushOfAMergeWhoseResolutionChangesAnLfsFileKeepsThePrePushUpload()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
         MakeRepoWithLfs();
-        Git(Main, "lfs", "pull");
 
         // Both sides change big.bin and reach the remote (with its real LFS store); only the merge is left to push.
         Git(Main, "checkout", "-b", "side");
@@ -157,11 +201,11 @@ public sealed class LfsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASyncOfTheMainCheckoutFillsItsLfsFilesWithTheirContent()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
         MakeRepoWithLfs();
-        Git(Main, "lfs", "pull");
 
         // origin/main is one commit ahead, a change to big.bin whose object only the remote's LFS store holds.
         File.WriteAllText(Path.Combine(Main, "big.bin"), "newer large content\n");

@@ -104,6 +104,7 @@ public abstract class OverlapTestsBase : IDisposable
 public sealed class OverlapTests1 : OverlapTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OverlapOnAFreshPairRingsOneCardWithFoldConnectAndPlanInParallelAndTellsThePlannerToEndItsTurn()
     {
         await TwoFlights();
@@ -130,6 +131,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSharedFilesAreNamedOnTheCardWithBothFlightsAndWhatEachChoiceDoes()
     {
         await TwoFlights();
@@ -151,6 +153,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALongListOfSharedFilesIsCutInTheTitleAndWholeInTheDetail()
     {
         await TwoFlights();
@@ -165,6 +168,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFoldPickTitlesTheCardAFoldAndKeepsThePickOnTheRow()
     {
         await TwoFlights();
@@ -181,6 +185,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConnectPickTitlesTheCardAConnectAsDoesNoPick()
     {
         await TwoFlights();
@@ -192,6 +197,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUnknownPickIsRefusedAndNothingIsRecorded()
     {
         await TwoFlights();
@@ -205,6 +211,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerRecordsItConnectsTheFlightClosesTheCardAndStartsAFreshPlannerThatKnowsIt()
     {
         await TwoFlights();
@@ -239,6 +246,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerIsRefusedWhenTheOtherWaitsForTheFlightAndTheCardStaysOpen()
     {
         await TwoFlights();
@@ -255,6 +263,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUnknownALandedAndTheSameFlightAreRefused()
     {
         await TwoFlights();
@@ -269,6 +278,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanLegAndPlannedAreRefusedWhileTheAnswerWaitsAndNameTheOtherFlightAndTheCard()
     {
         await TwoFlights();
@@ -290,6 +300,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AskingAPendingPairAgainRingsNoSecondCard()
     {
         await TwoFlights();
@@ -304,6 +315,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanSeparatelyRecordsTheAnswerClosesTheCardStopsTheWaitingPlannerAndStartsAFreshOneThatKnowsIt()
     {
         await TwoFlights();
@@ -334,6 +346,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AskingAnAnsweredPairAgainReturnsTheRecordedAnswerWithNoNewCard()
     {
         await TwoFlights();
@@ -353,6 +366,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldRecordsItOnThePairClosesTheCardAndAddsTheIssueToTheOtherFlightWhosePlannerIsToldToPlanLegsAfterItsOwn()
     {
         await TwoFlights();
@@ -388,6 +402,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     [Theory]
     [InlineData(TrackerKind.Shortcut, TrackerKind.GitHub)]
     [InlineData(TrackerKind.GitHub, TrackerKind.Shortcut)]
+    [Trait("Category", "Slow")]
     public async Task FoldAcrossTrackersIsRefusedNamingBothWhileTheOverlapItselfIsAllowed(TrackerKind asker, TrackerKind other)
     {
         await TwoFlights();
@@ -406,6 +421,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept()
     {
         await TwoFlights();
@@ -430,6 +446,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheOtherFlightsPrBodyClosesBothIssues()
     {
         await TwoFlights();
@@ -444,6 +461,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldingIntoALandedFlightIsRefusedAndNothingChanges()
     {
         await TwoFlights();
@@ -465,6 +483,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
 public sealed class OverlapTests2 : OverlapTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldingIntoAFlightWhosePrIsOpenIsRefusedForThePrWouldNotCloseTheIssue()
     {
         await TwoFlights();
@@ -478,6 +497,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldNeedsAnAskedPairAndAnsweringItAgainStartsNoFurtherPlanner()
     {
         await TwoFlights();
@@ -496,6 +516,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFoldedIssueAndTheRetirementSurviveAReplayOfTheJournal()
     {
         var folder = Path.Combine(_root, "journal-fold");
@@ -522,6 +543,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWaitingForTheFoldedOneNowWaitsForTheOtherAcrossAReplayAndFliesOnlyWhenTheOtherLands()
     {
         var folder = Path.Combine(_root, "journal-waiting");
@@ -557,6 +579,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldingDropsAConnectionThatWouldWaitOnItselfOrCycle()
     {
         await TwoFlights();
@@ -572,6 +595,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheRecordedAnswerSurvivesAReplayOfTheJournal()
     {
         var folder = Path.Combine(_root, "journal");
@@ -600,6 +624,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePlannersBriefMakesItLookFirstBeforeItPlansAnyLeg()
     {
         await TwoFlights();
@@ -633,6 +658,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task SeparateWithASharedFileThenConnectHoldsTheFlightOnTheOtherAndItsLegsCanStillBePlannedAndPlannedSaid()
     {
         await TwoFlights();
@@ -659,6 +685,7 @@ public sealed class OverlapTests2 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhosePlannerRaisesNoOverlapPlansAndSaysPlannedAsTodayWithNoOverlapCard()
     {
         await TwoFlights();

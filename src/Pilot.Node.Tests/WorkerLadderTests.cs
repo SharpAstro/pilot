@@ -63,6 +63,7 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondGoAroundStartsOpusAndAThirdOpusAtXhighAndTheRowRecordsIt()
     {
         _legs.Models = new RoleModels(null);
@@ -83,6 +84,7 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegPlannedOnOpusAtHighStepsToXhighOnTheFourthAttempt()
     {
         _legs.Models = new RoleModels(null);
@@ -96,6 +98,7 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheMaxSettingAndTheSwitchHoldTheLadderOnALiveLeg()
     {
         _legs.Models = Models(("worker-model-max", "sonnet"));
@@ -110,6 +113,7 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANudgeOrResumeOfAnAttemptThreeSessionStartsNoWorkerAndKeepsItsModel()
     {
         _legs.Models = new RoleModels(null);
@@ -127,6 +131,7 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedLegOffersARedoNamingTheNextRedoAndItsModel()
     {
         _legs.Models = new RoleModels(null);

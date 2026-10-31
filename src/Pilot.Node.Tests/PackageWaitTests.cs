@@ -177,6 +177,7 @@ public abstract class PackageWaitTestsBase : IDisposable
 public sealed class PackageWaitTests1 : PackageWaitTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightConnectedToAReleasingFlightStaysHeldAfterTheLandAndFliesWhenTheVersionAndItsNupkgAreOnNuGet()
     {
         MakeRepoAReleaser();
@@ -221,6 +222,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABumpedLineWaitsForAnyVersionOfItAndAnOlderLineDoesNotCount()
     {
         MakeRepoAReleaser();
@@ -246,6 +248,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightConnectedToAFlightThatReleasesNothingFliesOnTheLandAsBefore()
     {
         // No version line and no package in this repo.
@@ -261,6 +264,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APackageNotUpThirtyMinutesAfterThePublishRunSucceededRaisesOneCardNamingTheRunAndTheVersions()
     {
         MakeRepoAReleaser();
@@ -304,6 +308,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APublishRunThatFailedRaisesTheCardAtOnce()
     {
         MakeRepoAReleaser();
@@ -327,6 +332,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APublishRunThatNeverRanRaisesTheCardOnceTheStartGraceIsOver()
     {
         MakeRepoAReleaser();
@@ -354,6 +360,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWaitSurvivesARestartOfTheNodeAndSoDoesTheCardAlreadyRaised()
     {
         MakeRepoAReleaser();
@@ -389,6 +396,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandThatCannotReadNuGetIsRefusedAndLeavesTheFlightFlyingWithItsPlane()
     {
         MakeRepoAReleaser();
@@ -407,6 +415,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANugetOutageDuringAWaitIsNoNewsAndTheNextLookAsksAgain()
     {
         MakeRepoAReleaser();
@@ -427,6 +436,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfTheProducersOwnRepoFliesOnTheLandBecauseItBuildsFromSource()
     {
         MakeRepoAReleaser();
@@ -443,6 +453,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfAnotherRepoThatNamesNoPackageOfTheReleaseFliesOnTheLand()
     {
         MakeRepoAReleaser();
@@ -464,6 +475,7 @@ public sealed class PackageWaitTests1 : PackageWaitTestsBase
 public sealed class PackageWaitTests2 : PackageWaitTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACentralPackageVersionFileNamingThePackageIsAReferenceToo()
     {
         MakeRepoAReleaser();
@@ -481,6 +493,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APackableRepoWhoseCiPushesNoPackageOnAPushToMainReleasesNothingAndNobodyWaits()
     {
         MakeRepoAReleaser();
@@ -498,6 +511,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARepoThatPublishesOnAVersionTagReleasesNothingOnTheLand()
     {
         MakeRepoAReleaser();
@@ -512,6 +526,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APersonLetsAWaitingFlightFlyAnywayFromTheLateCardAndTheWaitIsDropped()
     {
         MakeRepoAReleaser();
@@ -544,6 +559,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightHeldOnlyByAnotherLandStaysHeldWhenToldToFlyAnyway()
     {
         MakeRepoAReleaser();
@@ -557,6 +573,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandReadAfterThePublishFinishedWaitsForNothingNewerThanTheFlightsOwnRelease()
     {
         MakeRepoAReleaser();
@@ -578,6 +595,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandReadBeforeThePublishStillWaitsForTheVersionAfterTheLatestThereWasAtTheMerge()
     {
         MakeRepoAReleaser();
@@ -594,6 +612,7 @@ public sealed class PackageWaitTests2 : PackageWaitTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLateCardReadsTheRunOfTheWorkflowThatPushesPackagesAndNotAnUnrelatedFastOne()
     {
         MakeRepoAReleaser();

@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// flying leg, a fresh planner of a flight with no legs), never for being seen ended: an ended session is resumed or nudged and
 /// may yet finish. Real commanders and the real watch on a real plane, a manual clock.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class SpendWasteMarkTests : LegHoldTestsBase
 {
     private readonly SpendLedger _ledger = new();
@@ -143,6 +144,7 @@ public sealed class SpendWasteMarkTests : LegHoldTestsBase
 /// The review's waste marks, on a real plane with a bare origin: a reviewer seen ended is told first, and marked only when a fresh
 /// review gives it up; a fresh review of a head that only a base merge changed is marked, one with a commit of the leg's own is not.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class SpendWasteReviewMarkTests : ReviewTestsBase
 {
     private readonly SpendLedger _ledger = new();
