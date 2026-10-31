@@ -147,6 +147,7 @@ public sealed class PushBlockedTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThatConflictsSendsTheLegRoundAgainNamingTheConflict()
     {
         var card = await Blocked();

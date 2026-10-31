@@ -118,6 +118,7 @@ public sealed class WindDownTests : IDisposable
     };
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAFlightTellsItsReviewerToFinishThenStopsItCancelsItsJobsAndEndsItsReview()
     {
         var flight = await ReviewedFlightAsync();
@@ -175,6 +176,7 @@ public sealed class WindDownTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSweepRingsOnceForALiveSessionOfALandedFlightAndOnceForOneTheLedgerDoesNotKnow()
     {
         var flight = await ReviewedFlightAsync();
