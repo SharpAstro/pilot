@@ -123,6 +123,7 @@ public static partial class CardSummaries
             LegCommander.ReviewNotesKind => "The review of a flight passed with notes that do not block. The watchtower makes the small ones in the plane; no leg goes round.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
+            LegWatch.StraySession => "A live session the node did not start and that matches no role, leg, flight or PR. Stop it if it is a stray; a role's current session never rings here.",
             PrReviews.FixEndedKind => "A fixer ended without pushing. Fix it starts another fixer on the same findings.",
             PrReviews.FixLeftKind => "A fixer's worktree is still held by a process. The node tries again.",
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
