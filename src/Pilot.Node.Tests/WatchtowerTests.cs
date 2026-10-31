@@ -700,81 +700,6 @@ public sealed class WatchtowerTests : IDisposable
         Open().ShouldNotContain(c => c.Kind == Watchtower.Down);
         Open().Count(c => c.Bin == CardBin.Ring && c.Kind != Watchtower.RaisedKind).ShouldBe(1);
     }
-}
-
-/// <summary>The watchtower's verbs on the node's route, and the controller's gates it cannot pass.</summary>
-public sealed class WatchtowerRouteTests
-{
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    [Fact]
-    public async Task AMergeOrALandingFromTheWatchtowerIsRefusedACardsIncluded()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var watchtower = $"{node.Options.Machine.ToLowerInvariant()}-watchtower";
-        node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge", choices:
-            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["cafe0000"] }]);
-
-        var answered = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
-        var landed = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = watchtower }, Ct);
-
-        // The answer runs the choice as the watchtower's, so the merge in it is what is refused.
-        answered.Response.ShouldNotBeNull().Error.ShouldBe("Merge was refused: merge is the controller's, not the watchtower's: leave its card open for them");
-        landed.Response.ShouldNotBeNull().Error.ShouldStartWith("land is the controller's");
-        node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-    }
-
-    [Fact]
-    public async Task FoldAndSeparateFromTheWatchtowerAreRefusedACardsIncludedAndLeaveThePairPendingAndTheCardOpen()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var watchtower = $"{node.Options.Machine.ToLowerInvariant()}-watchtower";
-        foreach (var code in new[] { "TIA1", "TIA2" })
-        {
-            node.State.PutFlight(new FlightRow
-            {
-                Code = code, Repo = "tianwen", RepoPath = "/r", Issue = int.Parse(code[3..]), Branch = $"flight/{code.ToLowerInvariant()}", Worktree = $"/r/{code}", Base = "main",
-                State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
-                Overlaps = code == "TIA2" ? [new OverlapRow { Other = "TIA1", Why = "same parser", Answer = OverlapAnswer.Pending, At = DateTimeOffset.UtcNow }] : [],
-            });
-        }
-        node.State.RaiseCard(CardBin.Ring, "flight-overlap", "flight/TIA2", "TIA2 looks like part of TIA1: same parser", choices:
-        [
-            new CardChoice { Label = "Fold into TIA1", Verb = Verbs.Fold, Target = "flight/TIA2", Args = ["TIA1"] },
-            new CardChoice { Label = "Plan separately", Verb = Verbs.Separate, Target = "flight/TIA2", Args = ["TIA1"] },
-        ]);
-
-        var folded = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
-        var separated = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["2"], Who = watchtower }, Ct);
-        var direct = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Fold, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
-        var directSeparate = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Separate, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
-
-        folded.Response.ShouldNotBeNull().Error.ShouldBe("Fold into TIA1 was refused: fold is the controller's, not the watchtower's: leave its card open for them");
-        separated.Response.ShouldNotBeNull().Error.ShouldBe("Plan separately was refused: separate is the controller's, not the watchtower's: leave its card open for them");
-        direct.Response.ShouldNotBeNull().Error.ShouldStartWith("fold is the controller's");
-        directSeparate.Response.ShouldNotBeNull().Error.ShouldStartWith("separate is the controller's");
-        node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-        var asker = node.State.Flights().Single(f => f.Code == "TIA2");
-        asker.Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
-        (asker.State, asker.FoldedInto).ShouldBe((FlightState.Flying, null));
-        node.State.Flights().Single(f => f.Code == "TIA1").FoldedIn.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task ARaiseIsACardFromWhoeverRaisedItAndATellNeedsAWatchtower()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["ring", "TIA1 forks: SQLite or JSON?", "both work"], Who = "du1-watchtower" }, Ct))
-            .Success.ShouldBeTrue();
-        var bad = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = "node", Args = ["loud", "x"], Who = "tests" }, Ct);
-        var tell = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["hello"], Who = "tests" }, Ct);
-
-        var card = node.State.Cards().ShouldHaveSingleItem();
-        (card.Bin, card.Kind, card.Title, card.Detail).ShouldBe((CardBin.Ring, Watchtower.RaisedKind, "TIA1 forks: SQLite or JSON?", "both work (from du1-watchtower)"));
-        bad.Response.ShouldNotBeNull().Error.ShouldStartWith("raise takes ring, for-you or handled");
-        tell.Response.ShouldNotBeNull().Error.ShouldBe("this node keeps no watchtower (--no-watchtower)");
-    }
 
     /// <summary>The node's real end path under a watchtower: tracker, ledger and messenger over a fake delivery, the job cancel observed.</summary>
     private sealed class RealEnd : IDisposable
@@ -872,5 +797,80 @@ public sealed class WatchtowerRouteTests
         await tower.LookAsync(Ct);
         _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
         _state.Cards(openOnly: true).Where(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldBeEmpty();
+    }
+}
+
+/// <summary>The watchtower's verbs on the node's route, and the controller's gates it cannot pass.</summary>
+public sealed class WatchtowerRouteTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task AMergeOrALandingFromTheWatchtowerIsRefusedACardsIncluded()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var watchtower = $"{node.Options.Machine.ToLowerInvariant()}-watchtower";
+        node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge", choices:
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["cafe0000"] }]);
+
+        var answered = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
+        var landed = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = watchtower }, Ct);
+
+        // The answer runs the choice as the watchtower's, so the merge in it is what is refused.
+        answered.Response.ShouldNotBeNull().Error.ShouldBe("Merge was refused: merge is the controller's, not the watchtower's: leave its card open for them");
+        landed.Response.ShouldNotBeNull().Error.ShouldStartWith("land is the controller's");
+        node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task FoldAndSeparateFromTheWatchtowerAreRefusedACardsIncludedAndLeaveThePairPendingAndTheCardOpen()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var watchtower = $"{node.Options.Machine.ToLowerInvariant()}-watchtower";
+        foreach (var code in new[] { "TIA1", "TIA2" })
+        {
+            node.State.PutFlight(new FlightRow
+            {
+                Code = code, Repo = "tianwen", RepoPath = "/r", Issue = int.Parse(code[3..]), Branch = $"flight/{code.ToLowerInvariant()}", Worktree = $"/r/{code}", Base = "main",
+                State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
+                Overlaps = code == "TIA2" ? [new OverlapRow { Other = "TIA1", Why = "same parser", Answer = OverlapAnswer.Pending, At = DateTimeOffset.UtcNow }] : [],
+            });
+        }
+        node.State.RaiseCard(CardBin.Ring, "flight-overlap", "flight/TIA2", "TIA2 looks like part of TIA1: same parser", choices:
+        [
+            new CardChoice { Label = "Fold into TIA1", Verb = Verbs.Fold, Target = "flight/TIA2", Args = ["TIA1"] },
+            new CardChoice { Label = "Plan separately", Verb = Verbs.Separate, Target = "flight/TIA2", Args = ["TIA1"] },
+        ]);
+
+        var folded = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
+        var separated = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["2"], Who = watchtower }, Ct);
+        var direct = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Fold, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
+        var directSeparate = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Separate, Target = "flight/TIA2", Args = ["TIA1"], Who = watchtower }, Ct);
+
+        folded.Response.ShouldNotBeNull().Error.ShouldBe("Fold into TIA1 was refused: fold is the controller's, not the watchtower's: leave its card open for them");
+        separated.Response.ShouldNotBeNull().Error.ShouldBe("Plan separately was refused: separate is the controller's, not the watchtower's: leave its card open for them");
+        direct.Response.ShouldNotBeNull().Error.ShouldStartWith("fold is the controller's");
+        directSeparate.Response.ShouldNotBeNull().Error.ShouldStartWith("separate is the controller's");
+        node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+        var asker = node.State.Flights().Single(f => f.Code == "TIA2");
+        asker.Overlaps.ShouldHaveSingleItem().Answer.ShouldBe(OverlapAnswer.Pending);
+        (asker.State, asker.FoldedInto).ShouldBe((FlightState.Flying, null));
+        node.State.Flights().Single(f => f.Code == "TIA1").FoldedIn.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARaiseIsACardFromWhoeverRaisedItAndATellNeedsAWatchtower()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["ring", "TIA1 forks: SQLite or JSON?", "both work"], Who = "du1-watchtower" }, Ct))
+            .Success.ShouldBeTrue();
+        var bad = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = "node", Args = ["loud", "x"], Who = "tests" }, Ct);
+        var tell = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["hello"], Who = "tests" }, Ct);
+
+        var card = node.State.Cards().ShouldHaveSingleItem();
+        (card.Bin, card.Kind, card.Title, card.Detail).ShouldBe((CardBin.Ring, Watchtower.RaisedKind, "TIA1 forks: SQLite or JSON?", "both work (from du1-watchtower)"));
+        bad.Response.ShouldNotBeNull().Error.ShouldStartWith("raise takes ring, for-you or handled");
+        tell.Response.ShouldNotBeNull().Error.ShouldBe("this node keeps no watchtower (--no-watchtower)");
     }
 }
