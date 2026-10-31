@@ -180,6 +180,7 @@ public sealed class StopGateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough()
     {
         // The hook's 2 s is for a live session; on a loaded machine the node took longer and the test read no decision.

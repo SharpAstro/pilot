@@ -228,6 +228,7 @@ public sealed class OneNodePerFlightTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerThatRefusesTheGrantDoesNotBlockACreate()
     {
         var peer = Peer("DE1", PeerFlight("PIL294", 294, "flight/pil294"));

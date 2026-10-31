@@ -161,6 +161,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStartThatFailsWithinTheAnswerIsTheCommandsErrorAndNoCard()
     {
         await FlightWithTwoLegs();

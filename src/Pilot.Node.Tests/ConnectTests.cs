@@ -123,6 +123,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerThatListsNoSuchFlightAnymoreKeepsItHeldAndSaysSo()
     {
         await TwoFlights();

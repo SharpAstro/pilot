@@ -52,6 +52,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThisNodesLabelOnAnOpenIssueNoFlightOfItsIsOnIsTakenOffAndNothingElseIs()
     {
         var repo = Clone();
@@ -78,6 +79,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeWhoseIssueOrPrLacksTheLabelGetsItAndAnotherNodesLabelIsLeft()
     {
         var repo = Clone();

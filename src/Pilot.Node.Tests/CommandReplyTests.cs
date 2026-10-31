@@ -56,6 +56,7 @@ public sealed class CommandReplyTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHandlerThatOutlastsTheDeadlineIsAnsweredQueued()
     {
         var release = new TaskCompletionSource();

@@ -111,6 +111,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedLegTheControllerMarksDoneAnywayClosesItsSubIssueToo()
     {
         OptIn("tianwen");

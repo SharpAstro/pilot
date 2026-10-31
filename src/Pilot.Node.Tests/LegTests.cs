@@ -1034,6 +1034,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 public sealed class LegCommanderTests1 : LegCommanderTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
     {
         _github.Issues[7] = "Moons of Jupiter";
@@ -1116,6 +1117,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerWithNoFiguresForTheWindowIsStartedAtOnce()
     {
         await FlightWithTwoLegs();
