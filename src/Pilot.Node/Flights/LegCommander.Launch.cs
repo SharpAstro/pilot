@@ -76,7 +76,7 @@ public sealed partial class LegCommander
     /// <param name="replacing">Takes the reservation over from a start still out, which then gives itself up silently.</param>
     /// <param name="quietFailure">Says a failure itself (its text), under the lock, where the command is never told it.</param>
     private void Launching(string key, string what, string subject, CardChoice? again, Func<Action, Task<string>> start, Func<string, string?> record,
-        Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null)
+        Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null, string? model = null)
     {
         RefuseIfMoving(key, what);
         var token = new object();
@@ -85,6 +85,9 @@ public sealed partial class LegCommander
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
         _starting[key] = token;
+        // Counted by admission from now, before the tracker lists it: a model it is started with, none leaving it to Claude Code's (Opus).
+        var code = key[(key.IndexOf(':') + 1)..];
+        Slots.Begin(key, token, what.Split(',')[0], code, key.StartsWith("plan:", StringComparison.Ordinal) ? AdmissionRole.Planner : key.StartsWith("review:", StringComparison.Ordinal) ? AdmissionRole.Reviewer : AdmissionRole.Worker, model);
         var launch = new Launch(what, quietFailure is not null);
         launch.Done = Task.Run(async () =>
         {
@@ -112,6 +115,7 @@ public sealed partial class LegCommander
                 finally
                 {
                     _starting.TryRemove(KeyValuePair.Create(key, token));
+                    Slots.End(key, token);
                     _one.Release();
                 }
                 if (!current || failure is not null)
@@ -128,6 +132,7 @@ public sealed partial class LegCommander
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _starting.TryRemove(KeyValuePair.Create(key, token));
+                Slots.End(key, token);
                 failure = ex.Message;
                 if (job is not null)
                 {
@@ -216,5 +221,58 @@ public sealed partial class LegCommander
             && now.Validator == seen.Validator && now.ValidatorJob == seen.ValidatorJob && now.GoArounds == seen.GoArounds
             ? now
             : null;
+    }
+
+    /// <summary>The model a worker on <paramref name="leg"/> starts with: the leg's own wins, else the worker role's; none leaves it to Claude Code's.</summary>
+    private string? WorkerModel(LegRow leg) => leg.Model ?? Models.Model(RoleModels.Worker);
+
+    /// <summary>
+    /// Asks admission whether a session of <paramref name="role"/> may start for <paramref name="flight"/> now, beside the 5-hour
+    /// window's <see cref="StartGate"/>. True: it waits, its why recorded on the leg (or the flight, for a planner or reviewer) as
+    /// the queued reason a row carries; no card, no stall, and the sweep asks again. False: it may go, any queued reason cleared;
+    /// admitted to break a wait-for cycle, one card says so naming both flights.
+    /// </summary>
+    private bool AdmissionWaits(AdmissionRole role, string? model, FlightRow flight, LegRow? leg, IReadOnlySet<string>? replacing = null)
+    {
+        string? why = null;
+        switch (Slots.Ask(role, model, flight, replacing))
+        {
+            case AdmissionDecision.Wait wait:
+                why = wait.Why;
+                break;
+            case AdmissionDecision.AdmitToBreakCycle breaking:
+                Slots.SayCycle(Verbs.FlightTarget(flight.Code), breaking.Card);
+                break;
+        }
+        Slots.PublishState();
+        if (leg is not null)
+        {
+            if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { } now && now.Queued != why)
+            {
+                state.PutLeg(now with { Queued = why });
+            }
+        }
+        else
+        {
+            state.UpdateFlight(flight.Code, f => f.Queued == why ? f : f with { Queued = why });
+        }
+        return why is not null;
+    }
+
+    /// <summary>Reads the <c>pilot: priority</c> label of the flight's issue at a start (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
+    private async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
+            {
+                var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
+                Slots.SetIssuePriority(flight.Code, labels.Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Labels that cannot be read leave the flight as the row says (its PR's label): a start never waits on a tracker.
+        }
     }
 }

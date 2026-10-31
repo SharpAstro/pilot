@@ -10,7 +10,7 @@ namespace Pilot.Node;
 /// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them, but for <c>set node maintenance
 /// on|off</c> (<see cref="NodeApp.MaintenanceSwitch"/>).
 /// </summary>
-public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles)
+public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles, Flights.AdmissionGate? slots = null)
 {
     // The checks run netsh and gh: a page looked at every few seconds runs them at most this often.
     private static readonly TimeSpan ChecksFor = TimeSpan.FromSeconds(10);
@@ -76,12 +76,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey)
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey)
         {
             roles.Apply(updated);
+            // The cap and the repo mode are one value for the fleet, held by the node that keeps the Opus count: a set here goes there too (one sent from there is not sent back).
+            var held = key is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey && command.Grant is null ? slots?.PushSetting(key, args[1..]) : null;
+            if (held is not null)
+            {
+                return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {held}");
+            }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? $"{key} saved as {value}, and in force now"
-                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
@@ -172,6 +178,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => options.Lan ? "on" : "off",
         NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
+        NodeSettings.OneFlightPerRepoKey => roles.OneFlightPerRepo ? "on" : "off",
+        NodeSettings.OpusCapKey => roles.OpusCap.ToString(CultureInfo.InvariantCulture),
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
         NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
@@ -213,7 +221,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -223,6 +231,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => "off",
         NodeSettings.MaintenanceKey => "off",
+        NodeSettings.OneFlightPerRepoKey => "off",
+        NodeSettings.OpusCapKey => "3",
         NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.AutopilotKey => "off",
         NodeSettings.ReviewDeepFirstKey => "on",
@@ -257,6 +267,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => ("On the LAN", "Listen on the LAN and announce it: anyone there may watch, a command needs a grant you allow", ["on", "off"]),
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
+        NodeSettings.OpusCapKey => ("Opus cap", "The most Opus sessions (workers, planners, fixers, reviewers; a role left to Claude Code's default counts) the fleet runs at once; a start past it waits for a slot. 0 for no cap. One value for the fleet: held by the node that keeps the count, the lowest-named one this fleet reaches, and a set on any node is sent there", ["0", "2", "3", "4"]),
+        NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time, on any node of the fleet; the others wait, those the rest depend on first. A flight marked priority goes ahead. One value for the fleet: held by the node that keeps the Opus count (the lowest-named one this fleet reaches), and a set on any node is sent there", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
         NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer-deep model; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),

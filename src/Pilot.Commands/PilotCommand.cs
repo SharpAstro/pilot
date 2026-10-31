@@ -1804,6 +1804,19 @@ public static class PilotCommand
     internal static string LandedHidden(int landed, string command = "pilot status --all") =>
         $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
 
+    /// <summary>The <c>Opus n/cap</c> line (with <c>peers not counted</c> when so) and the flights waiting for admission with why; nothing from a node that has not said.</summary>
+    internal static IEnumerable<string> AdmissionLines(SnapshotEvent snapshot)
+    {
+        if (snapshot.Admission is { } admission)
+        {
+            yield return $"{admission.Line()}{(admission.Counted.Length > 0 ? ": " + string.Join(", ", admission.Counted) : "")}{(admission.OneFlightPerRepo ? "; one flight per repo" : "")}";
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            yield return $"queued  {queued.Code}{(queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
+        }
+    }
+
     /// <summary>
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
@@ -1832,6 +1845,13 @@ public static class PilotCommand
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {
             text.AppendLine($"machine  {machine.Line()}");
+        }
+        if (!newestOnly && code is null)
+        {
+            foreach (var line in AdmissionLines(snapshot))
+            {
+                text.AppendLine(line);
+            }
         }
         if (!newestOnly && code is null && snapshot.Ideas.Count(i => i.State == IdeaState.Noted) is > 0 and var noted)
         {
