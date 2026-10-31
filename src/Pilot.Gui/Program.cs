@@ -334,37 +334,61 @@ void OpenAway(string location, Action? failed = null) => tracker.Run(async () =>
         loop.RequestRedraw();
     }
 }, $"open {location}");
+// A press of a button that asks the node: the work runs through the tracker (drained at shutdown, a fault logged), and its answer, the
+// node's refusal in its words or null when it took it, goes back to the view, which says it where the button was pressed. A fault the
+// work did not expect is the refusal too, in its message, and still reaches the tracker.
+Task<string?> Tracked(Func<Task<string?>> work, string what)
+{
+    var answer = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+    tracker.Run(async () =>
+    {
+        try
+        {
+            answer.TrySetResult(await work());
+        }
+        catch (Exception ex)
+        {
+            answer.TrySetResult(ex.Message);
+            throw;
+        }
+    }, what);
+    return answer.Task;
+}
+// A say's description ("refused: ...") without its prefix: the view puts its own before a refusal.
+static string? Plain(string said) => said.StartsWith("refused: ", StringComparison.Ordinal) ? said["refused: ".Length..] : said;
 // The release the update light shows, as the render thread last drew the header (null while none shows): the page builder
 // asks a frame each second while it is lit and unlit in turn, and none while there is no light.
 string? lightShown = null;
 if (feed is not null && client is not null && clients is not null)
 {
     view.CanSay = true;
-    view.OnSay = async (line, text) =>
+    view.OnSay = (line, text) => Tracked(async () =>
     {
         if (clients.For(line.Node) is not { } to)
         {
-            view.SayStatus = FleetClients.WatchOnly(line.Node);
-            return;
-        }
-        loop.RequestRedraw();
-        var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
-        view.SayStatus = result;
-        Note($"pilot-gui: say to {line.Name}: {result}");
-        loop.RequestRedraw();
-    };
-    // "Say to all shown": each picked row through its own node's say, one line per session in the console.
-    view.OnSayAll = async (line, text) =>
-    {
-        if (clients.For(line.Node) is not { } to)
-        {
-            return false;
+            return FleetClients.WatchOnly(line.Node);
         }
         var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         Note($"pilot-gui: say to {line.Name}: {result}");
-        loop.RequestRedraw();
-        return delivered;
-    };
+        if (delivered)
+        {
+            // How it went in; the view says "said to" only when the host has not said more.
+            view.SayStatus = result;
+            return null;
+        }
+        return Plain(result);
+    }, $"say to {line.Name}");
+    // "Say to all shown": each picked row through its own node's say, one line per session in the console.
+    view.OnSayAll = (line, text) => Tracked(async () =>
+    {
+        if (clients.For(line.Node) is not { } to)
+        {
+            return FleetClients.WatchOnly(line.Node);
+        }
+        var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
+        Note($"pilot-gui: say to {line.Name}: {result}");
+        return delivered ? null : Plain(result);
+    }, $"say to {line.Name}");
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
     view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
@@ -440,11 +464,11 @@ if (feed is not null && client is not null && clients is not null)
     view.CopyText = text => SetClipboardText(text);
     view.Changed = loop.RequestRedraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
-    view.OnAction = action => tracker.Run(async () =>
+    view.OnAction = action => Tracked(async () =>
     {
-        view.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-        Note($"pilot-gui: {view.SayStatus}");
-        loop.RequestRedraw();
+        var refused = clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
+        Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
+        return refused;
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
@@ -660,12 +684,11 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Show(PilotPage.Flights);
         wizard.Open(line.Status.Path, atIssues: true);
     };
-    chrome.Flights.OnAction = action => tracker.Run(async () =>
+    chrome.Flights.OnAction = action => Tracked(async () =>
     {
-        var said = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-        chrome.Flights.Say(said);
-        Note($"pilot-gui: {said}");
-        loop.RequestRedraw();
+        var refused = clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
+        Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
+        return refused;
     }, "a Flights action");
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
     // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
@@ -707,36 +730,24 @@ if (feed is not null && client is not null && clients is not null)
         ? log
         : throw new InvalidOperationException($"the node did not send {id}'s log");
     chrome.Jobs.Changed = loop.RequestRedraw;
-    // Cancel is the selected job's, whose log is followed: its node's.
-    Action<JobRow> CancelJob(bool force) => job => tracker.Run(async () =>
+    // Cancel is the selected job's, whose log is followed: its node's. The answer is the node's refusal, or null when it took it.
+    Task<string?> JobVerb(JobRow job, string verb, string word, string[] args) => Tracked(async () =>
     {
-        var what = force ? "force cancel" : "cancel";
-        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        var node = chrome.Jobs.FollowingNode;
+        if (clients.For(node) is not { } to)
         {
-            Note($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
-            return;
+            var watchOnly = FleetClients.WatchOnly(node);
+            Note($"pilot-gui: {word} {job.Id}: {watchOnly}");
+            return watchOnly;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = GuiSay.Who }, cts.Token);
-        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Note($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
-        loop.RequestRedraw();
-    }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
-    chrome.Jobs.OnCancel = CancelJob(force: false);
-    chrome.Jobs.OnForceCancel = CancelJob(force: true);
-    chrome.Jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "pause");
-    chrome.Jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resume");
-    void SendJobVerb(JobRow job, string verb, string word) => tracker.Run(async () =>
-    {
-        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
-        {
-            Note($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
-            return;
-        }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
-        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Note($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
-        loop.RequestRedraw();
+        var refused = await DashboardCommands.AskAsync(to, new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = args, Who = GuiSay.Who }, cts.Token, envelope => clients.NoteRefusal(node, envelope));
+        Note($"pilot-gui: {word} {job.Id}: {refused ?? "done"}");
+        return refused;
     }, $"{word} {job.Id}");
+    chrome.Jobs.OnCancel = job => JobVerb(job, Verbs.CancelJob, "cancel", []);
+    chrome.Jobs.OnForceCancel = job => JobVerb(job, Verbs.CancelJob, "force cancel", [Verbs.ForceArg]);
+    chrome.Jobs.OnPause = job => JobVerb(job, Verbs.PauseJob, "pause", []);
+    chrome.Jobs.OnResume = job => JobVerb(job, Verbs.ResumeJob, "resume", []);
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect
@@ -745,13 +756,14 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Jobs.CanSteer = CanSteer;
     chrome.Flights.CanSteer = CanSteer;
     chrome.Cards.CanSteer = CanSteer;
-    void Connect(string where, string machine) => tracker.Run(async () =>
+    // Asks a node for a grant: the answer is null once it is given, and what it said when it was not.
+    Task<string?> Connect(string where, string machine) => Tracked(async () =>
     {
         chrome.Fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
         view.SayStatus = chrome.Fleet.Said;
         chrome.Flights.Lan?.Asking(where, DateTimeOffset.UtcNow);
         loop.RequestRedraw();
-        var said = await DashboardCommands.RunAsync($"connect {where}", NodeArgs(), GuiSay.Who, cts.Token);
+        var (granted, said) = await DashboardCommands.TryRunAsync($"connect {where}", NodeArgs(), GuiSay.Who, cts.Token);
         // The token just saved is read now, so the rows steer at once rather than at the next 5 s look.
         clients.Refresh();
         chrome.Flights.Lan?.Answered(where);
@@ -759,6 +771,7 @@ if (feed is not null && client is not null && clients is not null)
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: connect {where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
+        return granted ? null : chrome.Fleet.Said;
     }, $"connect {where}");
     chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
     view.OnConnect = node => Connect(node.Where, node.Name);
@@ -768,7 +781,7 @@ if (feed is not null && client is not null && clients is not null)
     // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
     // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
     // the next draw: the steerable set is read again at once, not at the 5 s look.
-    void Forget(string endpoint) => tracker.Run(() => Task.Run(() =>
+    Task<string?> ForgetAsync(string endpoint) => Tracked(() => Task.Run<string?>(() =>
     {
         // A file read, a write and a move: off the render thread.
         Pilot.Commands.NodeTargets.Forget(endpoint);
@@ -778,27 +791,33 @@ if (feed is not null && client is not null && clients is not null)
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: forgot {endpoint}");
         loop.RequestRedraw();
+        return (string?)null;
     }), $"forget {endpoint}");
-    chrome.Fleet.OnForget = line => Forget(line.Where);
+    chrome.Fleet.OnForget = line => ForgetAsync(line.Where);
     // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
-    chrome.Fleet.OnMaintenance = (line, on) => tracker.Run(async () =>
+    chrome.Fleet.OnMaintenance = (line, on) => Tracked(async () =>
     {
-        chrome.Fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token)).ReplaceLineEndings(" ").Trim();
+        var (refused, said) = await FleetCommands.TrySetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token);
+        chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
+        return refused;
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
     // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
     // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.
     if (remoteEndpoint is null)
     {
-        chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
+        chrome.Autopilot.OnToggle = on => Tracked(async () =>
         {
-            view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
-            Note($"pilot-gui: {view.SayStatus}");
+            var (refused, said) = await AutopilotCommands.TrySetAsync(client, on, GuiSay.Who, cts.Token);
+            view.SayStatus = said;
+            Note($"pilot-gui: {said}");
             loop.RequestRedraw();
+            return refused;
         }, $"autopilot {(on ? "on" : "off")}");
+        chrome.Autopilot.Changed = loop.RequestRedraw;
     }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
@@ -817,7 +836,7 @@ if (feed is not null && client is not null && clients is not null)
             ? given
             : throw new InvalidOperationException("the node did not send its grants");
         chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
-        chrome.Settings.Forget = Forget;
+        chrome.Settings.Forget = endpoint => _ = ForgetAsync(endpoint);
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();

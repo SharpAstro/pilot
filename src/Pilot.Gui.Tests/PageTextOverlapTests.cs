@@ -76,9 +76,9 @@ public sealed class PageTextOverlapTests
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
     }
 
-    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi)
+    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
     {
-        using var prepared = await Prepare(page, state, width, dpi);
+        using var prepared = await Prepare(page, state, width, dpi, setup);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
     }
@@ -104,7 +104,7 @@ public sealed class PageTextOverlapTests
         _ => PilotPage.Home,
     };
 
-    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi)
+    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
     {
         var renderer = new RgbaImageRenderer((uint)width, Height);
         var data = PageData.For(state);
@@ -114,9 +114,10 @@ public sealed class PageTextOverlapTests
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
         chrome.Nodes.Choices = data.Nodes;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
+        setup?.Invoke(chrome);
         chrome.Show(PageOf(page));
 
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which

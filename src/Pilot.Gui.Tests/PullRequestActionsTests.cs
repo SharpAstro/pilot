@@ -274,7 +274,7 @@ public sealed class PullRequestActionsTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
         chrome.PullRequests.OnReview = (_, _) => Task.CompletedTask;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         return (chrome, chrome.PullRequests);
     }
 

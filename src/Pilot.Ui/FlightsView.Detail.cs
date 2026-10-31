@@ -209,7 +209,7 @@ internal sealed partial class FlightsView<TSurface>
         [
             FlowRow.Of(32f, 10f, head),
         ];
-        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line)) is { } band)
+        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line), presses: Presses) is { } band)
         {
             page.Add(band);
         }
@@ -221,7 +221,8 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(Layout.Builder.WrapH([.. buttons]).WithGap(10f).WithLineGap(6f).WStar());
         }
-        // A why asked for sits under the buttons it was asked by.
+        // What the node said to the last of them, when it refused, and a why asked for, sit under the buttons they were asked by.
+        page.AddRange(RefusalOf(line));
         page.AddRange(WhyRow(line));
         if (line.StaleMark is { } stale)
         {
@@ -284,8 +285,10 @@ internal sealed partial class FlightsView<TSurface>
         // A label long past a narrow page (a leg's name in "Redo leg ...") ends in an ellipsis, with the whole of it on hover.
         var label = CardsView<TSurface>.Ellipsize(action.Label, ActionFits);
         var whole = label == action.Label ? null : action.Label;
+        // Pressed, the node not yet answered: the button reads "…" and takes no second press, as the cards' do.
+        Layout.Node Idle() => whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole);
         return line.Stale is null
-            ? whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole)
+            ? Presses.Button(line.Code, id, Idle, pressed => CardsView<TSurface>.Dead(pressed ? $"{label} …" : label))
             : CardsView<TSurface>.Dead(label).WithTooltip(whole is null ? StaleWhy(line) : $"{whole}: {StaleWhy(line)}");
     }
 
@@ -394,11 +397,14 @@ internal sealed partial class FlightsView<TSurface>
         else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
         {
             yield return WrappedProse.Of("not planned yet: no planner is running", 12f, Held).WAuto();
-            if (CanCommand && OnAction is { } act)
+            if (CanCommand && OnAction is not null)
             {
+                var planHit = $"flight:{line.Code}:plan";
                 yield return line.Stale is null
-                    ? Pill("Plan it", $"flight:{line.Code}:plan", () =>
-                        act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }))
+                    ? Presses.Button(line.Code, planHit,
+                        () => Pill("Plan it", planHit, () =>
+                            _ = Run(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }, line.Code, planHit)),
+                        pressed => CardsView<TSurface>.Dead(pressed ? "Plan it …" : "Plan it"))
                     : CardsView<TSurface>.Dead("Plan it").WithTooltip(StaleWhy(line));
             }
         }

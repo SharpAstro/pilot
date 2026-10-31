@@ -54,7 +54,7 @@ public sealed class NightInputsTests
     {
         var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Autopilot.On = true;
         return (renderer, chrome);
     }
@@ -141,7 +141,7 @@ public sealed class NightInputsTests
         var (renderer, chrome) = Make();
         using var _ = renderer;
         chrome.Night.On = true;
-        chrome.Sessions.OnSay = (_, _) => Task.CompletedTask;
+        chrome.Sessions.OnSay = (_, _) => Task.FromResult<string?>(null);
         var sessions = new SessionsScreen(SessionLine.Order([SessionLine.From(Live.Row("aaaa0000", "worker", SessionState.Working), At)]), "test", At);
         chrome.Show(PilotPage.Sessions);
         chrome.Sessions.Select(0);

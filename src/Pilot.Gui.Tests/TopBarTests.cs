@@ -24,7 +24,7 @@ public sealed class TopBarTests
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Nodes.Choices = [Here, Other];
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
         return chrome;

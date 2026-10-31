@@ -194,6 +194,7 @@ internal sealed class PilotChrome<TSurface>
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
         PullRequests.OnAnswer = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         PullRequests.RefusedOf = Cards.RefusedOn;
+        PullRequests.CardWorking = Cards.WorkingOn;
         // One route to a PR's row: a card's title, a flight's PR link and chip, and the Repos page's open-PRs line all take it.
         Cards.OnPullRequest = (_, pr) => OpenPullRequest(pr.Repo, pr.Number);
         Flights.OnPullRequest = OpenPullRequest;
@@ -723,7 +724,9 @@ internal sealed class PilotChrome<TSurface>
             Flights.OpenDetail(flight.Code);
         });
         // A failed move's Retry move is the Flights page's action, run by the same handler and said in the same line, whichever page it is pressed on.
-        Home.OnAction = action => Flights.OnAction?.Invoke(action);
+        Home.OnAction = action => Flights.OnAction?.Invoke(action) ?? Task.FromResult<string?>("this window has no node to ask");
+        Home.Presses = Flights.Presses;
+        Home.Say = Flights.Say;
         Home.CanSteer = node => Flights.CanCommand && (Flights.CanSteer?.Invoke(node) ?? true);
         Home.Said = () => Flights.Said;
         Home.OnSession = line => Navigate(() =>
