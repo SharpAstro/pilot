@@ -1909,6 +1909,29 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task APlaneWhoseOldCommitsMainHoldsAsOneRebasedCommitLandsByContent()
+    {
+        // A laid PR merged through the rebase queue: main holds its change as one commit, the plane still its two older ones.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser { int X; }\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "parser 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "parser.cs"), "class Parser { int X; }\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser, laid");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
