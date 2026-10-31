@@ -273,7 +273,7 @@ public sealed partial class LegCommander(
         // its PR (which starts its review), after this lock is let go. Off, a card offers it, so a flight never just sits.
         // A worker's "failed" that the node finished as done (its plane matched its pushed branch and its check passed) goes on too.
         if (error is null && command.Verb == Verbs.FinishLeg
-            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified"
+            && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
@@ -647,8 +647,12 @@ public sealed partial class LegCommander(
             return;
         }
         _rung[current.Code] = $"failed {step.Target}";
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label} by itself", result.Error,
-            [new CardChoice { Label = char.ToUpperInvariant(label[0]) + label[1..], Verb = step.Verb, Target = step.Target, Args = step.Args }]);
+        // Needs someone: the node tried the step itself and was refused, and says it once; asking again is the choice.
+        var named = label.Replace("its ", $"{current.Code}'s ", StringComparison.Ordinal);
+        var reason = result.Error is { Length: > 0 } refused ? refused : "no reason given";
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not {label}: {Clip(reason.Split('\n')[0])}",
+            $"The node tried to {label} as the flight's next step and was refused, and it will not try again by itself: {reason}",
+            [new CardChoice { Label = $"{char.ToUpperInvariant(named[0])}{named[1..]} now, asking the node again", Verb = step.Verb, Target = step.Target, Args = step.Args }]);
     }
 
     /// <summary>What the flight is to do next by itself, its <see cref="DueStep.Step"/> null when nothing is left to it; or null when it waits on something else (a leg flying or failed, a validator, an overlap's answer).</summary>
@@ -736,8 +740,10 @@ public sealed partial class LegCommander(
             return false;
         }
         _rung[current.Code] = key;
-        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head by itself", result.Error,
-            [new CardChoice { Label = "Start its reviewer", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
+        var refusedBy = result.Error is { Length: > 0 } why ? why : "no reason given";
+        state.RaiseCard(CardBin.Ring, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} could not start its reviewer at its new head: {Clip(refusedBy.Split('\n')[0])}",
+            $"The node tried to start a reviewer at the head it has not reviewed and was refused, and it will not try again by itself: {refusedBy}",
+            [new CardChoice { Label = $"Start {current.Code}'s reviewer at its new head", Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg] }]);
         return true;
     }
 
@@ -1020,7 +1026,7 @@ public sealed partial class LegCommander(
         var brief = Briefs.Validate(flight, leg, legs, Briefs.Run(Cli, Socket), options.Machine);
         var model = Models.Model(RoleModels.Worker);
         Launching(LegsKey(flight.Code), $"{validator}, to check {flight.Code}/{leg.Name} against the tree", target,
-            new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
+            new CardChoice { Label = $"Start {leg.Name} again, its validator first", Verb = Verbs.StartLeg, Target = target },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -1096,7 +1102,7 @@ public sealed partial class LegCommander(
         // model its session started with, as a changed model would drop the session's prompt cache.
         var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 1);
         Launching(LegsKey(flight.Code), $"{worker}, on {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = $"Start {leg.Name}", Verb = Verbs.StartLeg, Target = target },
+            new CardChoice { Label = $"Start {leg.Name}'s worker again", Verb = Verbs.StartLeg, Target = target },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -1174,13 +1180,18 @@ public sealed partial class LegCommander(
         }
         else
         {
-            state.RaiseCard(CardBin.Ring, NoGoKind, target, $"{flight.Code}/{leg.Name} is NO-GO: the tree is not as its brief assumes", report,
+            // Needs someone: whether the plan still holds against the tree is the controller's.
+            var goAs = $"Start {leg.Name} as the tree is";
+            var dropIt = $"Drop {leg.Name} from {flight.Code}";
+            var replan = $"Plan {flight.Code} again";
+            var firstLine = report.Split('\n', 2)[0].Trim();
+            state.RaiseCard(CardBin.Ring, NoGoKind, target, firstLine.Length > 0 ? $"{flight.Code}/{leg.Name} is NO-GO: {Clip(firstLine)}" : $"{flight.Code}/{leg.Name} is NO-GO: the tree is not as its brief assumes", report,
                 [
-                    new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
-                    new CardChoice { Label = "Remove leg", Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
-                    new CardChoice { Label = "Re-plan", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
+                    new CardChoice { Label = goAs, Verb = Verbs.StartLeg, Target = target, Args = ["anyway"] },
+                    new CardChoice { Label = dropIt, Verb = Verbs.RemoveLeg, Target = target, Args = ["failed validation"] },
+                    new CardChoice { Label = replan, Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(flight.Code) },
                 ],
-                summary: $"The worker of {flight.Code}/{leg.Name} reports the tree is not as its brief assumes. Go anyway starts it as it is; Remove leg drops it; Re-plan plans the flight again.");
+                summary: $"The validator of {flight.Code}/{leg.Name} reports the tree is not as its brief assumes. {goAs} flies it unchanged; {dropIt} removes it; {replan} replans the flight.");
         }
 
         // The validator has answered: it is stopped after a grace to end its turn, as a worker that finished its own leg.
@@ -1362,6 +1373,11 @@ public sealed partial class LegCommander(
         // next leg with no go-around to stage (TIA1737's S2, 2026-10-23, closed by a go-around that only finished it). Its
         // card said "Accept the read", and nobody knew what that did (SE1, 2026-10-25): the words now say what happens.
         // The command keeps its word, accepted.
+        if (outcome is PushedWithLease or MergedWithOrigin)
+        {
+            await FinishPushBlockedAsync(command, flight, leg, outcome, args, cancellationToken);
+            return;
+        }
         if (outcome == "accepted")
         {
             if (leg.State != LegState.Failed)
@@ -1464,14 +1480,20 @@ public sealed partial class LegCommander(
                 }
                 // The attempt may have recorded on the leg (a corrected check): the failure keeps that.
                 leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
+                // A leg whose work is done and whose check passes, but whose branch needs a force push, is no failure: its own card.
+                if (await RaisePushBlockedAsync(flight, leg, report, cancellationToken))
+                {
+                    break;
+                }
                 state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "failed", Wait = null, Recheck = null });
+                var reason = report.Split('\n', 2)[0].Trim() is { Length: > 0 } first ? Clip(first) : "no reason given";
                 state.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget(flight.Code, leg.Name),
-                    $"{flight.Code}/{leg.Name} failed", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
+                    $"{flight.Code}/{leg.Name} stopped: {reason}", report.Length > 0 || notWhy is not null ? string.Join("\n\n", new[] { report, notWhy }.Where(s => !string.IsNullOrEmpty(s))) : null,
                     [
-                        new CardChoice { Label = Models.RedoLabel(leg), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker gave up: {(report.Length > 0 ? report : "no reason given")}"] },
-                        new CardChoice { Label = "Mark done anyway", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
+                        new CardChoice { Label = Models.SendBackLabel(leg, report.Length > 0 ? $"Send {leg.Name} round again to {reason}" : $"Send {leg.Name} round again"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = [$"the last worker stopped: {(report.Length > 0 ? report : "no reason given")}"] },
+                        new CardChoice { Label = $"Accept {leg.Name} as it stands, the failure kept in its report", Verb = Verbs.FinishLeg, Target = Verbs.LegTarget(flight.Code, leg.Name), Args = ["accepted"] },
                     ],
-                    summary: $"The worker of {flight.Code}/{leg.Name} gave up. Redo leg sends a fresh worker; Mark done anyway accepts the leg as it is.");
+                    summary: $"The worker of {flight.Code}/{leg.Name} stopped. Send {leg.Name} round again starts a fresh worker told why; Accept {leg.Name} as it stands keeps the failure in its report and the flight goes on.");
                 break;
             default:
                 throw new FlightException("finish-leg takes done or failed, then a report");
@@ -1495,6 +1517,129 @@ public sealed partial class LegCommander(
                 await StopQuietly(job, cancellationToken);
             }
         }
+    }
+
+    /// <summary>The outcome of <c>finish-leg</c> that pushes a rebased branch over origin's with a lease on the sha the card named (the controller's).</summary>
+    public const string PushedWithLease = "pushed-with-lease";
+
+    /// <summary>The outcome of <c>finish-leg</c> that merges origin's branch into the plane and pushes plain (the controller's).</summary>
+    public const string MergedWithOrigin = "merged-with-origin";
+
+    /// <summary>The card a failed finish raises when the leg's work is done and its check passes but its branch needs a force push or a merge.</summary>
+    public const string PushBlockedKind = "push-blocked";
+
+    private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
+
+    /// <summary>
+    /// A leg finished failed whose plane is clean, steps ticked and check passing at its head, while origin/&lt;branch&gt; exists and is not an
+    /// ancestor of that head (the plane was rebased off a pushed branch): it is not a failure, its card says what is blocked and offers the
+    /// two ways up. Nothing is pushed here. False when the leg is not in that case, and the ordinary failed card is raised.
+    /// </summary>
+    private async Task<bool> RaisePushBlockedAsync(FlightRow flight, LegRow leg, string report, CancellationToken cancellationToken)
+    {
+        if (leg.Check is not { Length: > 0 } check || leg.Checklist.Any(i => !i.Done))
+        {
+            return false;
+        }
+        var seen = leg;
+        var found = await OffLockAsync(null, async Task<(string Head, string Origin, CheckRun Run)?> () =>
+        {
+            if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is not null)
+            {
+                return null;
+            }
+            var tracking = $"refs/remotes/origin/{flight.Branch}";
+            await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken);
+            var remote = await git.RunAsync(["rev-parse", "--verify", "--quiet", tracking], flight.Worktree, cancellationToken);
+            var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+            if (!remote.Ok || !head.Ok || (await git.RunAsync(["merge-base", "--is-ancestor", tracking, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+            {
+                return null;
+            }
+            return (head.Output.Trim(), remote.Output.Trim(), await checks.RunAsync(check, flight.Worktree, cancellationToken));
+        });
+        if (found is not { Run.Passed: true } blocked)
+        {
+            return false;
+        }
+        leg = Unchanged(flight.Code, seen) is { } current
+            ? current
+            : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was looked at: nothing was recorded, look again and finish again");
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
+        state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
+            $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
+            $"Check passed at {Short(blocked.Head)}, origin/{flight.Branch} at {Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            [
+                new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
+                new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
+            ],
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+        return true;
+    }
+
+    /// <summary>
+    /// The two controller-only ways up for a leg whose card is <see cref="PushBlockedKind"/>: the rebased branch pushed with
+    /// <c>--force-with-lease</c> naming the sha origin held when the card was raised, or origin's branch merged in and pushed plain (a
+    /// conflict sends the leg round again with that named). Either reruns the check first and marks the leg done once it is up.
+    /// </summary>
+    private async Task FinishPushBlockedAsync(CommandRequest command, FlightRow flight, LegRow leg, string outcome, string[] args, CancellationToken cancellationToken)
+    {
+        if (leg.State != LegState.Failed)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg whose branch is blocked is pushed this way");
+        }
+        if (IsWatchtower(command.Who) || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
+        {
+            throw new FlightException($"pushing {flight.Code}/{leg.Name}'s branch past origin's is the controller's, not {command.Who}'s");
+        }
+        var leased = outcome == PushedWithLease
+            ? args.Length > 1 && args[1].Length > 0 ? args[1] : throw new FlightException($"{PushedWithLease} names the sha origin/{flight.Branch} held when the card was raised")
+            : null;
+        var target = Verbs.LegTarget(flight.Code, leg.Name);
+        var seen = leg;
+        string? conflict = null;
+        string? problem;
+        using (Calling(flight.Code, $"having {leg.Name}'s branch pushed"))
+        {
+            problem = await OffLockAsync(null, async Task<string?> () =>
+            {
+                var tracking = $"refs/remotes/origin/{flight.Branch}";
+                if (leased is null)
+                {
+                    await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{flight.Branch}:{tracking}"], flight.Worktree, cancellationToken);
+                    var merge = await git.RunAsync(["merge", "--no-edit", tracking], flight.Worktree, cancellationToken);
+                    if (!merge.Ok)
+                    {
+                        await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
+                        conflict = $"merging origin/{flight.Branch} into the plane conflicts ({merge.Why}): resolve it, keeping both sides' work, then finish again";
+                        return null;
+                    }
+                }
+                if (leg.Check is { Length: > 0 } check && await checks.RunAsync(check, flight.Worktree, cancellationToken) is { Passed: false } run)
+                {
+                    return $"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); nothing was pushed. Last of its output:\n{run.Tail}";
+                }
+                await EnsureNotArmedAsync(flight, cancellationToken);
+                var push = await git.RunAsync(leased is null ? ["push", "-u", "origin", flight.Branch] : ["push", "-u", $"--force-with-lease={flight.Branch}:{leased}", "origin", flight.Branch], flight.Worktree, cancellationToken);
+                return push.Ok ? null : $"git could not push {flight.Branch}: {push.Why}";
+            });
+        }
+        if (conflict is not null)
+        {
+            await GoAroundAsync(new CommandRequest { Verb = Verbs.GoAround, Target = command.Target, Args = [conflict], Who = command.Who }, cancellationToken);
+            return;
+        }
+        if (problem is not null)
+        {
+            throw new FlightException(problem);
+        }
+        leg = Unchanged(flight.Code, seen) is { } current
+            ? current
+            : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was pushed: it is up, look again and finish again");
+        var done = leased is null ? $"origin/{flight.Branch} merged into the plane and pushed, check passing" : $"rebased branch pushed with lease over origin/{flight.Branch} at {Short(leased)}, check passing";
+        state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = leg.Report is { Length: > 0 } was ? $"{done}\n{was}" : done });
+        state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} pushed and done", PushBlockedKind, "leg-failed");
     }
 
     /// <summary>The Handled card for a leg the node finished itself after its worker said it failed.</summary>
@@ -1826,7 +1971,7 @@ public sealed partial class LegCommander(
         var legs = state.Legs(flight.Code);
         var (attemptModel, attemptEffort) = Models.WorkerFor(leg.Model, leg.Effort, next.GoArounds + 1);
         Launching(LegsKey(flight.Code), $"{worker}, going around {flight.Code}/{leg.Name}", target,
-            new CardChoice { Label = Verbs.RedoLeg(leg.Name), Verb = Verbs.GoAround, Target = target, Args = [why] },
+            new CardChoice { Label = Models.RedoLabel(leg, "did not start"), Verb = Verbs.GoAround, Target = target, Args = [why] },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -2276,16 +2421,16 @@ public sealed partial class LegCommander(
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
         {
-            choices.Add(new CardChoice { Label = Models.RedoLabel(last), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
+            choices.Add(new CardChoice { Label = Models.RedoLabel(last, rerun ? "left the PR's checks failing" : "left the PR unmergeable"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name), Args = [goAroundWhy] });
         }
         if (rerun)
         {
-            choices.Add(new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
+            choices.Add(new CardChoice { Label = $"Re-run the checks of {code}'s PR", Verb = Verbs.RerunChecks, Target = target, Args = [head, method] });
         }
         // A PR GitHub cannot merge as it is (conflicting, behind) is offered the go-around that merges its base in, and no Merge to refuse.
         if (mergeAgain)
         {
-            choices.Add(new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = target, Args = [head, method] });
+            choices.Add(new CardChoice { Label = $"Merge {code}'s PR again as it is", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
         var offers = new List<string>();
         if (choices.FirstOrDefault(c => c.Verb == Verbs.GoAround) is { } redoChoice)
@@ -2294,11 +2439,11 @@ public sealed partial class LegCommander(
         }
         if (rerun)
         {
-            offers.Add("Re-run checks runs them again");
+            offers.Add($"Re-run the checks of {code}'s PR runs them again");
         }
         if (mergeAgain)
         {
-            offers.Add("Merge again tries once more as it is");
+            offers.Add($"Merge {code}'s PR again as it is tries once more");
         }
         var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary);
@@ -2603,7 +2748,7 @@ public sealed partial class LegCommander(
             }
         }
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
-            new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
+            new CardChoice { Label = $"Start {flight.Code}'s planner again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -2744,7 +2889,7 @@ public sealed partial class LegCommander(
         var baseMergeOnly = false;
         string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
-            new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
+            new CardChoice { Label = $"Start {flight.Code}'s reviewer again", Verb = Verbs.StartReview, Target = subject },
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
@@ -3031,6 +3176,29 @@ public sealed partial class LegCommander(
     /// </summary>
     public Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken) =>
         SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken, SendBackReason.ChecksFailed);
+
+    /// <summary>One line of a reason, cut at 80 characters: what a card title carries of a longer detail.</summary>
+    public static string OneLine(string text)
+    {
+        var line = text.Split('\n')[0].Trim().TrimEnd('.', ':', ';');
+        return line.Length > 80 ? line[..77].TrimEnd() + "..." : line;
+    }
+
+    /// <summary>The title of the card for a PR whose failed checks the node could not send back: the reason is in it.</summary>
+    public static string ChecksFailedTitle(string code, int number, string? failedName, string why) =>
+        $"{code}'s PR #{number} fails {(failedName is { Length: > 0 } ? $"check {failedName}" : "its checks")} and the leg could not be sent back: {OneLine(why)}";
+
+    /// <summary>What the node tried for a PR whose failed checks it could not send back, and what each choice does.</summary>
+    public string ChecksFailedSummary(string code, int number, string why, IReadOnlyList<CardChoice> choices) =>
+        $"The PR #{number} of {code} fails its checks; the node tried to send the last leg back and could not ({OneLine(why)})." +
+        (choices.Count > 0 ? $" {choices[0].Label} starts a fresh worker told what failed." : " Fix them by hand, then dismiss this.");
+
+    /// <summary>The choice that sends the flight's last leg round on a PR's failed checks, as the card's one action.</summary>
+    public IReadOnlyList<CardChoice> ChecksFailedChoices(string code, string head, int number) =>
+        state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last
+            ? [new CardChoice { Label = Models.RedoLabel(last, "left the PR's checks failing"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
+                Args = [$"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
+            : [];
 
     /// <summary>
     /// A flight whose base merge conflicts goes to the watchtower, not to a fresh worker: a ring card names the conflict and the plane,
@@ -3348,11 +3516,13 @@ public sealed partial class LegCommander(
         var leg = last is null ? flight.Code : $"{flight.Code}/{last.Name}";
         // Each card says what happened, not a review's findings it did not have (the review of #453): a check that failed and a
         // reviewer that never started raise this card too.
-        var (title, words, said) = reason switch
+        var firstLine = changes.Split('\n', 2)[0].Trim();
+        var because = firstLine.Length > 0 ? $": {Clip(firstLine)}" : ": nothing was written down, see the PR's review";
+        var (title, words, said, anyway) = reason switch
         {
-            SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks", "Fix the failing checks", $"The PR of {leg} fails its checks."),
-            SendBackReason.ReviewNotStarted => ($"{flight.Code}'s review did not start", "Review again", $"The reviewer of {leg} did not start, so nothing was reviewed."),
-            _ => ($"{flight.Code}'s review asks for changes", "Fix the review's findings", $"The review of {leg} found things to fix."),
+            SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks{because}", "Fix the failing checks", $"The PR of {leg} fails its checks.", $"Land {flight.Code} with its checks failing"),
+            SendBackReason.ReviewNotStarted => ($"{flight.Code}'s review did not start{because}", $"Start {flight.Code}'s review again", $"The reviewer of {leg} did not start, so nothing was reviewed.", $"Land {flight.Code} without a review"),
+            _ => ($"{flight.Code}'s review asks for changes{because}", "Fix the review's findings", $"The review of {leg} found things to fix.", $"Land {flight.Code} with the review's findings unfixed"),
         };
         // Said on the card's detail once the watchtower may no longer answer it, so the person sees why it waits on them. Not in
         // the go-around's args, which become the next worker's brief: that worker is told what the review asked, not who decides.
@@ -3374,11 +3544,11 @@ public sealed partial class LegCommander(
             // Not "Redo leg": the worker fixes what was found on the leg's work as it stands; nothing is thrown away (the owner, 2026-10-29).
             choices.Add(new CardChoice { Label = Models.SendBackLabel(last, words), Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [reason == SendBackReason.Findings ? $"the review asked for changes: {changes}" : changes] });
         }
-        choices.Add(new CardChoice { Label = "Ready anyway", Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
+        choices.Add(new CardChoice { Label = anyway, Verb = Verbs.Review, Target = Verbs.FlightTarget(flight.Code), Args = ["pass", "ready anyway"] });
         state.RaiseCard(CardBin.Ring, ReviewChanges, Verbs.FlightTarget(flight.Code), title, detail, choices, link: flight.PullRequestUrl,
             summary: reason == SendBackReason.ReviewNotStarted || last is null
-                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}Ready anyway lands it as it is."
-                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; Ready anyway lands it as it is.");
+                ? $"{said} {(reason == SendBackReason.ReviewNotStarted ? $"{words} starts it again; " : "")}{anyway} takes it as it is."
+                : $"{said} {words} has a worker do it on the leg's work as it stands, nothing thrown away; {anyway} takes it as it is.");
     }
 
     /// <summary>

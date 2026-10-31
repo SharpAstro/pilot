@@ -706,7 +706,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             // The page cannot tell why it was sent back (findings, checks, a conflict), so it names no button: the card has the right one.
             yield return Prose($"{capped.Name} has been sent back {capped.Row.ReviewGoArounds} times, so the next round is yours: "
-                + "send it back once more from its card, or Ready anyway if what was found should not hold it up.", 12f, Held);
+                + "send it back once more from its card, or land it with the findings unfixed if what was found should not hold it up.", 12f, Held);
         }
     }
 

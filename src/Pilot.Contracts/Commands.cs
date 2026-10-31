@@ -266,6 +266,10 @@ public static class Verbs
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
     /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
     /// its check passes there; the node refuses it otherwise, naming what did not hold.
+    /// Pushed-with-lease and merged-with-origin are the controller's too, for a failed leg whose push-blocked card says its rebased
+    /// branch cannot go up plain: the first (given the sha origin held, <c>pushed-with-lease &lt;sha&gt;</c>) reruns the check and pushes with
+    /// <c>--force-with-lease=&lt;branch&gt;:&lt;sha&gt;</c>; the second merges origin's branch into the plane, reruns the check and pushes plain
+    /// (a conflict sends the leg round again). Each marks the leg done and the flight goes on; both are refused to workers and the watchtower.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 
@@ -695,6 +699,13 @@ public static class Verbs
 
     /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
+
+    /// <summary>
+    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
+    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// </summary>
+    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
+        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
 
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>

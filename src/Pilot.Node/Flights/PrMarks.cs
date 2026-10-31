@@ -141,7 +141,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         else if (why != before)
         {
             state.CloseCardsAbout(subject, "refused again", RefusedKind);
-            state.RaiseCard(CardBin.ForYou, RefusedKind, subject, $"GitHub refused a mark on {code}'s PR #{number}",
+            state.RaiseCard(CardBin.ForYou, RefusedKind, subject, $"GitHub refused a mark on {code}'s PR #{number}: {LegCommander.OneLine(why)}",
                 $"{why}. The review itself stands; the node sets what is missing at its next look at the PR.", link: flight.PullRequestUrl);
         }
     }

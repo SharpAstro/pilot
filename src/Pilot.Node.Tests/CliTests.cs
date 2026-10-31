@@ -276,7 +276,7 @@ public sealed class CliTests : IAsyncLifetime
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
         after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");
-        after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.ForYou);
+        after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
         var (_, inTheAir, _) = await Pilot(_root, "status");
