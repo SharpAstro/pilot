@@ -521,6 +521,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 { State: SessionState.Working or SessionState.Waiting } => null,
                 { State: SessionState.Failed } => "its planner failed before planning any legs",
                 { State: SessionState.Ended } => "its planner ended without planning any legs",
+                { State: SessionState.Idle, Gone: true } => "its planner was stopped without planning any legs",
                 _ when now - (planner.LastResponseAt ?? planner.StartedAt) >= IdleGrace => $"its planner stopped {Ago(now, planner.LastResponseAt ?? planner.StartedAt)} ago without planning any legs",
                 _ => null,
             };
@@ -533,7 +534,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 continue;
             }
-            var idle = planner is { State: SessionState.Idle };
+            // An idle row with no process is gone, not idle: a stop from outside frees the planner's place.
+            var idle = planner is { State: SessionState.Idle, Gone: false };
             if (tries == 0 && idle)
             {
                 _planStalls[subject] = (1, now);

@@ -450,7 +450,7 @@ public sealed class LegWatchTests
         State = FlightState.Flying, CreatedAt = Start,
     });
 
-    private void Planner(SessionState state, DateTimeOffset lastResponse) =>
+    private void Planner(SessionState state, DateTimeOffset lastResponse, bool gone = false) =>
         _state.PutSession(new SessionRow
         {
             Id = "e5f6a7b8",
@@ -465,6 +465,7 @@ public sealed class LegWatchTests
             State = state,
             SpendWeighted = 0,
             LastResponseAt = lastResponse,
+            Gone = gone,
             StartedAt = Start,
         });
 
@@ -518,6 +519,21 @@ public sealed class LegWatchTests
         var ring = Open().ShouldHaveSingleItem();
         (ring.Bin, ring.Kind).ShouldBe((CardBin.Ring, LegWatch.PlanStalled));
         ring.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+    }
+
+    [Fact]
+    public async Task AnIdlePlannerWithNoProcessWasStoppedFromOutsideAndIsReplacedNotToldToFinish()
+    {
+        // PIL530: claude stop leaves the row idle with no process; it holds no role, so the next sweep starts a fresh planner.
+        Worker(SessionState.Working);
+        Unplanned();
+        Planner(SessionState.Idle, Start, gone: true);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        var plan = _said.ShouldHaveSingleItem();
+        (plan.Verb, plan.Target).ShouldBe((Verbs.PlanFlight, "flight/PIL9"));
     }
 
     [Fact]

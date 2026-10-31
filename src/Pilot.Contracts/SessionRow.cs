@@ -115,8 +115,9 @@ public sealed record SessionRow
     public string? Asking { get; init; }
 
     /// <summary>
-    /// A Waiting row whose process is gone: Claude Code's listing still says waiting, but no process runs to be answered,
-    /// so the wait is not live. <see cref="State"/> stays the last state it was in. False for every other row.
+    /// A Waiting or Idle row whose process is gone: Claude Code's listing still says waiting (or idle, for a session stopped
+    /// from outside with <c>claude stop</c>), but no process runs, so the row is not live and holds no role.
+    /// <see cref="State"/> stays the last state it was in. False for every other row.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Gone { get; init; }
