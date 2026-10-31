@@ -1067,7 +1067,7 @@ public sealed class JobTests2 : JobTestsBase
         jobs.Dispatch(JobRunner.LookAgain.Instance);
 
         var card = IdleCards().ShouldHaveSingleItem();
-        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, Verbs.JobTarget(first)));
+        (card.Kind, card.Bin, card.Subject).ShouldBe((JobRunner.IdleKind, CardBin.ForYou, Verbs.JobTarget(first)));
         card.Title.ShouldContain(first);
         (card.Detail ?? "").ShouldContain("se1-tia1-parser");
         (card.Detail ?? "").ShouldContain(second);
