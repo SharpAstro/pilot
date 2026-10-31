@@ -18,6 +18,7 @@ internal static class CardKindCatalog
     public const string SourcePinned = "CardKindTests.SourcePinned";
 
     private const string Leg = "Flights/LegCommander.cs";
+    private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Watch = "Flights/LegWatch.cs";
     private const string Flight = "Flights/FlightCommander.cs";
     private const string Move = "Flights/LegCommander.Move.cs";
@@ -70,7 +71,10 @@ internal static class CardKindCatalog
 
         // Flights: landing, moving, PRs.
         new("review-changes", "Ring", [Leg], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
-        new("pr-ready", "Ring", [Leg], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
+        new("laid-on-base", "Handled", [Lay], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
+        new("lay-failed", "Ring", [Lay], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
+        new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain"),
+        new("pr-ready", "Ring", [Leg, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
         new("pr-conflicts", "Ring", [Leg], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
         new("merge-taken-back", "Handled", [Leg], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
