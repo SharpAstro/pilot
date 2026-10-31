@@ -25,6 +25,9 @@ internal enum PilotPage
     /// <summary>Last in the enum for the same reason; the rail lists it after Settings.</summary>
     Ideas,
 
+    /// <summary>Last in the enum for the same reason; the rail lists it after Ideas.</summary>
+    Spend,
+
     /// <summary>
     /// Never a page shown: the rail's cue for the cards a window too narrow for the panel beside its page dropped (<c>PilotChrome.CardsOpen</c>).
     /// Last in the enum for the same reason as the others.
@@ -74,7 +77,13 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Fleet, "\U0001F310", "Fleet", new KeyChord(InputKey.D7, InputModifier.Ctrl), null),
         (PilotPage.Settings, "⚙", "Settings", new KeyChord(InputKey.D8, InputModifier.Ctrl), null),
         (PilotPage.Ideas, "\U0001F4A1", "Ideas", new KeyChord(InputKey.D0,InputModifier.Ctrl), null),
+        // The digits are all taken, so Spend has Ctrl+Shift+S (Ctrl+S alone is Say).
+        (PilotPage.Spend, "\U0001FA99", "Spend", new KeyChord(InputKey.S, InputModifier.Ctrl | InputModifier.Shift), null),
     ];
+
+    /// <summary>A rail entry's chord as its tooltip says it: <c>Ctrl+4</c>, <c>Ctrl+Shift+S</c>.</summary>
+    internal static string ChordText(KeyChord chord) =>
+        $"Ctrl{((chord.Modifiers & InputModifier.Shift) != 0 ? "+Shift" : "")}+{(chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (chord.Key - InputKey.D0).ToString() : chord.Key.ToString())}";
 
     /// <summary>What a tab draws at night: its initial where the colour emoji is not drawn (the Background tasks tab adds ! for a failed job, ~ for a running one, … for a waiting one), the glyph itself where the UI face has it (the plane and the cog).</summary>
     internal static string NightGlyph(PilotPage page, string glyph) => page == PilotPage.Jobs
@@ -84,7 +93,7 @@ internal sealed class PilotChrome<TSurface>
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
-        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I", [PilotPage.Spend] = "$",
     };
 
     /// <summary>
@@ -142,6 +151,7 @@ internal sealed class PilotChrome<TSurface>
         Repos = new ReposView<TSurface>(renderer);
         Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
+        Spend = new SpendView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer);
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
@@ -176,6 +186,7 @@ internal sealed class PilotChrome<TSurface>
         Chat.Arranged = nodes => TextCheck.Observe("chat", nodes, DpiScale);
         Cards.Arranged = nodes => TextCheck.Observe("cards panel", nodes, DpiScale);
         Ideas.Arranged = nodes => TextCheck.Observe("ideas", nodes, DpiScale);
+        Spend.Arranged = nodes => TextCheck.Observe("spend", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
@@ -263,6 +274,8 @@ internal sealed class PilotChrome<TSurface>
         Chat.Nodes = Nodes;
         Ideas.About = About;
         Ideas.Nodes = Nodes;
+        Spend.About = About;
+        Spend.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
         sessions.Autopilot = Autopilot;
         Flights.Autopilot = Autopilot;
@@ -274,8 +287,9 @@ internal sealed class PilotChrome<TSurface>
         Home.Autopilot = Autopilot;
         Chat.Autopilot = Autopilot;
         Ideas.Autopilot = Autopilot;
+        Spend.Autopilot = Autopilot;
         // And the Night switch beside it, one state every page reads.
-        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Night;
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Night;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -343,6 +357,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Ideas page: the ideas of every repo, noted from a multi-line box.</summary>
     public IdeasView<TSurface> Ideas { get; }
 
+    /// <summary>The Spend page: the token ledger over a window, by flight and role, and the waste.</summary>
+    public SpendView<TSurface> Spend { get; }
+
     /// <summary>The Pull requests page: every open PR of the repos pilot works in, grouped by repo.</summary>
     public PullRequestsView<TSurface> PullRequests { get; }
 
@@ -372,6 +389,7 @@ internal sealed class PilotChrome<TSurface>
     {
         PilotPage.Chat => [Nav, Rail, Chat, Cards],
         PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
+        PilotPage.Spend => [Nav, Rail, Spend, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],
@@ -383,7 +401,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The page shown, as a widget: what takes the keys nothing else did.</summary>
-    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    public IPixelWidget PageWidget => Page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel.</summary>
     public bool ShowsCards { get; private set; }
@@ -880,6 +898,7 @@ internal sealed class PilotChrome<TSurface>
             Cards.DpiScale = value;
             Chat.DpiScale = value;
             Ideas.DpiScale = value;
+            Spend.DpiScale = value;
             Tooltips.DpiScale = value;
             Rail.DpiScale = value;
             Nav.DpiScale = value;
@@ -902,6 +921,7 @@ internal sealed class PilotChrome<TSurface>
             Cards.FontPath = value;
             Chat.FontPath = value;
             Ideas.FontPath = value;
+            Spend.FontPath = value;
             Tooltips.FontPath = value;
             Rail.FontPath = value;
             Nav.FontPath = value;
@@ -952,7 +972,8 @@ internal sealed class PilotChrome<TSurface>
         Render(screen, flights, cards, jobs, fleet, repos, null, bounds, machines, ideas);
 
     /// <param name="pullRequests">The Pull requests page's screen; null shows it as before the node's first read, as a snapshot file without one does.</param>
-    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null)
+    /// <param name="spend">The Spend page's screen; null shows it as before the node's first answer, as a snapshot file without spend does.</param>
+    public void Render(SessionsScreen screen, FlightsScreen? flights, CardsScreen? cards, JobsScreen? jobs, FleetScreen? fleet, ReposScreen? repos, PullRequestsScreen? pullRequests, RectF32 bounds, IReadOnlyList<MachineLine>? machines = null, IdeasScreen? ideas = null, SpendScreen? spend = null)
     {
         Palette.Use(Night);
         ApplyEmojiFont();
@@ -970,7 +991,7 @@ internal sealed class PilotChrome<TSurface>
                 IsEnabled = locked is null,
                 // The rail has room for a glyph only, so the name, the chord, what the page's things are doing and a locked
                 // page's reason are the tooltip's.
-                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} (Ctrl+{shortcut.Key - InputKey.D0})" : $"{label} — {locked}",
+                Tooltip = locked is null ? $"{label}{(said is null ? "" : $": {said}")} ({ChordText(shortcut)})" : $"{label} — {locked}",
                 Shortcut = shortcut,
                 OnSelect = _select ??= Show,
             });
@@ -1084,6 +1105,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey when Page == PilotPage.Ideas:
                     Ideas.Render(ideas ?? IdeasScreen.Empty, rect);
+                    break;
+                case PageKey when Page == PilotPage.Spend:
+                    Spend.Render(spend ?? new SpendScreen(Spend.Window, null, null, screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);

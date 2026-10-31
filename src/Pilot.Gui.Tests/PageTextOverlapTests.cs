@@ -21,7 +21,7 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend",
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
@@ -100,6 +100,7 @@ public sealed class PageTextOverlapTests
         "repos" => PilotPage.Repos,
         "pull requests" => PilotPage.PullRequests,
         "chat" => PilotPage.Chat,
+        "spend" => PilotPage.Spend,
         _ => PilotPage.Home,
     };
 
@@ -122,7 +123,7 @@ public sealed class PageTextOverlapTests
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = data.Cards;
-        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend);
         Frame();
         if (page == "cards panel" && chrome.CardsDropped)
         {
@@ -160,6 +161,7 @@ public sealed class PageTextOverlapTests
                 tree = chrome.Flights.Tree(data.Flights);
                 break;
             case "flight page":
+                chrome.Flights.Spend = data.FlightSpend;
                 chrome.Flights.OpenDetail(data.Flights.Lines.Count > 0 ? data.Flights.Lines[0].Code : "NONE1");
                 tree = chrome.Flights.Tree(data.Flights);
                 break;
@@ -178,6 +180,9 @@ public sealed class PageTextOverlapTests
                 break;
             case "pull requests":
                 tree = chrome.PullRequests.Tree(data.PullRequests, pageWidth / dpi);
+                break;
+            case "spend":
+                tree = chrome.Spend.Tree(data.Spend);
                 break;
             case "chat":
                 tree = await OpenChat(chrome, data);
@@ -221,7 +226,7 @@ public sealed class PageTextOverlapTests
                 using var prepared = await Prepare(page, Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_STATE") is { Length: > 0 } state ? state : "long", width, dpi);
                 var chrome = prepared.Chrome;
                 var data = prepared.Data;
-                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines);
+                chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend);
                 File.WriteAllBytes(Path.Combine(capture, $"{page.Replace(' ', '-')}-{width}.png"), PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, Height));
             }
         }

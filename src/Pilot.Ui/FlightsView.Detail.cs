@@ -54,6 +54,7 @@ internal sealed partial class FlightsView<TSurface>
         _detailScroll.AtomOffset = 0;
         // A leg link that never resolved must not scroll the next page opened.
         _revealLeg = null;
+        OnSpend?.Invoke(code);
     }
 
     public void CloseDetail()
@@ -246,6 +247,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             scrolled.Add(checklist);
         }
+        if (detail.Spend is { } spend)
+        {
+            scrolled.Add(SpendBlock(spend));
+        }
         if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
         {
             scrolled.Add(attachments);
@@ -256,6 +261,16 @@ internal sealed partial class FlightsView<TSurface>
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    // What the flight has spent so far, said with its timeframe: the total, then each leg and each of its rounds, indented.
+    private Layout.Node SpendBlock(SpendFlightReport spend)
+    {
+        var lines = SpendText.FlightLines(spend);
+        return Layout.Builder.VStack(
+                [Label("spend").RowH(20f),
+                .. lines.Select(l => Layout.Builder.Text(l.Text, l.Indent == 0 ? 13f : 12f, l.Indent == 0 ? Bright : Dim).Whole(l.Text).RowH(20f).Pad(l.Indent switch { 0 => 0f, 1 => 16f, _ => 32f }, 0f))])
+            .WithGap(0f);
     }
 
     // The PR's state in the palette's own colours, the word always beside it: green while it is open for review, amber in the queue, blue once merged, dim as a draft.
