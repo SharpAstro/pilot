@@ -109,51 +109,61 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Action? Changed
     {
         get => _links.Changed;
-        set => _links.Changed = value;
+        set
+        {
+            _links.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
-    /// <summary>The tracker's slot a sync runs under: one at a time, however often the button is pressed.</summary>
-    internal const string SyncKey = "repos:sync";
+    /// <summary>What a press of the page's Sync is doing: working with the node (the button reads "Syncing…" with no hit), or refused in the node's words.</summary>
+    internal Presses Presses { get; } = new();
 
-    /// <summary>The host's tracker, which a sync runs in (drained when the host closes); without one the page has no Sync button.</summary>
+    private const string SyncKey = "repos:sync";
+
+    /// <summary>The host's tracker; a sync now runs under <see cref="Presses"/>, so the page no longer needs it and keeps the property only so hosts can still set it.</summary>
     public BackgroundTaskTracker? Tracker { get; set; }
 
     /// <summary>Whether a sync is running now.</summary>
-    public bool Syncing => Tracker?.IsRunning(SyncKey) ?? false;
+    public bool Syncing => Presses.PendingOf(SyncKey) is not null;
 
     /// <summary>What the last sync did to each repo; empty before one has run.</summary>
     public IReadOnlyList<RepoSyncOutcome> SyncOutcomes { get; private set; } = [];
 
     /// <summary>Why the last sync could not run (the node refused it); null when it ran.</summary>
-    public string? SyncError { get; private set; }
+    public string? SyncError => Presses.RefusedOf(SyncKey);
 
     /// <summary>
     /// Starts a sync through <see cref="SyncRepos"/> as <see cref="SyncKey"/> of the <see cref="Tracker"/>: a press while one runs
     /// does nothing, the button shows it running, and the outcome of each repo stays under the header until the next sync or until
     /// it is put away. The repos' new state is not read here: the node sends it as a reposChanged event.
     /// </summary>
-    public void StartSync()
+    public Task SyncAsync()
     {
-        if (SyncRepos is not { } sync || Tracker is not { } tracker || tracker.IsRunning(SyncKey))
+        if (SyncRepos is not { } sync)
         {
-            return;
+            return Task.CompletedTask;
         }
-        SyncError = null;
-        tracker.RunExclusive(SyncKey, async ct => SyncOutcomes = await sync(ct), CancellationToken.None, NullLogger.Instance, "sync repos",
-            ex =>
+        return Presses.PressAsync(SyncKey, SyncKey, async ct =>
+        {
+            try
+            {
+                SyncOutcomes = await sync(ct);
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
             {
                 SyncOutcomes = [];
-                SyncError = ex.Message;
-            },
-            onFinally: () => _ = Task.Delay(50).ContinueWith(_ => Changed?.Invoke(), TaskScheduler.Default));
-        Changed?.Invoke();
+                throw;
+            }
+        });
     }
 
     /// <summary>Puts away the outcome list.</summary>
     public void ClearSync()
     {
         SyncOutcomes = [];
-        SyncError = null;
+        Presses.NoteRefused(SyncKey, null);
     }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
@@ -275,7 +285,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
             Buttons =
             [
-                .. (SyncRepos is null || Tracker is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.HeaderPill(Syncing ? "Syncing…" : "Sync", "repos:sync", StartSync, Syncing ? Lit : null)]),
+                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [Presses.Button(SyncKey, SyncKey, () => CardsView<TSurface>.HeaderPill("Sync", SyncKey, () => _ = SyncAsync()), _ => CardsView<TSurface>.DeadHeaderPill("Syncing…", Lit))]),
                 CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
             ],
             Lines = lines,

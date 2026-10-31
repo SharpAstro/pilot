@@ -98,6 +98,11 @@ public static class NodeApp
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
+            flights.Ledger = services.GetRequiredService<SessionLedger>();
+            // A landing tells each live session of the flight to finish and report, then cancels the jobs of the flight and its sessions.
+            flights.Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
+            flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -145,18 +150,38 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
-        builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
-        builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
+        builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
+        builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton<ClaudeWorkerLauncher>();
+        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
+            services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
+            new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<IWorkerLauncher>(services => services.GetRequiredService<LoggingWorkerLauncher>());
+        builder.Services.AddHostedService(services => new StartWatch(services.GetRequiredService<IWorkerLauncher>()));
+        builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
         builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services =>
         {
+            var slots = new AdmissionGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<RoleModels>, options.Machine, services.GetRequiredService<TimeProvider>());
+            // The peers this node holds grants for count in admission; a setting the keeper of the count is sent is applied as this machine's own.
+            slots.Fleet.Fleet = services.GetRequiredService<FlightCommander>().Fleet;
+            slots.SettingApplier = args => services.GetRequiredService<NodeSettingsCommands>().Set(new CommandRequest
+            {
+                Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = args, Who = "fleet", Grant = "fleet",
+            }).Error;
+            return slots;
+        });
+        builder.Services.AddSingleton(services =>
+        {
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
+            legs.Ledger = services.GetRequiredService<SpendLedger>();
             legs.SiblingSync = services.GetRequiredService<RepoSync>();
             // Read as it is when a finish's check ends: a finish that outlasts the command route's deadline was answered queued.
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
@@ -169,6 +194,7 @@ public static class NodeApp
         {
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
+            reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             return reviews;
@@ -197,6 +223,7 @@ public static class NodeApp
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
                 Error = logWriter,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
@@ -219,6 +246,7 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
             };
         });
@@ -229,6 +257,7 @@ public static class NodeApp
         {
             Models = services.GetRequiredService<RoleModels>(),
             Gate = services.GetRequiredService<StartGate>(),
+            Ledger = services.GetRequiredService<SessionLedger>(),
             Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
@@ -364,7 +393,10 @@ public static class NodeApp
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
+            Launched = services.GetRequiredService<SessionLedger>(),
+            Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
+            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
@@ -375,7 +407,12 @@ public static class NodeApp
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
             logWriter,
-            services.GetRequiredService<StartOptionsBook>()));
+            services.GetRequiredService<StartOptionsBook>(),
+            services.GetRequiredService<SessionLedger>())
+        {
+            // Ending a session cancels the jobs it owns.
+            CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
+        });
         configure?.Invoke(builder);
 
         var app = builder.Build();
@@ -465,7 +502,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, NodeTraffic traffic) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -482,6 +519,10 @@ public static class NodeApp
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 Watchtower = watchtower.Health(),
+                OpusCap = models.OpusCap,
+                OneFlightPerRepo = models.OneFlightPerRepo,
+                CountedSessions = slots.Publish().Counted,
+                Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
@@ -557,6 +598,24 @@ public static class NodeApp
         // The conversation with the watchtower as one feed, across every watchtower there has been, read on from where the last read stopped.
         app.MapGet(NodeWire.ChatRoute, (int? after, WatchtowerChat chat) =>
             Results.Json(ResponseEnvelope<ChatPage>.Ok(chat.Page(after ?? -1)), PilotJsonContext.Default.ResponseEnvelopeChatPage));
+
+        // What the token ledger says was spent over a window (5h, today, week): pilot spend. This machine only.
+        app.MapGet(NodeWire.SpendRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Report(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } report
+                ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
+                : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
+
+        // What of that was spent for nothing kept: pilot spend --waste.
+        app.MapGet(NodeWire.SpendWasteRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
+            ledger.Waste(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } waste
+                ? Results.Json(ResponseEnvelope<SpendWasteReport>.Ok(waste), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport)
+                : Results.Json(ResponseEnvelope<SpendWasteReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, statusCode: 400));
+
+        // One flight's spend so far, per leg and round: the flight's page.
+        app.MapGet(NodeWire.SpendFlightRoute, (string? code, SpendLedger ledger, TimeProvider time) =>
+            !string.IsNullOrWhiteSpace(code)
+                ? Results.Json(ResponseEnvelope<SpendFlightReport>.Ok(ledger.FlightReport(code, time.GetUtcNow()) ?? new SpendFlightReport { Flight = code, From = time.GetUtcNow(), To = time.GetUtcNow(), Messages = 0, Tokens = 0, Weighted = 0, Legs = [] }), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport)
+                : Results.Json(ResponseEnvelope<SpendFlightReport>.Fail("Give a flight code: ?code=PIL515", 400), PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, statusCode: 400));
 
         // A job's output, its end, for the Background tasks page; the whole is in its log, on this machine.
         // With its pid, the process tree under it and, when its wrapper has exited while a process it started holds it, that fact.

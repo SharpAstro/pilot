@@ -229,6 +229,53 @@ public sealed class LegWatchTests
         Open().ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("it answered 1 of them");
     }
 
+    [Theory]
+    [InlineData(JobState.Queued)]
+    [InlineData(JobState.Running)]
+    public async Task AWorkerWaitingOnItsLegsCheckJobIsNeitherNudgedNorRungFor(JobState jobState)
+    {
+        // A check job has the flight and leg and no owner, so the owner match missed it: the worker was nudged and rung for while its check ran.
+        Worker(SessionState.Idle);
+        _state.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = "/work/tia1", Kind = JobKind.Check, Flight = "TIA1", Leg = "parser", State = jobState,
+            LogPath = "/tmp/j1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, false)]
+    public async Task AWorkerWithAJobOfItsOwnQueuedOrRunningIsNeitherNudgedNorRungFor(JobState jobState, bool byRowId)
+    {
+        Worker(SessionState.Idle);
+        var worker = _state.Sessions().First();
+        _state.PutJob(new JobRow
+        {
+            Id = "j2", Command = "dotnet build", Cwd = "/work/tia1", State = jobState, Owner = byRowId ? worker.Id : "c0000000", OwnerName = worker.Name,
+            LogPath = "/tmp/j2.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {
@@ -593,6 +640,21 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task APlannerThatWaitsForAdmissionIsWaitingNeverStalledAndRingsNothing()
+    {
+        Worker(SessionState.Working);
+        Unplanned();
+        _state.UpdateFlight("PIL9", f => f with { Queued = "waiting for an Opus slot: 1 of 1 flying: du1-other" });
+
+        _time.Advance(TimeSpan.FromHours(3));
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+        Handled().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AnIdlePlannerWithNoLegsIsToldToHandThemInThenRungNeverReplaced()
     {
         Worker(SessionState.Working);
@@ -748,10 +810,10 @@ public sealed class LegWatchTests
         };
     }
 
-    private void Silent(string id, SessionState state = SessionState.Working) => _state.PutSession(new SessionRow
+    private void Silent(string id, SessionState state = SessionState.Working, SessionRole role = SessionRole.Worker) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background, Cwd = "/work/tia1",
-        Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = state,
+        Role = role, Flight = "TIA1", Leg = role == SessionRole.Worker ? "parser" : null, ContextTokens = 0, ContextWindow = 200_000, State = state,
         SpendWeighted = 0, LastResponseAt = null, StartedAt = _time.GetUtcNow(),
     });
 
@@ -844,7 +906,7 @@ public sealed class LegWatchTests
         HookWorkers();
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
         Reviewing("rev1");
-        Silent("rev1");
+        Silent("rev1", role: SessionRole.Reviewer);
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
 
@@ -856,7 +918,7 @@ public sealed class LegWatchTests
         // The fresh reviewer is in place and shows nothing either.
         _state.RemoveSession("rev1");
         Reviewing("rev2");
-        Silent("rev2");
+        Silent("rev2", role: SessionRole.Reviewer);
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
         _said.Count.ShouldBe(1);
@@ -872,7 +934,7 @@ public sealed class LegWatchTests
         HookWorkers();
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
         Reviewing("rev1");
-        Silent("rev1");
+        Silent("rev1", role: SessionRole.Reviewer);
         _time.Advance(TimeSpan.FromMinutes(2));
         _state.PutSession(_state.Sessions().Single() with { ContextTokens = 5_000, LastResponseAt = _time.GetUtcNow() });
         _time.Advance(TimeSpan.FromMinutes(2));

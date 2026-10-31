@@ -30,6 +30,9 @@ public sealed record JobRow
 
     public string? Leg { get; init; }
 
+    /// <summary>What the job is: a run handed over by a session or terminal, or a leg's check the node runs itself (its <see cref="Flight"/> and <see cref="Leg"/> say whose). A row from before this reads as a run.</summary>
+    public JobKind Kind { get; init; } = JobKind.Run;
+
     public required JobState State { get; init; }
 
     /// <summary>What it is doing now (its last line of output), or what it came to once it ended.</summary>
@@ -132,6 +135,19 @@ public sealed record JobLog
 
 /// <summary>A process under a running job: its program, its id, and how far below the job's wrapper it is (the wrapper is 0).</summary>
 public sealed record JobProcessInfo(string Name, int Pid, int Depth);
+
+/// <summary>What a job is.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<JobKind>))]
+public enum JobKind
+{
+    /// <summary>A long run handed over by a session or a terminal (<c>pilot run</c>).</summary>
+    [JsonStringEnumMemberName("run")]
+    Run,
+
+    /// <summary>A leg's check, run by the node for the leg: it has no owner to wake.</summary>
+    [JsonStringEnumMemberName("check")]
+    Check,
+}
 
 /// <summary>Where a job stands.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]

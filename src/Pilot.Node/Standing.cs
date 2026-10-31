@@ -118,7 +118,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         }
         // A session of a new flight is not polled yet, so no row: its name still says whose it is (<machine>-<flight>-plan, -review or -<leg>),
         // and one that names a flight is that flight's, not an assistant's, whatever autopilot says.
-        if (command.Agent && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
+        // A session the node has a row for is who its row says, not who its name reads as (pilot #517): a renamed watchtower is no flight's.
+        var hasRow = state.Sessions().Any(s => string.Equals(s.Name, who, StringComparison.Ordinal));
+        if (command.Agent && !hasRow && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
         {
             return new Standing(StandingKind.FlightSession, named);
         }
@@ -181,7 +183,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return Flight is { } code
                     ? $"{command.Target} is not {code}'s: a flight's session acts on its own flight only"
                     : $"{command.Target} is not the PR this review is of ({Pr}): a review acts on its own PR only";
-            case StandingKind.FlightSession when command.Verb is Verbs.Stop or Verbs.Compact && !OwnsSession(command, state):
+            case StandingKind.FlightSession when command.Verb is Verbs.Stop or Verbs.EndSession or Verbs.Compact && !OwnsSession(command, state):
                 return $"{command.Target} is not {OwnerName()} session: a flight's session stops and compacts its own flight's only";
             case StandingKind.FlightSession when command.Verb is Verbs.CancelJob or Verbs.PauseJob or Verbs.ResumeJob && !OwnsJob(command, state):
                 return $"{command.Target} is not {OwnerName()} job: a flight's session cancels, pauses and resumes its own flight's only";

@@ -353,9 +353,20 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.EndSession)
+        {
+            return await Get<SessionMessenger>().EndAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);
+        }
+        if (Verbs.IsAdmission(command.Verb))
+        {
+            // Another node's claim for an Opus slot, its list of sessions, or a setting held here for the fleet: only under a grant.
+            return command.Grant is null
+                ? state.Complete(command, $"{command.Verb} is taken from another node of the fleet, under its grant")
+                : Get<AdmissionGate>().Handle(command);
         }
         if (command.Verb == Verbs.Set)
         {

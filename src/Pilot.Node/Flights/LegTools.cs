@@ -11,16 +11,23 @@ namespace Pilot.Node.Flights;
 /// A session to start in the background: its name, the folder it starts from (a repo's main checkout), the plane
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
-public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null);
+public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
+    string? Reason = null, int? Pr = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
 {
-    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id).</summary>
+    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id). <see cref="WorkerStart.Reason"/> is what the session ledger records as the start reason.</summary>
     Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken);
 
     /// <summary>Stops a worker's job; nothing happens when it has gone already.</summary>
     Task StopAsync(string job, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stops a worker's job for <paramref name="reason"/> (<see cref="SessionEndReasons"/>) by <paramref name="by"/>, which the session
+    /// ledger records. A launcher with no ledger just stops it.
+    /// </summary>
+    Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken) => StopAsync(job, cancellationToken);
 }
 
 /// <summary>
@@ -33,7 +40,7 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
@@ -104,11 +111,19 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
+        ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
     }
 
     public async Task StopAsync(string job, CancellationToken cancellationToken) =>
         await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, Timeout, cancellationToken);
+
+    public async Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
+    {
+        // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
+        ledger?.Stopped([job], reason, by);
+        await StopAsync(job, cancellationToken);
+    }
 
     private static string Clip(string text) => text.Trim() is { Length: > 400 } long_ ? long_[..400] + "…" : text.Trim();
 }
@@ -117,12 +132,34 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
 public sealed record CheckRun(int ExitCode, string Tail)
 {
     public bool Passed => ExitCode == 0;
+
+    /// <summary>Stopped by its running-time budget, not by its own exit.</summary>
+    public bool StoppedByBudget { get; init; }
+
+    /// <summary>The share (0 to 1) of the check's running time the machine's CPU was above 90%.</summary>
+    public double Saturation { get; init; }
+
+    /// <summary>Stopped by its budget while the machine was saturated for most of the run: worth one more try.</summary>
+    public bool StoppedSaturated => StoppedByBudget && Saturation > JobRunner.SaturatedShare;
 }
 
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>
 public interface ICheckRunner
 {
-    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken);
+    /// <param name="flight">The flight whose leg's check this is, for the job that runs it; null for a check that is no leg's.</param>
+    /// <param name="leg">The leg whose check it is.</param>
+    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null);
+}
+
+/// <summary>
+/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.RunCheckAsync"/>): it
+/// waits its turn with the other jobs, counts against max-jobs and the job-memory floor, and its
+/// <see cref="ShellCheckRunner.Timeout"/> counts from when it starts running.
+/// </summary>
+public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
+{
+    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, ShellCheckRunner.Timeout, cancellationToken);
 }
 
 /// <summary>
@@ -136,7 +173,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     private const int TailLines = 30;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         using var shell = ShellScript.For(command, cwd);
         var start = shell.Start;
@@ -372,6 +409,13 @@ public interface IGitHub
     Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
+    /// The method (<c>REBASE</c>, <c>SQUASH</c> or <c>MERGE</c>) of the merge queue of <paramref name="branch"/> in the repo at
+    /// <paramref name="repoPath"/>: the <c>merge_queue</c> rule's <c>parameters.merge_method</c> of <c>rules/branches/{branch}</c>.
+    /// Null when no such rule applies or GitHub would not say.
+    /// </summary>
+    Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -602,6 +646,9 @@ public static class PilotMarks
     public const string Conflicts = LabelPrefix + "conflicts";
 
     public const string Queued = LabelPrefix + "queued";
+
+    /// <summary>Put on a flight's issue or PR by a person: its starts bypass the Opus cap and the repo hold (still counted as Opus).</summary>
+    public const string Priority = LabelPrefix + "priority";
 
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
@@ -977,6 +1024,39 @@ public sealed partial class GhCli : IGitHub
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    public async Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return exit == 0 ? ParseMergeQueueMethod(rules) : null;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: the <c>merge_queue</c> rule's <c>parameters.merge_method</c>, upper-cased; null with no such rule, no method, or no JSON.</summary>
+    internal static string? ParseMergeQueueMethod(string rulesJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement is not { ValueKind: JsonValueKind.Array } array)
+            {
+                return null;
+            }
+            foreach (var rule in array.EnumerateArray())
+            {
+                if (rule.ValueKind == JsonValueKind.Object && TextOf(rule, "type") == "merge_queue"
+                    && rule.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+                    && TextOf(parameters, "merge_method") is { Length: > 0 } method)
+                {
+                    return method.ToUpperInvariant();
+                }
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

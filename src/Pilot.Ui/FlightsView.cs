@@ -23,6 +23,12 @@ internal sealed record FlightLine
     /// <summary>What holds it (<c>waiting for PIL5</c>), or when it landed; null otherwise.</summary>
     public string? StateDetail { get; init; }
 
+    /// <summary>Why it waits for admission (<c>waiting for an Opus slot: 3 of 3 flying</c>); null while it waits for nothing. Also the head of <see cref="StateDetail"/>, as <c>queued: ...</c>.</summary>
+    public string? Queued { get; init; }
+
+    /// <summary>The mark on a priority flight's row and page (<see cref="FlightMarks.PriorityMark"/>); null for any other flight.</summary>
+    public string? PriorityMark { get; init; }
+
     /// <summary>The plane's branch.</summary>
     public required string Branch { get; init; }
 
@@ -85,12 +91,25 @@ internal sealed record FlightLine
     }
 
     /// <summary>The flights in drawing order: flying, then held, then landed, newest first within each.</summary>
-    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null)
+    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null, AdmissionRow? admission = null)
     {
+        var flightRows = flights as IReadOnlyCollection<FlightRow> ?? [.. flights];
+        var legRows = legs as IReadOnlyCollection<LegRow> ?? [.. legs ?? []];
+        var queued = QueuedFlight.Of(flightRows, legRows, admission).ToDictionary(q => q.Code, q => q.Why, StringComparer.Ordinal);
+        legs = legRows;
+        flights = flightRows;
         var byFlight = sessions.Where(s => s.Flight is not null).ToLookup(s => s.Flight!, StringComparer.Ordinal);
         var legsOf = (legs ?? []).ToLookup(l => l.Flight, StringComparer.Ordinal);
-        return Order(flights.Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] }));
+        return Order(flights.Select(f => (From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] }).Admitted(queued.GetValueOrDefault(f.Code), admission)));
     }
+
+    // What admission says of the flight: why it queues (a flight that is flying and says nothing else), and the priority mark.
+    private FlightLine Admitted(string? queued, AdmissionRow? admission) => this with
+    {
+        Queued = queued,
+        StateDetail = StateDetail ?? (queued is null || Row.State != FlightState.Flying ? null : $"queued: {queued}"),
+        PriorityMark = FlightMarks.IsPriority(Row, admission) ? FlightMarks.PriorityMark : null,
+    };
 
     /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged.</summary>
     public static IReadOnlyList<FlightLine> Order(IEnumerable<FlightLine> lines) =>
@@ -145,6 +164,9 @@ internal sealed record FlightLine
 /// <summary>What the Flights page shows: the flights, and where they come from.</summary>
 internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Source, DateTimeOffset AsOf)
 {
+    /// <summary>What the node said of its Opus count and cap (the line Home and the page show); null from a node that says none, and for a snapshot written before it did.</summary>
+    public AdmissionRow? Admission { get; init; }
+
     /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
@@ -367,8 +389,44 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     private string? _said;
 
-    /// <summary>Runs an action's verb on the node (a why, where it asked for one, is its only argument).</summary>
-    public Action<FlightAction>? OnAction { get; set; }
+    /// <summary>
+    /// Runs an action's verb on the node (a why, where it asked for one, is its only argument) and answers with the node's refusal in its
+    /// words, or null when it took it. The page presses it through <see cref="Presses"/>: working at once, the outcome said where it was pressed.
+    /// </summary>
+    public Func<FlightAction, Task<string?>>? OnAction { get; set; }
+
+    /// <summary>What a press of a flight's button is doing, by the flight's code (and a node's, for a Connect); Home's Retry move shares it.</summary>
+    internal Presses Presses { get; } = new();
+
+    /// <summary>
+    /// Runs <paramref name="action"/> of flight <paramref name="code"/> from its button <paramref name="hit"/> through <see cref="Presses"/>: the
+    /// button says it is working at once, takes no second press, and the outcome is said at the button and in the page's bar (<see cref="Say"/>).
+    /// </summary>
+    internal Task Run(FlightAction action, string code, string hit)
+    {
+        if (OnAction is not { } send || Presses.PendingOf(code) is not null)
+        {
+            return Task.CompletedTask;
+        }
+        Say($"{action.Label}…");
+        return PressedAsync();
+
+        async Task PressedAsync()
+        {
+            var refused = await Presses.PressAsync(code, hit, _ => send(action), say: why => $"refused: {action.Label}: {why}");
+            Say(refused ?? $"ok: {action.Label}");
+            Presses.Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Asks <paramref name="node"/> for a grant through <see cref="OnConnect"/>: the button reads "asking…" until the grant answers.</summary>
+    internal void AskGrant(NodeMark node, string hit)
+    {
+        if (OnConnect is { } connect)
+        {
+            _ = Presses.PressAsync($"connect:{node.Where}", hit, _ => connect(node));
+        }
+    }
 
     /// <summary>Puts text in the chat's box and opens the chat: Plan a leg's message, for the person to finish and send.</summary>
     public Action<string>? OnChat { get; set; }
@@ -390,7 +448,20 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only row.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
+
+    /// <summary>What the node said to the last button pressed on <paramref name="line"/>, when it refused: under its buttons, in its words.</summary>
+    private IEnumerable<Layout.Node> RefusalOf(FlightLine line)
+    {
+        if (Presses.RefusalLine(line.Code, 12f, Held, 3) is { } refusal)
+        {
+            yield return refusal;
+        }
+    }
+
+    /// <summary>The Connect pill of a watch-only row: "asking…", dimmed and with no hit, until the grant answers.</summary>
+    private Layout.Node ConnectButton(NodeMark node, string hit) =>
+        Presses.Button($"connect:{node.Where}", hit, () => Pill("Connect", hit, () => AskGrant(node, hit)), _ => CardsView<TSurface>.Dead("asking…"));
 
     /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
     private NodeMark? WatchOnly(FlightLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
@@ -472,7 +543,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     public Action? Changed
     {
         get => _links.Changed;
-        set => _links.Changed = value;
+        set
+        {
+            _links.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
     /// <summary>The links' menu: its open items and its notice.</summary>
@@ -571,7 +646,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (CanCommand && WatchOnly(line) is { } watched)
         {
             // Disabled, and why: the one entry that can be chosen asks for the grant.
-            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watched), "connect") { OnChoose = () => OnConnect?.Invoke(watched) });
+            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watched), "connect") { OnChoose = () => AskGrant(watched, $"flight:{flight.Code}:connect") });
         }
         else if (CanCommand)
         {
@@ -618,6 +693,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The node's jobs, for the selected flight's details; set by the host each frame.</summary>
     public IReadOnlyList<JobRow> Jobs { get; set; } = [];
 
+    /// <summary>What the ledger says each flight has spent so far, for the open flight's page; set by the host, which reads the node's spend route for the flight shown.</summary>
+    public IReadOnlyList<SpendFlightReport> Spend { get; set; } = [];
+
+    /// <summary>Asked for a flight's spend when its page opens, and again as it stays open; the host reads the node and fills <see cref="Spend"/>.</summary>
+    public Action<string>? OnSpend { get; set; }
+
     /// <summary>The flights the last frame showed, in the order it showed them (the clicked sort's).</summary>
     internal IReadOnlyList<FlightLine> Shown => _screen.Lines;
 
@@ -648,7 +729,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     }
 
     /// <summary>
-    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints on pixels, and
+    /// The page as a tree of <paramref name="screen"/>, in design units: what <see cref="Render"/> paints on pixels, and
     /// what pilot-tui arranges in terminal cells (the selection, the why field and their callbacks the same).
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
@@ -715,7 +796,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         else
         {
             CloseWhy();
-            OnAction?.Invoke(action);
+            _ = Run(action, code, $"flight:{code}:{action.Verb}");
         }
     }
 
@@ -744,7 +825,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             return Task.CompletedTask;
         }
         CloseWhy();
-        OnAction?.Invoke(asking.Action.Confirm ? asking.Action : asking.Action with { Args = [why] });
+        var sent = asking.Action.Confirm ? asking.Action : asking.Action with { Args = [why] };
+        _ = Run(sent, asking.Code, $"flight:{asking.Code}:{asking.Action.Verb}");
         return Task.CompletedTask;
     }
 
@@ -825,12 +907,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
         var open = OpenLine(whole ?? screen);
         // The wizard, or an open flight's page, takes the flights' place; the header stays.
-        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf)) : Main(screen);
+        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf, Spend.FirstOrDefault(s => s.Flight == open.Code))) : Main(screen);
         var parts = new List<Layout.Node> { Header(screen) };
         if (!Wizard.IsOpen && open is null)
         {
             // Flights whose move failed, in red above the table: what happened, and Retry move. The open flight's page has its own.
-            parts.AddRange(MoveFailureBand.All<TSurface>(screen.Lines, P, RetryOf).Select(band => Layout.Builder.VStack(band).Pad(Gutter, 4f).WStar().HAuto()));
+            parts.AddRange(MoveFailureBand.All<TSurface>(screen.Lines, P, RetryOf, presses: Presses).Select(band => Layout.Builder.VStack(band).Pad(Gutter, 4f).WStar().HAuto()));
         }
         parts.Add(body.HStar(1f, BodyMinHeight));
         if (selected is not null && !Wizard.IsOpen && open is null)
@@ -930,7 +1012,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             buttons.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watchedNode), 12f, Dim).WAuto());
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Connect", $"flight:{line.Code}:connect", () => OnConnect?.Invoke(watchedNode)));
+            buttons.Add(ConnectButton(watchedNode, $"flight:{line.Code}:connect"));
         }
         else if (CanCommand)
         {
@@ -954,6 +1036,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         return Layout.Builder.VStack([
                 Layout.Builder.VStack(columns).WithScroll(_detailColumnsScroll).WStar().HStarUpToContent(1f, DetailColumnsMinHeight),
                 Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto(),
+                .. RefusalOf(line),
                 .. why])
             .Pad(Gutter, 8f)
             .Bg(PanelBg)
@@ -1118,7 +1201,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The colour of a flight's state: dim for a stale row, which no longer says what the flight is doing.</summary>
     private RGBAColor32 StateColor(FlightLine line) =>
-        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Queued is not null ? Held : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
 
     /// <summary>The stripe at a row's or card's left edge: <see cref="StateColor"/>, except that a failed move's stripe is the red of a failed leg, its words being the lighter red that holds 4.5:1 on the failed ground.</summary>
     private RGBAColor32 StripeColor(FlightLine line) => line.MoveMark is not null ? Failed : StateColor(line);
@@ -1153,12 +1236,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 ? Layout.Builder.VStack(
                     Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
                     Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
-                : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
+                : line.PriorityMark is { } priority
+                    ? Layout.Builder.VStack(
+                        Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
+                        Whole(Layout.Builder.Text(priority, 11f, Held).RowH(18f), priority, 0))
+                    : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : (line.Row.State == FlightState.Held || line.Queued is not null) && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
             LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),

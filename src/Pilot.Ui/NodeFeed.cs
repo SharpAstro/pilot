@@ -46,7 +46,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
         string Status, bool Connected, NodeInfo? Node, string? NodeVersion, ReposRow? Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
-        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null);
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null, AdmissionRow? Admission = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
@@ -75,7 +75,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
             nodeInfo: client.GetNodeAsync);
 
-    /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
+    /// <summary>The node's machine as it last sampled it (as <see cref="View.Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
     public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
     /// <summary>
@@ -183,7 +183,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     public FlightsScreen Flights(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs), view.Status + UpdateNoteOf(view), now);
+        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission };
     }
 
     /// <summary>
@@ -364,6 +364,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         SummaryRow[] summaries = [.. _mirror.Summaries.Values];
         var usage = _mirror.Usage;
         var machine = _mirror.Machine;
+        var admission = _mirror.Admission;
         var stream = _mirror.Stream;
         var wasDown = !Volatile.Read(ref _view).Connected;
         if (wasDown)
@@ -395,6 +396,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             Summaries = summaries,
             Usage = usage,
             Machine = machine,
+            Admission = admission,
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
             Connected = true,
