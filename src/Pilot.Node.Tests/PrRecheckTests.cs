@@ -302,6 +302,7 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARecheckThatCannotReadTheJobKeepsTheLabelAndRaisesAForYouCardOnceUntilTheLabelIsPutBack()
     {
         // No grant: gh cannot read the PR.

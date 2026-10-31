@@ -63,6 +63,7 @@ public sealed class MergeMirrorTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task EachLookUpdatesTheSameCardInPlaceAsTheChecksProgressAndThenAreReady()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

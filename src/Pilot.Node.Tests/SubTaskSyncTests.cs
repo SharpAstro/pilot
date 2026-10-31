@@ -96,6 +96,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegDoneClosesItsSubIssueAndTheOtherStaysOpen()
     {
         OptIn("tianwen");
@@ -125,6 +126,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegRemovedClosesItsSubIssueAsNotPlannedAndTheLegGoesOn()
     {
         OptIn("tianwen");

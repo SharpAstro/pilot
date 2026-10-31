@@ -257,6 +257,7 @@ public sealed class RemovalQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");

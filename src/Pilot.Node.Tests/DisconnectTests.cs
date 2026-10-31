@@ -182,6 +182,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnywayOnAnOverlapAnswerIsTheControllersAloneNotTheWatchtowersNorAFlightSessions()
     {
         await TwoFlights();

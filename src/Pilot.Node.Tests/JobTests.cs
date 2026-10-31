@@ -419,6 +419,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailingJobSaysItsExitCode()
     {
         var job = await Ended(Run(Echo("3 failed", 3)).Made!);
@@ -578,6 +579,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AForcedCancelOfAJobWithItsWrapperAliveKillsTheWholeTreeAtOnce()
     {
         var pidFile = Path.Combine(_root, "child.pid");

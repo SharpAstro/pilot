@@ -1595,6 +1595,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedCheckDuringWhichARetryWasRefusedLeavesItsOutcomeOnTheLegEvenWithinTheDeadline()
     {
         var result = await FailingFinishAsync(TimeSpan.Zero, TimeSpan.FromMinutes(5), retried: true);
