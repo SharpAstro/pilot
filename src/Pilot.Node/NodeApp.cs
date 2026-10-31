@@ -198,6 +198,9 @@ public static class NodeApp
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
                 Error = logWriter,
+                StartedPlanner = legs.StartedPlanner,
+                RestartPlanner = legs.RestartPlannerAsync,
+                StopPlanner = legs.StopPlannerAsync,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());

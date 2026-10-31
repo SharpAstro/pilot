@@ -242,6 +242,22 @@ public sealed partial class LegCommander
         return $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer";
     }
 
+    /// <summary>The planner this node started for the flight and when, if it still holds one.</summary>
+    internal (string Job, DateTimeOffset At)? StartedPlanner(string code) =>
+        _plannerJobs.TryGetValue(code, out var job) && _plannersStarted.TryGetValue(code, out var at) ? (job, at) : null;
+
+    /// <summary>Stops the flight's planner and starts a fresh one in its place.</summary>
+    internal async Task RestartPlannerAsync(string code, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(Verbs.FlightTarget(code));
+        await StopPlannerAsync(flight, cancellationToken);
+        StartPlanner(flight, replacing: true);
+    }
+
+    /// <summary>Stops the flight's planner and forgets it.</summary>
+    internal Task StopPlannerAsync(string code, CancellationToken cancellationToken) =>
+        StopPlannerAsync(FlightOf(Verbs.FlightTarget(code)), cancellationToken);
+
     /// <summary>Stops the flight's planner, by its row or the job this node started, and forgets it was started.</summary>
     private async Task StopPlannerAsync(FlightRow flight, CancellationToken cancellationToken)
     {

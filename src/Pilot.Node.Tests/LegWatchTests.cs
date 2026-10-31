@@ -469,6 +469,95 @@ public sealed class LegWatchTests
             StartedAt = Start,
         });
 
+    private readonly List<string> _stopped = [];
+    private readonly List<string> _restarted = [];
+    private (string Job, DateTimeOffset At)? _started;
+
+    private void HookPlanners()
+    {
+        _watch.StartedPlanner = _ => _started;
+        _watch.StopPlanner = (code, _) => { _stopped.Add(code); _started = null; return Task.CompletedTask; };
+        _watch.RestartPlanner = (code, _) =>
+        {
+            _restarted.Add(code);
+            _started = ("fresh" + _restarted.Count, _time.GetUtcNow());
+            _state.RemoveSession("e5f6a7b8");
+            return Task.CompletedTask;
+        };
+    }
+
+    private void SilentPlanner() => _state.PutSession(new SessionRow
+    {
+        Id = "e5f6a7b8", SessionId = "e5f6a7b8-0000-4000-8000-000000000000", Name = "du1-pil9-plan", Kind = SessionKind.Background,
+        Cwd = "/r/pil9", Role = SessionRole.Planner, Flight = "PIL9", ContextTokens = 0, ContextWindow = 200_000,
+        State = SessionState.Working, SpendWeighted = 0, LastResponseAt = null, StartedAt = _time.GetUtcNow(),
+    });
+
+    [Fact]
+    public async Task APlannerThatNeverTakesATurnIsStoppedAndStartedOnceMoreThenRungWhenTheSecondAlsoShowsNothing()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        SilentPlanner();
+        _started = ("e5f6a7b8", Start);
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBe(["PIL9"]);
+        var handled = Handled().ShouldHaveSingleItem();
+        (handled.Kind, handled.Title).ShouldBe((LegWatch.PlanStalled, "PIL9's planner (job e5f6a7b8) took no first turn and was started again"));
+
+        // The second one never appears in the listing at all: same ladder, then the ring.
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBe(["PIL9"]);
+        _restarted.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Title).ShouldBe((CardBin.Ring, "PIL9's planner never took a turn, twice"));
+        ring.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Plan PIL9 again", Verbs.PlanFlight)]);
+
+        // A further look does not start a third.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _watch.LookAsync(Ct);
+        _restarted.Count.ShouldBe(1);
+        Open().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task APlannerThatTakesItsFirstTurnWithinTheGraceIsLeftAlone()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        SilentPlanner();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "e5f6a7b8") with { ContextTokens = 12_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+
+        (_restarted.Count, _stopped.Count, _said.Count, Open().Length).ShouldBe((0, 0, 0, 0));
+    }
+
+    [Fact]
+    public async Task AStartedPlannerThatNeverAppearsInTheListingFollowsTheSameLadder()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        _started = ("job1", Start);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBe(["PIL9"]);
+        Handled().ShouldHaveSingleItem().Title.ShouldContain("job1");
+    }
+
     [Fact]
     public async Task AFlightWithNoLegsAndNoPlannerGetsOneAfterTheGraceAndRingsWhenThatFails()
     {
