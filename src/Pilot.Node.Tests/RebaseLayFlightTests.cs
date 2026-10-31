@@ -138,6 +138,28 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AReviewOfAnOlderHeadWithTheSameFilesCarriesToTheLaidHead()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        var (flight, old) = await KeepOursFlight();
+        var plane = flight.Worktree;
+        // A later head with no change to any file: the review still reads the one before it.
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "nothing");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+        var head = Git(plane, "rev-parse", "HEAD");
+        head.ShouldNotBe(old);
+        Drop(flight, head);
+
+        await Checks().LookAsync(Ct);
+
+        var laid = Git(plane, "rev-parse", "HEAD");
+        laid.ShouldNotBe(head);
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(laid);
+        F(flight.Code).Review!.State.ShouldBe(ReviewState.Passed);
+    }
+
+    [Fact]
     public async Task ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain()
     {
         _github.MergeQueueMethod = "REBASE";
@@ -225,5 +247,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         F(flight.Code).MergeWhenGreen![0].ShouldBe(laid);
         _legs.DroppedForConflict(flight.Code, laid).ShouldBeFalse();
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Choices.Any(ch => ch.Args.SequenceEqual(new[] { laid })));
+        // Nothing is armed on GitHub here: the card must not say it is.
+        _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).ShouldNotContain(c => c.Title.Contains("merges when its checks pass"));
     }
 }

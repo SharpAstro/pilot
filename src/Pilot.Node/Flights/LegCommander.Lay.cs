@@ -39,7 +39,10 @@ public sealed partial class LegCommander
         {
             var (laid, old) = await OffLockAsync(null, () => LayOnBaseAsync(flight, cancellationToken));
             // The passed review read the old head; the branch's tree is the merge's, so the pass goes with it (status and label set again there).
-            if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read } && string.Equals(read, old, StringComparison.OrdinalIgnoreCase))
+            // Or the reviewed head is an older one whose files (the flight's own changes against the base) are the laid commit's exactly.
+            if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read }
+                && (string.Equals(read, old, StringComparison.OrdinalIgnoreCase)
+                    || await OffLockAsync(null, () => SameFlightFilesAsync(flight.Worktree, $"origin/{BaseBranch(flight)}", read, laid, cancellationToken))))
             {
                 Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = laid, StatusState = null } : null });
                 await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
@@ -109,6 +112,33 @@ public sealed partial class LegCommander
             throw new FlightException($"git could not push {flight.Branch} ({push.Why}); the plane is back at {Short(old)}");
         }
         return (laid, old);
+    }
+
+    /// <summary>
+    /// Whether the flight's files at <paramref name="reviewed"/> are those of <paramref name="laid"/> exactly: the same set of files
+    /// changed against <paramref name="baseRef"/>, with the same content. What a review read is then what the laid commit holds.
+    /// </summary>
+    private async Task<bool> SameFlightFilesAsync(string plane, string baseRef, string reviewed, string laid, CancellationToken cancellationToken)
+    {
+        async Task<List<string>?> FilesAsync(string head)
+        {
+            var bas = await git.RunAsync(["merge-base", baseRef, head], plane, cancellationToken);
+            if (!bas.Ok)
+            {
+                return null;
+            }
+            var names = await git.RunAsync(["diff", "--name-only", bas.Output.Trim(), head], plane, cancellationToken);
+            return names.Ok ? [.. names.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal)] : null;
+        }
+        if (!(await git.RunAsync(["cat-file", "-e", $"{reviewed}^{{commit}}"], plane, cancellationToken)).Ok)
+        {
+            return false;
+        }
+        if (await FilesAsync(reviewed) is not { Count: > 0 } theirs || await FilesAsync(laid) is not { } ours || !theirs.SequenceEqual(ours))
+        {
+            return false;
+        }
+        return (await git.RunAsync(["diff", "--quiet", reviewed, laid, "--", .. theirs], plane, cancellationToken)).Ok;
     }
 
     private int _probes;

@@ -2081,10 +2081,15 @@ public sealed partial class LegCommander(
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
             // The line says how far the checks are, or where in the queue: the choice carries it too, for a client to put on the button.
             note ??= way == MergeWays.Queued ? System.Text.RegularExpressions.Regex.Match(line ?? "", @"position \d+") is { Success: true } place ? place.Value : null : ArmedProgress.Read(line);
+            // A card says what is set on GitHub: armed only where GitHub's auto-merge is, otherwise the node waits and then queues or merges.
+            var byGitHub = flight?.MergeWhenGreen?.ElementAtOrDefault(2) == ArmedByGitHub;
             state.UpdateCard(card.Id,
-                way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue" : $"{code}'s PR #{flight?.PullRequest} merges when its checks pass",
+                way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue"
+                    : byGitHub ? $"{code}'s PR #{flight?.PullRequest} merges when its checks pass" : $"{code}'s PR #{flight?.PullRequest} waits for its checks, then the node queues it",
                 line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
-                way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not." : $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not.");
+                way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
+                    : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
+                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.");
         }
     }
 
