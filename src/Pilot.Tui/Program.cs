@@ -116,11 +116,12 @@ pullRequests.OnRefresh = async ct =>
     }
 };
 pullRequests.Changed = Redraw;
-flights.OnAction = action => _ = Task.Run(async () =>
-{
-    flights.Say(clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
-    Redraw();
-});
+// A press of a button that asks the node answers with the node's refusal in its words, or null when it took it: the page says
+// working at once and the outcome where it was pressed.
+flights.Changed = Redraw;
+sessions.Changed = Redraw;
+flights.OnAction = action => Task.Run<string?>(async () =>
+    clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
 flights.OnOpen = location => flights.Say(DashboardCommands.Open(location) ? $"opened {location}" : $"could not open {location}");
 sessions.Transcript.Load = async (rowId, agent, after, ct) => (await clients.For(sessions.Transcript.Node, command: false)!.GetTranscriptAsync(rowId, after, ct, agent)) is { Success: true, Response: { } page }
     ? page
@@ -140,35 +141,14 @@ chrome.About.Opening = () => _ = Task.Run(async () =>
     }
     Redraw();
 });
-sessions.OnAction = action => _ = Task.Run(async () =>
-{
-    sessions.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-    Redraw();
-});
-sessions.OnSay = async (line, text) =>
-{
-    if (clients.For(line.Node) is not { } to)
-    {
-        sessions.SayStatus = FleetClients.WatchOnly(line.Node);
-        Redraw();
-        return;
-    }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
-    clients.NoteRefusal(line.Node, envelope);
-    sessions.SayStatus = envelope.Success ? $"said to {line.Name}" : $"refused: {envelope.Response?.Error ?? envelope.Error}";
-    Redraw();
-};
-sessions.OnSayAll = async (line, text) =>
-{
-    if (clients.For(line.Node) is not { } to)
-    {
-        return false;
-    }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token);
-    clients.NoteRefusal(line.Node, envelope);
-    Redraw();
-    return envelope.Success && envelope.Response is { Ok: true };
-};
+sessions.OnAction = action => Task.Run<string?>(async () =>
+    clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, Who, stop.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node));
+Task<string?> SayTo(SessionLine line, string text) => Task.Run<string?>(async () =>
+    clients.For(line.Node) is { } to
+        ? await DashboardCommands.AskAsync(to, new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(line.Row.Id), Args = [text], Who = Who }, stop.Token, envelope => clients.NoteRefusal(line.Node, envelope))
+        : FleetClients.WatchOnly(line.Node));
+sessions.OnSay = SayTo;
+sessions.OnSayAll = SayTo;
 async Task CardAsync(string verb, CardRow card, string[] cardArgs)
 {
     // A card raised on another node is answered there.
@@ -252,47 +232,30 @@ jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false)
     : throw new InvalidOperationException($"the node did not send {id}'s log");
 jobs.Changed = Redraw;
 // Cancel is the selected job's, whose log is followed: its node's.
-Action<JobRow> CancelJob(bool force) => job => _ = Task.Run(async () =>
+// The answer is the node's refusal in its words, or null when it took it; the page says working at once and the outcome beside the job's buttons.
+Task<string?> JobVerb(JobRow job, string verb, string[] args) => Task.Run<string?>(async () =>
 {
-    var what = force ? "force cancel" : "cancel";
-    if (clients.For(jobs.FollowingNode) is not { } to)
-    {
-        flights.Say($"{what} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
-        Redraw();
-        return;
-    }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = Who }, stop.Token);
-    clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{(force ? "force cancelled" : "cancelled")} {job.Id}" : $"{what} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
-    Redraw();
+    var node = jobs.FollowingNode;
+    return clients.For(node) is { } to
+        ? await DashboardCommands.AskAsync(to, new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = args, Who = Who }, stop.Token, envelope => clients.NoteRefusal(node, envelope))
+        : FleetClients.WatchOnly(node);
 });
-jobs.OnCancel = CancelJob(force: false);
-jobs.OnForceCancel = CancelJob(force: true);
-jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "paused");
-jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resumed");
-void SendJobVerb(JobRow job, string verb, string done) => _ = Task.Run(async () =>
-{
-    if (clients.For(jobs.FollowingNode) is not { } to)
-    {
-        flights.Say($"{verb} {job.Id}: {FleetClients.WatchOnly(jobs.FollowingNode)}");
-        Redraw();
-        return;
-    }
-    var envelope = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = Who }, stop.Token);
-    clients.NoteRefusal(jobs.FollowingNode, envelope);
-    flights.Say(envelope.Success && envelope.Response is { Ok: true } ? $"{done} {job.Id}" : $"{verb} {job.Id}: {envelope.Response?.Error ?? envelope.Error}");
-    Redraw();
-});
+jobs.OnCancel = job => JobVerb(job, Verbs.CancelJob, []);
+jobs.OnForceCancel = job => JobVerb(job, Verbs.CancelJob, [Verbs.ForceArg]);
+jobs.OnPause = job => JobVerb(job, Verbs.PauseJob, []);
+jobs.OnResume = job => JobVerb(job, Verbs.ResumeJob, []);
 jobs.OnOpen = location => DashboardCommands.Open(location);
 // The Fleet page: Connect asks a node for a grant; the merged lists then steer it.
-void Connect(string where, string machine) => _ = Task.Run(async () =>
+Task<string?> Connect(string where, string machine) => Task.Run<string?>(async () =>
 {
     fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
     sessions.SayStatus = fleet.Said;
     Redraw();
-    fleet.Said = (await DashboardCommands.RunAsync($"connect {where}", nodeArgs, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    var (granted, said) = await DashboardCommands.TryRunAsync($"connect {where}", nodeArgs, Who, stop.Token);
+    fleet.Said = said.ReplaceLineEndings(" ").Trim();
     sessions.SayStatus = fleet.Said;
     Redraw();
+    return granted ? null : fleet.Said;
 });
 fleet.OnConnect = line => Connect(line.Where, line.Machine);
 // Rows on a node this user cannot steer are watch-only, with a Connect in place of their actions.
@@ -316,13 +279,19 @@ void Forget(string endpoint)
     sessions.SayStatus = fleet.Said;
     Redraw();
 }
-fleet.OnForget = line => Forget(line.Where);
-// Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
-fleet.OnMaintenance = (line, on) => _ = Task.Run(async () =>
+fleet.OnForget = line =>
 {
-    fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, Who, stop.Token)).ReplaceLineEndings(" ").Trim();
+    Forget(line.Where);
+    return Task.FromResult<string?>(null);
+};
+// Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
+fleet.OnMaintenance = (line, on) => Task.Run<string?>(async () =>
+{
+    var (refused, said) = await FleetCommands.TrySetMaintenanceAsync(clients, line, on, Who, stop.Token);
+    fleet.Said = said.ReplaceLineEndings(" ").Trim();
     sessions.SayStatus = fleet.Said;
     Redraw();
+    return refused;
 });
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)

@@ -157,7 +157,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only row.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
 
     /// <summary>The node of <paramref name="line"/> when it is watched and not commanded, else null.</summary>
     private NodeMark? WatchOnly(SessionLine? line) => line?.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
@@ -226,7 +226,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     public Action? Changed
     {
         get => _links.Changed;
-        set => _links.Changed = value;
+        set
+        {
+            _links.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
     /// <summary>The links' menu: its open items and its notice.</summary>
@@ -241,22 +245,77 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>Whether archived sessions are listed too; off by default, the header's toggle flips it.</summary>
     public bool ShowArchived { get; set; }
 
-    /// <summary>Runs a button's verb on the node (archive one, archive every ended one, bring one back).</summary>
-    public Action<FlightAction>? OnAction { get; set; }
+    /// <summary>
+    /// Runs a button's verb on the node (archive one, archive every ended one, bring one back) and answers with the node's refusal in its
+    /// words, or null when it took it. Pressed through <see cref="Presses"/>: working at once, the outcome said beside the say bar.
+    /// </summary>
+    public Func<FlightAction, Task<string?>>? OnAction { get; set; }
+
+    /// <summary>What a press of a button of this page is doing, by the row's key (the page's own key for the header's): working, taken, or refused.</summary>
+    internal Presses Presses { get; } = new() ;
+
+    /// <summary>
+    /// Runs <paramref name="actions"/> (one per node, for "Archive ended") through <see cref="Presses"/> as the button <paramref name="hit"/>
+    /// of <paramref name="key"/>: the button reads its working label at once and takes no second press, the bar beside the say field says the
+    /// outcome, and a refusal in the node's words.
+    /// </summary>
+    internal Task Run(string key, string hit, string label, params FlightAction[] actions)
+    {
+        if (OnAction is not { } send || Presses.PendingOf(key) is not null)
+        {
+            return Task.CompletedTask;
+        }
+        SayStatus = $"{label}…";
+        return PressedAsync();
+
+        async Task PressedAsync()
+        {
+            var refused = await Presses.PressAsync(key, hit, async _ =>
+            {
+                string? first = null;
+                foreach (var action in actions)
+                {
+                    first ??= await send(action);
+                }
+                return first;
+            }, say: why => $"refused: {label}: {why}");
+            SayStatus = refused ?? $"ok: {label}";
+            Presses.Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Asks <paramref name="node"/> for a grant through <see cref="OnConnect"/>: the button reads "asking…" until the grant answers.</summary>
+    internal void AskGrant(NodeMark node, string hit)
+    {
+        if (OnConnect is { } connect)
+        {
+            _ = Presses.PressAsync($"connect:{node.Where}", hit, _ => connect(node));
+        }
+    }
+
+    /// <summary>A node-bound button of a page: a pill showing <paramref name="label"/> while nothing of <paramref name="key"/> is with the node, else a dimmed working label made from it.</summary>
+    private Layout.Node NodeButton(string key, string hit, string label, Action onClick, bool header = false) =>
+        Presses.Button(key, hit,
+            () => header ? CardsView<TSurface>.HeaderPill(label, hit, onClick) : CardsView<TSurface>.Pill(label, hit, onClick),
+            pressed => CardsView<TSurface>.Dead(pressed ? $"{label} …" : label));
 
     // What the header says about what is left out, and what Archive ended would put away; set by Tree.
     private int _archivedCount;
     private int _endedCount;
     private IReadOnlyList<SessionLine> _endedLines = [];
 
-    /// <summary>Called with the selected session's line and the text when Enter is pressed in the say bar.</summary>
-    public Func<SessionLine, string, Task>? OnSay { get; set; }
+    /// <summary>
+    /// Called with the selected session's line and the text when Enter is pressed in the say bar; answers with the node's refusal in its
+    /// words, or null when it took the text. The field keeps the text until then. A host that has more to say of a taken one than "said to"
+    /// (resumed, relayed) sets <see cref="SayStatus"/> before it answers.
+    /// </summary>
+    public Func<SessionLine, string, Task<string?>>? OnSay { get; set; }
 
     /// <summary>
-    /// Says the text to one session of "Say to all shown" and answers whether it was delivered (false: refused, or not sent).
+    /// Says the text to one session of "Say to all shown" and answers with the node's refusal in its words, or null when it was delivered.
     /// The view picks the rows, skips watch-only ones and sums up; the host sends, as it does for <see cref="OnSay"/>.
     /// </summary>
-    public Func<SessionLine, string, Task<bool>>? OnSayAll { get; set; }
+    public Func<SessionLine, string, Task<string?>>? OnSayAll { get; set; }
 
     /// <summary>
     /// The shown rows "Say to all shown" tells: those <c>pilot say-all</c> picks with its defaults (active, no validators,
@@ -282,43 +341,58 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         var text = SayInput.Text.Trim();
         var picks = SayAllPicks;
-        if (OnSayAll is not { } send || !CanSay || text.Length == 0 || picks.Count == 0)
+        if (OnSayAll is not { } send || !CanSay || text.Length == 0 || picks.Count == 0 || Presses.PendingOf(SayAllKey) is not null)
         {
             return;
         }
 
-        SayInput.Text = "";
-        SayInput.CursorPos = 0;
-        int said = 0, refused = 0, watched = 0;
-        foreach (var line in picks)
+        SayStatus = $"saying to {picks.Count}…";
+        await Presses.PressAsync(SayAllKey, SayAllHit, async _ =>
         {
-            if (WatchOnly(line) is not null)
+            int said = 0, refused = 0, watched = 0;
+            string? firstWhy = null;
+            foreach (var line in picks)
             {
-                watched++;
-                continue;
+                if (WatchOnly(line) is not null)
+                {
+                    watched++;
+                    continue;
+                }
+
+                string? why;
+                try
+                {
+                    why = await send(line, text);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    why = ex.Message;
+                }
+                if (why is null)
+                {
+                    said++;
+                }
+                else
+                {
+                    refused++;
+                    firstWhy ??= why;
+                }
             }
 
-            bool delivered;
-            try
+            // The text goes once the node took it for someone; a refusal for every row leaves it to be sent again.
+            if (said > 0 && SayInput.Text.Trim() == text)
             {
-                delivered = await send(line, text);
+                SayInput.Text = "";
+                SayInput.CursorPos = 0;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                delivered = false;
-            }
-            if (delivered)
-            {
-                said++;
-            }
-            else
-            {
-                refused++;
-            }
-        }
-
-        SayStatus = $"said to {said}{(refused > 0 ? $", {refused} refused" : "")}{(watched > 0 ? $", {watched} watch-only" : "")}";
+            SayStatus = $"said to {said}{(refused > 0 ? $", {refused} refused" : "")}{(watched > 0 ? $", {watched} watch-only" : "")}{(said == 0 && firstWhy is not null ? $": {firstWhy}" : "")}";
+            return null;
+        });
+        Presses.Changed?.Invoke();
     }
+
+    private const string SayAllKey = "say-all";
+    private const string SayAllHit = "sessions:say-all";
 
     /// <summary>
     /// Hands this view's window context to the other pages and panels, so the one input router (built on this view's
@@ -458,19 +532,45 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             return;
         }
 
-        SayInput.Text = "";
-        SayInput.CursorPos = 0;
-        // Shown at once as sending, keyed to the row it went to; the host's words replace it when the send completes.
-        var pending = new PendingSay(line.Row.Id, text.Trim());
+        // The text stays in the field until the node takes it: a refusal leaves it to be sent again, and says why beside the bar.
+        var typed = text.Trim();
+        var working = $"saying to {line.Name}…";
+        // Says go out in the order sent, and each one is shown as sending; the same words again while they are with the node send nothing.
+        var key = $"say:{line.Key}:{typed}";
+        if (Presses.PendingOf(key) is not null)
+        {
+            return;
+        }
+        SayStatus = working;
+        var pending = new PendingSay(line.Row.Id, typed);
         ImmutableInterlocked.Update(ref _pending, p => p.Add(pending));
+        string? refused;
         try
         {
-            await say(line, pending.Text);
+            refused = await Presses.PressAsync(key, "sessions:say", _ => say(line, typed), say: why => $"refused: {why}");
         }
         finally
         {
             ImmutableInterlocked.Update(ref _pending, p => p.Remove(pending));
         }
+        if (refused is not null)
+        {
+            SayStatus = refused;
+        }
+        else
+        {
+            if (SayInput.Text.Trim() == typed)
+            {
+                SayInput.Text = "";
+                SayInput.CursorPos = 0;
+            }
+            // A host that said more of it (resumed, relayed) has replaced the working line already.
+            if (SayStatus == working)
+            {
+                SayStatus = $"said to {line.Name}";
+            }
+        }
+        Presses.Changed?.Invoke();
     }
 
     private sealed record PendingSay(string RowId, string Text);
@@ -568,25 +668,25 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         if (watched is not null)
         {
             // Disabled, and why: the one entry that can be chosen asks for the grant.
-            items.Add(new DropdownItem<string>(SteerHint(watched), "connect") { OnChoose = () => OnConnect?.Invoke(watched) });
+            items.Add(new DropdownItem<string>(SteerHint(watched), "connect") { OnChoose = () => AskGrant(watched, $"session:{line.Key}:connect") });
         }
         else if (CanSay)
         {
             items.Add(new DropdownItem<string>($"Say to {line.Name}…", "say") { OnChoose = () => Ui.Focus.Focus(SayInput) });
         }
-        if (watched is null && OnAction is { } stop && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
+        if (watched is null && OnAction is not null && row.Kind == Pilot.Contracts.SessionKind.Background && !ended)
         {
-            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => stop(new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, []) { Node = line.Node }) });
+            items.Add(new DropdownItem<string>("Stop", "stop") { OnChoose = () => _ = Run(line.Key, $"session:{line.Key}:stop", $"stop {line.Name}", new FlightAction($"stop {line.Name}", Pilot.Contracts.Verbs.Stop, target, []) { Node = line.Node }) });
         }
         if (OnNewFlight is { } newFlight && row.Repo is { Length: > 0 } repo)
         {
             items.Add(new DropdownItem<string>($"New flight in {repo}…", "new-flight") { OnChoose = () => newFlight(repo) });
         }
-        if (watched is null && OnAction is { } act && ended)
+        if (watched is null && OnAction is not null && ended)
         {
             items.Add(row.Archived
-                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }) }
-                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node }) });
+                ? new DropdownItem<string>("Restore", "restore") { OnChoose = () => _ = Run(line.Key, $"session:{line.Key}:restore", $"restore {line.Name}", new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }) }
+                : new DropdownItem<string>("Archive", "archive") { OnChoose = () => _ = Run(line.Key, $"session:{line.Key}:archive", $"archive {line.Name}", new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node }) });
         }
         if (OnOpen is { } open && row.Cwd.Length > 0)
         {
@@ -614,9 +714,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 Layout.Builder.HStack([
                         Layout.Builder.Text($"Say to {_lines[Selected].Name}", 14f, Dim).WAuto(),
                         Layout.Builder.Text(SteerHint(watched), 14f, Dim).WStar(),
-                        .. (OnConnect is { } connect
-                            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-                            ? [CardsView<TSurface>.Pill("Connect", $"sessions:connect:{watched.Where}", () => connect(watched))]
+                        .. (OnConnect is not null
+                            // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151. It reads "asking…" until the grant answers.
+                            ? [Presses.Button($"connect:{watched.Where}", $"sessions:connect:{watched.Where}",
+                                () => CardsView<TSurface>.Pill("Connect", $"sessions:connect:{watched.Where}", () => AskGrant(watched, $"sessions:connect:{watched.Where}")),
+                                _ => CardsView<TSurface>.Dead("asking…"))]
                             : Array.Empty<Layout.Node>())])
                     .WithGap(12f)
                     .RowH(28f),
@@ -678,21 +780,20 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // The say bar's text to every shown row say-all would pick: only with text in the bar and a row to tell.
         if (!Transcript.IsOpen && !string.IsNullOrWhiteSpace(SayInput.Text) && SayAllCount is > 0 and var sayAll)
         {
-            yield return CardsView<TSurface>.HeaderPill($"Say to all shown ({sayAll})", "sessions:say-all", () => _ = SayAllAsync());
+            yield return NodeButton(SayAllKey, SayAllHit, $"Say to all shown ({sayAll})", () => _ = SayAllAsync(), header: true);
         }
-        if (_endedCount > 0 && OnAction is { } act)
+        if (_endedCount > 0 && OnAction is not null)
         {
             // Each node shown archives its own ended rows: with no node the verb went to this window's node alone, so
             // DE1's 181 stayed counted while SE1's 3 went (2026-10-24).
             var ended = _endedLines;
-            yield return CardsView<TSurface>.HeaderPill($"Archive ended ({_endedCount})", "sessions:archive-ended", () =>
+            const string key = "archive-ended";
+            yield return NodeButton(key, "sessions:archive-ended", $"Archive ended ({_endedCount})", () =>
             {
-                foreach (var group in ended.GroupBy(l => l.Node))
-                {
-                    act(new FlightAction($"archive {group.Count()} ended{(group.Key is { } node ? $" on {node.Name}" : "")}",
-                        Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, []) { Node = group.Key });
-                }
-            });
+                _ = Run(key, "sessions:archive-ended", $"archive {ended.Count} ended", [.. ended.GroupBy(l => l.Node).Select(group =>
+                    new FlightAction($"archive {group.Count()} ended{(group.Key is { } node ? $" on {node.Name}" : "")}",
+                        Pilot.Contracts.Verbs.Archive, Pilot.Contracts.Verbs.SessionsTarget, []) { Node = group.Key })]);
+            }, header: true);
         }
         if (_archivedCount > 0)
         {
@@ -875,15 +976,15 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The selected ended session's button: Archive it, or Restore one archived; nothing on any other row.</summary>
     private Layout.Node Act(SessionLine line, int index)
     {
-        if (index != Selected || OnAction is not { } act || WatchOnly(line) is not null
+        if (index != Selected || OnAction is null || WatchOnly(line) is not null
             || line.Row.State is not (Pilot.Contracts.SessionState.Ended or Pilot.Contracts.SessionState.Failed))
         {
             return Layout.Builder.Spacer();
         }
         var target = Pilot.Contracts.Verbs.SessionTarget(line.Row.Id);
         return Cell(line.Row.Archived
-            ? CardsView<TSurface>.Pill("Restore", $"session:{line.Key}:restore", () => act(new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }))
-            : CardsView<TSurface>.Pill("Archive", $"session:{line.Key}:archive", () => act(new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node })));
+            ? NodeButton(line.Key, $"session:{line.Key}:restore", "Restore", () => _ = Run(line.Key, $"session:{line.Key}:restore", $"restore {line.Name}", new FlightAction($"restore {line.Name}", Pilot.Contracts.Verbs.Archive, target, ["undo"]) { Node = line.Node }))
+            : NodeButton(line.Key, $"session:{line.Key}:archive", "Archive", () => _ = Run(line.Key, $"session:{line.Key}:archive", $"archive {line.Name}", new FlightAction($"archive {line.Name}", Pilot.Contracts.Verbs.Archive, target, []) { Node = line.Node })));
     }
 
     /// <summary>
