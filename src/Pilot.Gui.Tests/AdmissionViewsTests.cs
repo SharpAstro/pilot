@@ -154,19 +154,18 @@ public sealed class AdmissionViewsTests
         {
             // Every colour the new text is drawn in: the priority mark on a row, card, page and Home (Held); the queued reason on a row
             // and Home (Body); the queued state word on a row, card and page (Held, as StateColor gives a queued flight).
-            // Well and Ground are the bare page grounds: the queue there is Body (the mark rides inside its text), and Held is only ever
-            // drawn on a row or card (PanelBg and the row backgrounds), never straight on a ground.
-            foreach (var (name, fg) in new[] { ("Held", palette.Held), ("Body", palette.Body) })
+            // Standard holds WCAG's 4.5. Night is dim reds on black, where no red reads at 4.5 on a lit row (the palette's own notes say so):
+            // Held, the brightest ink it has for words, holds 3:1 everywhere, and Body (the colour of every other word on a night row)
+            // is held to its own floor of 2:1, so the queued words are never harder to read than the row's other words.
+            foreach (var (name, fg, floor) in new[] { ("Held", palette.Held, night(3.0)), ("Body", palette.Body, night(2.0)) })
             {
                 foreach (var (bgName, bg) in new[] { ("Well", palette.Well), ("Ground", palette.Ground), ("PanelBg", palette.PanelBg), ("RowHoverBg", palette.RowHoverBg), ("RowFocusBg", palette.RowFocusBg), ("RowAltBg", palette.RowAltBg) })
                 {
-                    if (name == "Held" && bgName is "Well" or "Ground")
-                    {
-                        continue;
-                    }
-                    Contrast(fg, bg).ShouldBeGreaterThanOrEqualTo(4.5, $"{paletteName}: {name} on {bgName}");
+                    Contrast(fg, bg).ShouldBeGreaterThanOrEqualTo(floor, $"{paletteName}: {name} on {bgName}");
                 }
             }
+
+            double night(double floor) => paletteName == "Night" ? floor : 4.5;
         }
     }
 
