@@ -617,6 +617,17 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         foreach (var row in sessions.Where(s => s is { Kind: SessionKind.Background, Gone: false, Archived: false } && s.State is not (SessionState.Ended or SessionState.Failed)))
         {
             string? why = WindDown.Why(state, Ledger, row);
+            // A role's current session (the watchtower now, a flying leg's current worker, a live flight's planner or reviewer, an
+            // open PR's reviewer or fixer) is never rung with Stop here, whatever a landed flight or the ledger's end reason says
+            // of an earlier session of that role.
+            if (KnownByRole(row, sessions, out var pr) && IsCurrent(row, why))
+            {
+                if (Ledger is not null && Ledger.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is null)
+                {
+                    Ledger.Adopt(row, pr);
+                }
+                continue;
+            }
             if (why is null && row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
                 && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
@@ -625,7 +636,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             if (why is null && Ledger is not null && Ledger.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is null)
             {
-                why = "the node's ledger has no entry for it: it did not start it";
+                // A true stranger: it matches no role, leg, flight or PR. It rings only once it has outlived the grace.
+                if (now - row.StartedAt < StrangerGrace)
+                {
+                    continue;
+                }
+                var cwd = string.IsNullOrEmpty(row.Cwd) ? "unknown" : row.Cwd;
+                why = $"the node did not start it and it is no role, leg, flight or PR of this node; cwd {cwd}, running {Ago(now, row.StartedAt)}";
             }
             if (why is null || !_strays.Add(row.Id))
             {
@@ -636,6 +653,63 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
         }
+    }
+
+    /// <summary>How long a session no role claims may run before it rings as a stranger, measured from its start.</summary>
+    public TimeSpan StrangerGrace { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Whether a session the node knows by role is still that role's current one: not a landed flight's, not a done leg's, not an
+    /// open PR's once it merged. The watchtower and a flying leg's worker are current whatever the ledger says.
+    /// </summary>
+    private bool IsCurrent(SessionRow row, string? why)
+    {
+        if (row.Role == SessionRole.Watchtower)
+        {
+            return true;
+        }
+        if (row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName })
+        {
+            return state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { State: not LegState.Done }
+                && state.Flights().FirstOrDefault(f => f.Code == flight) is not { State: FlightState.Landed };
+        }
+        if (row.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Landed })
+        {
+            return false;
+        }
+        return why is null;
+    }
+
+    /// <summary>
+    /// Whether the node knows <paramref name="row"/> by its role: the current watchtower, a flying leg's worker, a planner of an
+    /// existing flight, a flight reviewer, or a PR reviewer or fixer (<paramref name="pr"/> is that PR's number).
+    /// </summary>
+    private bool KnownByRole(SessionRow row, SessionRow[] sessions, out int? pr)
+    {
+        pr = null;
+        if (row.Role == SessionRole.Watchtower)
+        {
+            return Sessions.SessionMessenger.ReplacedBy(row, sessions) is null;
+        }
+        if (row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
+            && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg && leg.WorkerJob == row.Id)
+        {
+            return true;
+        }
+        if (row is { Role: SessionRole.Planner, Flight: { } planned } && state.Flights().Any(f => f.Code == planned))
+        {
+            return true;
+        }
+        if (state.Flights().Any(f => f.Review?.ReviewerJob == row.Id))
+        {
+            return true;
+        }
+        if (state.PrReviews().FirstOrDefault(r => r.ReviewerJob == row.Id || r.FixerJob == row.Id) is { } review)
+        {
+            pr = review.Number;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>How long a leg may be done before its worker still running is a stray: the node stops a finished worker itself, after its grace.</summary>
