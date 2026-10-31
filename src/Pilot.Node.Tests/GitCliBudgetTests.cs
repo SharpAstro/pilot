@@ -5,6 +5,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A git that outlives its budget or is cancelled says what it was and what it had said, so a CI log names the hang.</summary>
+[Trait("Category", "Slow")]
 public sealed class GitCliBudgetTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("p2g-").FullName;

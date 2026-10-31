@@ -5,6 +5,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A leg's check runs as written: quotes, pipes and all.</summary>
+[Trait("Category", "Slow")]
 public sealed class CheckRunnerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
