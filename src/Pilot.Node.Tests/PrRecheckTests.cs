@@ -467,6 +467,10 @@ public sealed class PrRecheckTests : IDisposable
         // The fixer pushed, and the review of the pushed head cannot start.
         var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        foreach (var f in new DirectoryInfo(WidgetClone).EnumerateFiles("*", SearchOption.AllDirectories))
+        {
+            f.Attributes = FileAttributes.Normal;
+        }
         Directory.Delete(WidgetClone, recursive: true);
 
         await _reviews.SweepAsync(Ct);
