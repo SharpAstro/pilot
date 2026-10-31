@@ -78,7 +78,10 @@ internal sealed class NodeHarness : IAsyncDisposable
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
-        folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        // In a folder of its own under the temp folder, never in it: a flight whose RepoPath is this folder makes its parent a
+        // repo root (RepoCatalog), and the node's repo watch then ran git in every clone the other tests had in the temp folder,
+        // outlasting the node's stop (MergeFixtureCardTests, 30 s on windows, #559).
+        folder ??= Path.Combine(Path.GetTempPath(), "p2t", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
             Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
