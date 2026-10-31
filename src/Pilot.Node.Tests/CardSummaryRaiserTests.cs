@@ -77,9 +77,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "pr-checks-failed");
-        card.Choices.ShouldBeEmpty();
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.GoAround);
         var summary = card.Summary.ShouldNotBeNull();
-        summary.ShouldContain("could not send the last leg back");
+        summary.ShouldContain("tried to send the last leg back and could not");
         summary.ShouldNotContain("goes around");
     }
 

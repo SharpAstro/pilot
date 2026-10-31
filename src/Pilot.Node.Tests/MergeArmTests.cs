@@ -127,7 +127,7 @@ public sealed class MergeArmTests
         await Look(node);
 
         node.GitHub.Summary = Pending(0);
-        (await Answer(node, Card(node, ready), "Re-run checks")).Error.ShouldBeNull();
+        (await Answer(node, Card(node, ready), "Re-run the checks of TIA1's PR")).Error.ShouldBeNull();
 
         node.GitHub.Reruns.ShouldBe([63]);
         var card = Card(node, ready);
