@@ -946,7 +946,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         Layout.Node ReviewSlotNode() =>
             pr.Review == PullRequestReview.Reviewing && actions.All(a => a.Kind is not (PullRequestActionKind.Review or PullRequestActionKind.AddressReview))
                 ? Said("Reviewing…", $"Pilot is reviewing {pr.Repo}#{pr.Number}", P.Bright, P.Button, ReviewSlot)
-                : Slot(ReviewSlot, PullRequestActionKind.Review, PullRequestActionKind.AddressReview);
+                : PullRequestActions.FlightReviewSaid(pr) is { } flight
+                    ? Said(flight.Label, flight.Tooltip, P.Bright, P.Button, ReviewSlot)
+                    : Slot(ReviewSlot, PullRequestActionKind.Review, PullRequestActionKind.AddressReview);
         var slots = Layout.Builder.HStack(
                 Slot(CardSlot, PullRequestActionKind.Merge, PullRequestActionKind.GoAround),
                 ReviewSlotNode(),
