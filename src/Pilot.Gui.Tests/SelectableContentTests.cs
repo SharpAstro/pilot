@@ -26,12 +26,20 @@ public sealed class SelectableContentTests
         ("*", t => t.Contains("· as of ", StringComparison.Ordinal) || t.StartsWith("live from the node", StringComparison.Ordinal), "the header's freshness line is chrome"),
         ("*", t => t is "not live" or "● live" or "not running" or "No open pull requests." or "Enter sends · Shift+Enter a new line", "a status badge or an empty-state hint is chrome"),
         ("*", t => t.Contains("open · ", StringComparison.Ordinal) || t.StartsWith("held by ", StringComparison.Ordinal), "a header summary or status line is chrome"),
+        ("*", t => t.StartsWith("New flight · ", StringComparison.Ordinal), "the new-flight wizard's step title is chrome"),
         ("settings", t => t.Contains("settings are", StringComparison.Ordinal) || t.StartsWith("another node's", StringComparison.Ordinal), "a settings page's note on whose settings these are is chrome"),
         ("fleet", t => t.StartsWith("every node heard", StringComparison.Ordinal), "the fleet page's lede is chrome"),
         ("flight page", t => t is "Goal" or "Done when" or "Report", "a field's label beside its selectable value is a label"),
         ("chat", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
         ("transcript", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
     ];
+
+    /// <summary>
+    /// Pages that are a table or list of rows the page hit-tests as a whole (a press anywhere in a row selects it, with no pressable
+    /// node in the arranged tree), so a drag cannot start in a cell and the cells stay unselectable by design. A control label
+    /// that is selectable is still a fault on these pages.
+    /// </summary>
+    private static readonly HashSet<string> RowPages = ["sessions", "pull requests", "repos", "flights table", "flights canvas", "jobs"];
 
     public static IEnumerable<TheoryDataRow<string>> Cases() => AllPages.Select(p => new TheoryDataRow<string>(p) { TestDisplayName = p });
 
@@ -70,7 +78,7 @@ public sealed class SelectableContentTests
             {
                 faults.Add($"control label is selectable: '{text.Value}'");
             }
-            else if (!control && !text.Selectable)
+            else if (!control && !text.Selectable && !RowPages.Contains(page))
             {
                 faults.Add($"content text is not selectable: '{text.Value}'");
             }
