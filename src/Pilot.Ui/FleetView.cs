@@ -271,8 +271,8 @@ internal sealed class FleetWatch : IAsyncDisposable
     }
 
     /// <summary>Every page's screen for the fleet: each node's rows merged and marked, filtered by <paramref name="filter"/>.</summary>
-    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now, bool reposWanted = false) =>
-        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now, reposWanted);
+    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now) =>
+        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now);
 
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
@@ -404,7 +404,35 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Action<FleetLine>? OnOpen { get; set; }
 
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
-    public Action<FleetLine>? OnConnect { get; set; }
+    public Func<FleetLine, Task<string?>>? OnConnect { get; set; }
+
+    /// <summary>
+    /// What a press of a row's button is doing, by the row's address: working with the node (the row's buttons read their working
+    /// word, dimmed, no second press), taken, or refused in the node's words beside the buttons.
+    /// </summary>
+    internal Presses Presses { get; } = new();
+
+    /// <summary>Called when a press changed what the page shows, from whichever thread: the host redraws.</summary>
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
+
+    // A row's press through the helper: the button reads its working word at once and the node's refusal is said beside the row's
+    // buttons; the host says the outcome in <see cref="Said"/>, as it always did.
+    private void Press(FleetLine line, string kind, Func<FleetLine, Task<string?>> send)
+    {
+        _ = PressedAsync();
+
+        async Task PressedAsync()
+        {
+            await Presses.PressAsync(line.Where, $"fleet:{line.Where}:{kind}", _ => send(line));
+        }
+    }
+
+    // A button of a row that asks the node: its working word while any press of the row is with the node (the others dimmed, no hit).
+    private Layout.Node NodeButton(FleetLine line, string label, string kind, string working, Action onClick)
+    {
+        var hit = $"fleet:{line.Where}:{kind}";
+        return Presses.Button(line.Where, hit, () => Pill(label, hit, onClick), pressed => CardsView<TSurface>.Dead(pressed ? working : label));
+    }
 
     /// <summary>Opens the Chat page on a reached node's own watchtower (this node's row: the fleet chat). Null leaves the row without the button.</summary>
     public Action<FleetLine>? OnChat { get; set; }
@@ -419,13 +447,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// Lets go of a node held in the grants and never reached: the host drops its token and stops watching it, as the
     /// Settings page's Forget does; null (the default) shows no such button.
     /// </summary>
-    public Action<FleetLine>? OnForget { get; set; }
+    public Func<FleetLine, Task<string?>>? OnForget { get; set; }
 
     /// <summary>
     /// Turns maintenance on (true) or off (false) on that row's node, as <c>set node maintenance on|off</c> does: offered on
     /// this window's node and on a node this user holds a grant for, and only while it answers. Null (the default) shows no such button.
     /// </summary>
-    public Action<FleetLine, bool>? OnMaintenance { get; set; }
+    public Func<FleetLine, bool, Task<string?>>? OnMaintenance { get; set; }
 
     /// <summary>What the last Open, Connect, Forget or Maintenance said, under the header.</summary>
     public string? Said { get; set; }
@@ -596,16 +624,18 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (!line.CanCommand && OnConnect is { } connect)
         {
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Connect", $"fleet:{line.Where}:connect", () => connect(line)));
+            buttons.Add(NodeButton(line, "Connect", "connect", "asking…", () => Press(line, "connect", connect)));
         }
         if (line.CanForget && OnForget is { } forget)
         {
-            buttons.Add(Pill("Forget", $"fleet:{line.Where}:forget", () => forget(line)));
+            buttons.Add(NodeButton(line, "Forget", "forget", "forgetting…", () => Press(line, "forget", forget)));
         }
         if (line.CanSetMaintenance && OnMaintenance is { } maintenance)
         {
             // The row's menu item: it names what it does, so a node in maintenance offers to end it.
-            buttons.Add(Pill(line.Maintenance ? "Take out of maintenance" : "Put into maintenance", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
+            var leaving = line.Maintenance;
+            buttons.Add(NodeButton(line, leaving ? "Take out of maintenance" : "Put into maintenance", "maintenance", leaving ? "taking out…" : "putting into maintenance…",
+                () => Press(line, "maintenance", l => maintenance(l, !leaving))));
         }
         var where = line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only";
         var rings = line.Rings == 0 ? "—" : $"{line.Rings} ringing";
@@ -640,7 +670,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).RowH(22f),
                 Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).RowH(18f)),
             ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Whole(rings)),
-            Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
+            Layout.Builder.VStack(
+                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
+                Presses.RefusalLine(line.Where, 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f)),
         };
         var row = Table.Row(FitColumns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
             .RowH(RowHeightOf(line))
@@ -693,11 +725,19 @@ internal static class FleetCommands
     /// <c>set node maintenance on|off</c> on <paramref name="line"/>'s node, through the client its grant gives (this window's
     /// own for its node); what became of it in a line, or the watch-only hint for a node this user holds no grant for.
     /// </summary>
-    public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)
+    public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken) =>
+        (await TrySetMaintenanceAsync(clients, line, on, who, cancellationToken)).Said;
+
+    /// <summary>As <see cref="SetMaintenanceAsync"/>, and the node's refusal in its words (null when it took it), for the row's button to say where it was pressed.</summary>
+    public static async Task<(string? Refused, string Said)> TrySetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)
     {
         var node = new NodeMark(line.Where, line.Where, line.Machine, line.Here);
-        return clients.For(node) is { } client
-            ? $"{line.Machine}: {(await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken)).Line}"
-            : FleetClients.WatchOnly(node);
+        if (clients.For(node) is not { } client)
+        {
+            var hint = FleetClients.WatchOnly(node);
+            return (hint, hint);
+        }
+        var reply = await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken);
+        return (reply.Kind == ReplyKind.Done ? null : reply.Line, $"{line.Machine}: {reply.Line}");
     }
 }

@@ -49,19 +49,22 @@ internal sealed class FakeChecks : ICheckRunner
 {
     public CheckRun Next { get; set; } = new(0, "all green");
 
+    /// <summary>Answered one per run before <see cref="Next"/> is: a first run stopped by its budget, then what the rerun says.</summary>
+    public Queue<CheckRun> Script { get; } = new();
+
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
         if (OnRun is { } wait)
         {
             await wait();
         }
-        return Next;
+        return Script.Count > 0 ? Script.Dequeue() : Next;
     }
 }
 
@@ -1446,6 +1449,69 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         _workers.Stopped.ShouldBe(["job00001"]);
         // The next leg may go now.
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
+    }
+
+    private static CheckRun Stopped(double saturation) =>
+        new(-1, "the check ran past 30 minutes of running and was stopped") { StoppedByBudget = true, Saturation = saturation };
+
+    private async Task<FlightRow> TickedLegs()
+    {
+        var flight = await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        return flight;
+    }
+
+    [Fact]
+    public async Task ACheckStoppedByItsBudgetOnASaturatedMachineIsRunOnceMoreAndAPassFinishesTheLeg()
+    {
+        await TickedLegs();
+        _checks.Script.Enqueue(Stopped(0.9));
+        _checks.Next = new CheckRun(0, "Passed: 42");
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+
+        _checks.Runs.Count.ShouldBe(2);
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    public async Task ASecondBudgetStopFailsTheLegAndSaysItWasRetriedOnceOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.9);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(2);
+        failed.Error.ShouldNotBeNull().ShouldContain("stopped by its budget twice; the machine was saturated the first time, so it was retried once");
+        L("parser").State.ShouldBe(LegState.Flying);
+        L("parser").Report.ShouldNotBeNull().ShouldContain("retried once");
+    }
+
+    [Fact]
+    public async Task ACheckStoppedByItsBudgetOnAQuietMachineIsNotRunAgain()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.1);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(1);
+        failed.Error.ShouldNotBeNull().ShouldNotContain("retried");
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryFailingExitIsNeverRunAgainEvenOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = new CheckRun(1, "Failed: 2") { Saturation = 1 };
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldNotBeNull().ShouldContain("failed (1)");
+
+        _checks.Runs.Count.ShouldBe(1);
     }
 
     [Fact]

@@ -56,7 +56,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.
-    /// This is how the watchtower's chat reads each of its sessions, whole, where <see cref="Read"/> pages by <c>after</c>.
+    /// This is how the watchtower's chat reads each of its sessions, whole, where <see cref="Read(string, int, string?)"/> pages by <c>after</c>.
     /// </summary>
     public TranscriptWindow? Window(string sessionId, int from, int take)
     {
@@ -212,7 +212,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
 
         /// <summary>
-        /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked"/> block is pending until the person says something
+        /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked(string)"/> block is pending until the person says something
         /// (their answer: a choice's label, or their own words) or the session's next message begins in the same turn (it moved
         /// on without the answer). What the node says in its own name (a card, a nudge) is not an answer, and it resumes the
         /// session, whose reply to it is not a move on either: after one, the question stays pending until the person says

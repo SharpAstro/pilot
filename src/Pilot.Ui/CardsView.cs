@@ -267,10 +267,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Whether this user may command a node's cards (its own, or one it holds a grant for); null: every card.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
-    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    /// <summary>
+    /// Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card. Answers null once the grant is given,
+    /// else what the node said, which the card shows under its buttons.
+    /// </summary>
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
 
-    /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
+    /// <summary>Opens the Fleet page on the node's row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
     /// <summary>
@@ -294,10 +297,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The session a card is about, whose transcript its <b>Its transcript</b> opens; null for a card about none.</summary>
     public Func<CardRow, SessionLine?>? TranscriptOf { get; set; }
 
-    /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
+    /// <summary>Opens the session's transcript at the moment the card was raised.</summary>
     public Action<CardRow, SessionLine>? OnTranscript { get; set; }
 
-    /// <summary>Shows <paramref name="line"/> itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
+    /// <summary>Shows the session itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
     public Action<CardRow, SessionLine>? OnOpenSession { get; set; }
 
     /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
@@ -468,27 +471,22 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         Layout.Builder.Spacer().RowH(10f),
     ];
 
-    // Noted from the pool (a button's answer) while the render thread draws them: swapped whole, never waited on.
-    private System.Collections.Immutable.ImmutableDictionary<string, string> _refused = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+    // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
+    internal Presses Presses { get; } = new();
 
     /// <summary>
     /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
     /// card changes or closes; null clears it (the next press that went through).
     /// </summary>
-    public void NoteRefused(string cardId, string? why) =>
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _refused, refused => why is null ? refused.Remove(cardId) : refused.SetItem(cardId, why));
-
-    // The button of each card whose press is with the node now, by its action id (card:c9:1): swapped whole, never waited on.
-    private System.Collections.Immutable.ImmutableDictionary<string, string> _working = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+    public void NoteRefused(string cardId, string? why) => Presses.NoteRefused(cardId, why);
 
     /// <summary>
     /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
     /// node: it reads "…" and the card's buttons take no press until it is cleared (null), when the node has answered.
     /// </summary>
-    public void NoteWorking(string cardId, string? action) =>
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
+    public void NoteWorking(string cardId, string? action) => Presses.NotePending(cardId, action);
 
-    // Cards whose detail fold is open, by id: swapped whole, as _working is.
+    // Cards whose detail fold is open, by id: swapped whole, as the presses are.
     private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
 
     private void ToggleDetail(string cardId) =>
@@ -498,10 +496,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
 
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
-    public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
+    public string? WorkingOn(string cardId) => Presses.PendingOf(cardId);
 
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
-    public string? RefusedOn(string cardId) => Volatile.Read(ref _refused).GetValueOrDefault(cardId);
+    public string? RefusedOn(string cardId) => Presses.RefusedOf(cardId);
 
     /// <summary>The panel's foot, which stays in view while the cards above scroll: the way into the chat with the watchtower.</summary>
     private Layout.Node Foot(CardsScreen screen)
@@ -768,10 +766,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
-        if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
+        var working = Presses.PendingOf(card.Id);
+        if (Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
         {
-            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines, LineChars));
+            lines.Add(refusal);
         }
 
         var buttons = new List<Layout.Node>();
@@ -780,13 +778,24 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // 2026-10-25).
         Layout.Node Button(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
             closed ? Dead(label) : working is not null ? Dead(action == working ? $"{label} …" : label) : Pill(label, action, onClick, tint);
+        // A button that asks the node goes through the shared helper, which says it is working and takes no second press.
+        Layout.Node NodeButton(string label, string action, Action onClick) =>
+            closed ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
             lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Button("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
+            // A grant asks the node like any other press: working at once, and a refusal on the card.
+            var connectHit = $"card:{card.Id}:connect";
+            buttons.Add(NodeButton("Connect", connectHit, () =>
+            {
+                if (OnConnect is { } connect)
+                {
+                    _ = Presses.PressAsync(card.Id, connectHit, _ => connect(watched));
+                }
+            }));
         }
         for (var i = 0; watched is null && i < card.Choices.Length; i++)
         {
@@ -803,11 +812,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
+            var label = StatusLabel(choice, card.Detail);
             buttons.Add(closed
-                ? Dead(StatusLabel(choice, card.Detail))
-                : working is not null && !IsChip(choice.Status)
-                    ? Dead(action == working ? $"{StatusLabel(choice, card.Detail)} …" : StatusLabel(choice, card.Detail))
-                    : ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)));
+                ? Dead(label)
+                : IsChip(choice.Status)
+                    ? ChoiceControl(choice, card.Detail, action, () => { })
+                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)), pressed => Dead(pressed ? $"{label} …" : label)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -832,7 +842,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Button("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            buttons.Add(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -881,6 +891,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         HeaderPill(label, action, _ => onClick(), tint, textColor);
+
+    /// <summary>A header pill with no hit: the working word of a header button whose press is with the node.</summary>
+    internal static Layout.Node DeadHeaderPill(string label, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
+            .WAuto()
+            .HFixed(AboutCard.HeaderButton)
+            .Bg(tint?.Bg ?? Button);
 
     /// <summary>A header button whose click is told which modifier keys were held: the node pills' Shift adds to the pick.</summary>
     internal static Layout.Node HeaderPill(string label, string action, Action<InputModifier> onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>

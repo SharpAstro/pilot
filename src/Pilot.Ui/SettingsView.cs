@@ -56,12 +56,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     // What the page has read, as one immutable record swapped whole: reads land on the pool, the render thread draws what
     // it finds, and neither waits on the other.
     // Checks: what the node last measured (null until it first answers); Checking: a read the person is waiting on is out
-    // (the first, a refresh, or the one after a fix), so the rows say so; Working: the ids of the controls pressed and not yet answered.
+    // (the first, a refresh, or the one after a fix), so the rows say so; the controls pressed and not yet answered are <see cref="Presses"/>'s.
     // Repos: the node's tracked repos the list pickers offer (null until read); ReposProblem: why they could not be read.
     // ChecksTicket: the ticket of the checks read shown, so a slower, older read cannot put its answer over a newer one.
-    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, System.Collections.Immutable.ImmutableHashSet<string> Working, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
+    private sealed record Seen(SettingsPage? Page, SetupChecks? Checks, bool Checking, string? ChecksProblem, GrantInfo[] Given, string[] Held, string? Problem, RepoInfo[]? Repos = null, string? ReposProblem = null, long ChecksTicket = 0);
 
-    private Seen _read = new(null, null, false, null, [], [], null, []);
+    private Seen _read = new(null, null, false, null, [], [], null);
     private CancellationTokenSource? _reading;
     private CancellationTokenSource? _readingChecks;
     private CancellationTokenSource? _readingRepos;
@@ -106,7 +106,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     public GrantInfo[] Given => Volatile.Read(ref _read).Given;
 
     /// <summary>Called when what the page shows changed, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
+
+    /// <summary>The controls pressed and not yet answered, by their ids: each reads its working word, dimmed, and takes no second press.</summary>
+    internal Presses Presses { get; } = new();
+
+    private bool Busy(string control) => Presses.PendingOf(control) is not null;
 
     /// <summary>What the last button or field said, under the header.</summary>
     public string? Said { get; set; }
@@ -322,34 +327,41 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             return;
         }
-        var added = false;
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => (added = !read.Working.Contains(control)) ? read with { Working = read.Working.Add(control) } : read);
-        if (!added)
+        if (Busy(control))
         {
             return;
         }
         Said = doing;
-        Changed?.Invoke();
-        _ = Task.Run(async () =>
+        _ = ActAsync();
+
+        async Task ActAsync()
         {
-            var reply = await send(verb, args, CancellationToken.None).ConfigureAwait(false);
-            // The row goes in and the control stops working in one swap, so no draw shows the old row with the control idle.
-            if (reply.Row is not null)
+            SettingsReply? reply = null;
+            // Working at once; the answer's row goes in before the control stops working, so no draw shows the old row with the control idle.
+            await Presses.PressAsync(control, control, async ct =>
             {
-                Interlocked.Increment(ref _swaps);
+                reply = await Task.Run(() => send(verb, args, ct), ct).ConfigureAwait(false);
+                if (reply.Row is not null)
+                {
+                    Interlocked.Increment(ref _swaps);
+                }
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with
+                {
+                    Page = reply.Row is { } row && read.Page is { } page ? page with { Settings = [.. page.Settings.Select(s => s.Key == row.Key ? row : s)] } : read.Page,
+                });
+                if (reply.Kind == ReplyKind.Done)
+                {
+                    // What the person chose for this verb goes only once the node has taken it: a refusal leaves the choice to amend.
+                    taken?.Invoke();
+                }
+                // The node's words, refusal included, are the page's line (Said); the control itself is back to its label.
+                Said = reply.Line.ReplaceLineEndings(" ").Trim();
+                return null;
+            }).ConfigureAwait(false);
+            if (reply is not { } answered)
+            {
+                return;
             }
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _read, read => read with
-            {
-                Page = reply.Row is { } row && read.Page is { } page ? page with { Settings = [.. page.Settings.Select(s => s.Key == row.Key ? row : s)] } : read.Page,
-                Working = read.Working.Remove(control),
-            });
-            if (reply.Kind == ReplyKind.Done)
-            {
-                // What the person chose for this verb goes only once the node has taken it: a refusal leaves the choice to amend.
-                taken?.Invoke();
-            }
-            Said = reply.Line.ReplaceLineEndings(" ").Trim();
-            Changed?.Invoke();
             if (verb == Verbs.Setup)
             {
                 await ReadChecksAsync(refresh: false, waited: true, CancellationToken.None).ConfigureAwait(false);
@@ -358,13 +370,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             {
                 await RefreshGrantsAsync(CancellationToken.None).ConfigureAwait(false);
             }
-            else if (verb == Verbs.Set && reply.Row is null && reply.Kind == ReplyKind.NoAnswer && Load is { } load)
+            else if (verb == Verbs.Set && answered.Row is null && answered.Kind == ReplyKind.NoAnswer && Load is { } load)
             {
                 // No row came (the node may be restarting for the change): read the settings, as the only way to know.
                 await RefreshAsync(load, CancellationToken.None).ConfigureAwait(false);
             }
             Changed?.Invoke();
-        });
+        }
     }
 
     /// <summary>Whose settings these are: this machine's node, named as the Chat page names its watchtower's owner.</summary>
@@ -423,7 +435,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         rows.Add(Section("Settings", "the node restarts to run with a change at once; its sessions, flights and jobs carry on"));
         for (var i = 0; i < page.Settings.Length; i++)
         {
-            rows.Add(SettingRowNode(page.Settings[i], i, read.Working));
+            rows.Add(SettingRowNode(page.Settings[i], i));
         }
         var given = read.Given;
         var held = read.Held;
@@ -496,7 +508,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                     .WFixed(TitleWidth),
                 Layout.Builder.Text("may command this node; Revoke cuts it back to watching at once", 12f, Body).WStar(),
                 Layout.Builder.HStack(
-                        Send is null ? Layout.Builder.Spacer().WStar() : Pill("Revoke", $"settings:revoke:{grant.Id}", () => Act(Verbs.RevokeGrant, [grant.Id], $"revoking {grant.Label}…", $"settings:revoke:{grant.Id}"), working: Volatile.Read(ref _read).Working.Contains($"settings:revoke:{grant.Id}")),
+                        Send is null ? Layout.Builder.Spacer().WStar() : NodePill("Revoke", $"settings:revoke:{grant.Id}", () => Act(Verbs.RevokeGrant, [grant.Id], $"revoking {grant.Label}…", $"settings:revoke:{grant.Id}")),
                         Layout.Builder.Spacer().WStar())
                     .WFixed(FixWidth))
             .WithGap(14f).Pad(8f, 6f).RowH(RowHeight);
@@ -537,7 +549,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var stale = age > ChecksStale;
         var action = $"settings:fix:{check.Key}";
         var fix = !checking && check.Fix is { } label && Send is not null
-            ? Pill(label, action, () => Act(Verbs.Setup, [check.Key], $"{check.Title}: {label}…", action), working: Volatile.Read(ref _read).Working.Contains(action))
+            ? NodePill(label, action, () => Act(Verbs.Setup, [check.Key], $"{check.Title}: {label}…", action))
             : Layout.Builder.Spacer().WStar();
         var status = checking ? "checking…" : $"{(check.Ok ? "done" : check.Optional ? "optional" : "to do")} · checked {SessionLine.Ago(age)}{(stale ? " (stale)" : "")}";
         var statusColor = checking ? Dim : stale ? Todo : check.Ok ? Ok : check.Optional ? Dim : Todo;
@@ -559,7 +571,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
     }
 
-    private Layout.Node SettingRowNode(SettingRow setting, int index, System.Collections.Immutable.ImmutableHashSet<string> working)
+    private Layout.Node SettingRowNode(SettingRow setting, int index)
     {
         var state = setting.Source == SettingSources.CommandLine ? "from the node's command line, which wins"
             : setting.Pending ? $"saved as {(setting.Saved ?? "the default")}: applies at the next start"
@@ -571,7 +583,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                         Layout.Builder.Text(state, 11f, setting.Pending ? Todo : Dim).RowH(18f))
                     .WFixed(TitleWidth),
                 Layout.Builder.VStack(
-                        setting.Many ? Editor(setting, working).HAuto() : Editor(setting, working).RowH(26f),
+                        setting.Many ? Editor(setting).HAuto() : Editor(setting).RowH(26f),
                         Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f))
                     .WStar())
             .WithGap(14f).Pad(8f, 6f);
@@ -581,7 +593,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     }
 
     // How a setting is changed: a pill per choice, a field (Enter saves), or for repo roots each folder with an x and a field to add one.
-    private Layout.Node Editor(SettingRow setting, System.Collections.Immutable.ImmutableHashSet<string> working)
+    private Layout.Node Editor(SettingRow setting)
     {
         var parts = new List<Layout.Node>();
         if (setting.Choices.Length > 0)
@@ -592,22 +604,22 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 var action = $"settings:{setting.Key}:{choice}";
                 // The wire value for "leave it to Claude Code" is none; the button says default, as the help line does.
                 var label = choice == "none" ? "default" : choice;
-                parts.Add(Pill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {label}…", action), chosen, working.Contains(action)));
+                parts.Add(NodePill(label, action, () => Act(Verbs.Set, [setting.Key, choice], $"{setting.Label}: {label}…", action), chosen));
             }
         }
         else if (setting.Many)
         {
-            return ListEditor(setting, working);
+            return ListEditor(setting);
         }
         else
         {
-            parts.Add(Field(setting, setting.Value, text => [setting.Key, text], working).WFixed(220f));
+            parts.Add(Field(setting, setting.Value, text => [setting.Key, text]).WFixed(220f));
         }
         if (setting.Saved is not null && setting.Source != SettingSources.CommandLine)
         {
             var action = $"settings:{setting.Key}:default";
             // "reset" takes the saved value out (back to what the node does unset); no choice on the row reads the same.
-            parts.Add(Pill("reset", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action), working: working.Contains(action)));
+            parts.Add(NodePill("reset", action, () => Act(Verbs.Set, [setting.Key, "default"], $"{setting.Label}: back to the default…", action)));
         }
         parts.Add(Layout.Builder.Spacer().WStar());
         return Layout.Builder.HStack([.. parts]).WithGap(6f);
@@ -627,7 +639,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// A list setting: each entry as a chip with a × (the list without it is what is sent), then for a list of repos a choice of
     /// the node's repos by name with an Add (and for repo-trackers the tracker), and a free entry for a folder outside them.
     /// </summary>
-    private Layout.Node ListEditor(SettingRow setting, System.Collections.Immutable.ImmutableHashSet<string> working)
+    private Layout.Node ListEditor(SettingRow setting)
     {
         var key = setting.Key;
         var entries = Roots(setting);
@@ -646,7 +658,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
         foreach (var entry in entries)
         {
-            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries, working), Layout.Builder.Spacer().WStar()).RowH(ControlH));
+            stack.Add(Layout.Builder.HStack(Chip(setting, entry, entries), Layout.Builder.Spacer().WStar()).RowH(ControlH));
         }
         var controls = new List<Layout.Node>();
         var offering = IsRepoList(key) && LoadRepos is not null;
@@ -665,9 +677,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var add = $"settings:{key}:add";
             controls.Add(pick is null
                 ? Idle("Add", "choose a repo to add", FieldBg)
-                : Pill("Add", add, () => Act(Verbs.Set, [key, .. entries, Entry(pick)], $"{setting.Label}: adding {pick}…", add, () => ClearPick(key)), working: working.Contains(add)).HFixed(ControlH));
+                : NodePill("Add", add, () => Act(Verbs.Set, [key, .. entries, Entry(pick)], $"{setting.Label}: adding {pick}…", add, () => ClearPick(key))).HFixed(ControlH));
         }
-        var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text], working);
+        var field = Field(setting, offering ? "or a folder's path, then Enter" : "add a folder, then Enter", text => [key, .. entries, trackers && !HasTracker(text) ? $"{text}={tracker}" : text]);
         if (offering)
         {
             controls.Add(Layout.Builder.Spacer().WStar());
@@ -688,13 +700,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static bool HasTracker(string text) => text.EndsWith("=github", StringComparison.OrdinalIgnoreCase) || text.EndsWith("=shortcut", StringComparison.OrdinalIgnoreCase);
 
     // An entry as a chip: its text (a long one elided in the middle, the whole on hover) and the × that sends the list without it.
-    private Layout.Node Chip(SettingRow setting, string entry, string[] entries, System.Collections.Immutable.ImmutableHashSet<string> working)
+    private Layout.Node Chip(SettingRow setting, string entry, string[] entries)
     {
         var action = $"settings:{setting.Key}:remove:{entry}";
         return Layout.Builder.HStack(
                 Layout.Builder.Text(Elide(entry), 12f, Body, TextAlign.Center).WithTooltip(entry).Pad(8f, 4f).WAuto(),
                 // The × stays a typeset rune for want of a close glyph: SharpAstro/DIR.Lib#151.
-                Pill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action), working: working.Contains(action)))
+                NodePill("×", action, () => Act(Verbs.Set, [setting.Key, .. entries.Where(e => e != entry).DefaultIfEmpty("default")], $"{setting.Label}: removing {entry}…", action)))
             .WithGap(0f).Bg(FieldBg).WAuto().HFixed(ControlH);
     }
 
@@ -759,7 +771,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         Layout.Builder.Text(label, 12f, Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(background).WithTooltip(why).HFixed(ControlH);
 
     // A field's working id is its own: Enter sends, and the field says "saving…" until the node answers (a second Enter is ignored meanwhile).
-    private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args, System.Collections.Immutable.ImmutableHashSet<string> working)
+    private Layout.Node Field(SettingRow setting, string placeholder, Func<string, string[]> args)
     {
         var control = $"settings:{setting.Key}:field";
         if (!_fields.TryGetValue(setting.Key, out var input))
@@ -767,10 +779,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             input = new TextInputState();
             _fields[setting.Key] = input;
         }
-        input.Placeholder = working.Contains(control) ? "saving…" : placeholder;
+        input.Placeholder = Busy(control) ? "saving…" : placeholder;
         input.OnCommit = text =>
         {
-            if (text.Trim().Length > 0 && !Volatile.Read(ref _read).Working.Contains(control))
+            if (text.Trim().Length > 0 && !Busy(control))
             {
                 Act(Verbs.Set, args(text.Trim()), $"{setting.Label}: {text.Trim()}…", control);
                 input.Clear();
@@ -782,6 +794,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private static string[] Roots(SettingRow setting) =>
         (setting.Saved ?? setting.Value).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+    // A pill that asks the node, through the press helper: while its press is with the node it reads "label…", dimmed, with no hit.
+    private Layout.Node NodePill(string label, string action, Action onClick, bool chosen = false) =>
+        Presses.Button(action, action, () => Pill(label, action, onClick, chosen), _ => Pill(label, action, onClick, chosen, working: true));
 
     // A pill whose verb is out shows "…" after its label and does not click again until the node answers.
     private static Layout.Node Pill(string label, string action, Action onClick, bool chosen = false, bool working = false)

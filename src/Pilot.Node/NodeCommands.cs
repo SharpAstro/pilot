@@ -340,6 +340,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<Summaries>().Records(command);
         }
+        if (command.Verb == Verbs.ReviewCost)
+        {
+            if (command.Target != Verbs.NodeTarget)
+            {
+                return state.Complete(command, $"review-cost takes the target {Verbs.NodeTarget}, not {command.Target}");
+            }
+            var (report, error) = ReviewCost.Run(command.Args ?? [], state, Get<SessionTrackerOptions>().Profile);
+            return state.Complete(command, error, made: report);
+        }
         if (command.Verb == Verbs.Stop)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);
@@ -347,6 +356,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);
+        }
+        if (Verbs.IsAdmission(command.Verb))
+        {
+            // Another node's claim for an Opus slot, its list of sessions, or a setting held here for the fleet: only under a grant.
+            return command.Grant is null
+                ? state.Complete(command, $"{command.Verb} is taken from another node of the fleet, under its grant")
+                : Get<AdmissionGate>().Handle(command);
         }
         if (command.Verb == Verbs.Set)
         {

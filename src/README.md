@@ -687,6 +687,7 @@ pilot compact <session> [focus…]               # an idle background session's 
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
 pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
@@ -822,6 +823,11 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
 
 ## The GUI
+
+A button that asks the node something is made through `Presses` (`Pilot.Ui/Presses.cs`): it reads its working label on the frame it
+is pressed, takes no second press, then shows the taking at once or the refusal in the node's words where it was pressed. A test
+(`ButtonFeedbackTests`) arranges every page and fails on a node-bound button made without it; the buttons it lists as local-only
+(navigation, folds, links) each say why they need none.
 
 `pilot-gui` flies a flight on its own. The rail has **Sessions** (every Claude session on the machine: model, effort,
 context against its window, last response, state, spend, usage in the header; a bar to say something to the selected

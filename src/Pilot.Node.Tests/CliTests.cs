@@ -280,6 +280,8 @@ public sealed class CliTests : IAsyncLifetime
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
         var (_, inTheAir, _) = await Pilot(_root, "status");
+        // The admission line names the Opus sessions counted; the test node's fake reviewer never ends, so it is not a flight in the air.
+        inTheAir = string.Join('\n', inTheAir.Split('\n').Where(l => !l.StartsWith("Opus ", StringComparison.Ordinal)));
         inTheAir.ShouldNotContain("TIA1611");
         inTheAir.ShouldContain("No flights in the air.");
         inTheAir.ShouldContain("1 landed flight not shown: pilot status --all");

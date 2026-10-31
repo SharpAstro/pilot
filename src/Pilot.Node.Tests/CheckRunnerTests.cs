@@ -23,6 +23,43 @@ public sealed class CheckRunnerTests
         run.Tail.ShouldContain("A|B");
     }
 
+    /// <summary>The same commands through the node's job path (<see cref="JobCheckRunner"/>): quoting, exit codes and the last command deciding hold.</summary>
+    [Theory]
+    [InlineData("echo \"A|B\"", "echo 'A|B'", 0)]
+    [InlineData("exit 3", "exit 3", 3)]
+    [InlineData("git --no-such-option", "git --no-such-option", 129)]
+    [InlineData("git --no-such-option; git --version", "git --no-such-option; git --version", 0)]
+    public async Task TheJobPathRunsTheSameCommandsAsTheShellPath(string windows, string other, int exit)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var jobs = new JobRunner(state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System);
+        await jobs.StartAsync(Ct);
+        await jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        try
+        {
+            var run = await new JobCheckRunner(jobs).RunAsync(OperatingSystem.IsWindows() ? windows : other, root, Ct, "TIA1", "parser");
+
+            run.ExitCode.ShouldBe(exit, run.Tail);
+            if (exit == 0 && windows.Contains("A|B"))
+            {
+                run.Tail.ShouldContain("A|B");
+            }
+        }
+        finally
+        {
+            await jobs.StopAsync(CancellationToken.None);
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
     [Fact]
     public async Task AFailingCommandFails()
     {
@@ -49,6 +86,56 @@ public sealed class CheckRunnerTests
         var run = await new ShellCheckRunner().RunAsync("git --no-such-option; git --version", Path.GetTempPath(), Ct);
 
         run.Passed.ShouldBeTrue(run.Tail);
+    }
+
+    /// <summary>
+    /// A check given up from outside ends with everything it started: only the time budget's kill took the tree before,
+    /// so a cancelled check's Pilot.Node.Tests.exe went on running and held the plane's DLLs (PIL446, PIL474, 2026-10-31).
+    /// </summary>
+    [Fact(Timeout = 60_000)]
+    public async Task ACancelledCheckEndsTheProcessesItStarted()
+    {
+        var marker = Path.Combine(Path.GetTempPath(), $"check-child-{Guid.NewGuid():N}.pid");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; Start-Sleep 120"
+            : $"sleep 120 & echo $! > '{marker}'; wait";
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var run = new ShellCheckRunner().RunAsync(command, Path.GetTempPath(), cancel.Token);
+        try
+        {
+            while (!File.Exists(marker) || File.ReadAllText(marker).Trim().Length == 0)
+            {
+                run.IsCompleted.ShouldBeFalse();
+                await Task.Delay(100, Ct);
+            }
+            var child = int.Parse(File.ReadAllText(marker).Trim());
+
+            await cancel.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(run);
+
+            using var gone = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (Alive(child))
+            {
+                await Task.Delay(100, gone.Token);
+            }
+        }
+        finally
+        {
+            File.Delete(marker);
+        }
+    }
+
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     /// <summary>The script a Windows check runs from is gone once it has run.</summary>

@@ -26,6 +26,14 @@ is neither built nor tested by CI.
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
 
+## How a flight merges
+
+- main is protected by a merge queue that **squashes** each PR into one commit (the ruleset's `merge_method` is
+  `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
+  conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
+- Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
+  `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading

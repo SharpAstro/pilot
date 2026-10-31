@@ -25,7 +25,8 @@ public sealed record TranscriptFacts(
     string? PendingQuestion,
     ApiStop? Stop = null,
     IReadOnlyList<SubagentRow>? Subagents = null,
-    PendingTool? PendingTool = null)
+    PendingTool? PendingTool = null,
+    IReadOnlyList<SpendMessage>? Spend = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -48,6 +49,8 @@ internal sealed class TranscriptTail(string path)
     private static readonly byte[] Handback = "\"name\":\"SubagentHandback\""u8.ToArray();
 
     private readonly Dictionary<string, MessageUsage> _messages = new Dictionary<string, MessageUsage>(StringComparer.Ordinal);
+    // When each message was written, on which model and effort: what the spend ledger buckets by.
+    private readonly Dictionary<string, (DateTimeOffset? At, string? Model, string? Effort)> _details = new Dictionary<string, (DateTimeOffset?, string?, string?)>(StringComparer.Ordinal);
     private long _offset;
     private string? _pendingToolId;
     private string? _pendingQuestion;
@@ -59,6 +62,9 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The usage of every message read so far, by message id.</summary>
     public IReadOnlyDictionary<string, MessageUsage> Messages => _messages;
+
+    /// <summary>When, on which model and at which effort each message of <see cref="Messages"/> was written.</summary>
+    public IReadOnlyDictionary<string, (DateTimeOffset? At, string? Model, string? Effort)> Details => _details;
 
     /// <summary>The last response that was not Claude Code's own error line, from a turn of this session itself (not a subagent's).</summary>
     public AssistantTurn? LastTurn { get; private set; }
@@ -147,6 +153,7 @@ internal sealed class TranscriptTail(string path)
     {
         _offset = 0;
         _messages.Clear();
+        _details.Clear();
         LastTurn = null;
         Stop = null;
         HandedBack = false;
@@ -200,6 +207,8 @@ internal sealed class TranscriptTail(string path)
             if (id is not null)
             {
                 _messages[id] = tokens;
+                var stamped = ClaudeAgentsJson.Text(root, "timestamp") is { } stampText && DateTimeOffset.TryParse(stampText, CultureInfo.InvariantCulture, DateTimeStyles.None, out var wrote) ? wrote : (DateTimeOffset?)null;
+                _details[id] = (stamped, ClaudeAgentsJson.Text(message, "model"), ClaudeAgentsJson.Text(root, "effort"));
             }
 
             // A later message means the turn moved on, so a question it asked is answered or abandoned.
@@ -382,9 +391,13 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
     private readonly Dictionary<string, TranscriptTail> _subagents = new Dictionary<string, TranscriptTail>(StringComparer.Ordinal);
     private TranscriptTail? _main;
     private long _spend;
+    private MessageUsage _usage;
     private bool _dirty = true;
 
     public string SessionId { get; } = sessionId;
+
+    /// <summary>The four token counts summed over every message of the files read so far, each counted once: what <see cref="TranscriptFacts.SpendWeighted"/> weighs.</summary>
+    public MessageUsage Usage => _usage;
 
     /// <summary>The main transcript's path once found.</summary>
     public string? Path => _main?.Path;
@@ -433,27 +446,33 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
             _dirty |= tail.Refresh();
         }
 
+        List<SpendMessage>? spend = null;
         if (_dirty)
         {
-            var once = new Dictionary<string, MessageUsage>(StringComparer.Ordinal);
-            foreach (var (id, usage) in _main.Messages)
-            {
-                once[id] = usage;
-            }
-            foreach (var tail in _subagents.Values)
+            var once = new Dictionary<string, SpendMessage>(StringComparer.Ordinal);
+            void Take(TranscriptTail tail)
             {
                 foreach (var (id, usage) in tail.Messages)
                 {
-                    once[id] = usage;
+                    var (at, model, effort) = tail.Details.TryGetValue(id, out var d) ? d : default;
+                    once[id] = new SpendMessage(id, usage, at, model, effort);
                 }
             }
-            _spend = once.Values.Sum(u => u.WeightedTwentieths) / 20;
+            Take(_main);
+            foreach (var tail in _subagents.Values)
+            {
+                Take(tail);
+            }
+            _spend = once.Values.Sum(m => m.Usage.WeightedTwentieths) / 20;
+            _usage = new MessageUsage(once.Values.Sum(m => m.Usage.Input), once.Values.Sum(m => m.Usage.CacheCreation), once.Values.Sum(m => m.Usage.CacheRead), once.Values.Sum(m => m.Usage.Output));
+            // What the ledger is told: once per message id, and only when something was read since it was last told.
+            spend = [.. once.Values.Where(m => m.Model != "<synthetic>")];
             _dirty = false;
         }
 
         var turn = _main.LastTurn;
         return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
-            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool);
+            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend);
     }
 
     // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was

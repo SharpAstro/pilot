@@ -100,7 +100,7 @@ public sealed class FlyingTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
         var acted = new List<FlightAction>();
-        chrome.Flights.OnAction = acted.Add;
+        chrome.Flights.OnAction = Taken.By<FlightAction>(acted.Add);
         var screen = new FlightsScreen([line], "test", Live.At);
         chrome.Show(PilotPage.Flights);
         chrome.Flights.ListCursor.MoveTo(0);

@@ -52,7 +52,10 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private MachineRow? _machine;
+    private AdmissionRow? _admission;
     private PullRequestsRow? _pullRequests;
+    private ReposRow? _repos;
+    private NodeRow? _node;
     private readonly Dictionary<string, MergeRow> _merges = new Dictionary<string, MergeRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
     private readonly Dictionary<string, PrReviewRow> _prReviews = new Dictionary<string, PrReviewRow>(StringComparer.OrdinalIgnoreCase);
@@ -880,6 +883,35 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The admission as last put; null before any.</summary>
+    public AdmissionRow? Admission()
+    {
+        lock (_gate)
+        {
+            return _admission;
+        }
+    }
+
+    /// <summary>Puts the admission when it differs from the one held, so a sweep that finds the same count adds no delta.</summary>
+    public void PutAdmission(AdmissionRow row)
+    {
+        lock (_gate)
+        {
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
+            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            {
+                return;
+            }
+            if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+            {
+                return;
+            }
+            Publish(new AdmissionChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Admission = row });
+        }
+    }
+
     /// <summary>Every open PR of the repos pilot works in as last read; null before any.</summary>
     public PullRequestsRow? PullRequests()
     {
@@ -905,6 +937,37 @@ public sealed class NodeState
         }
     }
 
+    // Compared as written, read times aside: a status holds arrays (worktrees, PRs, ideas), which a record compares by reference.
+    private static bool SameRepos(ReposRow held, ReposRow read) =>
+        held.Repos.Length == read.Repos.Length
+        && held.Repos.Zip(read.Repos).All(pair => System.Text.Json.JsonSerializer.Serialize(pair.First with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus)
+            == System.Text.Json.JsonSerializer.Serialize(pair.Second with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus));
+
+    /// <summary>What the node last said it is (<see cref="NodeRow"/>); null before any.</summary>
+    public NodeRow? Node()
+    {
+        lock (_gate)
+        {
+            return _node;
+        }
+    }
+
+    /// <summary>
+    /// Puts what the node says it is when it differs meaningfully (<see cref="NodeRow.Differs"/>): the watchtower's clock-driven
+    /// figures alone would otherwise put a delta each tick and fill the journal.
+    /// </summary>
+    public void PutNode(NodeRow said)
+    {
+        lock (_gate)
+        {
+            if (_node is { } held && !NodeRow.Differs(held, said))
+            {
+                return;
+            }
+            Publish(new NodeChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = said });
+        }
+    }
+
     /// <summary>
     /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
     /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
@@ -920,6 +983,38 @@ public sealed class NodeState
                 return;
             }
             Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+
+    /// <summary>Where every repo the node knows stands as last read, or marked not read yet; null before any.</summary>
+    public ReposRow? Repos()
+    {
+        lock (_gate)
+        {
+            return _repos;
+        }
+    }
+
+    /// <summary>
+    /// Puts the repos read, when their statuses differ from those held (their own read times aside), or when the held read is 2
+    /// minutes old: a read every few minutes that finds nothing new would fill the journal with a row of every repo, yet a
+    /// client dates the row by its read, so the read time is renewed well within that.
+    /// </summary>
+    public void PutRepos(ReposRow read)
+    {
+        lock (_gate)
+        {
+            // A node that knows no repos and has said nothing has nothing to say.
+            if (_repos is null && read.Repos.Length == 0)
+            {
+                return;
+            }
+            if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
+                && SameRepos(held, read))
+            {
+                return;
+            }
+            Publish(new ReposChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
         }
     }
 
@@ -1109,11 +1204,20 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case AdmissionChangedEvent admission:
+                _admission = admission.Admission;
+                break;
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
                 break;
             case PullRequestsChangedEvent pullRequests:
                 _pullRequests = pullRequests.Row;
+                break;
+            case ReposChangedEvent repos:
+                _repos = repos.Row;
+                break;
+            case NodeChangedEvent node:
+                _node = node.Row;
                 break;
             case JobAddedEvent added:
                 _jobs[added.Job.Id] = added.Job;
@@ -1179,7 +1283,10 @@ public sealed class NodeState
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
+        _admission = snapshot.Admission;
         _pullRequests = snapshot.PullRequests;
+        _repos = snapshot.Repos;
+        _node = snapshot.Node;
         foreach (var job in snapshot.Jobs ?? [])
         {
             _jobs[job.Id] = job;
@@ -1215,7 +1322,10 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Machine = _machine,
+        Admission = _admission,
         PullRequests = _pullRequests,
+        Repos = _repos,
+        Node = _node,
         Jobs = [.. _jobs.Values],
         Merges = [.. _merges.Values],
         PrReviews = [.. _prReviews.Values],

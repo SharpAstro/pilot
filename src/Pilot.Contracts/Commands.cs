@@ -192,6 +192,27 @@ public static class Verbs
     public const string ReceiveFlight = "receive-flight";
 
     /// <summary>
+    /// <c>admission-claim node &lt;node&gt; &lt;key&gt; &lt;label&gt; &lt;model&gt; &lt;role&gt; [flight]</c>: a node of the fleet asks the node that holds the Opus count for a slot
+    /// (a lease, kept while the sender renews it with <see cref="AdmissionSync"/>). Answered ok when the lease is taken, else refused with the wait's reason.
+    /// </summary>
+    public const string AdmissionClaim = "admission-claim";
+
+    /// <summary>
+    /// <c>admission-sync node &lt;node&gt; [key|label|model]…</c>: a node tells the holder of the count which Opus sessions it has now; its leases become
+    /// exactly those, renewed, so a session that ended frees its slot at once.
+    /// </summary>
+    public const string AdmissionSync = "admission-sync";
+
+    /// <summary>
+    /// <c>admission-setting node &lt;key&gt; [value…]</c>: a node of the fleet sets <c>opus-cap</c> or <c>one-flight-per-repo</c> on the node that holds
+    /// them for the fleet (<c>set</c> itself is this machine's alone).
+    /// </summary>
+    public const string AdmissionSetting = "admission-setting";
+
+    /// <summary>Whether <paramref name="verb"/> is one of the fleet admission verbs.</summary>
+    public static bool IsAdmission(string verb) => verb is AdmissionClaim or AdmissionSync or AdmissionSetting;
+
+    /// <summary>
     /// <c>move-flight flight/&lt;code&gt;</c> (#376): hand the flight to the best willing node of the fleet now, as a node in maintenance does
     /// at a leg boundary: the plane is made safe (clean, pushed fast-forward only, the remote's head read back equal to the plane's),
     /// the flight is sent with <see cref="ReceiveFlight"/>, and this node stops flying it. Refused when a leg is flying; any failure
@@ -334,6 +355,12 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
+    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// </summary>
+    public const string AllowRound = "allow-round";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -384,6 +411,14 @@ public static class Verbs
     /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
     /// </summary>
     public const string Records = "records";
+
+    /// <summary>
+    /// <c>review-cost node [--since &lt;date&gt;] [--until &lt;date&gt;] [--repo &lt;repo&gt;]</c> (#433): a read of what reviews cost, in the result's
+    /// <see cref="CommandResult.Made"/>: per landed flight, its reviewer sessions (round, model, head) and their tokens as the transcripts
+    /// hold them (input, cache creation, cache read, output, the weighted spend of <see cref="SessionRow.SpendWeighted"/>), with totals and
+    /// a per-flight average. Nothing is changed or called.
+    /// </summary>
+    public const string ReviewCost = "review-cost";
 
     /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it

@@ -124,7 +124,7 @@ public sealed class PackageHoldPageTests
         var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
-        chrome.Flights.OnAction = _ => { };
+        chrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
         chrome.Flights.Mode = mode;
         chrome.Show(PilotPage.Flights);
         chrome.Flights.ListCursor.MoveTo(0);

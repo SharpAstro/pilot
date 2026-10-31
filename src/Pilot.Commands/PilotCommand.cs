@@ -59,7 +59,7 @@ public static class PilotCommand
 
     /// <param name="bySession">Whether a command is from the Claude session running this host, where one is (the CLI's and
     /// the MCP server's are), before <paramref name="who"/>.</param>
-    /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent"/>).</param>
+    /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
     internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
     {
@@ -505,6 +505,10 @@ public static class PilotCommand
         var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
+        var allowWhy = Words("why", "Why one more round is worth it", required: false);
+        var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
+            (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
+
         // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
         var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -526,7 +530,7 @@ public static class PilotCommand
         var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, merge, land } };
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, allowRound, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -787,6 +791,73 @@ public static class PilotCommand
             await output.WriteAsync(merges.Count == 0 ? "No merges.\n" : string.Concat(merges.Select(m => MergeLine(m) + "\n")));
             return 0;
         });
+        var spendWindow = new Option<string>("--window") { Description = "5h, today or week: the account's 5-hour or 7-day window when its reset is known, else counted back from now; today is the local day", DefaultValueFactory = _ => "today" };
+        spendWindow.AcceptOnlyFromAmong("5h", "today", "week");
+        var spendBy = new Option<string?>("--by") { Description = "flight or role; both when left out" };
+        spendBy.AcceptOnlyFromAmong("flight", "role");
+        var spendWaste = new Option<bool>("--waste") { Description = "Only what bought nothing kept, worst first: later rounds of a leg, base-merge re-reviews, sessions that ended without a result, replanned plans, failed starts again" };
+        var spendCommand = Action(new Command("spend", "Tokens spent over a window, by flight and by role, from the node's ledger") { Options = { spendWindow, spendBy, spendWaste } }, async (p, client, ct) =>
+        {
+            var window = p.GetValue(spendWindow)!;
+            if (p.GetValue(spendWaste))
+            {
+                var wasted = await client.GetSpendWasteAsync(window, ct);
+                if (wasted is not { Success: true, Response: { } waste })
+                {
+                    await output.WriteLineAsync($"refused: {wasted.Error}");
+                    return 1;
+                }
+                var culture = CultureInfo.InvariantCulture;
+                var span = $"{waste.From.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)} to {waste.To.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)}";
+                var name = window switch { "5h" => "5h window", "week" => "7-day window", _ => "today" };
+                await output.WriteLineAsync($"spend waste, {name}: {span} (local time){(waste.FromAccount ? ", the account's own window" : "")}");
+                await output.WriteLineAsync($"{waste.WasteWeighted.ToString("N0", culture)} of {waste.WindowWeighted.ToString("N0", culture)} weighted tokens spent for nothing kept ({waste.WasteShare.ToString("0.0", culture)} %), {span}");
+                if (waste.Rows.Length == 0)
+                {
+                    await output.WriteLineAsync("  no waste");
+                    return 0;
+                }
+                foreach (var row in waste.Rows)
+                {
+                    var where = string.Join('/', new[] { row.Flight, row.Leg }.Where(x => x is { Length: > 0 }));
+                    await output.WriteLineAsync($"  {row.Kind}: {row.Reason}  {(where.Length > 0 ? where : "-")}  {row.Role}  {row.Model ?? "-"}  {row.Tokens.ToString("N0", culture),14} tokens  {row.Weighted.ToString("N0", culture),14} weighted  {row.Share.ToString("0.0", culture),5} %");
+                }
+                return 0;
+            }
+            var envelope = await client.GetSpendAsync(window, ct);
+            if (envelope is not { Success: true, Response: { } report })
+            {
+                await output.WriteLineAsync($"refused: {envelope.Error}");
+                return 1;
+            }
+
+            var inv = CultureInfo.InvariantCulture;
+            var range = $"{report.From.ToLocalTime().ToString("yyyy-MM-dd HH:mm", inv)} to {report.To.ToLocalTime().ToString("yyyy-MM-dd HH:mm", inv)}";
+            var label = window switch { "5h" => "5h window", "week" => "7-day window", _ => "today" };
+            await output.WriteLineAsync($"spend, {label}: {range} (local time){(report.FromAccount ? ", the account's own window" : "")}");
+            await output.WriteLineAsync($"{report.Messages.ToString("N0", inv)} messages, {report.Tokens.ToString("N0", inv)} tokens, {report.Weighted.ToString("N0", inv)} weighted, {range}");
+            var by = p.GetValue(spendBy);
+            foreach (var (name, rows) in new[] { ("flight", report.Flights), ("role", report.Roles) })
+            {
+                if (by is not null && by != name)
+                {
+                    continue;
+                }
+                await output.WriteLineAsync();
+                await output.WriteLineAsync($"by {name}, {range}:");
+                if (rows.Length == 0)
+                {
+                    await output.WriteLineAsync("  nothing spent");
+                    continue;
+                }
+                var width = rows.Max(r => r.Key.Length);
+                foreach (var row in rows)
+                {
+                    await output.WriteLineAsync($"  {row.Key.PadRight(width)}  {row.Tokens.ToString("N0", inv),14} tokens  {row.Weighted.ToString("N0", inv),14} weighted  {row.Share.ToString("0.0", inv),5} %");
+                }
+            }
+            return 0;
+        });
         var jobId = Arg("job", "The job's id, as j3");
         var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
         {
@@ -927,6 +998,24 @@ public static class PilotCommand
         var summariseFlight = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play", Arity = ArgumentArity.ZeroOrOne };
         var summarise = Action(new Command("summarise", "Summarise the flights in play (or one flight) with one Haiku call: what needs you, where it is") { Arguments = { summariseFlight } },
             (p, client, ct) => Send(client, Verbs.Summarise, p.GetValue(summariseFlight) is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.NodeTarget, [], who, ct));
+        // review-cost: what reviews cost per landed flight, from the reviewer transcripts; a read, nothing is changed.
+        var costSince = new Option<string?>("--since") { Description = "Flights landed on or after this date (2026-10-22)" };
+        var costUntil = new Option<string?>("--until") { Description = "Flights landed on or before this date" };
+        var costRepo = new Option<string?>("--repo") { Description = "Only this repo's flights (its name, as in pilot status)" };
+        var reviewCost = Action(new Command("review-cost", "What reviews cost per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and a per-flight average")
+            { Options = { costSince, costUntil, costRepo } },
+            (p, client, ct) =>
+            {
+                List<string> args = [];
+                foreach (var (flag, option) in new[] { ("--since", costSince), ("--until", costUntil), ("--repo", costRepo) })
+                {
+                    if (p.GetValue(option) is { Length: > 0 } value)
+                    {
+                        args.AddRange([flag, value]);
+                    }
+                }
+                return Send(client, Verbs.ReviewCost, Verbs.NodeTarget, [.. args], who, ct);
+            });
         // summary: the kept summary, or one made when there is none or --fresh asks; the fleet's records are the node's to gather.
         var summaryOf = new Argument<string?>("flight") { Description = "The flight's code; leave it out for every flight in play on this node", Arity = ArgumentArity.ZeroOrOne };
         var summaryFresh = new Option<bool>("--fresh") { Description = "Make a new one now (one Haiku call) instead of showing the kept one" };
@@ -1202,7 +1291,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1681,7 +1770,7 @@ public static class PilotCommand
                     await output.WriteLineAsync($"{edited} {result.Way}");
                 }
             }
-            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise && result.Made is { Length: > 0 } told)
+            if (verb is Verbs.Overlap or Verbs.Touches or Verbs.Separate or Verbs.ConnectOverlap or Verbs.Connect or Verbs.Disconnect or Verbs.WaitLeg or Verbs.Summarise or Verbs.ReviewCost && result.Made is { Length: > 0 } told)
             {
                 await output.WriteLineAsync(told);
             }
@@ -1715,6 +1804,19 @@ public static class PilotCommand
     internal static string LandedHidden(int landed, string command = "pilot status --all") =>
         $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
 
+    /// <summary>The <c>Opus n/cap</c> line (with <c>peers not counted</c> when so) and the flights waiting for admission with why; nothing from a node that has not said.</summary>
+    internal static IEnumerable<string> AdmissionLines(SnapshotEvent snapshot)
+    {
+        if (snapshot.Admission is { } admission)
+        {
+            yield return $"{admission.Line()}{(admission.Counted.Length > 0 ? ": " + string.Join(", ", admission.Counted) : "")}{(admission.OneFlightPerRepo ? "; one flight per repo" : "")}";
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            yield return $"queued  {queued.Code}{(queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
+        }
+    }
+
     /// <summary>
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
@@ -1743,6 +1845,13 @@ public static class PilotCommand
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {
             text.AppendLine($"machine  {machine.Line()}");
+        }
+        if (!newestOnly && code is null)
+        {
+            foreach (var line in AdmissionLines(snapshot))
+            {
+                text.AppendLine(line);
+            }
         }
         if (!newestOnly && code is null && snapshot.Ideas.Count(i => i.State == IdeaState.Noted) is > 0 and var noted)
         {

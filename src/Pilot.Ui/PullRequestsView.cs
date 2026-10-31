@@ -156,8 +156,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>What the node said to the last press on a card, by card id (the panel keeps it); null when it did not refuse.</summary>
     public Func<string, string?>? RefusedOf { get; set; }
 
+    /// <summary>The hit id of the press of a card with the node now, by card id, or null: a row's Merge or Go around reads its working state here.</summary>
+    public Func<string, string?>? CardWorking { get; set; }
+
     /// <summary>Called when a refresh starts or ends, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
 
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard? About { get; set; }
@@ -177,64 +180,22 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>What the node said to the last Review pressed, when it refused: its words, with the PR; null when it did not.</summary>
     public string? ReviewRefused { get; private set; }
 
-    // What a Review or an Address review press has come to, per PR (by URL) and kind. Set only from the node's answer to OnReview or
-    // OnFixReview: Asking while the send is unanswered (pressed again meanwhile does nothing), Taken once the node said ok (the button
-    // says so at once rather than at the next read, up to a minute on, which left a press of Review looking like nothing happened:
-    // the owner, 2026-10-29), Failed with the node's words when it refused or the send did not come through (pressable again, which
-    // retries). Taken lapses after StartedFor: a row cannot say it is working on a review that never ran, nor lose its button until a
-    // restart. Both books are touched from the UI thread and from the press's continuation, and the UI never waits
-    // (LayoutDrivenTests.NothingInTheUiWaits), so each is an immutable dictionary swapped whole (ImmutableInterlocked), never locked.
-    private enum PressPhase { Asking, Taken, Failed }
-
-    private readonly record struct PressState(PressPhase Phase, long At, string? Why);
-
-    private sealed class PressBook
-    {
-        private System.Collections.Immutable.ImmutableDictionary<string, PressState> _all = System.Collections.Immutable.ImmutableDictionary.Create<string, PressState>(StringComparer.Ordinal);
-
-        /// <summary>Marks <paramref name="url"/> as asked; false (and nothing changed) when its press is already unanswered.</summary>
-        public bool TryAsk(string url) =>
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _all, d =>
-                d.TryGetValue(url, out var was) && was.Phase == PressPhase.Asking ? d : d.SetItem(url, new PressState(PressPhase.Asking, System.Diagnostics.Stopwatch.GetTimestamp(), null)));
-
-        public void Take(string url) => Set(url, new PressState(PressPhase.Taken, System.Diagnostics.Stopwatch.GetTimestamp(), null));
-
-        public void Fail(string url, string why) => Set(url, new PressState(PressPhase.Failed, System.Diagnostics.Stopwatch.GetTimestamp(), why));
-
-        public void Clear(string url) => System.Collections.Immutable.ImmutableInterlocked.TryRemove(ref _all, url, out _);
-
-        /// <summary>Forgets what the node answered for <paramref name="url"/> (a read showed the result); a press still unanswered stays.</summary>
-        public void Settle(string url) =>
-            System.Collections.Immutable.ImmutableInterlocked.Update(ref _all, d => d.TryGetValue(url, out var press) && press.Phase != PressPhase.Asking ? d.Remove(url) : d);
-
-        /// <summary>The press of <paramref name="url"/>, or null when there is none or its taking lapsed after <paramref name="takenFor"/>.</summary>
-        public PressState? Of(string url, TimeSpan takenFor)
-        {
-            if (!Volatile.Read(ref _all).TryGetValue(url, out var press))
-            {
-                return null;
-            }
-            if (press.Phase == PressPhase.Taken && System.Diagnostics.Stopwatch.GetElapsedTime(press.At) >= takenFor)
-            {
-                Clear(url);
-                return null;
-            }
-            return press;
-        }
-
-        private void Set(string url, PressState press) => System.Collections.Immutable.ImmutableInterlocked.AddOrUpdate(ref _all, url, press, (_, _) => press);
-    }
-
-    private readonly PressBook _reviews = new();
-    private readonly PressBook _fixes = new();
-    internal TimeSpan StartedFor { get; set; } = TimeSpan.FromMinutes(2);
+    // A Review's or an Address review's press, working with the node, taken (the row says "reviewing" or "fixing" at once, until a read shows
+    // the outcome, which takes over; it lapses after StartedFor so the row cannot say so for a review that never ran) or refused: the shared
+    // helper's, by PR URL (a fix's by FixKey).
+    internal Presses Presses { get; } = new();
+    internal TimeSpan StartedFor { get => Presses.TakenFor; set => Presses.TakenFor = value; }
 
     /// <summary>What the node said to the last Address review pressed, when it refused: its words, with the PR; null when it did not.</summary>
     public string? FixRefused { get; private set; }
 
-    private bool IsStarted(string url) => _reviews.Of(url, StartedFor) is { Phase: PressPhase.Taken };
+    private static string FailedWhy(string said, string prefix) => said.StartsWith(prefix, StringComparison.Ordinal) ? said[prefix.Length..] : said;
 
-    private bool IsFixStarted(string url) => _fixes.Of(url, StartedFor) is { Phase: PressPhase.Taken };
+    private static string FixKey(string url) => "fix:" + url;
+
+    private bool IsStarted(string url) => Presses.IsTaken(url);
+
+    private bool IsFixStarted(string url) => Presses.IsTaken(FixKey(url));
 
     // The cards the last frame offered a Merge or a Go around from.
     private IReadOnlyList<CardRow> _cards = [];
@@ -488,48 +449,37 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         {
             return;
         }
-        if (!_reviews.TryAsk(pr.Url))
+        if (Presses.PendingOf(pr.Url) is not null)
         {
             return;
         }
         ReviewRefused = null;
-        // Said on the button at once: a press with nothing to show for it reads as a press that missed.
-        Changed?.Invoke();
-        try
+        ReviewRefused = await Presses.PressAsync(pr.Url, ReviewHit(pr), async ct =>
         {
-            await review(pr, CancellationToken.None);
-            _reviews.Take(pr.Url);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            _reviews.Fail(pr.Url, ex.Message);
-            ReviewRefused = $"review {pr.Repo}#{pr.Number} refused: {ex.Message}";
-        }
-        Changed?.Invoke();
+            await review(pr, ct);
+            return null;
+        }, say: why => $"review {pr.Repo}#{pr.Number} refused: {why}");
     }
 
     /// <summary>Asks the node to fix <paramref name="pr"/>'s review findings through <see cref="OnFixReview"/>; a refusal is said in the node's words above the list.</summary>
     public async Task FixReviewAsync(PullRequestRow pr)
     {
-        if (OnFixReview is not { } fix || !_fixes.TryAsk(pr.Url))
+        if (OnFixReview is not { } fix || Presses.PendingOf(FixKey(pr.Url)) is not null)
         {
             return;
         }
         FixRefused = null;
         ReviewRefused = null;
-        Changed?.Invoke();
-        try
+        FixRefused = await Presses.PressAsync(FixKey(pr.Url), FixHit(pr), async ct =>
         {
-            await fix(pr, CancellationToken.None);
-            _fixes.Take(pr.Url);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            _fixes.Fail(pr.Url, ex.Message);
-            FixRefused = $"review fix {pr.Repo}#{pr.Number} refused: {ex.Message}";
-        }
-        Changed?.Invoke();
+            await fix(pr, ct);
+            return null;
+        }, say: why => $"review fix {pr.Repo}#{pr.Number} refused: {why}");
     }
+
+    private static string ReviewHit(PullRequestRow pr) => $"pr:{pr.Url}:{ActionId(PullRequestActionKind.Review)}";
+
+    private static string FixHit(PullRequestRow pr) => $"pr:{pr.Url}:{ActionId(PullRequestActionKind.AddressReview)}";
 
     /// <summary>
     /// What the node refused of the last action pressed on the list, in its words: a Review's, or a card's (the one a row's Merge or
@@ -946,7 +896,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         Layout.Node ReviewSlotNode() =>
             pr.Review == PullRequestReview.Reviewing && actions.All(a => a.Kind is not (PullRequestActionKind.Review or PullRequestActionKind.AddressReview))
                 ? Said("Reviewing…", $"Pilot is reviewing {pr.Repo}#{pr.Number}", P.Bright, P.Button, ReviewSlot)
-                : Slot(ReviewSlot, PullRequestActionKind.Review, PullRequestActionKind.AddressReview);
+                : PullRequestActions.FlightReviewSaid(pr) is { } flight
+                    ? Said(flight.Label, flight.Tooltip, P.Bright, P.Button, ReviewSlot)
+                    : Slot(ReviewSlot, PullRequestActionKind.Review, PullRequestActionKind.AddressReview);
         var slots = Layout.Builder.HStack(
                 Slot(CardSlot, PullRequestActionKind.Merge, PullRequestActionKind.GoAround),
                 ReviewSlotNode(),
@@ -968,43 +920,44 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         } : null;
         var bg = tint?.Bg ?? P.Button;
         var hover = tint?.Hover ?? P.ButtonHover;
-        var name = $"{pr.Repo}#{pr.Number}";
-        var label = action.Label;
-        var tooltip = action.Tooltip;
-        var color = P.Bright;
-        if (action.Kind == PullRequestActionKind.Review && _reviews.Of(pr.Url, StartedFor) is { } review)
+        // A press the node refused leaves the button saying so, pressable again (which retries); the words are in the tooltip and the bar.
+        var prName = $"{pr.Repo}#{pr.Number}";
+        var failed = action.Kind switch
         {
-            (label, tooltip, color) = review.Phase switch
-            {
-                PressPhase.Asking => ("Starting review…", $"Asking the node to review {name}", P.Bright),
-                PressPhase.Taken => ("Reviewing…", $"The node took the review of {name}; the next read of the PRs shows it", P.Bright),
-                _ => ("Failed", $"The node did not start the review of {name}: {review.Why}. Press to try again", P.Held),
-            };
-            if (review.Phase != PressPhase.Failed)
-            {
-                return Said(label, tooltip, color, bg, width);
-            }
-        }
-        else if (action.Kind == PullRequestActionKind.AddressReview && action.Card is null && _fixes.Of(pr.Url, StartedFor) is { } fix)
-        {
-            (label, tooltip, color) = fix.Phase switch
-            {
-                PressPhase.Asking => ("Starting fix…", $"Asking the node to fix {name}'s review findings", P.Bright),
-                PressPhase.Taken => ("Addressing…", $"The node took the fixer on {name}'s review findings; the next read of the PRs shows the result", P.Bright),
-                _ => ("Failed", $"The node did not start a fixer on {name}: {fix.Why}. Press to try again", P.Held),
-            };
-            if (fix.Phase != PressPhase.Failed)
-            {
-                return Said(label, tooltip, color, bg, width);
-            }
-        }
-        return Layout.Builder.Text(label, ChipSize, color, TextAlign.Center, TextAlign.Center)
+            PullRequestActionKind.Review => Presses.RefusedOf(pr.Url) is { } why ? $"The node did not start the review of {prName}: {FailedWhy(why, $"review {prName} refused: ")}. Press to try again" : null,
+            PullRequestActionKind.AddressReview when action.Card is null => Presses.RefusedOf(FixKey(pr.Url)) is { } why ? $"The node did not start a fixer on {prName}: {FailedWhy(why, $"review fix {prName} refused: ")}. Press to try again" : null,
+            _ => null,
+        };
+        Layout.Node Idle() => Layout.Builder.Text(failed is null ? action.Label : "Failed", ChipSize, failed is null ? P.Bright : P.Held, TextAlign.Center, TextAlign.Center)
             .Bg(bg)
             .BgHover(hover)
             .Follows(new HitResult.ButtonHit($"pr:{pr.Url}:{ActionId(action.Kind)}"), _ => Press(pr, action))
-            .WithTooltip(tooltip)
+            .WithTooltip(failed ?? action.Tooltip)
             .WFixed(width)
             .HStar();
+        var name = $"{pr.Repo}#{pr.Number}";
+        if (action.Kind == PullRequestActionKind.Review)
+        {
+            if (Presses.IsTaken(pr.Url))
+            {
+                return Said("Reviewing…", $"The node took the review of {name}; the next read of the PRs shows it", P.Bright, bg, width);
+            }
+            // Pressed, the node not yet answered: said, and not pressed again.
+            return Presses.Button(pr.Url, ReviewHit(pr), Idle, _ => Said("Starting review…", $"Asking the node to review {name}", P.Dim, bg, width));
+        }
+        if (action.Kind == PullRequestActionKind.AddressReview && action.Card is null)
+        {
+            if (IsFixStarted(pr.Url))
+            {
+                return Said("Addressing…", $"The node took the fixer on {name}'s review findings; the next read of the PRs shows the result", P.Bright, bg, width);
+            }
+            return Presses.Button(FixKey(pr.Url), FixHit(pr), Idle, _ => Said("Starting fix…", $"Asking the node to fix {name}'s review findings", P.Dim, bg, width));
+        }
+        // Merge and Go around ask through the card, whose own press says the card is with the node.
+        return action.Card is { } card
+            ? Presses.ButtonOf($"pr:{pr.Url}:{ActionId(action.Kind)}", () => CardWorking?.Invoke(card.Id), Idle,
+                _ => Layout.Builder.Text($"{action.Label} …", ChipSize, P.Dim, TextAlign.Center, TextAlign.Center).Bg(bg).WFixed(width).HStar())
+            : Idle();
     }
 
     // A button that says what the node is doing and takes no press: asking, or taken.
@@ -1153,11 +1106,11 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
         // A review the node took is said at once; the read that shows it (or its verdict) takes over from there.
         if (pr.Review is not null)
         {
-            _reviews.Settle(pr.Url);
+            Presses.ClearTaken(pr.Url);
         }
         if (pr.Review != PullRequestReview.Changes)
         {
-            _fixes.Settle(pr.Url);
+            Presses.ClearTaken(FixKey(pr.Url));
         }
         else if (IsFixStarted(pr.Url))
         {

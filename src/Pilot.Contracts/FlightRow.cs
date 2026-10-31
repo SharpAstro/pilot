@@ -87,6 +87,12 @@ public sealed record FlightRow
     /// <summary>Its review: a fresh session reading the branch before the merge is offered; null before its PR opens.</summary>
     public ReviewRow? Review { get; init; }
 
+    /// <summary>Every round of its review so far, oldest first; kept when a fresh review replaces <see cref="Review"/>. Null before the first verdict.</summary>
+    public ReviewRound[]? ReviewRounds { get; init; }
+
+    /// <summary>How many review rounds the watchtower (or the person) has allowed in all, past the third at which a loop is held; null until one is allowed.</summary>
+    public int? ReviewRoundsAllowed { get; init; }
+
     /// <summary>
     /// Where its PR waits in its base's merge queue while it does (<c>in the merge queue, position 2</c>), as the node last
     /// read it; null while it is in none. A merge through a queue is not a merge yet: it lands once the queue's checks pass.
@@ -107,6 +113,12 @@ public sealed record FlightRow
     /// more); null when it has none, or before a look. Compare with <see cref="ReviewRow.Label"/>, which the node set.
     /// </summary>
     public string? GitHubLabel { get; init; }
+
+    /// <summary>
+    /// Why its planner or reviewer waits for admission (the Opus cap, the one-flight-per-repo mode); a leg's own wait is on
+    /// <see cref="LegRow.Queued"/>. Not a stall and no ring: the node asks again on its sweep. Null when it waits for nothing.
+    /// </summary>
+    public string? Queued { get; init; }
 
     /// <summary>
     /// Where GitHub disagrees with what the node set or read (<c>pilot: passed was removed on GitHub</c>, <c>the head moved to
@@ -316,6 +328,7 @@ public static class FlightWaiting
     /// <summary>Where a leg is in a line of words: its state, or what it holds for (<c>holding for Drawboard.Core 1.2.7</c>).</summary>
     public static string LegState(LegRow leg) =>
         leg.Hold is { } hold ? $"holding for {hold.Id} {hold.Wanted ?? hold.Line}"
+        : leg.Queued is { } queued && leg.State == Pilot.Contracts.LegState.Planned ? "queued: " + queued
         : leg.Recheck is { Outcome: null } recheck && leg.State == Pilot.Contracts.LegState.Flying ? RecheckText(recheck)
         : leg.Wait is { } wait && leg.State == Pilot.Contracts.LegState.Flying ? WaitText(wait)
         : leg.State.ToString().ToLowerInvariant();
@@ -444,6 +457,9 @@ public sealed record ReviewRow
 
     /// <summary>How deep the node chose to review (#74); null on a review started before it chose.</summary>
     public ReviewDepth? Depth { get; init; }
+
+    /// <summary>The model the reviewer was started on; null on a review started before the node said.</summary>
+    public string? Model { get; init; }
 
     /// <summary>Why that depth, in a few words ("usage at 88%"); said in the reviewer's brief and on the PR-ready card.</summary>
     public string? DepthWhy { get; init; }

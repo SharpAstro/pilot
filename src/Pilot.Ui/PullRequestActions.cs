@@ -73,13 +73,27 @@ internal static class PullRequestActions
                 offered.Add(fix);
             }
         }
-        if (pr.Review is null)
+        // A flight's PR has one review, the flight's own, which its Review starts (pilot flight review). A draft's legs are still
+        // flying, so it has no review to start yet: its slot says so instead (FlightReviewSaid).
+        if (pr.Review is null && !(pr.Flight is not null && pr.Draft))
         {
-            offered.Add(new(PullRequestActionKind.Review, "Review", $"Start pilot's reviewer on {name} (pilot review pr): its verdict comes back as a card"));
+            offered.Add(new(PullRequestActionKind.Review, "Review", pr.Flight is { } flight
+                ? $"Start {flight}'s own reviewer on {name} (pilot flight review {flight}): its verdict comes back as the flight's card"
+                : $"Start pilot's reviewer on {name} (pilot review pr): its verdict comes back as a card"));
         }
         offered.Add(new(PullRequestActionKind.Open, "Open" + Followable.Away, $"Open {name} on GitHub"));
         return offered;
     }
+
+    /// <summary>
+    /// What the review slot of a flight's draft PR says while pilot has no review of it, in place of a Review button: the flight
+    /// is still flying its legs, and its review starts by itself once the last one lands (the PR is marked ready for review then).
+    /// Null for a PR no flight owns, one marked ready (its Review starts the flight's review), or one with a review.
+    /// </summary>
+    internal static (string Label, string Tooltip)? FlightReviewSaid(PullRequestRow pr) =>
+        pr is { Flight: { } code, Review: null, Draft: true }
+            ? ("In flight", $"{pr.Repo}#{pr.Number} is {code}'s PR, a draft while its legs fly. Its review starts by itself once the last leg lands, and the PR is marked ready for review then")
+            : null;
 
     /// <summary>
     /// A flight's Address review: its open review-changes card's go-around, as the PR page offers it and the flight page does too

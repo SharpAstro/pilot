@@ -118,6 +118,28 @@ public sealed partial class RoleModels
     public string? ReviewerModel(ReviewDepth depth) =>
         depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
 
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
+    public bool ReviewDeepFirst
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewDeepFirst ?? true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The model a reviewer starts on in <paramref name="round"/> (1 for the first review of a flight): a re-review runs on the leg
+    /// model <paramref name="legModel"/> (the worker's, Sonnet by default), as it only reads what changed; the first review is
+    /// <see cref="ReviewerModel"/>, its deep model only when the diff is deep-sized and <see cref="ReviewDeepFirst"/> is on.
+    /// </summary>
+    public string? ReviewerModelFor(ReviewDepth depth, int round, string? legModel) =>
+        round > 1 ? legModel ?? Model(Worker)
+        : depth == ReviewDepth.Deep && !ReviewDeepFirst ? Model(Reviewer)
+        : ReviewerModel(depth);
+
     /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
     /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
     /// A deep setting of <c>none</c> passes no flag, as it does for any role.</summary>
@@ -324,6 +346,52 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.WeekLimit ?? 90;
+            }
+        }
+    }
+
+    /// <summary>The week-pace margin in points that holds a start of <paramref name="repo"/>; null when the setting is off or the repo is
+    /// a priority repo (<see cref="NodeSettings.WeekPaceKey"/>).</summary>
+    public double? WeekPaceFor(string repo)
+    {
+        lock (_lock)
+        {
+            return IsPriority(repo) ? null : _settings.WeekPace;
+        }
+    }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
+    public double SpendAlert
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.SpendAlert ?? 3;
+            }
+        }
+    }
+
+    /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
+    public int OpusCap
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OpusCap ?? 3;
+            }
+        }
+    }
+
+    /// <summary>Whether only one flight per repo flies at a time (<see cref="NodeSettings.OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool OneFlightPerRepo
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OneFlightPerRepo ?? false;
             }
         }
     }
