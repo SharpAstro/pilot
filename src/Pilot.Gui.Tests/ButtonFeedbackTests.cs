@@ -173,6 +173,7 @@ public sealed class ButtonFeedbackTests
         (@"^play:", "the in-play filter of a list: what the page shows"),
         (@":table:divider:\d+$", "a column divider dragged in a table"),
         (@"^flights:view:", "the Flights page's view switch"),
+        (@"^spend:window:", "the Spend page's timeframe tab: the page switches at once and asks a read, no command on the node"),
         (@"^flight:(back|[^:]+:open)$", "navigation to and from the flight page"),
         (@"^pr:(PIL\d+|https://\S+/pull/\d+)$", "a flight's PR link, or a PR row picked on the Pull requests page"),
         (@"^pr:.+:(open|flight)$", "a row of the Pull requests page opens GitHub or the flight page"),
