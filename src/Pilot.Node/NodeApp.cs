@@ -98,6 +98,11 @@ public static class NodeApp
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
+            flights.Ledger = services.GetRequiredService<SessionLedger>();
+            // A landing tells each live session of the flight to finish and report, then cancels the jobs of the flight and its sessions.
+            flights.Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
+            flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
             var models = services.GetRequiredService<RoleModels>();
             var trackers = new List<ITracker> { new ShortcutTracker(new HttpClient(new CountingHandler(NodeTraffic.Shared) { InnerHandler = new HttpClientHandler() }) { Timeout = TimeSpan.FromSeconds(30) }, () => ShortcutTracker.TokenFrom(models.ShortcutToken)) };
             if (services.GetService<IGitHub>() is { } gitHub)
@@ -205,6 +210,7 @@ public static class NodeApp
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
+                Ledger = services.GetRequiredService<SessionLedger>(),
                 Error = logWriter,
             };
         });
@@ -232,6 +238,7 @@ public static class NodeApp
         {
             Models = services.GetRequiredService<RoleModels>(),
             Gate = services.GetRequiredService<StartGate>(),
+            Ledger = services.GetRequiredService<SessionLedger>(),
             Error = logWriter,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());

@@ -162,7 +162,7 @@ public sealed class SessionLedgerTests : IDisposable
 
         var text = PilotCommand.Sessions([ended, ended with { Id = "b2c3d4e5", StartReason = null, EndReason = null, EndedAt = null, WallSeconds = null, State = SessionState.Idle }]);
 
-        text.ShouldContain("start: leg launch  end: stopped on land or merge  ended: 2026-10-31 11:15Z  wall: 1h15m");
+        text.ShouldContain("start: leg launch  end: stopped on land  ended: 2026-10-31 11:15Z  wall: 1h15m");
         text.ShouldContain("start: -  end: -  ended: -");
     }
 }

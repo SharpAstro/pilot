@@ -763,6 +763,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Complete(command, CancelJob(id, command.Who, args.Length > 0));
     }
 
+    /// <summary>
+    /// Cancels every queued or running job of <paramref name="flight"/> (its check, a worker's run) and every one owned by one of
+    /// <paramref name="owners"/> (session row ids): a landed or merged flight leaves nothing of its own on the queue. Returns how many.
+    /// </summary>
+    public int CancelFor(string flight, IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
+            && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
     /// <summary>Stops a running job or takes a queued one out; null when it did, else why not.</summary>
     private string? CancelJob(string id, string who, bool force)
     {

@@ -19,7 +19,8 @@ public static class SessionStartReasons
 public static class SessionEndReasons
 {
     public const string Finished = "finished";
-    public const string Landed = "stopped on land or merge";
+    public const string Landed = "stopped on land";
+    public const string Merged = "stopped on merge";
     public const string Watchtower = "stopped by the watchtower";
     public const string Person = "stopped by a person";
     public const string Crashed = "crashed";
