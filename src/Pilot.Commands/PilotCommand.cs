@@ -1966,7 +1966,7 @@ public static class PilotCommand
         {
             var flight = row.Flight is null ? "" : $" {row.Flight}{(row.Leg is { } leg ? "/" + leg : "")}";
             var budget = row.Budget is { } b ? $" of {b.ToString("N0", CultureInfo.InvariantCulture)}" : "";
-            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}{(row.EndedBecause is { } why ? $"  ({why})" : "")}");
+            text.AppendLine($"{row.Id}  {MachineName.Shown(row.Name, machine)}  {row.Role.ToString().ToLowerInvariant()}{flight}  {row.State.ToString().ToLowerInvariant()}  {row.Model ?? "-"}  {row.ContextTokens.ToString("N0", CultureInfo.InvariantCulture)}/{row.ContextWindow.ToString("N0", CultureInfo.InvariantCulture)}  {row.SpendWeighted.ToString("N0", CultureInfo.InvariantCulture)}{budget}  start: {row.StartReason ?? "-"}  end: {row.EndReason ?? "-"}  ended: {(row.EndedAt is { } endedAt ? endedAt.ToUniversalTime().ToString("yyyy-MM-dd HH:mm'Z'", CultureInfo.InvariantCulture) : "-")}{(row.WallSeconds is { } wall ? $"  wall: {(int)TimeSpan.FromSeconds(wall).TotalHours}h{TimeSpan.FromSeconds(wall).Minutes:00}m" : "")}{(row.EndedBecause is { } why ? $"  ({why})" : "")}");
         }
         return text.Length == 0 ? "No sessions.\n" : text.ToString();
     }

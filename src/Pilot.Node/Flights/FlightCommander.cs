@@ -811,7 +811,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                 {
                     try
                     {
-                        await workers.StopAsync(job, cancellationToken);
+                        await workers.StopAsync(job, SessionEndReasons.Landed, "land", cancellationToken);
                     }
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {

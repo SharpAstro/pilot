@@ -145,6 +145,7 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
+        builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton<ClaudeWorkerLauncher>();
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
@@ -366,6 +367,7 @@ public static class NodeApp
             Hooks = services.GetRequiredService<HookBook>(),
             Attachments = services.GetRequiredService<Attachments>(),
             Starts = services.GetRequiredService<StartOptionsBook>(),
+            Launched = services.GetRequiredService<SessionLedger>(),
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
@@ -379,7 +381,8 @@ public static class NodeApp
             services.GetRequiredService<SessionTracker>(),
             services.GetRequiredService<ISessionDelivery>(),
             logWriter,
-            services.GetRequiredService<StartOptionsBook>()));
+            services.GetRequiredService<StartOptionsBook>(),
+            services.GetRequiredService<SessionLedger>()));
         configure?.Invoke(builder);
 
         var app = builder.Build();

@@ -21,7 +21,7 @@ namespace Pilot.Node.Sessions;
 /// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's log: who, the target, the way and the
 /// outcome, with how long it took.
 /// </remarks>
-public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null)
+public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null, SessionLedger? ledger = null)
 {
     // One say at a time per row: a second resume of a session mid-resume would continue the old id twice.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
@@ -67,7 +67,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     }
 
     /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
-    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken)
+    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null)
     {
         var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : null;
         if (id is null || state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row)
@@ -82,6 +82,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} has {row.State.ToString().ToLowerInvariant()} already");
         }
+        // A stop from the watchtower's own session is the watchtower's; any other is a person's.
+        reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         try
         {
             await delivery.StopAsync(row.SessionId, cancellationToken);
@@ -90,6 +92,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
         }
+        ledger?.Stopped([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], reason, command.Who);
         tracker.Kick();
         await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped");
         return state.Complete(command, null);
@@ -149,7 +152,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             switch (Choose(row))
             {
                 case SayWays.Resumed:
-                    return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken), null);
+                    var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
+                    return (SayWays.Resumed, resumedAs, null);
                 default:
                     RefuseAmbiguous(row, rows);
                     var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId), cancellationToken);

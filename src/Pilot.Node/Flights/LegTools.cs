@@ -11,16 +11,23 @@ namespace Pilot.Node.Flights;
 /// A session to start in the background: its name, the folder it starts from (a repo's main checkout), the plane
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
-public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null);
+public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
+    string? Reason = null, int? Pr = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
 {
-    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id).</summary>
+    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id). <see cref="WorkerStart.Reason"/> is what the session ledger records as the start reason.</summary>
     Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken);
 
     /// <summary>Stops a worker's job; nothing happens when it has gone already.</summary>
     Task StopAsync(string job, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stops a worker's job for <paramref name="reason"/> (<see cref="SessionEndReasons"/>) by <paramref name="by"/>, which the session
+    /// ledger records. A launcher with no ledger just stops it.
+    /// </summary>
+    Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken) => StopAsync(job, cancellationToken);
 }
 
 /// <summary>
@@ -33,7 +40,7 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
@@ -104,11 +111,19 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
+        ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
     }
 
     public async Task StopAsync(string job, CancellationToken cancellationToken) =>
         await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, Timeout, cancellationToken);
+
+    public async Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
+    {
+        // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
+        ledger?.Stopped([job], reason, by);
+        await StopAsync(job, cancellationToken);
+    }
 
     private static string Clip(string text) => text.Trim() is { Length: > 400 } long_ ? long_[..400] + "…" : text.Trim();
 }

@@ -773,7 +773,7 @@ public sealed class Watchtower(
         {
             try
             {
-                await launcher.StopAsync(replacing.Id, cancellationToken);
+                await launcher.StopAsync(replacing.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -791,7 +791,8 @@ public sealed class Watchtower(
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
-                DisallowedTools: ["AskUserQuestion"]), cancellationToken);
+                DisallowedTools: ["AskUserQuestion"],
+                Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart), cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -910,7 +911,7 @@ public sealed class Watchtower(
         {
             try
             {
-                await launcher.StopAsync(other.Id, cancellationToken);
+                await launcher.StopAsync(other.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -927,7 +928,7 @@ public sealed class Watchtower(
     {
         try
         {
-            await launcher.StopAsync(row.Id, cancellationToken);
+            await launcher.StopAsync(row.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
