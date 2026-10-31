@@ -17,6 +17,9 @@ internal sealed record GuiSettings
     /// <summary>Whether the window is painted red on black (the header's Night switch).</summary>
     public bool Night { get; init; }
 
+    /// <summary>What is folded on the Pull requests page: <c>org:name</c> and <c>repo:owner/name</c>, kept for an org or repo no longer listed.</summary>
+    public List<string> PullRequestFolds { get; init; } = [];
+
     /// <summary>Which layers of the Flights page's map are on.</summary>
     public MapLayerSettings? MapLayers { get; init; }
 }
@@ -48,11 +51,13 @@ internal sealed class GuiSettingsFile : IDisposable
     private readonly Timer _pending;
     private int _dirty;
     private volatile bool _night;
+    private ImmutableArray<string> _folds;
     private MapLayerSettings? _layers;
     private FlightMapLayerState? _layerState;
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds)
     {
+        _folds = [.. folds];
         Path = path;
         _night = night;
         _layers = layers;
@@ -74,12 +79,14 @@ internal sealed class GuiSettingsFile : IDisposable
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         var sorts = new Dictionary<string, SavedSort>(StringComparer.Ordinal);
         var night = false;
+        var folds = new List<string>();
         MapLayerSettings? layers = null;
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
+                folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 layers = settings.MapLayers;
                 foreach (var (page, sort) in settings.Sorts ?? [])
                 {
@@ -102,9 +109,10 @@ internal sealed class GuiSettingsFile : IDisposable
             tables.Clear();
             sorts.Clear();
             night = false;
+            folds.Clear();
             layers = null;
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -131,6 +139,21 @@ internal sealed class GuiSettingsFile : IDisposable
         table.Restore(Volatile.Read(ref _tables).GetValueOrDefault(table.Page));
         table.RestoreSort(Volatile.Read(ref _sorts).TryGetValue(table.Page, out var saved) && saved.Column is { } column ? new ListTable.SortState(column, saved.Descending) : null);
         table.Changed += Touch;
+    }
+
+    /// <summary>The folds the file holds for the Pull requests page.</summary>
+    public IReadOnlyList<string> PullRequestFolds => _folds;
+
+    /// <summary>Gives <paramref name="page"/> the folds this file holds, and keeps the file current: a fold or unfold writes it, a moment later.</summary>
+    public void Attach<TSurface>(PullRequestsView<TSurface> page)
+    {
+        page.RestoreFolds(_folds);
+        // Read on the thread that builds the page; the timer's write only reads the copy.
+        page.FoldsChanged += () =>
+        {
+            _folds = [.. page.Folds];
+            Touch();
+        };
     }
 
     /// <summary>Gives <paramref name="layers"/> the choice this file holds, and keeps the file current: a toggle writes it a moment later.</summary>
@@ -171,6 +194,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal),
                 Sorts = Volatile.Read(ref _sorts).Count > 0 ? new Dictionary<string, SavedSort>(Volatile.Read(ref _sorts), StringComparer.Ordinal) : null,
                 Night = _night,
+                PullRequestFolds = [.. _folds],
             },
             GuiSettingsJsonContext.Default.GuiSettings);
 
