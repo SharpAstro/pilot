@@ -20,7 +20,10 @@
          exist, not to demand them everywhere. Broken crefs and paramrefs still warn. -->
     <GenerateDocumentationFile Condition="!$(MSBuildProjectName.EndsWith('.Tests'))">true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
-    <TreatWarningsAsErrors Condition="'$(GITHUB_ACTIONS)' == 'true'">true</TreatWarningsAsErrors>
+    <!-- Warnings fail a Release build here as they do on CI. A leg's check and a worker's build run Release,
+         and with this on CI only, an analyzer warning (xUnit1051 on PIL461, 2026-10-31) passed every local
+         check and failed only on GitHub. Debug stays lenient for the inner loop. -->
+    <TreatWarningsAsErrors Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <PropertyGroup>
