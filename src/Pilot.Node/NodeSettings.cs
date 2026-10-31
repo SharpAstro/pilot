@@ -30,6 +30,8 @@ public sealed record NodeSettings
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
     public const string WeekLimitKey = "week-limit";
+    public const string WeekPaceKey = "week-pace";
+    public const string SpendAlertKey = "spend-alert";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
@@ -37,6 +39,8 @@ public sealed record NodeSettings
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    public const string OpusCapKey = "opus-cap";
+    public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
     public const string MergeBatchKey = "merge-batch";
@@ -53,13 +57,19 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r)) || key is WorkerModelMaxKey or WorkerEffortMaxKey;
 
     public bool? Lan { get; init; }
+
+    /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
+    public int? OpusCap { get; init; }
+
+    /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool? OneFlightPerRepo { get; init; }
 
     /// <summary>Whether the node takes no new flight (<see cref="MaintenanceKey"/>): flights already made carry on, a create-flight is refused.</summary>
     public bool? Maintenance { get; init; }
@@ -104,6 +114,12 @@ public sealed record NodeSettings
 
     /// <summary>The 7-day window's share past which a start rings, once per window, and goes ahead.</summary>
     public double? WeekLimit { get; init; }
+
+    /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
+    public double? WeekPace { get; init; }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next round rings; 3 when unset.</summary>
+    public double? SpendAlert { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -163,6 +179,8 @@ public sealed record NodeSettings
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
+                    OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
+                    OpusCapKey => JsonValue.Create(OpusCap),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
@@ -191,6 +209,8 @@ public sealed record NodeSettings
     {
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
+        OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
+        OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
@@ -208,6 +228,8 @@ public sealed record NodeSettings
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
+        WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
+        SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -246,6 +268,22 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } maintenance
                     ? (settings with { Maintenance = maintenance }, null)
                     : (null, "maintenance takes on or off");
+            case OneFlightPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { OneFlightPerRepo = null }, null);
+                }
+                return OnOff(One()) is { } oneFlight
+                    ? (settings with { OneFlightPerRepo = oneFlight }, null)
+                    : (null, "one-flight-per-repo takes on or off");
+            case OpusCapKey:
+                if (clear)
+                {
+                    return (settings with { OpusCap = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
+                    ? (settings with { OpusCap = opus }, null)
+                    : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -363,6 +401,29 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weekly) && weekly is > 0 and <= 100
                     ? (settings with { WeekLimit = weekly }, null)
                     : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
+            case WeekPaceKey:
+            {
+                var raw = clear ? "off" : One();
+                if (raw is "off" or "none")
+                {
+                    return (settings with { WeekPace = null }, null);
+                }
+                if (raw == "on")
+                {
+                    return (settings with { WeekPace = 10 }, null);
+                }
+                return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var margin) && margin is >= 0 and <= 100
+                    ? (settings with { WeekPace = margin }, null)
+                    : (null, "week-pace takes off, on (a margin of 10 points) or a margin in points, 0 to 100");
+            }
+            case SpendAlertKey:
+                if (clear)
+                {
+                    return (settings with { SpendAlert = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && share is > 0 and <= 100
+                    ? (settings with { SpendAlert = share }, null)
+                    : (null, "spend-alert takes the 7-day window's share in percent, above 0 and up to 100");
             case PriorityReposKey:
             {
                 if (clear)

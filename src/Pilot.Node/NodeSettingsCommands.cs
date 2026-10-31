@@ -10,7 +10,7 @@ namespace Pilot.Node;
 /// check's fix. Both verbs are this machine's alone: a grant from the LAN never reaches them, but for <c>set node maintenance
 /// on|off</c> (<see cref="NodeApp.MaintenanceSwitch"/>).
 /// </summary>
-public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles)
+public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, NodeRestarter restarter, NodeSetup setup, TimeProvider time, Flights.JobRunner jobs, RoleModels roles, Flights.AdmissionGate? slots = null)
 {
     // The checks run netsh and gh: a page looked at every few seconds runs them at most this often.
     private static readonly TimeSpan ChecksFor = TimeSpan.FromSeconds(10);
@@ -75,14 +75,20 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey)
+        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey)
         {
             roles.Apply(updated);
+            // The cap and the repo mode are one value for the fleet, held by the node that keeps the Opus count: a set here goes there too (one sent from there is not sent back).
+            var held = key is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey && command.Grant is null ? slots?.PushSetting(key, args[1..]) : null;
+            if (held is not null)
+            {
+                return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {held}");
+            }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? $"{key} saved as {value}, and in force now"
-                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey ? $"{key} saved as {value}, and in force now"
-                : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
         // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
@@ -172,6 +178,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => options.Lan ? "on" : "off",
         NodeSettings.MaintenanceKey => roles.Maintenance ? "on" : "off",
+        NodeSettings.OneFlightPerRepoKey => roles.OneFlightPerRepo ? "on" : "off",
+        NodeSettings.OpusCapKey => roles.OpusCap.ToString(CultureInfo.InvariantCulture),
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
         NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
         NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
@@ -191,6 +199,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.StartLimitKey => roles.StartLimit.ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityStartLimitKey => (NodeSettings.Read(options.SettingsFile).PriorityStartLimit ?? 98).ToString(CultureInfo.InvariantCulture),
+        NodeSettings.WeekPaceKey => NodeSettings.Read(options.SettingsFile).WeekPace is { } pace ? pace.ToString(CultureInfo.InvariantCulture) : "off",
+        NodeSettings.SpendAlertKey => (NodeSettings.Read(options.SettingsFile).SpendAlert ?? 3).ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).PriorityRepos ?? []),
         NodeSettings.RepoTrackersKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).RepoTrackers ?? []),
         NodeSettings.NoAutoMergeReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).NoAutoMergeRepos ?? []),
@@ -210,8 +220,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
-        || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey;
+        || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -221,6 +231,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => "off",
         NodeSettings.MaintenanceKey => "off",
+        NodeSettings.OneFlightPerRepoKey => "off",
+        NodeSettings.OpusCapKey => "3",
         NodeSettings.AcceptFleetFlightsKey => "off",
         NodeSettings.AutopilotKey => "off",
         NodeSettings.ReviewDeepFirstKey => "on",
@@ -240,6 +252,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
         NodeSettings.WeekLimitKey => "90",
+        NodeSettings.WeekPaceKey => "off",
+        NodeSettings.SpendAlertKey => "3",
         NodeSettings.PriorityReposKey => "",
         NodeSettings.RepoTrackersKey => "",
         NodeSettings.NoAutoMergeReposKey => "",
@@ -253,6 +267,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     {
         NodeSettings.LanKey => ("On the LAN", "Listen on the LAN and announce it: anyone there may watch, a command needs a grant you allow", ["on", "off"]),
         NodeSettings.MaintenanceKey => ("Maintenance", "While on, this node takes no new flight: a create-flight is refused with the reason; flights in the air, held ones, legs, reviews, landings and jobs carry on", ["on", "off"]),
+        NodeSettings.OpusCapKey => ("Opus cap", "The most Opus sessions (workers, planners, fixers, reviewers; a role left to Claude Code's default counts) the fleet runs at once; a start past it waits for a slot. 0 for no cap. One value for the fleet: held by the node that keeps the count, the lowest-named one this fleet reaches, and a set on any node is sent there", ["0", "2", "3", "4"]),
+        NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time, on any node of the fleet; the others wait, those the rest depend on first. A flight marked priority goes ahead. One value for the fleet: held by the node that keeps the Opus count (the lowest-named one this fleet reaches), and a set on any node is sent there", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
         NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer-deep model; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
@@ -275,6 +291,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.PriorityStartLimitKey => ("Priority start limit", "How far into the 5-hour window a priority repo's flight still goes on by itself, in percent", ["95", "98", "100"]),
         NodeSettings.StartLimitKey => ("Start limit", "A session the node starts by itself (a leg, a planner, a reviewer, the watchtower, a compaction) goes ahead until the account's 5-hour window is this spent, in percent; then it waits for the reset", ["80", "90", "95", "100"]),
         NodeSettings.WeekLimitKey => ("Week limit", "How far into the 7-day window the node rings, once per window, as it starts sessions; it rings and does not wait, in percent", ["80", "90", "95", "100"]),
+        NodeSettings.WeekPaceKey => ("Week pace", "While set, a start the node makes by itself waits while the 7-day window is spent faster than an even pace: used % above elapsed % plus this margin, in points (on means 10). Priority repos and the watchtower go ahead; the 5-hour rules stay as they are. Off by default", ["off", "on", "5", "10", "20"]),
+        NodeSettings.SpendAlertKey => ("Spend alert", "A leg whose rounds have spent more than this share of the 7-day window, in percent, rings with its spend before another round starts. The share is of what this node's ledger holds for the window, so early in a window or on a quiet node one leg is a large share", ["1", "3", "5", "10"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
         _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role) + (role == RoleModels.ReviewerDeep ? "" : "; default leaves the choice to Claude Code"), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
         _ when RoleOf(key) is (RoleModels.ReviewerDeep, true) => ("Reviewer-deep effort", "The effort a deep review starts at; unset, a step above the reviewer's (high when that is unset); default leaves the choice to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),

@@ -85,6 +85,16 @@ public sealed class Watchtower(
     /// <summary>The share of its context window past which an ended watchtower is replaced, not resumed, warm or not.</summary>
     public double ResumeBelow { get; init; } = 0.75;
 
+    /// <summary>Claude Code's record of a job it started (state.json); null reads none. A started job whose record reads failed is a failed start.</summary>
+    public Func<string, Sessions.ClaudeJobRecord?> JobRecord { get; init; } = _ => null;
+
+    /// <summary>The node's version: a new release starts a parked watchtower again.</summary>
+    public string Version { get; set; } = typeof(Watchtower).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "0.0.0";
+
+    /// <summary>How many starts in a row failed for the same reason before the node stops trying on a timer.</summary>
+    public int ParkAfter { get; init; } = 2;
+
     /// <summary>How it runs the CLI, socket and all: <see cref="Briefs.Run"/>.</summary>
     public string Pilot { get; init; } = "pilot";
 
@@ -107,6 +117,20 @@ public sealed class Watchtower(
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
+
+    // The last failed start's reason and how many in a row had it; at ParkAfter the node stops trying until something changes.
+    private string? _failReason;
+    private int _failures;
+    private bool _parked;
+    private string? _failCounted;
+    private string? _parkedVersion;
+    private HashSet<string> _parkedOpen = [];
+
+    // A row a say did not reach (the session is gone, or "No agent named ... is reachable"): its cards are held, and it is not said to
+    // again until RetryAfter has passed, instead of failing on every look (DE1 2026-10-29 logged ~60 failed says).
+    private string? _unreachableId;
+    private DateTimeOffset _unreachableAt;
+    private const string HeldMark = " Held for it: ";
 
     // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
     private string? _resumeRefused;
@@ -539,6 +563,7 @@ public sealed class Watchtower(
             Generations();
             KeepChurnCard(Health());
             var watching = Watching();
+            NoteHeld();
             if (watching is not null || _watchingAt is null)
             {
                 _watchingAt = now;
@@ -573,9 +598,26 @@ public sealed class Watchtower(
             }
             if (row is null || !Live(row))
             {
+                CountFailedJob(now);
+                if (_parked && !ParkedChanged())
+                {
+                    return;
+                }
                 if (_startedAt is { } started && now - started < ShowUpGrace && (row is null || row.Id != _job))
                 {
                     return;
+                }
+                if (_startedAt is not null && _job is { } unseen && _failCounted != unseen && (row is null || row.Id != unseen)
+                    && state.Sessions().All(s => s.Id != unseen))
+                {
+                    // Started, and never showed up past the grace: a failed start like any other.
+                    _failCounted = unseen;
+                    _startedAt = null;
+                    _nextTry = now + RetryAfter;
+                    if (NoteFailure($"the session it started never showed up within {ShowUpGrace.TotalMinutes:0} minutes"))
+                    {
+                        return;
+                    }
                 }
                 // One that ended (its turn over, or stopped when quiet) on the brief it has is woken only when there is something
                 // to say to it: in place while its cache is warm, where the say resumes it; past that, a fresh one, below. Started
@@ -606,12 +648,16 @@ public sealed class Watchtower(
                 return;
             }
 
-            state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
+            if (row.Id != _unreachableId)
+            {
+                state.CloseCardsAbout(Verbs.WatchtowerTarget, "it is running", Down);
+            }
+            ClearFailures();
             if (Briefed() != BriefFingerprint())
             {
                 // A say would resume it on its old brief: a fresh one is told the new. A start that failed is tried again
                 // after the retry time, as any other start is, not stopped and started on every look.
-                if (now >= _nextTry)
+                if (now >= _nextTry && !_parked)
                 {
                     await StartAsync("its brief changed since the node started it", cancellationToken, row);
                 }
@@ -638,6 +684,7 @@ public sealed class Watchtower(
         try
         {
             var row = Current();
+            ClearFailures();
             return await StartAsync(why, cancellationToken, row is not null && Live(row) ? row : null) ? null : "the watchtower did not start; its card says why";
         }
         finally
@@ -747,6 +794,12 @@ public sealed class Watchtower(
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             _nextTry = time.GetUtcNow() + RetryAfter;
+            _job = null;
+            _startedAt = null;
+            if (NoteFailure(ex.Message))
+            {
+                return false;
+            }
             var untrusted = ex.Message.Contains("not trusted", StringComparison.OrdinalIgnoreCase);
             state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, "The watchtower could not be started",
                 untrusted
@@ -758,6 +811,7 @@ public sealed class Watchtower(
 
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
+        _failCounted = null;
         RememberStart(_job, why);
         KeepChurnCard(Health());
         RecordBrief(fingerprint);
@@ -766,6 +820,71 @@ public sealed class Watchtower(
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
         await StopOthersAsync(_job, replacing?.Id, cancellationToken);
         return true;
+    }
+
+    /// <summary>A started job whose record reads failed is a failed start with that detail as its reason; counted once per job.</summary>
+    private void CountFailedJob(DateTimeOffset now)
+    {
+        if (_job is not { } job || _failCounted == job || JobRecord(job) is not { Failed: true } record)
+        {
+            return;
+        }
+        _failCounted = job;
+        _startedAt = null;
+        _nextTry = now + RetryAfter;
+        var reason = $"the session it started failed: {record.Detail ?? "no detail"}";
+        if (NoteFailure(reason))
+        {
+            return;
+        }
+        state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, "The watchtower could not be started",
+            $"{reason}; the node tries again in {RetryAfter.TotalMinutes:0} minutes",
+            [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
+    }
+
+    /// <summary>
+    /// Counts a failed start; true when this one parks it (the same reason <see cref="ParkAfter"/> times in a row), with its one
+    /// Ring card raised or updated. A different reason counts afresh.
+    /// </summary>
+    private bool NoteFailure(string reason)
+    {
+        _failures = reason == _failReason ? _failures + 1 : 1;
+        _failReason = reason;
+        if (_failures < ParkAfter)
+        {
+            return false;
+        }
+        _parked = true;
+        _parkedVersion = Version;
+        const string title = "The watchtower cannot start";
+        var detail = $"{reason}; it failed {_failures} times in a row for this reason, so the node stopped trying on a timer. "
+            + "It tries again when a new node release is installed, when a card is closed, or when you press Try now.";
+        CardChoice[] choices = [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }];
+        var card = state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, title, detail, choices);
+        state.UpdateCard(card.Id, title, detail, choices, null);
+        _parkedOpen = [.. state.Cards(openOnly: true).Select(c => c.Id)];
+        return true;
+    }
+
+    /// <summary>Whether something changed that retries a parked watchtower: a new release, or a card closed since it parked; the count is reset then.</summary>
+    private bool ParkedChanged()
+    {
+        var open = state.Cards(openOnly: true).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        if (Version == _parkedVersion && _parkedOpen.All(open.Contains))
+        {
+            return false;
+        }
+        ClearFailures();
+        _nextTry = DateTimeOffset.MinValue;
+        return true;
+    }
+
+    private void ClearFailures()
+    {
+        _failReason = null;
+        _failures = 0;
+        _parked = false;
+        _parkedOpen = [];
     }
 
     /// <summary>
@@ -892,12 +1011,18 @@ public sealed class Watchtower(
         {
             return null;
         }
+        if (_unreachableId == row.Id && time.GetUtcNow() - _unreachableAt < RetryAfter)
+        {
+            // Held: not said again until the retry time, and not rung per card.
+            return false;
+        }
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
+            _unreachableId = null;
             var now = time.GetUtcNow();
             foreach (var card in fresh)
             {
@@ -907,6 +1032,40 @@ public sealed class Watchtower(
                 }
             }
         }
+        else
+        {
+            // Its cards stay untold: the next watchtower that starts has them in its brief. One ring says it is down.
+            _unreachableId = row.Id;
+            _unreachableAt = time.GetUtcNow();
+            const string title = "The watchtower cannot be reached";
+            var detail = $"{result.Error ?? "a say to it failed"}; its cards are held, not rung one by one, and the node tries again in {RetryAfter.TotalMinutes:0} minutes.";
+            CardChoice[] choices = [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }];
+            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, title, detail, choices);
+            NoteHeld();
+        }
         return result.Ok;
+    }
+
+    /// <summary>Keeps the one watchtower-down ring saying how many cards are held for the watchtower.</summary>
+    private void NoteHeld()
+    {
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == Down && c.Subject == Verbs.WatchtowerTarget) is not { } card)
+        {
+            return;
+        }
+        var held = Untold().Count;
+        var detail = card.Detail ?? "";
+        if (detail.IndexOf(HeldMark, StringComparison.Ordinal) is var at and >= 0)
+        {
+            detail = detail[..at];
+        }
+        if (held > 0)
+        {
+            detail += $"{HeldMark}{held} card{(held == 1 ? "" : "s")}, told to the next watchtower that starts.";
+        }
+        if (detail != card.Detail)
+        {
+            state.UpdateCard(card.Id, card.Title, detail, card.Choices, card.Link);
+        }
     }
 }

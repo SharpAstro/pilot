@@ -297,7 +297,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add) };
         var here = new NodeMark("s", "node.sock", "SE1", Here: true);
         var there = new NodeMark("192.168.0.79:47731", "192.168.0.79:47731", "DE1", Here: false);
         var lines = SessionLine.Build([
@@ -318,7 +318,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add) };
         var live = Live.Row("aaaa1111", "live", SessionState.Working);
         var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
         var archived = Live.Row("cccc3333", "archived", SessionState.Ended) with { Archived = true };
@@ -352,7 +352,7 @@ public sealed class SayBarTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var acted = new List<FlightAction>();
-        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = acted.Add, CanSay = true };
+        var view = new SessionsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = Taken.By<FlightAction>(acted.Add), CanSay = true };
         var ended = Live.Row("bbbb2222", "ended", SessionState.Ended);
         var bounds = new RectF32(0, 0, 1280, 800);
         view.Render(Screen(ended), bounds);
@@ -429,7 +429,7 @@ public sealed class SayBarTests
         view.OnSay = (line, text) =>
         {
             said.Add((line.Row.Id, text));
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         };
         view.Render(Screen(Live.Row("aaaa1111", "one"), Live.Row("bbbb2222", "two")), new RectF32(0, 0, 1280, 800));
         view.Select(1);
@@ -520,16 +520,16 @@ public sealed class RailTests
         var chrome = new PilotChrome<RgbaImage>(renderer, view) { FontPath = SessionsCapture.FontPath };
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 1280, 800));
 
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Pull requests", "Background tasks", "Fleet", "Settings", "Ideas"]);
-        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.PullRequests, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings, PilotPage.Ideas]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Label).ShouldBe(["Home", "Chat", "Sessions", "Flights", "Repos", "Pull requests", "Background tasks", "Fleet", "Settings", "Ideas", "Spend"]);
+        PilotChrome<RgbaImage>.Pages.Where(p => p.Locked is null).Select(p => p.Page).ShouldBe([PilotPage.Home, PilotPage.Chat, PilotPage.Sessions, PilotPage.Flights, PilotPage.Repos, PilotPage.PullRequests, PilotPage.Jobs, PilotPage.Fleet, PilotPage.Settings, PilotPage.Ideas, PilotPage.Spend]);
         chrome.Page.ShouldBe(PilotPage.Home);
 
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
         // One cell per page down the rail's 52 px, every one live.
         var cells = regions.Where(r => r.Result is HitResult.ListItemHit).ToList();
-        cells.Count.ShouldBe(10);
-        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(10);
+        cells.Count.ShouldBe(11);
+        cells.Count(r => r.Result is HitResult.ListItemHit { ListId: TabBarRegions.Tabs }).ShouldBe(11);
         cells.ShouldAllBe(r => r.X + r.Width <= 53f);
     }
 }

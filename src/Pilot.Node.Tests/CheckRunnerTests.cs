@@ -24,6 +24,43 @@ public sealed class CheckRunnerTests
         run.Tail.ShouldContain("A|B");
     }
 
+    /// <summary>The same commands through the node's job path (<see cref="JobCheckRunner"/>): quoting, exit codes and the last command deciding hold.</summary>
+    [Theory]
+    [InlineData("echo \"A|B\"", "echo 'A|B'", 0)]
+    [InlineData("exit 3", "exit 3", 3)]
+    [InlineData("git --no-such-option", "git --no-such-option", 129)]
+    [InlineData("git --no-such-option; git --version", "git --no-such-option; git --version", 0)]
+    public async Task TheJobPathRunsTheSameCommandsAsTheShellPath(string windows, string other, int exit)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var jobs = new JobRunner(state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System);
+        await jobs.StartAsync(Ct);
+        await jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        try
+        {
+            var run = await new JobCheckRunner(jobs).RunAsync(OperatingSystem.IsWindows() ? windows : other, root, Ct, "TIA1", "parser");
+
+            run.ExitCode.ShouldBe(exit, run.Tail);
+            if (exit == 0 && windows.Contains("A|B"))
+            {
+                run.Tail.ShouldContain("A|B");
+            }
+        }
+        finally
+        {
+            await jobs.StopAsync(CancellationToken.None);
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
     [Fact]
     public async Task AFailingCommandFails()
     {

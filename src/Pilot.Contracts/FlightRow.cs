@@ -115,6 +115,12 @@ public sealed record FlightRow
     public string? GitHubLabel { get; init; }
 
     /// <summary>
+    /// Why its planner or reviewer waits for admission (the Opus cap, the one-flight-per-repo mode); a leg's own wait is on
+    /// <see cref="LegRow.Queued"/>. Not a stall and no ring: the node asks again on its sweep. Null when it waits for nothing.
+    /// </summary>
+    public string? Queued { get; init; }
+
+    /// <summary>
     /// Where GitHub disagrees with what the node set or read (<c>pilot: passed was removed on GitHub</c>, <c>the head moved to
     /// beef1111 since the review read cafe0000</c>), as of the last look; null when they agree. Clients show it; the node
     /// puts nothing right by itself, since the person who changed it may have meant to.
@@ -322,6 +328,7 @@ public static class FlightWaiting
     /// <summary>Where a leg is in a line of words: its state, or what it holds for (<c>holding for Drawboard.Core 1.2.7</c>).</summary>
     public static string LegState(LegRow leg) =>
         leg.Hold is { } hold ? $"holding for {hold.Id} {hold.Wanted ?? hold.Line}"
+        : leg.Queued is { } queued && leg.State == Pilot.Contracts.LegState.Planned ? "queued: " + queued
         : leg.Recheck is { Outcome: null } recheck && leg.State == Pilot.Contracts.LegState.Flying ? RecheckText(recheck)
         : leg.Wait is { } wait && leg.State == Pilot.Contracts.LegState.Flying ? WaitText(wait)
         : leg.State.ToString().ToLowerInvariant();

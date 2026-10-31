@@ -346,6 +346,52 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The week-pace margin in points that holds a start of <paramref name="repo"/>; null when the setting is off or the repo is
+    /// a priority repo (<see cref="NodeSettings.WeekPaceKey"/>).</summary>
+    public double? WeekPaceFor(string repo)
+    {
+        lock (_lock)
+        {
+            return IsPriority(repo) ? null : _settings.WeekPace;
+        }
+    }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
+    public double SpendAlert
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.SpendAlert ?? 3;
+            }
+        }
+    }
+
+    /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
+    public int OpusCap
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OpusCap ?? 3;
+            }
+        }
+    }
+
+    /// <summary>Whether only one flight per repo flies at a time (<see cref="NodeSettings.OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool OneFlightPerRepo
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OneFlightPerRepo ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
     public static bool IsModel(string value) => ModelName().IsMatch(value);
 

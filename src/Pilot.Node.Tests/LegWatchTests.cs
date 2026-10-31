@@ -500,6 +500,21 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task APlannerThatWaitsForAdmissionIsWaitingNeverStalledAndRingsNothing()
+    {
+        Worker(SessionState.Working);
+        Unplanned();
+        _state.UpdateFlight("PIL9", f => f with { Queued = "waiting for an Opus slot: 1 of 1 flying: du1-other" });
+
+        _time.Advance(TimeSpan.FromHours(3));
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+        Handled().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AnIdlePlannerWithNoLegsIsToldToHandThemInThenRungNeverReplaced()
     {
         Worker(SessionState.Working);

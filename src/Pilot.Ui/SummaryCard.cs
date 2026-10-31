@@ -68,8 +68,9 @@ internal sealed record SummaryShelf(IReadOnlyList<NodeMark> Marks, IReadOnlyDict
 internal sealed class SummaryBoard
 {
     private SummaryShelf _shelf = SummaryShelf.Empty;
-    private ImmutableDictionary<string, bool> _running = ImmutableDictionary.Create<string, bool>(StringComparer.Ordinal);
-    private ImmutableDictionary<string, string> _refused = ImmutableDictionary.Create<string, string>(StringComparer.Ordinal);
+
+    /// <summary>What a press of Summarise is doing, by the ask's key: working with the node (the button reads "Summarising…"), or refused in its words.</summary>
+    internal Presses Presses { get; } = new();
 
     /// <summary>The rows and nodes as the page builder last read them; the host sets it with every build.</summary>
     public SummaryShelf Shelf
@@ -88,16 +89,16 @@ internal sealed class SummaryBoard
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
     /// <summary>Asks for a frame: the state changed off the render thread.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
 
     /// <summary>Whether there is a node to ask at all: a snapshot file has none, and its cards show no button.</summary>
     public bool CanAsk => Send is not null && Track is not null;
 
     /// <summary>Whether a summary of <paramref name="ask"/> is out: asked, and the node has not answered.</summary>
-    public bool Running(SummaryAsk ask) => _running.ContainsKey(ask.Key);
+    public bool Running(SummaryAsk ask) => Presses.PendingOf(ask.Key) is not null;
 
     /// <summary>Why the node's last answer to <paramref name="ask"/> was a no, until the next press.</summary>
-    public string? Refused(SummaryAsk ask) => _refused.GetValueOrDefault(ask.Key);
+    public string? Refused(SummaryAsk ask) => Presses.RefusedOf(ask.Key);
 
     /// <summary>Whether this user may ask <paramref name="ask"/>'s node.</summary>
     public bool Steerable(SummaryAsk ask) => CanSteer?.Invoke(ask.Node) ?? true;
@@ -105,27 +106,13 @@ internal sealed class SummaryBoard
     /// <summary>Asks the node for a summary, unless one is out already for this ask or its node is watch-only.</summary>
     public void Press(SummaryAsk ask)
     {
-        if (Send is not { } send || Track is not { } track || !Steerable(ask) || !ImmutableInterlocked.TryAdd(ref _running, ask.Key, true))
+        if (Send is not { } send || Track is not { } track || !Steerable(ask))
         {
             return;
         }
-        ImmutableInterlocked.TryRemove(ref _refused, ask.Key, out _);
-        Changed?.Invoke();
-        track(async () =>
-        {
-            try
-            {
-                if (await send(ask) is { } why)
-                {
-                    ImmutableInterlocked.AddOrUpdate(ref _refused, ask.Key, why, (_, _) => why);
-                }
-            }
-            finally
-            {
-                ImmutableInterlocked.TryRemove(ref _running, ask.Key, out _);
-                Changed?.Invoke();
-            }
-        }, $"summarise {ask.Scope} on {ask.Node.Name}");
+        // Working on this frame (the helper marks it before it asks); the host drains the press at shutdown all the same.
+        var press = Presses.PressAsync(ask.Key, $"summary:{ask.Key}", _ => send(ask));
+        track(() => press, $"summarise {ask.Scope} on {ask.Node.Name}");
     }
 }
 
