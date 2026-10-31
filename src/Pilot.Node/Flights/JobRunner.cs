@@ -680,11 +680,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private int SignalTree(string id, JobProcess process, bool stop)
     {
         var reached = 0;
-        foreach (var info in Tree.Read(id, process).Tree)
+        // A freeze reads the tree again until a pass finds nothing it has not frozen: a process a running one started between
+        // the read and its suspend (PIL537) would otherwise keep running through the pause. Each pid is suspended once, since
+        // suspends nest on Windows and one resume must undo it. A thaw is one pass: nothing runs to start another.
+        var seen = new HashSet<int>();
+        for (var pass = 0; pass < (stop ? 8 : 1); pass++)
         {
-            if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+            var fresh = false;
+            foreach (var info in Tree.Read(id, process).Tree)
             {
-                reached++;
+                if (!seen.Add(info.Pid))
+                {
+                    continue;
+                }
+                fresh = true;
+                if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+                {
+                    reached++;
+                }
+            }
+            if (!fresh)
+            {
+                break;
             }
         }
         // setsid made the wrapper its own group leader: its group is the job's, children that left the tree by parent pid included.
