@@ -114,7 +114,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var sessions = state.Sessions();
         await LookAtReviewsAsync(sessions, now, cancellationToken);
         LookAtValidators(sessions, now);
-        LookAtStrays(sessions);
+        LookAtStrays(sessions, now);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
         await LookAtLegRechecksAsync(now, cancellationToken);
@@ -600,14 +600,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// A live background session whose flight has landed, whose leg is done or was redone (its worker is no longer the leg's), or
     /// that the ledger has no entry for rings once, with Stop as the way on. Every look sees it again; the card is raised once.
     /// </summary>
-    private void LookAtStrays(SessionRow[] sessions)
+    private void LookAtStrays(SessionRow[] sessions, DateTimeOffset now)
     {
         foreach (var row in sessions.Where(s => s is { Kind: SessionKind.Background, Gone: false, Archived: false } && s.State is not (SessionState.Ended or SessionState.Failed)))
         {
             string? why = WindDown.Why(state, Ledger, row);
             if (why is null && row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
                 && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg
-                && (leg.State == LegState.Done || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
+                && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
             {
                 why = leg.State == LegState.Done ? $"its leg {flight}/{legName} is done" : $"its leg {flight}/{legName} was redone and has another worker";
             }
@@ -625,6 +625,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
         }
     }
+
+    /// <summary>How long a leg may be done before its worker still running is a stray: the node stops a finished worker itself, after its grace.</summary>
+    public TimeSpan StrayGrace { get; init; } = TimeSpan.FromMinutes(10);
 
     /// <summary>The ledger of launched sessions: which were stopped on a land or merge, and which the node does not know; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }

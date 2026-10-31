@@ -132,7 +132,8 @@ public sealed class WindDownTests : IDisposable
         (entry.EndReason, entry.EndedBy).ShouldBe((SessionEndReasons.Landed, "land"));
         entry.EndReason.ShouldBe("stopped on land");
         var cancel = _cancelled.ShouldHaveSingleItem();
-        (cancel.Flight, cancel.Owners).ShouldBe((flight.Code, ["rev11111"]));
+        cancel.Flight.ShouldBe(flight.Code);
+        cancel.Owners.ShouldBe(["rev11111"]);
         F(flight.Code).Review.ShouldBeNull();
         F(flight.Code).State.ShouldBe(FlightState.Landed);
     }
