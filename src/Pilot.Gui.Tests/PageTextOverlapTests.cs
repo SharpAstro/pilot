@@ -25,6 +25,9 @@ public sealed class PageTextOverlapTests
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
+    /// <summary>The Ideas board is walked by the selectable-content check only; the overlap theory keeps its own page list.</summary>
+    internal const string IdeasPage = "ideas";
+
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
     public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
@@ -100,9 +103,20 @@ public sealed class PageTextOverlapTests
         "repos" => PilotPage.Repos,
         "pull requests" => PilotPage.PullRequests,
         "chat" => PilotPage.Chat,
+        "ideas" => PilotPage.Ideas,
         "spend" => PilotPage.Spend,
         _ => PilotPage.Home,
     };
+
+    private static IdeaRow Idea(int number, string title, string body, IdeaState state = IdeaState.Noted) => new()
+    {
+        Id = IdeaIds.Id(number), Repo = "pilot", Title = title, Body = body, State = state, UpdatedAt = PageData.Now.AddMinutes(number),
+        Age = "3h", Origin = "ada", Url = $"https://github.com/SharpAstro/pilot/issues/{number}", Images = IdeaImages.In(body),
+    };
+
+    private static IdeasScreen IdeasSample() => new(
+        [Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box"), Idea(380, "Rail count", ""), Idea(370, "Old plan", "", IdeaState.Planned)],
+        [], ["pilot", "tianwen"], "live from the node", PageData.Now);
 
     private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
     {
@@ -186,6 +200,9 @@ public sealed class PageTextOverlapTests
                 break;
             case "chat":
                 tree = await OpenChat(chrome, data);
+                break;
+            case "ideas":
+                tree = chrome.Ideas.Tree(IdeasSample());
                 break;
             case "cards panel":
                 // As the chrome drew it: beside the page, or in the page's place where the rail's cue opened it.

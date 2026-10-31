@@ -273,7 +273,7 @@ internal sealed partial class FlightsView<TSurface>
         var lines = SpendText.FlightLines(spend);
         return Layout.Builder.VStack(
                 [Label("spend").RowH(20f),
-                .. lines.Select(l => Layout.Builder.Text(l.Text, l.Indent == 0 ? 13f : 12f, l.Indent == 0 ? Bright : Dim).Whole(l.Text).RowH(20f).Pad(l.Indent switch { 0 => 0f, 1 => 16f, _ => 32f }, 0f))])
+                .. lines.Select(l => Layout.Builder.Text(l.Text, l.Indent == 0 ? 13f : 12f, l.Indent == 0 ? Bright : Dim).Selectable().Whole(l.Text).RowH(20f).Pad(l.Indent switch { 0 => 0f, 1 => 16f, _ => 32f }, 0f))])
             .WithGap(0f);
     }
 

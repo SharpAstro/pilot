@@ -183,12 +183,12 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         if (screen.Report is not { } report)
         {
-            return Layout.Builder.Text("Reading the node's spend…", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text("Reading the node's spend…", 16f, Dim, TextAlign.Center).Selectable().Stretch();
         }
         var timeframe = SpendText.Timeframe(report.Window, report.From, report.To, report.FromAccount);
         List<Layout.Node> parts =
         [
-            Layout.Builder.Text(SpendText.SharesAre, 12f, Dim).RowH(RowH).Whole(SpendText.SharesAre),
+            Layout.Builder.Text(SpendText.SharesAre, 12f, Dim).Selectable().RowH(RowH).Whole(SpendText.SharesAre),
             Heading($"By flight, {timeframe}"),
             .. Rows(report.Flights, "no spend in this window"),
             Heading($"By role, {timeframe}"),
@@ -199,7 +199,7 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             parts.Add(Heading($"Waste, worst first, {SpendText.Timeframe(waste.Window, waste.From, waste.To, waste.FromAccount)}: {SpendText.Tokens(waste.WasteTokens)} tokens, {SpendText.Share(waste.WasteShare)} of the window"));
             if (waste.Rows.Length == 0)
             {
-                parts.Add(Layout.Builder.Text("nothing wasted in this window", 12f, Dim).RowH(RowH));
+                parts.Add(Layout.Builder.Text("nothing wasted in this window", 12f, Dim).Selectable().RowH(RowH));
             }
             for (var i = 0; i < waste.Rows.Length; i++)
             {
@@ -211,13 +211,13 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     }
 
     private static Layout.Node Heading(string text) =>
-        Layout.Builder.Text(text, 14f, Bright).RowH(30f).Whole(text);
+        Layout.Builder.Text(text, 14f, Bright).Selectable().RowH(30f).Whole(text);
 
     private IEnumerable<Layout.Node> Rows(SpendRow[] rows, string none)
     {
         if (rows.Length == 0)
         {
-            yield return Layout.Builder.Text(none, 12f, Dim).RowH(RowH);
+            yield return Layout.Builder.Text(none, 12f, Dim).Selectable().RowH(RowH);
         }
         for (var i = 0; i < rows.Length; i++)
         {
@@ -227,13 +227,13 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     private static Layout.Node Line(string label, string? where, string tokens, string share, int index, RGBAColor32 color)
     {
-        List<Layout.Node> cells = [Layout.Builder.Text(label, 13f, color).WStar(where is null ? 1f : 2f).Whole(label)];
+        List<Layout.Node> cells = [Layout.Builder.Text(label, 13f, color).Selectable().WStar(where is null ? 1f : 2f).Whole(label)];
         if (where is not null)
         {
-            cells.Add(Layout.Builder.Text(where, 12f, Dim).WStar(2f).Whole(where));
+            cells.Add(Layout.Builder.Text(where, 12f, Dim).Selectable().WStar(2f).Whole(where));
         }
-        cells.Add(Layout.Builder.Text(tokens, 13f, Body, TextAlign.Far).WFixed(TokensWidth));
-        cells.Add(Layout.Builder.Text(share, 13f, Bright, TextAlign.Far).WFixed(ShareWidth));
+        cells.Add(Layout.Builder.Text(tokens, 13f, Body, TextAlign.Far).Selectable().WFixed(TokensWidth));
+        cells.Add(Layout.Builder.Text(share, 13f, Bright, TextAlign.Far).Selectable().WFixed(ShareWidth));
         var line = Layout.Builder.HStack([.. cells]).WithGap(10f).RowH(RowH);
         return index % 2 == 1 ? line.Bg(RowAltBg) : line;
     }
