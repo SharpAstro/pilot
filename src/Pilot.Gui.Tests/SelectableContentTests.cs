@@ -21,9 +21,10 @@ public sealed class SelectableContentTests
     private static readonly (string Page, Func<string, bool> Is, string Reason)[] Exceptions =
     [
         ("*", t => t == "pilot v2", "the app title in the page header is chrome"),
-        ("*", t => t is "home" or "sessions" or "flights" or "background tasks" or "fleet" or "repos" or "pull requests" or "fleet chat"
+        ("*", t => t is "home" or "sessions" or "flights" or "background tasks" or "fleet" or "repos" or "pull requests" or "fleet chat" or "spend"
             || t.EndsWith("(this machine)", StringComparison.Ordinal), "a page's title in its header is chrome"),
         ("*", t => t.Contains("· as of ", StringComparison.Ordinal) || t.StartsWith("live from the node", StringComparison.Ordinal), "the header's freshness line is chrome"),
+        ("spend", t => t.Contains(" tokens in ", StringComparison.Ordinal) && t.Contains(" messages, ", StringComparison.Ordinal), "the spend header's count line is chrome"),
         ("*", t => t is "not live" or "● live" or "not running" or "No open pull requests." or "Enter sends · Shift+Enter a new line", "a status badge or an empty-state hint is chrome"),
         ("*", t => t.Contains("open · ", StringComparison.Ordinal) || t.StartsWith("held by ", StringComparison.Ordinal), "a header summary or status line is chrome"),
         ("*", t => t.StartsWith("New flight · ", StringComparison.Ordinal), "the new-flight wizard's step title is chrome"),

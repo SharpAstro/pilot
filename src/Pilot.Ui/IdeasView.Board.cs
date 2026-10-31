@@ -245,6 +245,10 @@ internal sealed partial class IdeasView<TSurface>
         parts.AddRange(ReadinessRows(item));
         parts.AddRange(SuggestionOf(item));
         parts.Add(Layout.Builder.WrapH([.. Buttons(item)]).WithGap(8f).WithLineGap(4f).WStar());
+        if (idea is not null && PressLine(idea) is { } pressed)
+        {
+            parts.Add(pressed);
+        }
         if (idea is not null && _open is { } open && open.Key == KeyOf(idea))
         {
             parts.AddRange(OpenRows(idea, open.Mode));

@@ -63,7 +63,8 @@ internal sealed record JobLine
         Row = job,
         Id = job.Id,
         Command = job.Command,
-        For = job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
+        For = job.Kind == JobKind.Check && job.Flight is { } checkOf ? job.Leg is { } checked_ ? $"{checkOf}/{checked_}'s check" : $"{checkOf}'s check"
+            : job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
         State = job.State == JobState.Running && job.PausedAt is not null ? "paused" : job.State.ToString().ToLowerInvariant(),
         StateDetail = job.State switch
         {
@@ -234,21 +235,36 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
     /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill that stands where Cancel would on a watch-only row.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
+
+    // Asks for a grant through the press helper: the Connect button reads "asking…" until the grant answers; a refusal is said beside the job's buttons.
+    private void AskGrant(JobLine line, NodeMark node) =>
+        _ = OnConnect is { } connect ? Presses.PressAsync(line.Key, $"job:{line.Row.Id}:connect", _ => connect(node), say: why => $"connect {node.Name} refused: {why}") : Task.CompletedTask;
 
     /// <summary>Whether <paramref name="line"/>'s job is on this window's node, the one whose files a path on it names.</summary>
     private static bool IsHere(JobLine line) => line.Node is null or { Here: true };
 
     private NodeMark? WatchOnly(JobLine line) => line.Node is { Here: false } node && CanSteer?.Invoke(node) == false ? node : null;
 
-    /// <summary>Cancels a job: the node's <c>cancel-job</c>.</summary>
-    public Action<JobRow>? OnCancel { get; set; }
+    // What a press of a job's button is doing, by the line's key (node and id): working with the node, taken, or refused in its words.
+    internal Presses Presses { get; } = new();
+
+    // The word the row says for the press the node took (cancelling, pausing, resuming) and the state it was pressed in, by the line's key:
+    // it stands until a read shows the job in another state, or the taken mark lapses.
+    private System.Collections.Immutable.ImmutableDictionary<string, (string Word, string Was)> _doing =
+        System.Collections.Immutable.ImmutableDictionary.Create<string, (string, string)>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Cancels a job: the node's <c>cancel-job</c>. Each of the four callbacks answers with the node's refusal in its words, or null
+    /// when the node took it; the view says working at once, the row's new state when it was taken, and the refusal beside the buttons.
+    /// </summary>
+    public Func<JobRow, Task<string?>>? OnCancel { get; set; }
 
     /// <summary>Freezes a running job: the node's <c>pause-job</c>.</summary>
-    public Action<JobRow>? OnPause { get; set; }
+    public Func<JobRow, Task<string?>>? OnPause { get; set; }
 
     /// <summary>Thaws a paused job: the node's <c>resume-job</c>.</summary>
-    public Action<JobRow>? OnResume { get; set; }
+    public Func<JobRow, Task<string?>>? OnResume { get; set; }
 
     /// <summary>
     /// The job whose Cancel was pressed and waits on its confirm: a cancel ends a run that may have taken hours, so one press
@@ -257,7 +273,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private string? _confirmCancel;
 
     /// <summary>Kills a running job's whole process tree at once: the node's <c>cancel-job</c> with its <c>force</c> arg.</summary>
-    public Action<JobRow>? OnForceCancel { get; set; }
+    public Func<JobRow, Task<string?>>? OnForceCancel { get; set; }
 
     /// <summary>The job whose Force cancel… was pressed and waits on its own question, as <see cref="_confirmCancel"/>. Both hold the line's
     /// Key (node and id), not the job id: two nodes' lists share one page, and each can have a j14 (review of #357).</summary>
@@ -279,7 +295,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public Func<NodeMark?, string, CancellationToken, Task<JobLog>>? LoadLog { get; set; }
 
     /// <summary>Called when the log shown changed, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
@@ -473,17 +489,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var items = new List<DropdownItem<string>>();
         if (CanCommand && line.Live && WatchOnly(line) is { } watchedItem)
         {
-            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watchedItem), "connect") { OnChoose = () => OnConnect?.Invoke(watchedItem) });
+            items.Add(new DropdownItem<string>(SessionsView<TSurface>.SteerHint(watchedItem), "connect") { OnChoose = () => AskGrant(line, watchedItem) });
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
             if (line.Paused && OnResume is { } resume)
             {
-                items.Add(new DropdownItem<string>("Resume", "resume") { OnChoose = () => resume(job) });
+                items.Add(new DropdownItem<string>("Resume", "resume") { OnChoose = () => Press(line, "resume", resume) });
             }
             else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
             {
-                items.Add(new DropdownItem<string>("Pause", "pause") { OnChoose = () => pause(job) });
+                items.Add(new DropdownItem<string>("Pause", "pause") { OnChoose = () => Press(line, "pause", pause) });
             }
             items.Add(new DropdownItem<string>("Cancel…", "cancel") { OnChoose = () => { _confirmForce = null; _confirmCancel = line.Key; } });
             if (job.State == JobState.Running && OnForceCancel is not null)
@@ -633,7 +649,9 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body).Selectable()),
             Top(Layout.Builder.Text(line.For, 13f, Dim).Selectable()),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).Selectable().RowH(22f),
+                DoingOf(line) is { } doing
+                    ? Layout.Builder.Text(doing, 14f, Queued).Selectable().RowH(22f)
+                    : Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).Selectable().RowH(22f),
                 // The state column can be narrower than the stuck line: it ends in an ellipsis and says the whole of it on hover.
                 (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).Selectable() : Layout.Builder.Text(stuck, 11f, Queued).Selectable().WithTooltip(stuck)).RowH(18f)),
             Top(Layout.Builder.Text(line.Started, 13f, Dim).Selectable()),
@@ -669,7 +687,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Label($"{job.Id} · {line.State}").RowH(20f),
             Fact("runs", job.Command, Body),
             Fact("in", job.Cwd, Dim),
-            Fact("wakes", job.Owner is null ? "nobody: handed over from a terminal" : $"{line.For}{(job.Told ? ", told" : job.EndedAt is null ? "" : ", not told yet")}", Dim),
+            Fact("wakes", job.Kind == JobKind.Check ? $"nobody: the node's check of {line.For.Replace("'s check", "")}" : job.Owner is null ? "nobody: handed over from a terminal" : $"{line.For}{(job.Told ? ", told" : job.EndedAt is null ? "" : ", not told yet")}", Dim),
             Fact("log", job.LogPath, Dim),
             Fact("timeout", JobLine.Duration(job.Timeout), Dim),
         };
@@ -691,7 +709,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             // Cancel is disabled on a node this user cannot steer; the pill asks for the grant, and says why.
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Connect", $"job:{job.Id}:connect", () => OnConnect?.Invoke(watched)));
+            var connectHit = $"job:{job.Id}:connect";
+            buttons.Add(Presses.Button(line.Key, connectHit, () => Pill("Connect", connectHit, () => AskGrant(line, watched)), _ => CardsView<TSurface>.Dead("asking…")));
         }
         else if (CanCommand && line.Live && OnCancel is { } cancel)
         {
@@ -699,7 +718,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             {
                 // The question replaces the row's buttons, so nothing else can be pressed by a slip while it stands.
                 buttons.Add(Question($"Cancel {job.Id}? It stops now; its output so far stays in its log."));
-                buttons.Add(Pill("Cancel job", $"job:{job.Id}:cancel-yes", () => { _confirmCancel = null; cancel(job); }, Danger, DangerHover));
+                buttons.Add(NodeButton(line, "Cancel job", "cancel-yes", () => { _confirmCancel = null; Press(line, "cancel-yes", cancel); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:cancel-no", () => _confirmCancel = null));
                 return Panel(facts, line, buttons);
             }
@@ -707,17 +726,17 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             {
                 // Its own question, as Cancel's: a force kills the wrapper and everything under it with no grace.
                 buttons.Add(Question($"Force cancel {job.Id}? It and every process under it are killed at once; its output so far stays in its log."));
-                buttons.Add(Pill("Force cancel job", $"job:{job.Id}:force-yes", () => { _confirmForce = null; forceYes(job); }, Danger, DangerHover));
+                buttons.Add(NodeButton(line, "Force cancel job", "force-yes", () => { _confirmForce = null; Press(line, "force-yes", forceYes); }, Danger, DangerHover));
                 buttons.Add(Pill("Keep running", $"job:{job.Id}:force-no", () => _confirmForce = null));
                 return Panel(facts, line, buttons);
             }
             if (line.Paused && OnResume is { } resume)
             {
-                buttons.Add(Pill("Resume", $"job:{job.Id}:resume", () => resume(job)));
+                buttons.Add(NodeButton(line, "Resume", "resume", () => Press(line, "resume", resume)));
             }
             else if (!line.Paused && job.State == JobState.Running && OnPause is { } pause)
             {
-                buttons.Add(Pill("Pause", $"job:{job.Id}:pause", () => pause(job)));
+                buttons.Add(NodeButton(line, "Pause", "pause", () => Press(line, "pause", pause)));
             }
             // Cancel (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Cancel…", $"job:{job.Id}:cancel", () => { _confirmForce = null; _confirmCancel = line.Key; }, Danger, DangerHover));
@@ -788,6 +807,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                         LogTail(line).WStar())
                     .WithGap(24f)
                     .Stretch(),
+                // What the node said to the last press here, when it refused: beside the job's buttons, never only in a log.
+                Presses.RefusalLine(line.Key, 11f, Failed, 3) ?? Layout.Builder.Spacer().RowH(0f),
                 // The buttons flow onto lines of their own where the page is narrower than they are.
                 Layout.Builder.WrapH([.. buttons.Select(b => Layout.Builder.HStack(b).WAuto().HFixed(28f))]).WithGap(8f).WithLineGap(6f).WStar().HAuto())
             .Pad(Gutter, 8f)
@@ -848,6 +869,57 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// engine could give it less. Header and rows both say it, so they drop together.
     /// </summary>
     private static Layout.Node Optional(Layout.Node cell, float width) => cell.WStar(1f, 0f, width).CollapseBelow(width);
+
+    /// <summary>The word the row and the dimmed button say for a press of <paramref name="kind"/> (the hit's last part): working, then taken.</summary>
+    private static string Doing(string kind) => kind switch
+    {
+        "cancel-yes" => "cancelling",
+        "force-yes" => "force cancelling",
+        "pause" => "pausing",
+        _ => "resuming",
+    };
+
+    /// <summary>What the row says of a press of its job: "cancelling…" from the press until a read shows the job in another state; null when none stands.</summary>
+    private string? DoingOf(JobLine line)
+    {
+        if (Presses.PendingOf(line.Key) is { } hit)
+        {
+            return $"{Doing(hit[(hit.LastIndexOf(':') + 1)..])}…";
+        }
+        if (!System.Collections.Immutable.ImmutableInterlocked.TryRemove(ref _doing, line.Key, out var done))
+        {
+            return null;
+        }
+        if (Presses.IsTaken(line.Key) && done.Was == $"{line.State}|{line.Paused}")
+        {
+            System.Collections.Immutable.ImmutableInterlocked.TryAdd(ref _doing, line.Key, done);
+            return $"{done.Word}…";
+        }
+        Presses.ClearTaken(line.Key);
+        return null;
+    }
+
+    /// <summary>Sends <paramref name="send"/> for <paramref name="line"/>'s job through the press helper: working at once, the row changing when the node takes it, the refusal said beside the buttons.</summary>
+    private void Press(JobLine line, string kind, Func<JobRow, Task<string?>> send)
+    {
+        var word = Doing(kind);
+        var was = $"{line.State}|{line.Paused}";
+        _ = PressAndNoteAsync();
+
+        async Task PressAndNoteAsync()
+        {
+            var refused = await Presses.PressAsync(line.Key, $"job:{line.Row.Id}:{kind}", _ => send(line.Row), say: why => $"{word} {line.Row.Id} refused: {why}");
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _doing, d => refused is null ? d.SetItem(line.Key, (word, was)) : d.Remove(line.Key));
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>A button of a job's detail that asks the node: its working word, dimmed and with no hit, while any press of the job is with the node.</summary>
+    private Layout.Node NodeButton(JobLine line, string label, string kind, Action onClick, RGBAColor32? bg = null, RGBAColor32? hover = null)
+    {
+        var hit = $"job:{line.Row.Id}:{kind}";
+        return Presses.Button(line.Key, hit, () => Pill(label, hit, onClick, bg, hover), pressed => CardsView<TSurface>.Dead(pressed ? $"{Doing(kind)}…" : label));
+    }
 
     private static Layout.Node Pill(string label, string action, Action onClick, RGBAColor32? bg = null, RGBAColor32? hover = null) =>
         Layout.Builder.Text(label, 12f, Bright, TextAlign.Center)

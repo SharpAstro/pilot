@@ -76,6 +76,27 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
         }
+        finally
+        {
+            // RefreshAsync's WaitAsync returns the moment the node stops, but the read it started (Task.Run, git children
+            // in each repo folder) is still ending. Hosting's StopAsync returns when this method does, so wait for that read:
+            // a test that deletes a repo folder after disposing the node found it in use (StopGateTests, run 41121644805).
+            Task<RepoStatus[]>? running;
+            lock (_gate)
+            {
+                running = _running;
+            }
+            if (running is not null)
+            {
+                try
+                {
+                    await running;
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or AggregateException or InvalidOperationException)
+                {
+                }
+            }
+        }
     }
 
     /// <summary>Puts the repos the catalog knows, marked not read yet, when the node holds no row (a fresh node; a restored one keeps its last).</summary>

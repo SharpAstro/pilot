@@ -229,6 +229,53 @@ public sealed class LegWatchTests
         Open().ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("it answered 1 of them");
     }
 
+    [Theory]
+    [InlineData(JobState.Queued)]
+    [InlineData(JobState.Running)]
+    public async Task AWorkerWaitingOnItsLegsCheckJobIsNeitherNudgedNorRungFor(JobState jobState)
+    {
+        // A check job has the flight and leg and no owner, so the owner match missed it: the worker was nudged and rung for while its check ran.
+        Worker(SessionState.Idle);
+        _state.PutJob(new JobRow
+        {
+            Id = "j1", Command = "dotnet test", Cwd = "/work/tia1", Kind = JobKind.Check, Flight = "TIA1", Leg = "parser", State = jobState,
+            LogPath = "/tmp/j1.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, false)]
+    public async Task AWorkerWithAJobOfItsOwnQueuedOrRunningIsNeitherNudgedNorRungFor(JobState jobState, bool byRowId)
+    {
+        Worker(SessionState.Idle);
+        var worker = _state.Sessions().First();
+        _state.PutJob(new JobRow
+        {
+            Id = "j2", Command = "dotnet build", Cwd = "/work/tia1", State = jobState, Owner = byRowId ? worker.Id : "c0000000", OwnerName = worker.Name,
+            LogPath = "/tmp/j2.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {
@@ -497,6 +544,21 @@ public sealed class LegWatchTests
         _state.PutLeg(_state.Legs().Single() with { Flight = "PIL9", Name = "first" });
         await _watch.LookAsync(Ct);
         Open().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APlannerThatWaitsForAdmissionIsWaitingNeverStalledAndRingsNothing()
+    {
+        Worker(SessionState.Working);
+        Unplanned();
+        _state.UpdateFlight("PIL9", f => f with { Queued = "waiting for an Opus slot: 1 of 1 flying: du1-other" });
+
+        _time.Advance(TimeSpan.FromHours(3));
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldBeEmpty();
+        Open().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
+        Handled().Where(c => c.Kind == LegWatch.PlanStalled).ShouldBeEmpty();
     }
 
     [Fact]

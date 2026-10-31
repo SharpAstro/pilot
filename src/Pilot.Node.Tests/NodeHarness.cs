@@ -68,8 +68,8 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="lanPort">Listens on the LAN too, on this port, announcing nothing, and on loopback only (no firewall prompt): a client on loopback stands in for one on another machine.</param>
     /// <param name="localOnly">Starts the node local-only, as <c>--local-only</c> does, whatever <paramref name="lanPort"/> asks for.</param>
     /// <param name="folder">A folder to start on (a disposed node's, to start its successor on the same socket path and data); default a new temp one.</param>
+    /// <param name="machine">The node's machine prefix (two harness nodes of one fleet need two); default the one this machine has.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
-    /// <param name="machine">The node's machine prefix (<c>SE1</c>), for two nodes that must not share one; default this machine's.</param>
     /// <param name="journal">The node's store in place of its files in the data folder: one the test can make fail.</param>
     public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null)
     {
@@ -130,6 +130,8 @@ internal sealed class NodeHarness : IAsyncDisposable
             await app.StartAsync(cancellationToken);
             // The PR loop's first look happens at start; a test's state is put only after it, so it never lands a half-made flight.
             await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);
+            // So is the flight sweep's: it tells the keeper of the Opus count what this node runs, and would free a slot a test had just taken.
+            await app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().FirstSweep.WaitAsync(cancellationToken);
             return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner };
         }
         catch

@@ -91,6 +91,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The CPU time a running job's process tree has used in all, or null when it cannot be read.</summary>
     public Func<string, TimeSpan?>? JobCpu { get; init; }
 
+    /// <summary>The machine's CPU use now in percent, or null when it is not sampled: a check's saturation is counted from it. A test puts its own.</summary>
+    public Func<double?>? MachineCpu { get; init; }
+
+    /// <summary>The share of the looks at a check that found the machine's CPU above <see cref="SaturatedAbove"/> percent, over which the machine counts as saturated.</summary>
+    public const double SaturatedShare = 0.5;
+
+    /// <summary>The machine CPU percent above which a look counts as saturated.</summary>
+    public const double SaturatedAbove = 90;
+
     /// <summary>The OS's process table, as the node reads a job's tree and kills it: a test puts a fake one.</summary>
     public IProcessTable ProcessTable { get; init; } = OsProcessTable.Instance;
 
@@ -121,6 +130,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
     // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
     private readonly object _rowLock = new();
+    // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<CheckRun>> _checkWaiters = new(StringComparer.Ordinal);
+    // The running checks' kill-on-close job objects (Windows): a node that crashes ends them, as a check never outlives its node.
+    private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
+    // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
+    private readonly ConcurrentDictionary<string, double> _saturation = new(StringComparer.Ordinal);
+    private const string TimeoutPrefix = "stopped after its timeout";
     private CancellationToken _stopping;
     // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
     // state cannot tell whether a Queued row it puts will be seen by that recovery and failed as orphaned.
@@ -187,6 +203,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
+        // A check is not followed: the node that awaited it is gone, so nothing waits for its result. Its tree is ended and its row says so.
+        foreach (var check in left.Where(j => j.Kind == JobKind.Check).ToList())
+        {
+            left.Remove(check);
+            _mine[check.Id] = 0;
+            EndOrphanedCheck(check);
+        }
         // Back on the queue through the dispatcher, which owns it, in the order they were handed over.
         foreach (var job in left.Where(j => j.State == JobState.Queued).OrderBy(j => j.QueuedAt ?? j.StartedAt).ThenBy(j => j.Id, StringComparer.Ordinal))
         {
@@ -198,6 +221,27 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _mine[job.Id] = 0;
             await RecoverRunningAsync(job, cancellationToken);
         }
+    }
+
+    private void EndOrphanedCheck(JobRow check)
+    {
+        if (check is { State: JobState.Running, Pid: { } pid, ProcessStartedAt: { } startedAt })
+        {
+            var process = new JobProcess(pid, startedAt);
+            // Only a live process of that pid and start time is touched: its named job object first, then the wrapper's tree.
+            if (process.IsAlive())
+            {
+                DetachedShell.TerminateJob(check.Id, check.LogPath);
+                process.Kill();
+            }
+        }
+        DetachedShell.DeleteScripts(check.ScriptPath);
+        state.PutJob(Unpaused(check, time.GetUtcNow()) with
+        {
+            State = JobState.Failed,
+            Error = "the node restarted and nothing waits for this check any more, so it was ended",
+            EndedAt = time.GetUtcNow(),
+        });
     }
 
     private async Task RecoverRunningAsync(JobRow job, CancellationToken cancellationToken)
@@ -325,6 +369,68 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return state.Complete(command, null, made: jobId);
     }
 
+    /// <summary>
+    /// Runs a leg's check as a job of kind <see cref="JobKind.Check"/>: it waits its turn in the same queue as any job (so
+    /// <see cref="MaxRunning"/> and the memory gate hold it), has no owner and says nothing to a session, and its
+    /// <paramref name="budget"/> counts from when it starts running, not from when it was queued. The result is its exit code
+    /// and last lines; one stopped by its budget, cancelled or never started is -1 with why. Cancelling
+    /// <paramref name="cancellationToken"/> withdraws a waiting check or kills a running one's tree.
+    /// </summary>
+    public async Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    {
+        var jobId = state.NextJobId();
+        var folder = Path.Combine(options.DataFolder, "jobs");
+        Directory.CreateDirectory(folder);
+        var logPath = Path.Combine(folder, $"{jobId}.log");
+        var now = time.GetUtcNow();
+        var job = new JobRow
+        {
+            Id = jobId,
+            Command = command,
+            Cwd = cwd,
+            Kind = JobKind.Check,
+            Flight = flight,
+            Leg = leg,
+            State = JobState.Queued,
+            LogPath = logPath,
+            ExitPath = ExitPathOf(logPath),
+            Timeout = budget,
+            StartedAt = now,
+            QueuedAt = now,
+            MemoryKey = JobKey.Of(command, cwd).ToString(),
+        };
+        var done = new TaskCompletionSource<CheckRun>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _checkWaiters[jobId] = done;
+        _mine[jobId] = 0;
+        state.PutJob(job);
+        _signals.Writer.TryWrite(new HandedOver(job));
+        using (cancellationToken.Register(() => CancelJob(jobId, "the check's caller", force: true)))
+        {
+            var run = await done.Task;
+            // A caller that gave up is told so, not handed a result it did not ask for.
+            cancellationToken.ThrowIfCancellationRequested();
+            return run;
+        }
+    }
+
+    private void Finish(JobRow ended, string[]? last)
+    {
+        if (!_checkWaiters.TryRemove(ended.Id, out var waiter))
+        {
+            return;
+        }
+        var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
+        _saturation.TryRemove(ended.Id, out var share);
+        waiter.TrySetResult(ended.State switch
+        {
+            JobState.Succeeded => new CheckRun(0, tail),
+            _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
+                new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped") { StoppedByBudget = true, Saturation = share },
+            _ when ended.ExitCode is { } code => new CheckRun(code, tail),
+            _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
+        });
+    }
+
     /// <summary>Whether the job's process is held as running: what a cancel looks for.</summary>
     internal bool IsRunning(string id) => _running.ContainsKey(id);
 
@@ -372,6 +478,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
                 state.PutJob(ended);
+                Finish(ended, null);
                 _ = TellAsync(ended, _stopping);
             }
         }
@@ -457,6 +564,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         var cancelled = job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
         state.PutJob(cancelled);
+        Finish(cancelled, null);
         _ = TellAsync(cancelled, _stopping);
     }
 
@@ -520,6 +628,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             shell?.Dispose();
             return ex.Message;
         }
+        // A check never outlives the node, a crash included: its wrapper (and so whatever it starts) is held by a kill-on-close job.
+        if (job.Kind == JobKind.Check && process.Child is { } wrapper && KillOnCloseJob.Hold(wrapper) is { } hold)
+        {
+            _holds[job.Id] = hold;
+        }
         // What a later node needs to find it again, on the row before it is put. The scripts stay until the job has ended.
         job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = shell.Script };
         // In _running before the Running row is put: a cancel that sees the row must find the process.
@@ -567,11 +680,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private int SignalTree(string id, JobProcess process, bool stop)
     {
         var reached = 0;
-        foreach (var info in Tree.Read(id, process).Tree)
+        // A freeze reads the tree again until a pass finds nothing it has not frozen: a process a running one started between
+        // the read and its suspend (PIL537) would otherwise keep running through the pause. Each pid is suspended once, since
+        // suspends nest on Windows and one resume must undo it. A thaw is one pass: nothing runs to start another.
+        var seen = new HashSet<int>();
+        for (var pass = 0; pass < (stop ? 8 : 1); pass++)
         {
-            if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+            var fresh = false;
+            foreach (var info in Tree.Read(id, process).Tree)
             {
-                reached++;
+                if (!seen.Add(info.Pid))
+                {
+                    continue;
+                }
+                fresh = true;
+                if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+                {
+                    reached++;
+                }
+            }
+            if (!fresh)
+            {
+                break;
             }
         }
         // setsid made the wrapper its own group leader: its group is the job's, children that left the tree by parent pid included.
@@ -647,10 +777,47 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, $"cancel-job takes only `{Verbs.ForceArg}`, not {string.Join(' ', args)}");
         }
-        var force = args.Length > 0;
+        return state.Complete(command, CancelJob(id, command.Who, args.Length > 0));
+    }
+
+    /// <summary>
+    /// Cancels every queued or running job of <paramref name="flight"/> (its check, a worker's run) and every one owned by one of
+    /// <paramref name="owners"/> (session row ids): a landed or merged flight leaves nothing of its own on the queue. Returns how many.
+    /// </summary>
+    public int CancelFor(string flight, IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
+            && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>Cancels every queued or running job owned by one of <paramref name="owners"/> (session row ids); returns how many.</summary>
+    public int CancelOwnedBy(IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>Stops a running job or takes a queued one out; null when it did, else why not.</summary>
+    private string? CancelJob(string id, string who, bool force)
+    {
         if (_running.TryGetValue(id, out var process))
         {
-            _cancelled[id] = command.Who;
+            _cancelled[id] = who;
             if (force)
             {
                 _forced[id] = 0;
@@ -662,15 +829,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 Kill(id, process);
             }
             Nudge(id);
-            return state.Complete(command, null);
+            return null;
         }
         if (state.Jobs().FirstOrDefault(j => j.Id == id) is { State: JobState.Queued })
         {
             // The dispatcher owns the queue: it takes the job out, or stops it if it has started since.
-            _signals.Writer.TryWrite(new Withdrawn(id, command.Who));
-            return state.Complete(command, null);
+            _signals.Writer.TryWrite(new Withdrawn(id, who));
+            return null;
         }
-        return state.Complete(command, state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}");
+        return state.Jobs().Any(j => j.Id == id) ? $"job {id} is not running" : $"There is no job {id}";
     }
 
     private void Nudge(string id)
@@ -728,6 +895,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         int? exitCode = null;
         // What the job's process tree held at each look at it: the run's median is its value in the estimate, its peak only shown.
         var memory = new List<long>();
+        // The looks at the machine's CPU while this job ran, and how many found it above 90%.
+        int looks = 0, hot = 0;
 
         void Follow(bool final)
         {
@@ -771,6 +940,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         {
                             memory.Add(held);
                         }
+                        if (job.Kind == JobKind.Check && (MachineCpu is { } cpuNow ? cpuNow() : state.Machine()?.CpuPercent) is { } cpu)
+                        {
+                            looks++;
+                            hot += cpu > SaturatedAbove ? 1 : 0;
+                        }
                     }
                     // Sampled before the exit file is looked at: a process that was gone by now has left its exit file, if it was going to.
                     var alive = process.IsAlive();
@@ -789,6 +963,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         timedOut = true;
                         Kill(job.Id, process);
+                        if (job.Kind == JobKind.Check)
+                        {
+                            Tree.KillAll(job.Id, process);
+                        }
                         await GoneAsync(process);
                         exitCode = ReadExit(exitPath);
                         break;
@@ -809,6 +987,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
             {
+                if (job.Kind == JobKind.Check)
+                {
+                    // A check is given up with the node: nobody will await it, and its tests must not hold the plane's files.
+                    EndCheckForStop(job, process);
+                    return;
+                }
                 // The node is stopping: the job is not, and its row stays as it is for the next node.
                 process.Child?.Dispose();
                 return;
@@ -818,6 +1002,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         Follow(final: true);
         // Ended: the scripts it ran are of no use now.
         DetachedShell.DeleteScripts(job.ScriptPath);
+        ReleaseHold(job.Id);
 
         _running.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
@@ -835,7 +1020,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         else if (timedOut)
         {
-            ended = latest with { State = JobState.Failed, Error = $"stopped after its timeout of {Took(job.Timeout)}" };
+            ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
         }
         else if (exitCode is { } code)
         {
@@ -853,9 +1038,40 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
         }
         state.PutJob(ended);
+        if (looks > 0)
+        {
+            _saturation[job.Id] = (double)hot / looks;
+        }
+        Finish(ended, last);
         // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
         Pump();
         await TellAsync(ended, CancellationToken.None, last);
+        process.Child?.Dispose();
+    }
+
+    private void ReleaseHold(string id)
+    {
+        if (_holds.TryRemove(id, out var hold))
+        {
+            hold.Dispose();
+        }
+    }
+
+    /// <summary>The node is stopping: a running check's whole tree is killed and its row ended, saying why.</summary>
+    private void EndCheckForStop(JobRow job, JobProcess process)
+    {
+        Kill(job.Id, process);
+        Tree.KillAll(job.Id, process);
+        DetachedShell.DeleteScripts(job.ScriptPath);
+        ReleaseHold(job.Id);
+        _running.TryRemove(job.Id, out _);
+        _watches.TryRemove(job.Id, out _);
+        _nudges.TryRemove(job.Id, out _);
+        Tree.Forget(job.Id);
+        var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
+        var ended = latest with { State = JobState.Failed, Error = "the node stopped, so the check was ended", EndedAt = time.GetUtcNow() };
+        state.PutJob(ended);
+        Finish(ended, null);
         process.Child?.Dispose();
     }
 
@@ -945,6 +1161,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         catch (OperationCanceledException)
         {
         }
+        // Checks still waiting are dropped: their callers go with the node.
+        foreach (var waiting in state.Jobs().Where(j => j.Kind == JobKind.Check && j.State == JobState.Queued && _mine.ContainsKey(j.Id)).ToList())
+        {
+            var ended = waiting with { State = JobState.Failed, Error = "the node stopped before the check started", Step = null, EndedAt = time.GetUtcNow() };
+            state.PutJob(ended);
+            Finish(ended, null);
+        }
     }
 
     /// <summary>
@@ -954,12 +1177,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal string WakeTarget(string owner, string? ownerName)
     {
+        // By id only, never a namesake (#542): the owner's own row, or the row its id moved to (a continuation lists it among its
+        // earlier ids), else the owner as recorded.
         var sessions = state.Sessions();
-        if (sessions.FirstOrDefault(s => s.Id == owner) is { State: not SessionState.Ended } || ownerName is not { Length: > 0 } name)
+        if (sessions.FirstOrDefault(s => s.Id == owner) is not null)
         {
             return owner;
         }
-        return sessions.Where(s => s.State != SessionState.Ended && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+        return sessions.Where(s => s.SessionId == owner || s.EarlierSessionIds?.Contains(owner) == true)
             .OrderByDescending(s => s.StartedAt).FirstOrDefault()?.Id ?? owner;
     }
 

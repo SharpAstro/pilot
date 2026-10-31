@@ -77,7 +77,7 @@ public sealed class DisconnectPageTests
         using var renderer = new RgbaImageRenderer(1280, 900);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CanCommand = true };
         var sent = new List<FlightAction>();
-        view.OnAction = sent.Add;
+        view.OnAction = a => { sent.Add(a); return Task.FromResult<string?>(null); };
         var screen = new FlightsScreen([Line(flight)], "test", Live.At);
         view.Render(screen, new RectF32(0, 0, 1280, 900));
         view.Choose(removes.Single(a => a.Args[0] == "TIA2"), "TIA1611");
@@ -103,7 +103,7 @@ public sealed class DisconnectPageTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var flights = chrome.Flights;
         flights.CanCommand = true;
-        flights.OnAction = _ => { };
+        flights.OnAction = _ => Task.FromResult<string?>(null);
         var screen = new FlightsScreen([line], "test", Live.At);
         var bounds = new RectF32(0, 0, width, 900);
         flights.Render(screen, bounds);

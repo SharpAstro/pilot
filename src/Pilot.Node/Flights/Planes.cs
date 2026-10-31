@@ -565,6 +565,10 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var notInMain = cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var loose = new List<string>();
+        if (notInMain.Count > 0 && await ContentInMainAsync(worktree, mainRef, cancellationToken))
+        {
+            return loose;
+        }
         foreach (var sha in unpushed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(notInMain.Contains))
         {
             var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
@@ -590,12 +594,42 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             return (null, []);
         }
         var commits = new List<string>();
-        foreach (var sha in cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()))
+        var notIn = cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToList();
+        if (notIn.Count > 0 && await ContentInMainAsync(worktree, mainRef, cancellationToken))
+        {
+            return (head.Output.Trim(), commits);
+        }
+        foreach (var sha in notIn)
         {
             var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
             commits.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
         }
         return (head.Output.Trim(), commits);
+    }
+
+    /// <summary>
+    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content: the files it touched are
+    /// the same in both. A PR laid on its base and rebase-merged is in main as one commit under another id, so <c>git cherry</c>
+    /// cannot match the plane's older commits one by one; its content is what says it landed. False when git cannot say.
+    /// </summary>
+    private async Task<bool> ContentInMainAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        var mergeBase = await git.RunAsync(["merge-base", mainRef, "HEAD"], worktree, cancellationToken);
+        if (!mergeBase.Ok)
+        {
+            return false;
+        }
+        var names = await git.RunAsync(["diff", "--name-only", mergeBase.Output.Trim(), "HEAD"], worktree, cancellationToken);
+        if (!names.Ok)
+        {
+            return false;
+        }
+        var files = names.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (files.Length == 0)
+        {
+            return true;
+        }
+        return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
     }
 
     /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>

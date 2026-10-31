@@ -12,30 +12,47 @@ public sealed class FlightAdvance(LegCommander legs, TimeProvider time) : Backgr
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(1);
 
+    private readonly TaskCompletionSource _firstSweep = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes once the sweep at start is over (it ran, failed, or the node stopped). A test node awaits it before it hands out
+    /// its state, so that sweep never runs against a test's: on CI it told the keeper of the Opus count that its node ran no session
+    /// after the test had taken a slot, and freed it (AdmissionFleetTests on windows, #546's run 41183059493).
+    /// </summary>
+    public Task FirstSweep => _firstSweep.Task;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         // The first sweep is at node start, not a minute on: a flight an update left with a head no review read is taken at once.
         var first = true;
-        while (!stopping.IsCancellationRequested)
+        try
         {
-            try
+            while (!stopping.IsCancellationRequested)
             {
-                if (!first)
+                try
                 {
-                    await Task.Delay(Interval, time, stopping);
+                    if (!first)
+                    {
+                        await Task.Delay(Interval, time, stopping);
+                    }
+                    first = false;
+                    await legs.AdvanceAllAsync(stopping);
                 }
-                first = false;
-                await legs.AdvanceAllAsync(stopping);
+                catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // A sweep that failed once is tried again a minute later: a flight that never advances is the stall itself.
+                    await Error.WriteLineAsync($"flight advance: one sweep failed, sweeping again: {ex.Message}");
+                }
+                _firstSweep.TrySetResult();
             }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                // A sweep that failed once is tried again a minute later: a flight that never advances is the stall itself.
-                await Error.WriteLineAsync($"flight advance: one sweep failed, sweeping again: {ex.Message}");
-            }
+        }
+        finally
+        {
+            _firstSweep.TrySetResult();
         }
     }
 }

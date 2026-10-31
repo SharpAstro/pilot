@@ -144,7 +144,14 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
         }
 
         var args = ResumeArguments(request);
-        var run = await ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
+        var run = await RunResumeAsync(args, request, cancellationToken);
+        for (var attempt = 1; run.ExitCode != 0 && IsTransientConfigRead(run.Output + run.Error) && attempt <= ConfigRetries; attempt++)
+        {
+            // claude read ~/.claude.json while something else was writing it: the session is fine, so wait and ask again
+            // rather than let the caller take up another session for the role (#542).
+            await ConfigRetryDelay(ConfigRetryWait, cancellationToken);
+            run = await RunResumeAsync(args, request, cancellationToken);
+        }
         var job = Backgrounded().Match(run.Output);
         if (run.ExitCode != 0 || !job.Success)
         {
@@ -184,6 +191,25 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
             await Task.Delay(Step, cancellationToken);
         }
     }
+
+    /// <summary>How many times a resume refused for a transient read of the config file is asked again.</summary>
+    public int ConfigRetries { get; init; } = 4;
+
+    /// <summary>How long between those tries.</summary>
+    public TimeSpan ConfigRetryWait { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>The wait between tries; a test replaces it so it does not sleep.</summary>
+    public Func<TimeSpan, CancellationToken, Task> ConfigRetryDelay { get; init; } = Task.Delay;
+
+    /// <summary>Runs <c>claude --bg --resume</c>; a test overrides it to give the output it wants.</summary>
+    protected virtual Task<ClaudeRun> RunResumeAsync(IReadOnlyList<string> args, ResumeRequest request, CancellationToken cancellationToken) =>
+        ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
+
+    /// <summary>Whether claude's output says it read its config file (~/.claude.json) mid-write: corrupted, a JSON parse error, an unexpected end.</summary>
+    public static bool IsTransientConfigRead(string output) =>
+        output.Contains("corrupted", StringComparison.OrdinalIgnoreCase)
+        || output.Contains("JSON Parse error", StringComparison.OrdinalIgnoreCase)
+        || output.Contains("Unexpected EOF", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string> ListOrEmptyAsync(CancellationToken cancellationToken)
     {

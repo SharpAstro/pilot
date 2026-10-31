@@ -82,6 +82,15 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         }
     }
 
+    /// <summary><c>Opus 2/3</c> as the node said it (<see cref="AdmissionRow.Line"/>); null when it said none.</summary>
+    public string? OpusLine => Flights.Admission?.Line();
+
+    /// <summary>The flights waiting for admission and why, priority ones first, then in the order they formed; a stale flight's last known wait is not one.</summary>
+    public IReadOnlyList<(FlightLine Line, string Why)> QueueLines =>
+        [.. Flights.Lines.Where(l => l.Stale is null && l.Queued is not null)
+            .OrderByDescending(l => l.PriorityMark is not null).ThenBy(l => l.Row.CreatedAt)
+            .Select(l => (l, l.Queued!))];
+
     /// <summary>Whether anything is flying or waits: false is the quiet page.</summary>
     public bool Quiet => Flying == "Nothing is flying" && Waiting == "Nothing waits on you";
 
@@ -209,8 +218,35 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
-    /// <summary>Runs a flight's verb on its node: the failed move's Retry move. Null (a snapshot has no node) draws no button.</summary>
-    public Action<FlightAction>? OnAction { get; set; }
+    /// <summary>
+    /// Runs a flight's verb on its node (the failed move's Retry move) and answers with the node's refusal in its words, or null when it took it.
+    /// Null (a snapshot has no node) draws no button.
+    /// </summary>
+    public Func<FlightAction, Task<string?>>? OnAction { get; set; }
+
+    /// <summary>What a press of a flight's button is doing: the Flights page's, shared by the chrome, so Retry move reads the same on both pages.</summary>
+    internal Presses Presses { get; set; } = new();
+
+    /// <summary>Says what the last Retry came to, in the page's bar (the Flights page's <c>Say</c>).</summary>
+    public Action<string>? Say { get; set; }
+
+    // A Retry move pressed here: working at once on its button, then the outcome said where it was pressed and in the bar.
+    private void Retry(FlightLine line, FlightAction action)
+    {
+        if (OnAction is not { } send || Presses.PendingOf(line.Code) is not null)
+        {
+            return;
+        }
+        Say?.Invoke($"{action.Label}…");
+        _ = PressedAsync();
+
+        async Task PressedAsync()
+        {
+            var refused = await Presses.PressAsync(line.Code, "home:" + MoveFailureBand.ActionId(line.Code), _ => send(action), say: why => $"refused: {action.Label}: {why}");
+            Say?.Invoke(refused ?? $"ok: {action.Label}");
+            Presses.Changed?.Invoke();
+        }
+    }
 
     /// <summary>Whether this user may command a node's flights (its own, or one it holds a grant for); null: every row. The Flights page's, set by the chrome.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
@@ -265,6 +301,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }
         blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).Selectable().RowH(28f));
         blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).Selectable().RowH(28f));
+        Queue(blocks, screen);
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         MoveFailures(blocks, screen);
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
@@ -302,11 +339,45 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }
     }
 
+    // The Opus count and the flights waiting for admission, each a row that opens the flight: its words end in an ellipsis where the
+    // page is narrower than they are, with the whole text on hover. Nothing is drawn for a node that says no count and has no queue.
+    private void Queue(List<Layout.Node> blocks, HomeScreen screen)
+    {
+        var queue = screen.QueueLines;
+        if (screen.Flights.Admission is null && queue.Count == 0)
+        {
+            return;
+        }
+        blocks.Add(Layout.Builder.Spacer().RowH(14f));
+        blocks.Add(Layout.Builder.Text("Queue", 13f, Dim).Selectable().RowH(22f));
+        if (screen.OpusLine is { } opus)
+        {
+            blocks.Add(Layout.Builder.Text(opus, 13f, screen.Flights.Admission?.PeersNotCounted is null ? Palette.Current.Body : Ring).WithTooltip(screen.Flights.Admission?.PeersNotCounted is { } why ? $"{opus}\n{why}" : opus).Selectable().RowH(22f));
+        }
+        if (queue.Count == 0)
+        {
+            blocks.Add(Layout.Builder.Text("no flight waits for a slot", 12f, Dim).Selectable().RowH(22f));
+            return;
+        }
+        foreach (var (line, why) in queue.Take(HomeScreen.MaxChips))
+        {
+            var text = $"{(line.PriorityMark is null ? "" : line.PriorityMark + " · ")}{line.Code} · {why}";
+            blocks.Add(Layout.Builder.Text(text, 13f, Palette.Current.Body)
+                .WithTooltip($"{text}\n{line.Title}")
+                .Follows(new HitResult.ButtonHit($"home:queued:{line.Code}"), _ => OnFlight?.Invoke(line))
+                .RowH(22f));
+        }
+        if (queue.Count > HomeScreen.MaxChips)
+        {
+            blocks.Add(Layout.Builder.Text($"and {queue.Count - HomeScreen.MaxChips} more on the Flights page", 12f, Dim).RowH(22f));
+        }
+    }
+
     // The flights whose move failed, each as the red band the Flights page shows (one component): its reason wrapped, and Retry move.
     private void MoveFailures(List<Layout.Node> blocks, HomeScreen screen)
     {
         var bands = MoveFailureBand.All<TSurface>(screen.Flights.Lines, Palette.Current,
-            line => OnAction is { } act && CanSteer?.Invoke(line.Node) != false ? act : null, "home:").ToList();
+            line => OnAction is not null && CanSteer?.Invoke(line.Node) != false ? action => Retry(line, action) : null, "home:", Presses).ToList();
         if (bands.Count == 0)
         {
             return;

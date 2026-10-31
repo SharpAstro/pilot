@@ -54,6 +54,7 @@ internal sealed partial class FlightsView<TSurface>
         _detailScroll.AtomOffset = 0;
         // A leg link that never resolved must not scroll the next page opened.
         _revealLeg = null;
+        OnSpend?.Invoke(code);
     }
 
     public void CloseDetail()
@@ -176,6 +177,10 @@ internal sealed partial class FlightsView<TSurface>
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto().Selectable());
         }
+        if (line.PriorityMark is { } priorityMark)
+        {
+            facts.Add(Layout.Builder.Text($"{priorityMark}: skips the Opus cap and the repo hold", 12f, Held).WAuto().Selectable());
+        }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
@@ -208,7 +213,7 @@ internal sealed partial class FlightsView<TSurface>
         [
             FlowRow.Of(32f, 10f, head),
         ];
-        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line)) is { } band)
+        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line), presses: Presses) is { } band)
         {
             page.Add(band);
         }
@@ -220,7 +225,8 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(Layout.Builder.WrapH([.. buttons]).WithGap(10f).WithLineGap(6f).WStar());
         }
-        // A why asked for sits under the buttons it was asked by.
+        // What the node said to the last of them, when it refused, and a why asked for, sit under the buttons they were asked by.
+        page.AddRange(RefusalOf(line));
         page.AddRange(WhyRow(line));
         if (line.StaleMark is { } stale)
         {
@@ -245,6 +251,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             scrolled.Add(checklist);
         }
+        if (detail.Spend is { } spend)
+        {
+            scrolled.Add(SpendBlock(spend));
+        }
         if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
         {
             scrolled.Add(attachments);
@@ -255,6 +265,16 @@ internal sealed partial class FlightsView<TSurface>
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    // What the flight has spent so far, said with its timeframe: the total, then each leg and each of its rounds, indented.
+    private Layout.Node SpendBlock(SpendFlightReport spend)
+    {
+        var lines = SpendText.FlightLines(spend);
+        return Layout.Builder.VStack(
+                [Label("spend").RowH(20f),
+                .. lines.Select(l => Layout.Builder.Text(l.Text, l.Indent == 0 ? 13f : 12f, l.Indent == 0 ? Bright : Dim).Selectable().Whole(l.Text).RowH(20f).Pad(l.Indent switch { 0 => 0f, 1 => 16f, _ => 32f }, 0f))])
+            .WithGap(0f);
     }
 
     // The PR's state in the palette's own colours, the word always beside it: green while it is open for review, amber in the queue, blue once merged, dim as a draft.
@@ -269,8 +289,10 @@ internal sealed partial class FlightsView<TSurface>
         // A label long past a narrow page (a leg's name in "Redo leg ...") ends in an ellipsis, with the whole of it on hover.
         var label = CardsView<TSurface>.Ellipsize(action.Label, ActionFits);
         var whole = label == action.Label ? null : action.Label;
+        // Pressed, the node not yet answered: the button reads "…" and takes no second press, as the cards' do.
+        Layout.Node Idle() => whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole);
         return line.Stale is null
-            ? whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole)
+            ? Presses.Button(line.Code, id, Idle, pressed => CardsView<TSurface>.Dead(pressed ? $"{label} …" : label))
             : CardsView<TSurface>.Dead(label).WithTooltip(whole is null ? StaleWhy(line) : $"{whole}: {StaleWhy(line)}");
     }
 
@@ -379,11 +401,14 @@ internal sealed partial class FlightsView<TSurface>
         else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
         {
             yield return WrappedProse.Of("not planned yet: no planner is running", 12f, Held).WAuto();
-            if (CanCommand && OnAction is { } act)
+            if (CanCommand && OnAction is not null)
             {
+                var planHit = $"flight:{line.Code}:plan";
                 yield return line.Stale is null
-                    ? Pill("Plan it", $"flight:{line.Code}:plan", () =>
-                        act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }))
+                    ? Presses.Button(line.Code, planHit,
+                        () => Pill("Plan it", planHit, () =>
+                            _ = Run(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }, line.Code, planHit)),
+                        pressed => CardsView<TSurface>.Dead(pressed ? "Plan it …" : "Plan it"))
                     : CardsView<TSurface>.Dead("Plan it").WithTooltip(StaleWhy(line));
             }
         }

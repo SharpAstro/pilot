@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -39,6 +40,12 @@ public sealed partial class LegCommander(
 
     /// <summary>What holds a start while the 5-hour window is spent; one gate for every session the node starts by itself, shared with the watchtower and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
+
+    /// <summary>Whether a session may start: the Opus cap, the one-flight-per-repo mode and priority flights, asked beside <see cref="Gate"/>.</summary>
+    public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
+
+    /// <summary>The token ledger the waste rules are told what the node knows (a go-around's reason, a replan, a base-merge re-review, a failed start); null keeps none.</summary>
+    public SpendLedger? Ledger { get; set; }
 
     /// <summary>Which sibling clones a plane's local build compiles against are behind their origin; a test passes its own.</summary>
     public SiblingWatch Siblings { get; init; } = new(git, time);
@@ -115,6 +122,12 @@ public sealed partial class LegCommander(
         var launches = _launched.Value = [];
         // Asked of the peers before the lock is taken: a slow one holds up this command, not the others.
         var peerRefusal = await PeerRefusalAsync(command, cancellationToken);
+        // The flight's issue label for admission, read at the start and without the lock too.
+        if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview
+            && state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is { } starting)
+        {
+            await PrimeAsync(starting, cancellationToken);
+        }
         await _one.WaitAsync(cancellationToken);
         string? error = null;
         string? made = null;
@@ -514,10 +527,28 @@ public sealed partial class LegCommander(
     /// <summary>Every flying flight's next step, where it has one: what the node's sweep runs every minute.</summary>
     public async Task AdvanceAllAsync(CancellationToken cancellationToken)
     {
+        // The peers are read and the node that keeps the Opus count is told what this one runs, so a slot freed anywhere is seen before the starts below ask.
+        try
+        {
+            await Slots.SweepAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A peer that cannot be read is no reason to hold this node's own flights: its starts say so as they ask.
+        }
         // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
-        foreach (var code in _plannersWaiting.Keys.ToList())
+        // Also a planner admission holds (queued on its flight, as a node restarted meanwhile has lost its memory of it), in the order admission gives.
+        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null } && state.Legs(f.Code).Length == 0))
+        {
+            _plannersWaiting.TryAdd(queued.Code, true);
+        }
+        foreach (var code in Slots.Order(_plannersWaiting.Keys).ToList())
         {
             _plannersWaiting.TryRemove(code, out _);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { } asking)
+            {
+                await PrimeAsync(asking, cancellationToken);
+            }
             if (Gate.Check(Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == code)?.Repo ?? "")) is null)
             {
                 await RunAsync(new CommandRequest { Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(code), Who = LegWatch.Who }, cancellationToken);
@@ -527,7 +558,10 @@ public sealed partial class LegCommander(
                 _plannersWaiting[code] = true;
             }
         }
-        foreach (var flight in state.Flights().Where(f => f.State == FlightState.Flying))
+        // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
+        var flying = state.Flights().Where(f => f.State == FlightState.Flying).ToList();
+        var queuedFirst = Slots.Order(flying.Where(f => f.Queued is not null || state.Legs(f.Code).Any(l => l.Queued is not null)).Select(f => f.Code));
+        foreach (var flight in flying.OrderBy(f => queuedFirst.ToList().IndexOf(f.Code) is var at && at >= 0 ? at : int.MaxValue))
         {
             await AdvanceAsync(flight, cancellationToken);
         }
@@ -566,12 +600,22 @@ public sealed partial class LegCommander(
             }
             return;
         }
+        if (step.Verb is Verbs.StartLeg or Verbs.StartReview)
+        {
+            await PrimeAsync(current, cancellationToken);
+        }
         var label = step.Verb == Verbs.StartLeg ? $"start {step.Target.Split('/')[^1]}" : step.Verb == Verbs.StartReview ? "start its reviewer" : "open its PR";
-        if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}"))
+        if (Gate.Hold($"{step.Verb} {step.Target}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to {label}", Models.WeekPaceFor(current.Repo)))
         {
             return;
         }
         if (_rung.TryGetValue(current.Code, out var failed) && failed == $"failed {step.Target}")
+        {
+            return;
+        }
+        // An open that conflicted waits on the watchtower's pr-conflicts card: once that card closes (the base merged in and pushed), the
+        // sweep opens the PR itself, as no ring offers it.
+        if (step.Verb == Verbs.OpenPr && state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(current.Code)))
         {
             return;
         }
@@ -593,6 +637,12 @@ public sealed partial class LegCommander(
         // web-header, DE1 2026-10-25).
         if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is not { State: FlightState.Flying } now
             || Due(now)?.Step is not { } still || still.Verb != step.Verb || still.Target != step.Target)
+        {
+            return;
+        }
+        // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
+        // sweep opens the PR once that card closes.
+        if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
             return;
         }
@@ -676,7 +726,7 @@ public sealed partial class LegCommander(
         {
             return false;
         }
-        if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer"))
+        if (Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(current.Code)}", Models.StartLimitFor(current.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(current.Code), $"{current.Code} waits to start its reviewer", Models.WeekPaceFor(current.Repo)))
         {
             return false;
         }
@@ -975,7 +1025,7 @@ public sealed partial class LegCommander(
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 entering();
-                return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low"), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low", Reason: SessionStartReasons.LegValidator), CancellationToken.None);
             },
             job =>
             {
@@ -991,10 +1041,55 @@ public sealed partial class LegCommander(
             });
     }
 
+    /// <summary>The card that says a leg's rounds have spent more than the alert share of the 7-day window.</summary>
+    public const string SpendAlertKind = "spend-alert";
+
+    // The rounds already rung for, so a worker started again in one round says it once.
+    private readonly HashSet<string> _spendRung = new(StringComparer.Ordinal);
+
+    // Before a leg's round starts: its ledger spend in the 7-day window, past the alert share, rings once with tokens, share and model.
+    // It rings and holds nothing; the round goes ahead.
+    internal void RingSpendAlert(FlightRow flight, LegRow leg, int round)
+    {
+        if (Ledger?.LegInWeek(flight.Code, leg.Name, time.GetUtcNow(), state.Usage()) is not { } spent || spent.Share <= Models.SpendAlert
+            || !_spendRung.Add($"{flight.Code}/{leg.Name}#{round}"))
+        {
+            return;
+        }
+        var how = string.Join(", ", new[] { spent.Model, spent.Effort }.Where(s => !string.IsNullOrEmpty(s)));
+        state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"round {round + 1} has its own", SpendAlertKind);
+        state.RaiseCard(CardBin.Ring, SpendAlertKind, Verbs.LegTarget(flight.Code, leg.Name),
+            string.Create(CultureInfo.InvariantCulture, $"{flight.Code}/{leg.Name} has spent {spent.Tokens:N0} tokens, {spent.Share:0.#} % of the 7-day window, before round {round + 1}"),
+            string.Create(CultureInfo.InvariantCulture, $"The leg's rounds so far went past the alert share ({Models.SpendAlert:0.#} %), latest on {(how.Length > 0 ? how : "an unknown model")}. The share is of the weighted tokens this machine's ledger holds for the 7-day window, not of the account's weekly figure, so early in a window one leg is a large share. The next round still starts; stop the flight by hand if it should not."));
+    }
+
+    // A session the node gives up on while its leg, review or plan still wants what it was for: what it spent bought nothing kept.
+    // Marked where it is replaced, not where it is first seen ended, as an ended session is resumed or nudged and may yet finish.
+    private void GaveUp(string flight, SessionRow? row, string how)
+    {
+        if (Ledger is null || row is null)
+        {
+            return;
+        }
+        // A resumed session went on under a new id, and each id holds part of its spend.
+        foreach (var id in (row.EarlierSessionIds ?? []).Append(row.SessionId))
+        {
+            Ledger.Mark(new WasteMark(WasteKinds.NoResult, flight, null, null, id, 0, how, time.GetUtcNow()));
+        }
+    }
+
     private void StartWorker(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs)
     {
+        RingSpendAlert(flight, leg, leg.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
+        // The Opus cap and the repo mode: the leg stays planned with its why on the row, and the sweep asks again. Its validator, still
+        // ending, does not count against it.
+        var model = WorkerModel(leg);
+        if (AdmissionWaits(AdmissionRole.Worker, model, flight, leg, leg.Validator is { } validator ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { validator } : null))
+        {
+            return;
+        }
         // A leg that flew before and was held for a package is flown again from what the plane holds, as a go-around is.
         var resumed = leg.Worker is not null && leg.Report?.StartsWith("resumed:", StringComparison.Ordinal) == true ? leg.Report : null;
         // A fresh worker steps up the ladder by attempt (PIL402). Only a fresh session does: a nudge, Resume or wake keeps the
@@ -1016,7 +1111,7 @@ public sealed partial class LegCommander(
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
                 var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
             },
             job =>
             {
@@ -1024,12 +1119,13 @@ public sealed partial class LegCommander(
                 {
                     return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
                 }
-                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null });
+                state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), Report = resumed, Wait = null, Queued = null });
                 state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
                 // A ring that this step could not be taken by itself is moot once it is.
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
                 return null;
-            });
+            },
+            model: model);
     }
 
     /// <summary>
@@ -1070,7 +1166,7 @@ public sealed partial class LegCommander(
         {
             // Held by a spent 5-hour window, the leg stays planned and validated: the sweep starts its worker once it resets.
             if (flight.State == FlightState.Flying
-                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}")
+                && !Gate.Hold($"{Verbs.StartLeg} {target}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start {leg.Name}", Models.WeekPaceFor(flight.Repo))
                 && state.Legs(flight.Code).All(l => l.State != LegState.Flying))
             {
                 StartWorker(flight, done, state.Legs(flight.Code));
@@ -1438,7 +1534,15 @@ public sealed partial class LegCommander(
             seen = leg;
             try
             {
-                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                if (run.StoppedSaturated)
+                {
+                    // Stopped by its budget on a machine that was saturated for most of the run: run once more, as a fresh job.
+                    var again = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                    run = again.StoppedByBudget
+                        ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
+                        : again;
+                }
             }
             catch (Exception ex)
             {
@@ -1705,10 +1809,18 @@ public sealed partial class LegCommander(
 
         if (leg.WorkerJob is { } job)
         {
+            // A worker replaced while its leg flies never finished it; one whose leg is done or failed said how it ended.
+            if (leg.State == LegState.Flying)
+            {
+                GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == job), "worker given up before it finished its leg");
+            }
             await StopQuietly(job, cancellationToken);
         }
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
+        // What the waste rules need: the new worker flies this round, for this reason.
+        Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
+        RingSpendAlert(flight, leg, next.GoArounds);
         var worker = WorkerName(flight, leg);
         var target = Verbs.LegTarget(flight.Code, leg.Name);
         var legs = state.Legs(flight.Code);
@@ -1722,7 +1834,7 @@ public sealed partial class LegCommander(
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: UpdateInstruction, pilotMd: await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
             },
             started =>
             {
@@ -1823,6 +1935,10 @@ public sealed partial class LegCommander(
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
+        if (DroppedForConflict(flight.Code, pr.Head))
+        {
+            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
+        }
         if (checks?.Status == ChoiceStatus.Failing)
         {
             throw new FlightException($"#{pr.Number}'s checks fail: it merges once they pass");
@@ -1855,9 +1971,20 @@ public sealed partial class LegCommander(
         }
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
-        return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, pr.Head, method, cancellationToken))
-            ? (false, QueuedLine(flight.Code), MergeWays.Queued)
-            : (true, null, null);
+        var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
+        try
+        {
+            return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
+                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
+                : (true, null, null);
+        }
+        catch (FlightException ex) when (!string.Equals(queueHead, pr.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
+            // merge waits for the checks there, as for any head whose checks run.
+            RaiseReadyAtLaid(flight, queueHead, ex.Message);
+            return await ArmAsync(flight, pr with { Head = queueHead }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
+        }
     }
 
     /// <summary>What an armed merge says while every check shown is green and one GitHub requires has yet to be created.</summary>
@@ -2054,10 +2181,15 @@ public sealed partial class LegCommander(
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
             // The line says how far the checks are, or where in the queue: the choice carries it too, for a client to put on the button.
             note ??= way == MergeWays.Queued ? System.Text.RegularExpressions.Regex.Match(line ?? "", @"position \d+") is { Success: true } place ? place.Value : null : ArmedProgress.Read(line);
+            // A card says what is set on GitHub: armed only where GitHub's auto-merge is, otherwise the node waits and then queues or merges.
+            var byGitHub = flight?.MergeWhenGreen?.ElementAtOrDefault(2) == ArmedByGitHub;
             state.UpdateCard(card.Id,
-                way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue" : $"{code}'s PR #{flight?.PullRequest} merges when its checks pass",
+                way == MergeWays.Queued ? $"{code}'s PR #{flight?.PullRequest} is in the merge queue"
+                    : byGitHub ? $"{code}'s PR #{flight?.PullRequest} merges when its checks pass" : $"{code}'s PR #{flight?.PullRequest} waits for its checks, then the node queues it",
                 line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
-                way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not." : $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not.");
+                way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
+                    : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
+                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.");
         }
     }
 
@@ -2203,7 +2335,10 @@ public sealed partial class LegCommander(
         // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
         // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
         using var call = Calling(flight.Code, "having its PR opened");
-        var (repaired, pr, mergedBase) = await OffLockAsync(flight, async () =>
+        (FlightRow repaired, PullRequest pr, bool mergedBase) opened;
+        try
+        {
+        opened = await OffLockAsync(flight, async () =>
         {
             // A base that is not a branch on the remote is repaired first: the merge it takes must be what is pushed.
             // The remote's commits are taken first, so the repair's merge is made on the whole branch.
@@ -2247,7 +2382,18 @@ public sealed partial class LegCommander(
             }
             return (repaired, pr, mergedBase);
         });
+        }
+        catch (FlightException ex) when (IsConflict(ex.Message))
+        {
+            // A base that conflicts is the watchtower's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
+            // the same pr-conflicts card the update paths raise, not a ring that the flight could not open its PR by itself.
+            await ConflictsAsync(flight.Code, ex.Message, cancellationToken);
+            throw;
+        }
+        var (repaired, pr, mergedBase) = opened;
         Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
+        // The PR opened, so a conflict that held its opening is resolved.
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
         if (mergedBase)
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{repaired.Base} merged into {flight.Code}'s plane; a new PR opens", FlightCommander.MergedUnderLegKind);
@@ -2429,12 +2575,33 @@ public sealed partial class LegCommander(
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
         // Asked for while the 5-hour window is spent: it waits, and the sweep starts it once the window has reset.
-        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner"))
+        if (Gate.Hold($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner", Models.WeekPaceFor(flight.Repo)))
+        {
+            _plannersWaiting[flight.Code] = true;
+            return;
+        }
+        // The Opus cap and the repo mode: queued on the flight, and the sweep starts it once admitted.
+        var plannerModel = Models.Model(RoleModels.Planner);
+        if (AdmissionWaits(AdmissionRole.Planner, plannerModel, flight, null, replacing ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) { planner } : null))
         {
             _plannersWaiting[flight.Code] = true;
             return;
         }
         var subject = Verbs.FlightTarget(flight.Code);
+        if (replacing)
+        {
+            // The plan of the planner before this one is thrown away.
+            Ledger?.Mark(new WasteMark(WasteKinds.Replanned, flight.Code, null, null, null, 0, "replanned", time.GetUtcNow()));
+        }
+        else if (state.Legs(flight.Code).Length == 0)
+        {
+            // A planner before this one that ended with no legs and no planned card since it started is given up.
+            foreach (var gone in state.Sessions().Where(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase) && s.State is SessionState.Ended or SessionState.Failed
+                && !state.Cards().Any(c => c.Kind == PlannedKind && c.Subject == subject && c.At >= s.StartedAt)))
+            {
+                GaveUp(flight.Code, gone, "planner given up without planning any legs");
+            }
+        }
         Launching(PlanKey(flight.Code), $"{planner}, to plan {flight.Code}'s legs", subject,
             new CardChoice { Label = "Plan again", Verb = Verbs.PlanFlight, Target = subject },
             async entering =>
@@ -2442,7 +2609,7 @@ public sealed partial class LegCommander(
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner), Reason: SessionStartReasons.Planner), CancellationToken.None);
             },
             job =>
             {
@@ -2455,7 +2622,7 @@ public sealed partial class LegCommander(
                 state.RaiseCard(CardBin.Handled, "planner-started", subject, $"Started {planner} to plan {flight.Code}'s legs");
                 return null;
             },
-            replacing: replacing);
+            replacing: replacing, model: plannerModel);
     }
 
     // The flights whose planner a spent window holds, until the sweep starts it; kept in memory, so a node restarted meanwhile
@@ -2532,7 +2699,7 @@ public sealed partial class LegCommander(
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
-            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}");
+            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}; its review starts by itself once they land");
         }
         // The person's word at a held loop allows the round, recorded once the refusals above have passed.
         if (loopHeld)
@@ -2546,17 +2713,26 @@ public sealed partial class LegCommander(
         }
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
-        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer");
+        var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
         if (flight.Review?.ReviewerJob is { } last)
         {
+            // One still reviewing is replaced without its verdict.
+            if (flight.Review.State == ReviewState.Reviewing)
+            {
+                GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
+            }
             await StopQuietly(last, cancellationToken);
         }
-        if (held)
+        // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being
+        // replaced does not count against its own successor.
+        var reviewModel = Models.ReviewerModel(ReviewDepth.Standard);
+        var waiting = !held && AdmissionWaits(AdmissionRole.Reviewer, reviewModel, flight, null, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ReviewerName(flight) });
+        if (held || waiting)
         {
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review waits for the 5-hour window", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), held ? "its review waits for the 5-hour window" : "its review waits for a slot", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
             }
             return;
         }
@@ -2565,6 +2741,7 @@ public sealed partial class LegCommander(
         var subject = Verbs.FlightTarget(flight.Code);
         var before = flight.Review?.ReviewerJob;
         ReviewPlan? plan = null;
+        var baseMergeOnly = false;
         string? model = null;
         Launching(ReviewKey(flight.Code), $"{reviewer}, to review {flight.Code}", subject,
             new CardChoice { Label = "Start review", Verb = Verbs.StartReview, Target = subject },
@@ -2586,10 +2763,17 @@ public sealed partial class LegCommander(
                 // GitHub can still report the head before a push for a moment, so it is only the fallback.
                 var planeHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
                 reviewedHead = planeHead.Ok && planeHead.Output.Trim() is { Length: > 0 } sha ? sha : await _marks.HeadAsync(flight, CancellationToken.None);
+                // Only a base merge since the last review: no commit of the leg's own between the two heads (first parent only, or the base's commits the merge brought in count as own).
+                if (flight.Review?.ReviewedHead is { Length: > 0 } was && reviewedHead is { Length: > 0 } now && was != now
+                    && (await git.RunAsync(["merge-base", "--is-ancestor", was, now], flight.Worktree, CancellationToken.None)).Ok)
+                {
+                    var own = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{was}..{now}"], flight.Worktree, CancellationToken.None);
+                    baseMergeOnly = own.Ok && own.Output.Trim() == "0";
+                }
                 // A re-review reads only what changed, on the leg's model; Opus is for the first review of a large diff (if the setting lets it).
                 model = Models.ReviewerModelFor(plan.Depth, (flight.ReviewRounds?.Length ?? 0) + 1, legs.OrderBy(l => l.Order).LastOrDefault()?.Model);
                 entering();
-                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth), Reason: SessionStartReasons.FlightReview), CancellationToken.None);
             },
             job =>
             {
@@ -2609,6 +2793,10 @@ public sealed partial class LegCommander(
                     },
                 });
                 state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, ReviewLoopKind, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                if (baseMergeOnly)
+                {
+                    Ledger?.Mark(new WasteMark(WasteKinds.BaseMergeReview, flight.Code, null, null, null, 0, "head changed only by a base merge", time.GetUtcNow()));
+                }
                 return null;
             },
             after: async () =>
@@ -2616,7 +2804,8 @@ public sealed partial class LegCommander(
                 await MarkReadyForReviewAsync(flight);
                 await _marks.ApplyAsync(flight.Code, CancellationToken.None);
             },
-            quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null);
+            quietFailure: quiet ? why => { ReviewNotStarted(flight.Code, $"the reviewer did not start: {why}"); return Task.CompletedTask; } : null,
+            model: reviewModel);
     }
 
     /// <summary>The last round and what changed since its head, when that head is still in the plane; null reads the whole diff.</summary>
@@ -2869,7 +3058,7 @@ public sealed partial class LegCommander(
         }
         var number = flight.PullRequest is { } n ? $"PR #{n}" : "branch";
         state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
-            $"{why}. The plane is {flight.Worktree}: {ConflictBrief(why)}, then `pilot flight review {code}`. {ResolveConflict} only if the conflict is real work, not a merge.",
+            $"{why}. The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} only if the conflict is real work, not a merge.",
             choices, link: flight.PullRequestUrl,
             summary: $"The {number} of {code} conflicts with its base. The watchtower merges the base into the plane and resolves it; {ResolveConflict} has a worker do it, for real work only.");
         return Task.FromResult<string?>(null);
@@ -3221,7 +3410,7 @@ public sealed partial class LegCommander(
             if (!merge.Ok)
             {
                 await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
-                throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and merging {remoteBase} into its plane conflicts: {merge.Why}. Merge it by hand, then open the PR");
+                throw new FlightException($"{flight.Code}'s base {flight.Base} is not a branch on the remote, and merging {remoteBase} into its plane conflicts ({merge.Why}). Merge it by hand, then open the PR");
             }
         }
         // The caller records the new base, under the lock: this runs with it let go.
@@ -3306,7 +3495,7 @@ public sealed partial class LegCommander(
     {
         try
         {
-            await workers.StopAsync(job, cancellationToken);
+            await workers.StopAsync(job, SessionEndReasons.Finished, "node", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

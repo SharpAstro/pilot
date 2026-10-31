@@ -434,6 +434,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
+            if (review.Fixer is null)
+            {
+                reviews.CloseCardsPastHead(review, pr.Head);
+            }
             var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
             if (!started.Ok)
             {
@@ -505,6 +509,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 return Outcome.Kept;
             }
             return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
+        }
+        if (noFixer is not null && review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null)
+        {
+            reviews.RingNoFixer(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number), review, noFixer);
         }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
             : review.Verdict == "changes" ? (noFixer is null ? "its review asks for changes, and its fixer is on it" : $"its review asks for changes, and no fixer starts: {noFixer}")

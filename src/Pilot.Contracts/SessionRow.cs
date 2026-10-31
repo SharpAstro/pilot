@@ -157,6 +157,22 @@ public sealed record SessionRow
     /// </summary>
     public string? RemoteControlUrl { get; init; }
 
+    /// <summary>What started it, from the node's ledger (<see cref="SessionStartReasons"/>); null for a session the node did not launch.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StartReason { get; init; }
+
+    /// <summary>Why it ended, from the node's ledger (<see cref="SessionEndReasons"/>); null while it runs, and for a session the node did not launch.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EndReason { get; init; }
+
+    /// <summary>When it ended, from the node's ledger; null while it runs.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? EndedAt { get; init; }
+
+    /// <summary>Its wall time in seconds, start to end, once it ended (its cost beside <see cref="SpendWeighted"/>); null while it runs.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? WallSeconds { get; init; }
+
     /// <summary>When it started: the agents row's <c>startedAt</c> (epoch milliseconds there).</summary>
     public required DateTimeOffset StartedAt { get; init; }
 }
