@@ -824,6 +824,11 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 
 ## The GUI
 
+A button that asks the node something is made through `Presses` (`Pilot.Ui/Presses.cs`): it reads its working label on the frame it
+is pressed, takes no second press, then shows the taking at once or the refusal in the node's words where it was pressed. A test
+(`ButtonFeedbackTests`) arranges every page and fails on a node-bound button made without it; the buttons it lists as local-only
+(navigation, folds, links) each say why they need none.
+
 `pilot-gui` flies a flight on its own. The rail has **Sessions** (every Claude session on the machine: model, effort,
 context against its window, last response, state, spend, usage in the header; a bar to say something to the selected
 one) and **Flights**. On Flights the selected flight shows its legs (steps, go-arounds), its review, its PR and

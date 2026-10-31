@@ -218,8 +218,35 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
-    /// <summary>Runs a flight's verb on its node: the failed move's Retry move. Null (a snapshot has no node) draws no button.</summary>
-    public Action<FlightAction>? OnAction { get; set; }
+    /// <summary>
+    /// Runs a flight's verb on its node (the failed move's Retry move) and answers with the node's refusal in its words, or null when it took it.
+    /// Null (a snapshot has no node) draws no button.
+    /// </summary>
+    public Func<FlightAction, Task<string?>>? OnAction { get; set; }
+
+    /// <summary>What a press of a flight's button is doing: the Flights page's, shared by the chrome, so Retry move reads the same on both pages.</summary>
+    internal Presses Presses { get; set; } = new();
+
+    /// <summary>Says what the last Retry came to, in the page's bar (the Flights page's <c>Say</c>).</summary>
+    public Action<string>? Say { get; set; }
+
+    // A Retry move pressed here: working at once on its button, then the outcome said where it was pressed and in the bar.
+    private void Retry(FlightLine line, FlightAction action)
+    {
+        if (OnAction is not { } send || Presses.PendingOf(line.Code) is not null)
+        {
+            return;
+        }
+        Say?.Invoke($"{action.Label}…");
+        _ = PressedAsync();
+
+        async Task PressedAsync()
+        {
+            var refused = await Presses.PressAsync(line.Code, "home:" + MoveFailureBand.ActionId(line.Code), _ => send(action), say: why => $"refused: {action.Label}: {why}");
+            Say?.Invoke(refused ?? $"ok: {action.Label}");
+            Presses.Changed?.Invoke();
+        }
+    }
 
     /// <summary>Whether this user may command a node's flights (its own, or one it holds a grant for); null: every row. The Flights page's, set by the chrome.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
@@ -340,7 +367,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private void MoveFailures(List<Layout.Node> blocks, HomeScreen screen)
     {
         var bands = MoveFailureBand.All<TSurface>(screen.Flights.Lines, Palette.Current,
-            line => OnAction is { } act && CanSteer?.Invoke(line.Node) != false ? act : null, "home:").ToList();
+            line => OnAction is not null && CanSteer?.Invoke(line.Node) != false ? action => Retry(line, action) : null, "home:", Presses).ToList();
         if (bands.Count == 0)
         {
             return;

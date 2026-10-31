@@ -59,6 +59,45 @@ internal static class DashboardCommands
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Running = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// The node's refusal of what it answered, in its words; null when it took it. A press goes through <c>Presses</c>, which says
+    /// working at once and then this, where the button was pressed.
+    /// </summary>
+    public static string? RefusalOf(ResponseEnvelope<Pilot.Contracts.CommandResult> envelope) =>
+        !envelope.Success ? (string.IsNullOrEmpty(envelope.Error) ? "the node gave no reason" : envelope.Error)
+        : envelope.Response is { Ok: false } answer ? (string.IsNullOrEmpty(answer.Error) ? "the node gave no reason" : answer.Error)
+        : null;
+
+    /// <summary>Sends <paramref name="request"/> and returns the node's refusal in its words, or null when it took it; a node that cannot be reached is a refusal too.</summary>
+    public static async Task<string?> AskAsync(NodeClient client, CommandRequest request, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null)
+    {
+        try
+        {
+            var envelope = await client.SendAsync(request, cancellationToken);
+            answered?.Invoke(envelope);
+            return RefusalOf(envelope);
+        }
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>One action's verb on the node, as <see cref="AskAsync"/>: its refusal, or null when it was taken.</summary>
+    public static Task<string?> TryActAsync(NodeClient client, FlightAction action, string who, CancellationToken cancellationToken, Action<ResponseEnvelope<Pilot.Contracts.CommandResult>>? answered = null) =>
+        AskAsync(client, new CommandRequest { Verb = action.Verb, Target = action.Target, Args = action.Args, Who = who }, cancellationToken, answered);
+
+    /// <summary>As <see cref="RunAsync"/>, and whether it came to exit 0, so a refused grant is a refusal and not only text.</summary>
+    public static async Task<(bool Ok, string Said)> TryRunAsync(string line, string[] node, string who, CancellationToken cancellationToken)
+    {
+        var args = CommandLineParser.SplitCommandLine(line).ToList();
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exit = await PilotCommand.RunAsync([.. node, .. args], Environment.CurrentDirectory, output, error, cancellationToken, who);
+        var said = (output.ToString() + error.ToString()).TrimEnd();
+        return (exit == 0, said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}");
+    }
+
+    /// <summary>
     /// The command a card's button sends: <paramref name="verb"/> (<see cref="Verbs.Answer"/> with the choice's number, or
     /// <see cref="Verbs.Dismiss"/>) on <paramref name="card"/>. One builder for the panel's buttons in either host and for the
     /// Pull requests page's Merge and Go around, which press the flight's card, so a PR row says to the node what its card does.
@@ -70,9 +109,11 @@ internal static class DashboardCommands
     public static CommandRequest AnswerRequest(CardRow card, int number, string who) =>
         CardRequest(Verbs.Answer, card, [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], who);
 
-    /// <summary>What <c>pilot review pr</c> sends for <paramref name="pr"/>: a fresh reviewer on it, pinned at its head.</summary>
-    public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) =>
-        new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
+    /// <summary>What a PR's Review sends: <c>pilot review pr</c>, a fresh reviewer pinned at its head, or a flight's own review for a flight's PR.</summary>
+    public static CommandRequest ReviewPrRequest(PullRequestRow pr, string who) => pr.Flight is { } flight
+        // A flight's PR has one review, the flight's own: `pilot review pr` on it is refused, so its Review is `pilot flight review`.
+        ? new() { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight), Args = [], Who = who }
+        : new() { Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(pr.Repo, pr.Number), Args = [], Who = who };
 
     /// <summary>What <c>pilot review fix</c> sends for <paramref name="pr"/>: a fixer on its branch with the review's findings.</summary>
     public static CommandRequest FixPrRequest(PullRequestRow pr, string who) =>

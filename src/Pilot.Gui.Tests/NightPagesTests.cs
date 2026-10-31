@@ -41,7 +41,7 @@ public sealed class NightPagesTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Night.On = true;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Autopilot.On = true;
 
         var sessions = new SessionsScreen(SessionLine.Order(

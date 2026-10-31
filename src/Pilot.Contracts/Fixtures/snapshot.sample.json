@@ -198,6 +198,7 @@
       "ownerName": "xy1-orb204-parser",
       "flight": "ORB204",
       "leg": "parser",
+      "kind": "check",
       "state": "running",
       "step": "Passed Orbit.Lib.Tests.Parser.NestedGroups [12 ms]",
       "error": null,
@@ -226,6 +227,7 @@
       "ownerName": "fix the flaky clock test",
       "flight": null,
       "leg": null,
+      "kind": "run",
       "state": "queued",
       "step": "waiting for a slot: 1 of 1 running",
       "error": null,
@@ -254,6 +256,7 @@
       "ownerName": "xy1-orb204-parser",
       "flight": "ORB204",
       "leg": "parser",
+      "kind": "run",
       "state": "failed",
       "step": "Failed!  - Failed: 2, Passed: 311, Skipped: 0, Total: 313",
       "error": "exit 1",
@@ -282,6 +285,7 @@
       "ownerName": null,
       "flight": null,
       "leg": null,
+      "kind": "run",
       "state": "succeeded",
       "step": "built in 41s",
       "error": null,
@@ -329,6 +333,7 @@
         }
       ],
       "card": "c41",
+      "raised": [],
       "draft": "/home/ada/.local/share/pilot2/reviews/DrawboardLtd/bullclip-backend-2479.json",
       "postingAt": null,
       "postedId": null,
@@ -379,6 +384,462 @@
       "newId": "I398"
     }
   ],"milestones":[{"repo":"pilot","number":3,"title":"v2.1","description":"The Ideas pane v2","dueOn":"2026-11-15T00:00:00+00:00","openIssues":4,"closedIssues":9},{"repo":"pilot","number":1,"title":"Ideas","description":"Ideas noted with pilot idea","dueOn":null,"openIssues":1,"closedIssues":0}],"issues":[{"repo":"pilot","number":412,"title":"Show the job queue on the Flights page","body":"A line under the flights: what runs, what waits.","milestone":"Ideas","updatedAt":"2026-10-18T08:52:10+00:00","age":"1h","author":"ada","url":"https://github.com/example-org/pilot/issues/412","flight":null},{"repo":"pilot","number":430,"title":"Group the Flights page by milestone","body":"","milestone":"v2.1","updatedAt":"2026-10-17T10:00:00+00:00","age":"1d","author":"ada","url":"https://github.com/example-org/pilot/issues/430","flight":"ORB204"},{"repo":"pilot","number":435,"title":"A loose end with no milestone","body":"","milestone":null,"updatedAt":"2026-10-16T10:00:00+00:00","age":"2d","author":"ada","url":"https://github.com/example-org/pilot/issues/435","flight":null}],
+  "spend": {
+    "reports": [
+      {
+        "window": "5h",
+        "from": "2026-10-18T04:41:09+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": false,
+        "messages": 420,
+        "tokens": 4200000,
+        "weighted": 1000000,
+        "flights": [
+          {
+            "key": "TIA1611",
+            "messages": 280,
+            "tokens": 3000000,
+            "weighted": 700000,
+            "share": 70.0
+          },
+          {
+            "key": "ORB204",
+            "messages": 90,
+            "tokens": 800000,
+            "weighted": 200000,
+            "share": 20.0
+          },
+          {
+            "key": "-",
+            "messages": 50,
+            "tokens": 400000,
+            "weighted": 100000,
+            "share": 10.0
+          }
+        ],
+        "roles": [
+          {
+            "key": "worker",
+            "messages": 250,
+            "tokens": 2500000,
+            "weighted": 600000,
+            "share": 60.0
+          },
+          {
+            "key": "reviewer",
+            "messages": 110,
+            "tokens": 1100000,
+            "weighted": 250000,
+            "share": 25.0
+          },
+          {
+            "key": "planner",
+            "messages": 40,
+            "tokens": 400000,
+            "weighted": 100000,
+            "share": 10.0
+          },
+          {
+            "key": "watchtower",
+            "messages": 20,
+            "tokens": 200000,
+            "weighted": 50000,
+            "share": 5.0
+          }
+        ]
+      },
+      {
+        "window": "today",
+        "from": "2026-10-18T00:00:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": false,
+        "messages": 420,
+        "tokens": 4200000,
+        "weighted": 1000000,
+        "flights": [
+          {
+            "key": "TIA1611",
+            "messages": 280,
+            "tokens": 3000000,
+            "weighted": 700000,
+            "share": 70.0
+          },
+          {
+            "key": "ORB204",
+            "messages": 90,
+            "tokens": 800000,
+            "weighted": 200000,
+            "share": 20.0
+          },
+          {
+            "key": "-",
+            "messages": 50,
+            "tokens": 400000,
+            "weighted": 100000,
+            "share": 10.0
+          }
+        ],
+        "roles": [
+          {
+            "key": "worker",
+            "messages": 250,
+            "tokens": 2500000,
+            "weighted": 600000,
+            "share": 60.0
+          },
+          {
+            "key": "reviewer",
+            "messages": 110,
+            "tokens": 1100000,
+            "weighted": 250000,
+            "share": 25.0
+          },
+          {
+            "key": "planner",
+            "messages": 40,
+            "tokens": 400000,
+            "weighted": 100000,
+            "share": 10.0
+          },
+          {
+            "key": "watchtower",
+            "messages": 20,
+            "tokens": 200000,
+            "weighted": 50000,
+            "share": 5.0
+          }
+        ]
+      },
+      {
+        "window": "week",
+        "from": "2026-10-12T00:00:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": true,
+        "messages": 1260,
+        "tokens": 12600000,
+        "weighted": 3000000,
+        "flights": [
+          {
+            "key": "TIA1611",
+            "messages": 840,
+            "tokens": 9000000,
+            "weighted": 2100000,
+            "share": 70.0
+          },
+          {
+            "key": "ORB204",
+            "messages": 270,
+            "tokens": 2400000,
+            "weighted": 600000,
+            "share": 20.0
+          },
+          {
+            "key": "-",
+            "messages": 150,
+            "tokens": 1200000,
+            "weighted": 300000,
+            "share": 10.0
+          }
+        ],
+        "roles": [
+          {
+            "key": "worker",
+            "messages": 750,
+            "tokens": 7500000,
+            "weighted": 1800000,
+            "share": 60.0
+          },
+          {
+            "key": "reviewer",
+            "messages": 330,
+            "tokens": 3300000,
+            "weighted": 750000,
+            "share": 25.0
+          },
+          {
+            "key": "planner",
+            "messages": 120,
+            "tokens": 1200000,
+            "weighted": 300000,
+            "share": 10.0
+          },
+          {
+            "key": "watchtower",
+            "messages": 60,
+            "tokens": 600000,
+            "weighted": 150000,
+            "share": 5.0
+          }
+        ]
+      }
+    ],
+    "waste": [
+      {
+        "window": "5h",
+        "from": "2026-10-18T04:41:09+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": false,
+        "windowWeighted": 1000000,
+        "wasteTokens": 1220000,
+        "wasteWeighted": 160000,
+        "wasteShare": 16.0,
+        "rows": [
+          {
+            "kind": "round",
+            "reason": "findings",
+            "flight": "TIA1611",
+            "leg": "render",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 40,
+            "tokens": 700000,
+            "weighted": 90000,
+            "share": 9.0
+          },
+          {
+            "kind": "base-merge-review",
+            "reason": "only a base merge changed the head",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "reviewer",
+            "model": "claude-sonnet-5-5",
+            "messages": 18,
+            "tokens": 300000,
+            "weighted": 40000,
+            "share": 4.0
+          },
+          {
+            "kind": "no-result",
+            "reason": "session ended without a commit or a verdict",
+            "flight": "TIA1611",
+            "leg": "parser",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 9,
+            "tokens": 200000,
+            "weighted": 25000,
+            "share": 2.5
+          },
+          {
+            "kind": "failed-start",
+            "reason": "start failed again",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "worker",
+            "model": null,
+            "messages": 2,
+            "tokens": 20000,
+            "weighted": 5000,
+            "share": 0.5
+          }
+        ]
+      },
+      {
+        "window": "today",
+        "from": "2026-10-18T00:00:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": false,
+        "windowWeighted": 1000000,
+        "wasteTokens": 1220000,
+        "wasteWeighted": 160000,
+        "wasteShare": 16.0,
+        "rows": [
+          {
+            "kind": "round",
+            "reason": "findings",
+            "flight": "TIA1611",
+            "leg": "render",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 40,
+            "tokens": 700000,
+            "weighted": 90000,
+            "share": 9.0
+          },
+          {
+            "kind": "base-merge-review",
+            "reason": "only a base merge changed the head",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "reviewer",
+            "model": "claude-sonnet-5-5",
+            "messages": 18,
+            "tokens": 300000,
+            "weighted": 40000,
+            "share": 4.0
+          },
+          {
+            "kind": "no-result",
+            "reason": "session ended without a commit or a verdict",
+            "flight": "TIA1611",
+            "leg": "parser",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 9,
+            "tokens": 200000,
+            "weighted": 25000,
+            "share": 2.5
+          },
+          {
+            "kind": "failed-start",
+            "reason": "start failed again",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "worker",
+            "model": null,
+            "messages": 2,
+            "tokens": 20000,
+            "weighted": 5000,
+            "share": 0.5
+          }
+        ]
+      },
+      {
+        "window": "week",
+        "from": "2026-10-12T00:00:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "fromAccount": true,
+        "windowWeighted": 3000000,
+        "wasteTokens": 3660000,
+        "wasteWeighted": 480000,
+        "wasteShare": 16.0,
+        "rows": [
+          {
+            "kind": "round",
+            "reason": "findings",
+            "flight": "TIA1611",
+            "leg": "render",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 120,
+            "tokens": 2100000,
+            "weighted": 270000,
+            "share": 9.0
+          },
+          {
+            "kind": "base-merge-review",
+            "reason": "only a base merge changed the head",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "reviewer",
+            "model": "claude-sonnet-5-5",
+            "messages": 54,
+            "tokens": 900000,
+            "weighted": 120000,
+            "share": 4.0
+          },
+          {
+            "kind": "no-result",
+            "reason": "session ended without a commit or a verdict",
+            "flight": "TIA1611",
+            "leg": "parser",
+            "role": "worker",
+            "model": "claude-opus-5-5",
+            "messages": 27,
+            "tokens": 600000,
+            "weighted": 75000,
+            "share": 2.5
+          },
+          {
+            "kind": "failed-start",
+            "reason": "start failed again",
+            "flight": "ORB204",
+            "leg": "ui",
+            "role": "worker",
+            "model": null,
+            "messages": 6,
+            "tokens": 60000,
+            "weighted": 15000,
+            "share": 0.5
+          }
+        ]
+      }
+    ],
+    "flights": [
+      {
+        "flight": "TIA1611",
+        "from": "2026-10-17T14:02:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "messages": 280,
+        "tokens": 3000000,
+        "weighted": 700000,
+        "legs": [
+          {
+            "leg": "-",
+            "messages": 30,
+            "tokens": 300000,
+            "weighted": 60000,
+            "rounds": [
+              {
+                "round": 0,
+                "messages": 30,
+                "tokens": 300000,
+                "weighted": 60000
+              }
+            ]
+          },
+          {
+            "leg": "parser",
+            "messages": 90,
+            "tokens": 800000,
+            "weighted": 180000,
+            "rounds": [
+              {
+                "round": 0,
+                "messages": 90,
+                "tokens": 800000,
+                "weighted": 180000
+              }
+            ]
+          },
+          {
+            "leg": "render",
+            "messages": 160,
+            "tokens": 1900000,
+            "weighted": 460000,
+            "rounds": [
+              {
+                "round": 0,
+                "messages": 100,
+                "tokens": 1100000,
+                "weighted": 280000
+              },
+              {
+                "round": 1,
+                "messages": 60,
+                "tokens": 800000,
+                "weighted": 180000
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "flight": "ORB204",
+        "from": "2026-10-18T06:10:00+00:00",
+        "to": "2026-10-18T09:41:09+00:00",
+        "messages": 90,
+        "tokens": 800000,
+        "weighted": 200000,
+        "legs": [
+          {
+            "leg": "ui",
+            "messages": 90,
+            "tokens": 800000,
+            "weighted": 200000,
+            "rounds": [
+              {
+                "round": 0,
+                "messages": 90,
+                "tokens": 800000,
+                "weighted": 200000
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "summaries": [
     {
       "scope": "*",
