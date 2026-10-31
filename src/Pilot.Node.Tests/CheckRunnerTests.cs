@@ -96,14 +96,16 @@ public sealed class CheckRunnerTests
     public async Task ACancelledCheckEndsTheProcessesItStarted()
     {
         var marker = Path.Combine(Path.GetTempPath(), $"check-child-{Guid.NewGuid():N}.pid");
+        // Written under another name and renamed into place, so the marker exists only once it is whole and closed: polled
+        // while Set-Content still held it, the read and then the cleanup's delete failed on the lock (#532's CI, 2026-10-31).
         var command = OperatingSystem.IsWindows()
-            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; Start-Sleep 120"
-            : $"sleep 120 & echo $! > '{marker}'; wait";
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}.tmp' -Value $p.Id; Move-Item '{marker}.tmp' '{marker}'; Start-Sleep 120"
+            : $"sleep 120 & echo $! > '{marker}.tmp' && mv '{marker}.tmp' '{marker}'; wait";
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         var run = new ShellCheckRunner().RunAsync(command, Path.GetTempPath(), cancel.Token);
         try
         {
-            while (!File.Exists(marker) || File.ReadAllText(marker).Trim().Length == 0)
+            while (!File.Exists(marker))
             {
                 run.IsCompleted.ShouldBeFalse();
                 await Task.Delay(100, Ct);
@@ -121,7 +123,17 @@ public sealed class CheckRunnerTests
         }
         finally
         {
-            File.Delete(marker);
+            // Best effort: a failed cleanup must not hide how the test itself ended.
+            foreach (var file in new[] { marker, marker + ".tmp" })
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (IOException)
+                {
+                }
+            }
         }
     }
 
