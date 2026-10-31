@@ -145,7 +145,12 @@ public static class NodeApp
         });
         builder.Services.AddSingleton(services => new ClaudeTrust(ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root)));
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
-        builder.Services.AddSingleton<IWorkerLauncher, ClaudeWorkerLauncher>();
+        builder.Services.AddSingleton<ClaudeWorkerLauncher>();
+        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
+            services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
+            new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<IWorkerLauncher>(services => services.GetRequiredService<LoggingWorkerLauncher>());
+        builder.Services.AddHostedService(services => new StartWatch(services.GetRequiredService<IWorkerLauncher>()));
         builder.Services.AddSingleton<ICheckRunner, ShellCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
@@ -213,6 +218,7 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
+                JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
             };
         });
