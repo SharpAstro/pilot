@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// denies and the asking session is told which; on, it runs at once, recorded with the session and the message it acted on,
 /// and said on a Handled card. A worker's is refused either way, and the person's own commands are as they were.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class AutopilotTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

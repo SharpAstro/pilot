@@ -1735,6 +1735,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 60_000)]
+    [Trait("Category", "Slow")]
     public async Task ACheckJobOverItsBudgetEndsTheProcessesItStartedAndSaysSo()
     {
         var marker = Path.Combine(_root, "grandchild.pid");
