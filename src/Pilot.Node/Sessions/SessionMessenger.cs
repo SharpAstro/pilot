@@ -223,7 +223,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
 
     /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
-    private static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows) =>
+    internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows) =>
         row.Kind != SessionKind.Background ? null
         : rows.Where(r => r.Id != row.Id && r.Kind == SessionKind.Background && r.Name == row.Name && r.Role == row.Role && r.StartedAt > row.StartedAt
                 && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle

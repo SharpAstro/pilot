@@ -183,6 +183,7 @@ public sealed class WindDownTests : IDisposable
         _state.PutSession(Row("rev11111", "du1-pil542-review", SessionRole.Reviewer, flight.Code, SessionState.Working));
         _state.PutSession(Row("zzz99999", "someone-elses", SessionRole.AdHoc, null, SessionState.Working));
         var watch = new LegWatch(_state, Run, _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromMinutes(20));
 
         await watch.LookAsync(Ct);
         await watch.LookAsync(Ct);
