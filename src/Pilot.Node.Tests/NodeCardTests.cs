@@ -32,7 +32,7 @@ public sealed class NodeCardTests : IDisposable
     public void AChecksFailedTitleNamesTheCheckAndWhyTheLegWasNotSentBack()
     {
         LegCommander.ChecksFailedTitle("TIA1", 7, "build (linux)", "its review no longer passes")
-            .ShouldBe("TIA1's PR #7 fails build (linux) and the leg could not be sent back: its review no longer passes");
+            .ShouldBe("TIA1's PR #7 fails check build (linux) and the leg could not be sent back: its review no longer passes");
         LegCommander.ChecksFailedTitle("TIA1", 7, null, "no leg").ShouldContain("fails its checks");
     }
 
