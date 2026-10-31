@@ -199,6 +199,9 @@ public sealed partial class LegCommander
                 // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
                 // once they pass. The laid head is the node's own, never marked as a GitHub drop.
                 RaiseReadyAtLaid(flight, laid, ex.Message);
+                // Where the repo's queue needs the checks first (auto-merge off, enqueue refused until they report), the node waits for
+                // them on the laid head and joins the queue then, as for any armed merge.
+                Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
                 if (_dropRung.TryAdd($"{code} {laid}", true))
                 {
                     state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", ex.Message);

@@ -178,8 +178,35 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         _legs.DroppedForConflict(flight.Code, laid).ShouldBeFalse();
         _github.Merged.ShouldBeEmpty();
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.SequenceEqual(new[] { laid })));
+        F(flight.Code).MergeWhenGreen![0].ShouldBe(laid);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.DropUnexplainedKind && c.Bin == CardBin.Ring);
         F(flight.Code).Review!.ReviewedHead.ShouldBe(laid);
+    }
+
+    [Fact]
+    public async Task ALaidPlaneIsNotGivenItsOldHistoryBackByAMergeOfMainAndTheRemoteBranch()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        var (flight, old) = await KeepOursFlight();
+        var plane = flight.Worktree;
+        Drop(flight, old);
+        await Checks().LookAsync(Ct);
+        var laid = Git(plane, "rev-parse", "HEAD");
+        laid.ShouldNotBe(old);
+
+        // What a merge-main leg does once main has moved: merge main, then the remote branch, then push.
+        File.WriteAllText(Path.Combine(Repo, "g.txt"), "g\n");
+        Git(Repo, "add", ".");
+        Commit(Repo, "g");
+        Git(Repo, "push", "-q", "origin", "main");
+        Git(plane, "fetch", "-q", "origin");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "-m", "merge main", "origin/main");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "--no-edit", $"origin/{flight.Branch}");
+
+        // The old head is not an ancestor of the plane: the laid commit is the history now, on the plane and on the remote.
+        Should.Throw<InvalidOperationException>(() => Git(plane, "merge-base", "--is-ancestor", old, "HEAD"));
+        Git(plane, "rev-parse", $"origin/{flight.Branch}").ShouldBe(laid);
     }
 
     [Fact]
