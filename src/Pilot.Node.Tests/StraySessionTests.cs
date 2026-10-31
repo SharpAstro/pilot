@@ -70,12 +70,51 @@ public sealed class StraySessionTests
     {
         _state.PutSession(Row("zzz99999", "someone-elses", SessionRole.AdHoc));
         var watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromMinutes(20));
 
         await watch.LookAsync(Ct);
         await watch.LookAsync(Ct);
 
         _state.Cards(openOnly: true).Where(c => c.Kind == LegWatch.StraySession).Select(c => c.Subject).ShouldBe(["session/zzz99999"]);
         _ledger.All().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AStrangerInsideTheGraceRaisesNoCardAndOnePastItRingsOnceNamingNameCwdAndAge()
+    {
+        _state.PutSession(Row("zzz99999", "someone-elses", SessionRole.AdHoc));
+        var watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromMinutes(5));
+
+        await watch.LookAsync(Ct);
+        _state.Cards().Where(c => c.Kind == LegWatch.StraySession).ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == LegWatch.StraySession).ShouldHaveSingleItem();
+        card.Title.ShouldContain("someone-elses");
+        card.Detail.ShouldNotBeNull().ShouldContain("cwd /work");
+        card.Detail.ShouldContain("running 25 min");
+        card.Summary.ShouldNotBeNull().ShouldContain("cwd /work");
+    }
+
+    [Fact]
+    public async Task ACurrentWatchtowerAndAFlyingWorkerNeverGetAStopCardEvenWhenTheLedgerSaysLanded()
+    {
+        _state.PutSession(Row("tower111", "de1-watchtower", SessionRole.Watchtower));
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        _ledger.Adopt(_state.Sessions().First(s => s.Id == "tower111"), null);
+        _ledger.Adopt(_state.Sessions().First(s => s.Id == "work1111"), null);
+        _ledger.Stopped(["tower111"], SessionEndReasons.Landed, "node");
+        _ledger.Stopped(["work1111"], SessionEndReasons.Landed, "node");
+        var watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromHours(3));
+
+        await watch.LookAsync(Ct);
+
+        _state.Cards().Where(c => c.Kind == LegWatch.StraySession).ShouldBeEmpty();
     }
 
     [Fact]
