@@ -1737,10 +1737,6 @@ public static class PilotCommand
     internal static string LandedHidden(int landed, string command = "pilot status --all") =>
         $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
 
-    /// <summary>
-    /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
-    /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
-    /// </summary>
     /// <summary>The <c>Opus n/cap</c> line (with <c>peers not counted</c> when so) and the flights waiting for admission with why; nothing from a node that has not said.</summary>
     internal static IEnumerable<string> AdmissionLines(SnapshotEvent snapshot)
     {
@@ -1754,6 +1750,10 @@ public static class PilotCommand
         }
     }
 
+    /// <summary>
+    /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
+    /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
+    /// </summary>
     internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false)
     {
         var text = new System.Text.StringBuilder();
