@@ -163,3 +163,17 @@ UnreadHeadTests.UnreadHeadIsReviewedByTheFirstSweep.... The `xUnit.MaxParallelTh
 
 The Done-when (slowest 20 under 5 s, under 3 minutes) is NOT met. Per-flight cost is the count of real git processes the node runs (about 32 per flight, see above),
 which needs a production change (memoise repeated fetches, merge rev-parse pairs) and its own review; it is not a test-start-up cost.
+
+## After git-bound-tests (PIL501, leg git-bound-tests)
+
+Measured on DE1, Release, through `pilot run`, other flights running on the machine.
+
+| Run | Wall time | Result |
+|---|---|---|
+| The four git-bound classes (ReviewTests, PrRecheckTests, LfsTests, PrFixTests), 197 tests | 13m10s | 197 passed |
+| Full Pilot.Node.Tests, 2514 tests | 34m19s | 2511 passed, 2 skipped, 1 failed (the 5 s guard on `McpTests.ARemoteNodeNobodyListensOn_...` at 5.5 s under load; now tagged Slow) |
+
+The LfsTests class template (one real git-lfs setup per class, copied per test) and the split of the review and recheck classes were already in the plane.
+Each remaining flight still costs about 32 real git processes started by the node itself (see fix-starts), which a fake `IGit` cannot remove without dropping
+the pushes and merges those tests assert on. The full run is therefore NOT under 15 minutes: that needs fewer git starts per flight in production code
+(memoise repeated fetches, merge `rev-parse --verify` pairs), which is its own reviewed change.

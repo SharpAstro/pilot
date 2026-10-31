@@ -431,6 +431,7 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARemoteNodeNobodyListensOn_IsTheSameToolErrorAndTheServerKeepsGoing()
     {
         using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
