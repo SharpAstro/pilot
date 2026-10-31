@@ -69,7 +69,8 @@ public sealed class MergeArmTests
         card.State.ShouldBe(CardState.Open);
         card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
         card.Detail.ShouldNotBeNull().ShouldStartWith("merging when checks pass: 1 of 3 done");
-        card.Title.ShouldContain("merges when its checks pass");
+        // The node waits (GitHub has no auto-merge set here), and the card says so rather than that it is armed.
+        card.Title.ShouldContain("waits for its checks, then the node queues it");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ready.Id);
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();

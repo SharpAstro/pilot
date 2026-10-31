@@ -64,7 +64,7 @@ public abstract class ReviewTestsBase : IDisposable
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}{output}");
     }
 
     private protected async Task<CommandResult> Run(string verb, string target, string who, params string[] args)

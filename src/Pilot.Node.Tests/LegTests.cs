@@ -433,9 +433,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
+    /// <summary>When set, MergeAsync refuses any head other than the first it took, as a queue does a PR pushed since, whose checks have not run.</summary>
+    public bool MergeRefusesLaid { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefusesLaid && Pr is { } shown && head != shown.Head)
+        {
+            throw new FlightException("the merge queue takes no PR whose required checks have not passed");
+        }
         Merged.Add((number, head, method));
         return Queues;
     }
@@ -477,6 +484,11 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
     public List<string> ProtectionAsked { get; } = [];
+
+    /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
+    public string? MergeQueueMethod { get; set; }
+
+    public Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(MergeQueueMethod);
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -1964,6 +1976,29 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", ReviewedHead = head, StartedAt = DateTimeOffset.UtcNow } });
         (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task APlaneWhoseOldCommitsMainHoldsAsOneRebasedCommitLandsByContent()
+    {
+        // A laid PR merged through the rebase queue: main holds its change as one commit, the plane still its two older ones.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser { int X; }\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "parser 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "parser.cs"), "class Parser { int X; }\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser, laid");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
