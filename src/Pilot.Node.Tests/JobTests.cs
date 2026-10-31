@@ -923,6 +923,7 @@ public sealed class JobTests2 : JobTestsBase
         (await Ended(started.Made!)).State.ShouldBe(JobState.Succeeded);
     }
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TwoChecksAndFourJobsAtMaxJobsFourNeverRunMoreThanFourAtOnceAndAllFinish()
     {
         _jobs.MaxRunning = 4;

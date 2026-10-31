@@ -88,6 +88,7 @@ public sealed class AdmissionPrReviewTests : PrReviewTestsBase
     }
 }
 
+[Trait("Category", "Slow")]
 public sealed class AdmissionPrFixTests : PrFixTestsBase
 {
     [Fact]

@@ -554,6 +554,7 @@ public sealed class PrRecheckTests2 : PrRecheckTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheNoFixerRingClosesNamingTheHeadThatMovedPastIt()
     {
         await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
@@ -572,6 +573,7 @@ public sealed class PrRecheckTests2 : PrRecheckTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep()
     {
         _github.Login = "ada";

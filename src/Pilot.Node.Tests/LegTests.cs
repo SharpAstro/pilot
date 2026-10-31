@@ -2014,6 +2014,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneWhoseOldCommitsMainHoldsAsOneRebasedCommitLandsByContent()
     {
         // A laid PR merged through the rebase queue: main holds its change as one commit, the plane still its two older ones.
