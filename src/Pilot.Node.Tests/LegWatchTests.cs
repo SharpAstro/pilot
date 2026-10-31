@@ -295,6 +295,9 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
         Open().ShouldBeEmpty();
 
+        // The first no-show is a restart (a start that did not take), the second rings.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(5));
         await _watch.LookAsync(Ct);
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Missing);
@@ -692,7 +695,9 @@ public sealed class LegWatchTests
     [Fact]
     public async Task AWaitingFailedMissingAndIdleWorkersRingsSummariesMatchTheirChoices()
     {
-        // No worker at all: the redo alone.
+        // No worker at all: the redo alone (after its one restart).
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(5));
         await _watch.LookAsync(Ct);
         var missing = Open().ShouldHaveSingleItem();
@@ -722,5 +727,156 @@ public sealed class LegWatchTests
         var idle = Open().Single(c => c.Kind == LegWatch.Idle);
         idle.Choices.Select(c => c.Label).ShouldBe(["Nudge", "Redo leg parser"]);
         SummaryMatchesChoices(idle);
+    }
+
+    // ---- the first-turn ladder for workers, validators and reviewers (PIL530) ----
+
+    private readonly List<string> _restartedWorkers = [];
+    private int _fresh;
+
+    private void HookWorkers()
+    {
+        _watch.StopSession = (job, _) => { _stopped.Add(job); return Task.CompletedTask; };
+        _watch.RestartWorker = (flight, leg, _) =>
+        {
+            _restartedWorkers.Add($"{flight}/{leg}");
+            var row = _state.Legs(flight).Single(l => l.Name == leg);
+            _stopped.Add(row.WorkerJob!);
+            _state.RemoveSession(row.WorkerJob!);
+            _state.PutLeg(row with { WorkerJob = "fresh" + ++_fresh, StartedAt = _time.GetUtcNow() });
+            return Task.CompletedTask;
+        };
+    }
+
+    private void Silent(string id, SessionState state = SessionState.Working) => _state.PutSession(new SessionRow
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background, Cwd = "/work/tia1",
+        Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = state,
+        SpendWeighted = 0, LastResponseAt = null, StartedAt = _time.GetUtcNow(),
+    });
+
+    [Fact]
+    public async Task AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing()
+    {
+        HookWorkers();
+        Silent("a1b2c3d4");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBe(["TIA1/parser"]);
+        _stopped.ShouldBe(["a1b2c3d4"]);
+        var handled = Handled().ShouldHaveSingleItem();
+        (handled.Kind, handled.Title).ShouldBe((LegWatch.NeverTurned, "TIA1/parser's worker (job a1b2c3d4) took no first turn and was started again"));
+        // Not counted as a go-around of the work, and never nudged.
+        _state.Legs("TIA1").Single().GoArounds.ShouldBe(0);
+        _said.ShouldBeEmpty();
+
+        // The fresh one is listed and says nothing either.
+        Silent("fresh1");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBe(["a1b2c3d4", "fresh1"]);
+        _restartedWorkers.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Kind, ring.Title).ShouldBe((CardBin.Ring, LegWatch.NeverTurned, "TIA1/parser's worker never took a turn after two starts"));
+        ring.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
+        _said.ShouldBeEmpty();
+
+        // No third start, no repeat.
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await _watch.LookAsync(Ct);
+        (_restartedWorkers.Count, Open().Length, _said.Count).ShouldBe((1, 1, 0));
+    }
+
+    [Fact]
+    public async Task AWorkerThatNeverShowsInTheListingIsRetriedOnceBeforeTheMissingRing()
+    {
+        HookWorkers();
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBe(["TIA1/parser"]);
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.NeverTurned);
+
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Kind, ring.Title).ShouldBe((LegWatch.Missing, "TIA1/parser's worker du1-tia1-parser never showed up"));
+        ring.Detail!.ShouldContain("job fresh1");
+    }
+
+    [Fact]
+    public async Task AWorkerThatTakesATurnWithinTheGraceIsLeftAloneAndTheIdleLadderIsAsBefore()
+    {
+        HookWorkers();
+        Silent("a1b2c3d4");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 9_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        (_restartedWorkers.Count, _stopped.Count, _said.Count, Open().Length).ShouldBe((0, 0, 0, 0));
+
+        // It goes idle after that: nudged, as before.
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+        _restartedWorkers.ShouldBeEmpty();
+    }
+
+    private void Reviewing(string job) => _state.PutFlight(new FlightRow
+    {
+        Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+        State = FlightState.Flying, CreatedAt = Start,
+        Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "du1-tia1-review", ReviewerJob = job, StartedAt = _time.GetUtcNow() },
+    });
+
+    [Fact]
+    public async Task AReviewerThatNeverTakesATurnIsRestartedOnceThenRung()
+    {
+        HookWorkers();
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        Reviewing("rev1");
+        Silent("rev1");
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        // Started afresh through the existing review path, never told to finish a verdict it has not begun.
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.StartReview, "flight/TIA1"));
+        Handled().ShouldHaveSingleItem().Title.ShouldBe("TIA1's reviewer (job rev1) took no first turn and was started again");
+        Open().ShouldNotContain(c => c.Bin != CardBin.Handled);
+
+        // The fresh reviewer is in place and shows nothing either.
+        _state.RemoveSession("rev1");
+        Reviewing("rev2");
+        Silent("rev2");
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _stopped.ShouldBe(["rev2"]);
+        var ring = Open().Single(c => c.Bin == CardBin.Ring);
+        (ring.Kind, ring.Title).ShouldBe((LegWatch.ReviewStalled, "TIA1's reviewer never took a turn after two starts"));
+        ring.Choices.Select(c => c.Verb).ShouldBe([Verbs.StartReview]);
+    }
+
+    [Fact]
+    public async Task AReviewerThatTakesATurnWithinTheGraceIsUntouched()
+    {
+        HookWorkers();
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        Reviewing("rev1");
+        Silent("rev1");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 5_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        (_said.Count, _stopped.Count, Open().Length, Handled().Length).ShouldBe((0, 0, 0, 0));
     }
 }

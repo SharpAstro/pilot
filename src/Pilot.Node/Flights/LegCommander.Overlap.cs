@@ -254,6 +254,34 @@ public sealed partial class LegCommander
         StartPlanner(flight, replacing: true);
     }
 
+    /// <summary>
+    /// Stops a flying leg's worker that took no first turn and starts a fresh one in its place. Not a go-around: the leg's count,
+    /// brief and model are as they were, as nothing was done by the first.
+    /// </summary>
+    internal async Task RestartWorkerAsync(string code, string legName, CancellationToken cancellationToken)
+    {
+        var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
+        if (leg.WorkerJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        StartWorker(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>Stops a leg's validator that took no first turn and starts a fresh one in its place.</summary>
+    internal async Task RestartValidatorAsync(string code, string legName, CancellationToken cancellationToken)
+    {
+        var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
+        if (leg.ValidatorJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        StartValidator(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>Stops a session by its job, whatever it is (claude stop); one already gone is no error.</summary>
+    internal Task StopSessionAsync(string job, CancellationToken cancellationToken) => StopQuietly(job, cancellationToken);
+
     /// <summary>Stops the flight's planner and forgets it.</summary>
     internal Task StopPlannerAsync(string code, CancellationToken cancellationToken) =>
         StopPlannerAsync(FlightOf(Verbs.FlightTarget(code)), cancellationToken);

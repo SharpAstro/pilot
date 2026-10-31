@@ -201,6 +201,9 @@ public static class NodeApp
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
                 StopPlanner = legs.StopPlannerAsync,
+                RestartWorker = legs.RestartWorkerAsync,
+                RestartValidator = legs.RestartValidatorAsync,
+                StopSession = legs.StopSessionAsync,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
