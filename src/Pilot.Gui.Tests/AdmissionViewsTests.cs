@@ -46,17 +46,17 @@ public sealed class AdmissionViewsTests
     };
 
     /// <summary>A node with <paramref name="queued"/> flights waiting on top of two flying, the first of them a priority one.</summary>
-    private static (FlightRow[] Flights, LegRow[] Legs, AdmissionRow Admission) Queue(int queued, bool longWhy = true)
+    private static (FlightRow[] Flights, LegRow[] Legs, AdmissionRow Admission) Queue(int queued, bool longWhy = true, bool newestPriority = false)
     {
         var flights = new List<FlightRow> { Flight(0, priority: true), Flight(1) };
         var legs = new List<LegRow>();
         for (var i = 0; i < queued; i++)
         {
-            var flight = Flight(i + 2, priority: i == 0);
+            var flight = Flight(i + 2, priority: i == 0 || newestPriority && i == queued - 1);
             flights.Add(flight);
             legs.Add(Leg(flight.Code, longWhy ? LongWhy : "waiting for an Opus slot: 3 of 3 flying"));
         }
-        return ([.. flights], [.. legs], Admission(longWhy ? "peers not counted: LE1 unreachable" : null, "PIL900", "PIL902"));
+        return ([.. flights], [.. legs], Admission(longWhy ? "peers not counted: LE1 unreachable" : null, newestPriority ? ["PIL900", "PIL902", $"PIL{900 + queued + 1}"] : ["PIL900", "PIL902"]));
     }
 
     [Fact]
@@ -150,13 +150,15 @@ public sealed class AdmissionViewsTests
     [Fact]
     public void TheMarksAndTheQueuedWordsKeepTheContrastFloorOnEveryBackgroundTheyAreDrawnOn()
     {
-        foreach (var palette in new[] { Palette.Standard })
+        foreach (var (paletteName, palette) in new[] { ("Standard", Palette.Standard), ("Night", Palette.Night) })
         {
+            // Every colour the new text is drawn in: the priority mark on a row, card, page and Home (Held); the queued reason on a row
+            // and Home (Body); the queued state word on a row, card and page (Held, as StateColor gives a queued flight).
             foreach (var (name, fg) in new[] { ("Held", palette.Held), ("Body", palette.Body) })
             {
                 foreach (var (bgName, bg) in new[] { ("Well", palette.Well), ("Ground", palette.Ground), ("PanelBg", palette.PanelBg), ("RowHoverBg", palette.RowHoverBg), ("RowFocusBg", palette.RowFocusBg), ("RowAltBg", palette.RowAltBg) })
                 {
-                    Contrast(fg, bg).ShouldBeGreaterThanOrEqualTo(4.5, $"{name} on {bgName}");
+                    Contrast(fg, bg).ShouldBeGreaterThanOrEqualTo(4.5, $"{paletteName}: {name} on {bgName}");
                 }
             }
         }
@@ -200,7 +202,8 @@ public sealed class AdmissionViewsTests
     [Fact]
     public void EachChangedPageIsCapturedAtANarrowAndAWideSizeWithLongContent()
     {
-        var (flights, legs, admission) = Queue(8);
+        // The newest flight is a priority one too, so a mark is on the first row and card of the list and canvas captures.
+        var (flights, legs, admission) = Queue(8, newestPriority: true);
         var screen = Screens(flights, legs, admission);
         // Where the captures go (docs/captures, for the PR) when a person asks for them; else a folder that goes with the test.
         var given = Environment.GetEnvironmentVariable("PILOT_ADMISSION_CAPTURES");

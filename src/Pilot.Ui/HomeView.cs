@@ -325,7 +325,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         foreach (var (line, why) in queue.Take(HomeScreen.MaxChips))
         {
             var text = $"{(line.PriorityMark is null ? "" : line.PriorityMark + " · ")}{line.Code} · {why}";
-            blocks.Add(Layout.Builder.Text(text, 13f, Ring)
+            blocks.Add(Layout.Builder.Text(text, 13f, Palette.Current.Body)
                 .WithTooltip($"{text}\n{line.Title}")
                 .Follows(new HitResult.ButtonHit($"home:queued:{line.Code}"), _ => OnFlight?.Invoke(line))
                 .RowH(22f));

@@ -63,6 +63,8 @@ internal sealed partial class FlightsView<TSurface>
             .Stretch();
     }
 
+    private const float PriorityMarkWidth = 56f;
+
     // A card's width: its own, or the page's less its gutters where the page is narrower.
     private float CardWidthOnPage() => _viewWidth > 0f ? FlightCanvas.CardWidthIn(_viewWidth, Gutter) : FlightCanvas.CardWidth;
 
@@ -76,6 +78,12 @@ internal sealed partial class FlightsView<TSurface>
         if (PullRequestChip(line, CardChipWidth, PullRequestChipHeight) is { } chip)
         {
             code = Layout.Builder.HStack(code.WStar(), chip).WithGap(6f).RowH(22f);
+        }
+        // A priority flight says so beside its code, in the amber of a held thing, as its list row does.
+        if (line.PriorityMark is { } priority)
+        {
+            var mark = Layout.Builder.Text(priority, 11f, Held).WFixed(PriorityMarkWidth).RowH(22f);
+            code = Layout.Builder.HStack(code.WStar(), mark).WithGap(6f).RowH(22f);
         }
         var rows = new List<Layout.Node>
         {

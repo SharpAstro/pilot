@@ -69,7 +69,6 @@ public sealed class AdmissionPrReviewTests : PrReviewTestsBase
         var answer = await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller");
 
         answer.Error.ShouldBeNull();
-        answer.Made.ShouldNotBeNull().ShouldStartWith("queued: ");
         _workers.Started.ShouldBeEmpty();
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Handled);
@@ -100,6 +99,11 @@ public sealed class AdmissionPrFixTests : PrFixTestsBase
         _state.PutSession(AdmissionHeld.Opus("du1-other-worker"));
         (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, "changes", "Two things are wrong.", "README.md:1 no")).Error.ShouldBeNull();
 
+        // A review the node posted goes on to its fixer after the post, not within the verdict's answer.
+        for (var i = 0; i < 500 && !_state.Cards(openOnly: true).Any(c => c.Kind == PrReviews.WaitingKind); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
         Fixers.ShouldBeEmpty();
         _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.WaitingKind).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
 

@@ -1140,7 +1140,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The colour of a flight's state: dim for a stale row, which no longer says what the flight is doing.</summary>
     private RGBAColor32 StateColor(FlightLine line) =>
-        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Queued is not null ? Held : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
 
     /// <summary>The stripe at a row's or card's left edge: <see cref="StateColor"/>, except that a failed move's stripe is the red of a failed leg, its words being the lighter red that holds 4.5:1 on the failed ground.</summary>
     private RGBAColor32 StripeColor(FlightLine line) => line.MoveMark is not null ? Failed : StateColor(line);
@@ -1184,7 +1184,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : (line.Row.State == FlightState.Held || line.Queued is not null) && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
             LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
