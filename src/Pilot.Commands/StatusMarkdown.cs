@@ -39,6 +39,14 @@ internal static class StatusMarkdown
         {
             facts.Add($"**machine** {Text(machine.Line())}");
         }
+        if (snapshot.Admission is { } admission)
+        {
+            facts.Add($"**{Text(admission.Line())}**{(admission.Counted.Length > 0 ? ": " + Text(string.Join(", ", admission.Counted)) : "")}");
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            facts.Add($"**queued** {queued.Code}{(queued.Priority ? " (priority)" : "")} {Text(queued.Title ?? "")}: {Text(queued.Why)}");
+        }
         if (facts.Count > 0)
         {
             foreach (var fact in facts)

@@ -192,6 +192,27 @@ public static class Verbs
     public const string ReceiveFlight = "receive-flight";
 
     /// <summary>
+    /// <c>admission-claim node &lt;node&gt; &lt;key&gt; &lt;label&gt; &lt;model&gt; &lt;role&gt; [flight]</c>: a node of the fleet asks the node that holds the Opus count for a slot
+    /// (a lease, kept while the sender renews it with <see cref="AdmissionSync"/>). Answered ok when the lease is taken, else refused with the wait's reason.
+    /// </summary>
+    public const string AdmissionClaim = "admission-claim";
+
+    /// <summary>
+    /// <c>admission-sync node &lt;node&gt; [key|label|model]…</c>: a node tells the holder of the count which Opus sessions it has now; its leases become
+    /// exactly those, renewed, so a session that ended frees its slot at once.
+    /// </summary>
+    public const string AdmissionSync = "admission-sync";
+
+    /// <summary>
+    /// <c>admission-setting node &lt;key&gt; [value…]</c>: a node of the fleet sets <c>opus-cap</c> or <c>one-flight-per-repo</c> on the node that holds
+    /// them for the fleet (<c>set</c> itself is this machine's alone).
+    /// </summary>
+    public const string AdmissionSetting = "admission-setting";
+
+    /// <summary>Whether <paramref name="verb"/> is one of the fleet admission verbs.</summary>
+    public static bool IsAdmission(string verb) => verb is AdmissionClaim or AdmissionSync or AdmissionSetting;
+
+    /// <summary>
     /// <c>move-flight flight/&lt;code&gt;</c> (#376): hand the flight to the best willing node of the fleet now, as a node in maintenance does
     /// at a leg boundary: the plane is made safe (clean, pushed fast-forward only, the remote's head read back equal to the plane's),
     /// the flight is sent with <see cref="ReceiveFlight"/>, and this node stops flying it. Refused when a leg is flying; any failure

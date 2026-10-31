@@ -177,6 +177,10 @@ internal sealed partial class FlightsView<TSurface>
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto().Selectable());
         }
+        if (line.PriorityMark is { } priorityMark)
+        {
+            facts.Add(Layout.Builder.Text($"{priorityMark}: skips the Opus cap and the repo hold", 12f, Held).WAuto().Selectable());
+        }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {

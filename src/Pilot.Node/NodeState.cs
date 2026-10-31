@@ -52,6 +52,7 @@ public sealed class NodeState
     private readonly Dictionary<string, CardRow> _cards = new Dictionary<string, CardRow>(StringComparer.Ordinal);
     private UsageRow? _usage;
     private MachineRow? _machine;
+    private AdmissionRow? _admission;
     private PullRequestsRow? _pullRequests;
     private ReposRow? _repos;
     private NodeRow? _node;
@@ -882,6 +883,35 @@ public sealed class NodeState
         }
     }
 
+    /// <summary>The admission as last put; null before any.</summary>
+    public AdmissionRow? Admission()
+    {
+        lock (_gate)
+        {
+            return _admission;
+        }
+    }
+
+    /// <summary>Puts the admission when it differs from the one held, so a sweep that finds the same count adds no delta.</summary>
+    public void PutAdmission(AdmissionRow row)
+    {
+        lock (_gate)
+        {
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
+            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            {
+                return;
+            }
+            if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+            {
+                return;
+            }
+            Publish(new AdmissionChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Admission = row });
+        }
+    }
+
     /// <summary>Every open PR of the repos pilot works in as last read; null before any.</summary>
     public PullRequestsRow? PullRequests()
     {
@@ -1174,6 +1204,9 @@ public sealed class NodeState
             case UsageChangedEvent usage:
                 _usage = usage.Usage;
                 break;
+            case AdmissionChangedEvent admission:
+                _admission = admission.Admission;
+                break;
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
                 break;
@@ -1250,6 +1283,7 @@ public sealed class NodeState
         }
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
+        _admission = snapshot.Admission;
         _pullRequests = snapshot.PullRequests;
         _repos = snapshot.Repos;
         _node = snapshot.Node;
@@ -1288,6 +1322,7 @@ public sealed class NodeState
         Cards = [.. _cards.Values],
         Usage = _usage,
         Machine = _machine,
+        Admission = _admission,
         PullRequests = _pullRequests,
         Repos = _repos,
         Node = _node,

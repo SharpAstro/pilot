@@ -23,6 +23,12 @@ internal sealed record FlightLine
     /// <summary>What holds it (<c>waiting for PIL5</c>), or when it landed; null otherwise.</summary>
     public string? StateDetail { get; init; }
 
+    /// <summary>Why it waits for admission (<c>waiting for an Opus slot: 3 of 3 flying</c>); null while it waits for nothing. Also the head of <see cref="StateDetail"/>, as <c>queued: ...</c>.</summary>
+    public string? Queued { get; init; }
+
+    /// <summary>The mark on a priority flight's row and page (<see cref="FlightMarks.PriorityMark"/>); null for any other flight.</summary>
+    public string? PriorityMark { get; init; }
+
     /// <summary>The plane's branch.</summary>
     public required string Branch { get; init; }
 
@@ -85,12 +91,25 @@ internal sealed record FlightLine
     }
 
     /// <summary>The flights in drawing order: flying, then held, then landed, newest first within each.</summary>
-    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null)
+    public static IReadOnlyList<FlightLine> Build(IEnumerable<FlightRow> flights, IEnumerable<SessionRow> sessions, DateTimeOffset now, IEnumerable<LegRow>? legs = null, AdmissionRow? admission = null)
     {
+        var flightRows = flights as IReadOnlyCollection<FlightRow> ?? [.. flights];
+        var legRows = legs as IReadOnlyCollection<LegRow> ?? [.. legs ?? []];
+        var queued = QueuedFlight.Of(flightRows, legRows, admission).ToDictionary(q => q.Code, q => q.Why, StringComparer.Ordinal);
+        legs = legRows;
+        flights = flightRows;
         var byFlight = sessions.Where(s => s.Flight is not null).ToLookup(s => s.Flight!, StringComparer.Ordinal);
         var legsOf = (legs ?? []).ToLookup(l => l.Flight, StringComparer.Ordinal);
-        return Order(flights.Select(f => From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] }));
+        return Order(flights.Select(f => (From(f, byFlight[f.Code].ToList(), now) with { Legs = LegsText([.. legsOf[f.Code].OrderBy(l => l.Order)]), LegRows = [.. legsOf[f.Code].OrderBy(l => l.Order)] }).Admitted(queued.GetValueOrDefault(f.Code), admission)));
     }
+
+    // What admission says of the flight: why it queues (a flight that is flying and says nothing else), and the priority mark.
+    private FlightLine Admitted(string? queued, AdmissionRow? admission) => this with
+    {
+        Queued = queued,
+        StateDetail = StateDetail ?? (queued is null || Row.State != FlightState.Flying ? null : $"queued: {queued}"),
+        PriorityMark = FlightMarks.IsPriority(Row, admission) ? FlightMarks.PriorityMark : null,
+    };
 
     /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged.</summary>
     public static IReadOnlyList<FlightLine> Order(IEnumerable<FlightLine> lines) =>
@@ -145,6 +164,9 @@ internal sealed record FlightLine
 /// <summary>What the Flights page shows: the flights, and where they come from.</summary>
 internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Source, DateTimeOffset AsOf)
 {
+    /// <summary>What the node said of its Opus count and cap (the line Home and the page show); null from a node that says none, and for a snapshot written before it did.</summary>
+    public AdmissionRow? Admission { get; init; }
+
     /// <summary>What In play left out, named (<c>29 landed hidden</c>); null while nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
@@ -1179,7 +1201,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     /// <summary>The colour of a flight's state: dim for a stale row, which no longer says what the flight is doing.</summary>
     private RGBAColor32 StateColor(FlightLine line) =>
-        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
+        line.Stale is not null ? Dim : line.MoveMark is not null ? P.FailedText : line.Queued is not null ? Held : line.Row.State switch { FlightState.Flying => Flying, FlightState.Held => Held, _ => Landed };
 
     /// <summary>The stripe at a row's or card's left edge: <see cref="StateColor"/>, except that a failed move's stripe is the red of a failed leg, its words being the lighter red that holds 4.5:1 on the failed ground.</summary>
     private RGBAColor32 StripeColor(FlightLine line) => line.MoveMark is not null ? Failed : StateColor(line);
@@ -1214,12 +1236,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 ? Layout.Builder.VStack(
                     Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
                     Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
-                : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
+                : line.PriorityMark is { } priority
+                    ? Layout.Builder.VStack(
+                        Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
+                        Whole(Layout.Builder.Text(priority, 11f, Held).RowH(18f), priority, 0))
+                    : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),
-                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : line.Row.State == FlightState.Held && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
+                Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : (line.Row.State == FlightState.Held || line.Queued is not null) && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
             LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, dim)),
             ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),

@@ -521,6 +521,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 continue;
             }
+            // Its planner waits for admission (the Opus cap, the repo mode): waiting, not stalled, and the sweep starts it.
+            if (flight.Queued is not null)
+            {
+                state.CloseCardsAbout(subject, "its planner waits for admission", PlanStalled);
+                continue;
+            }
             string? why = planner switch
             {
                 null when now - flight.CreatedAt > PlanGrace => $"it has had no legs and no planner for {Ago(now, flight.CreatedAt)}",

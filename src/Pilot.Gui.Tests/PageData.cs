@@ -158,6 +158,8 @@ internal sealed class PageData
             PullRequest = i % 2 == 0 ? 390 + i : null,
             PullRequestUrl = i % 2 == 0 ? $"https://github.com/SharpAstro/pilot/pull/{390 + i}" : null,
             LandedAt = i % 3 == 2 ? now.AddMinutes(-30) : null,
+            Queued = i % 3 == 0 ? (lengthen ? "waiting for an Opus slot: 3 of 3 flying: " + LongWord + ", " + LongPath : "waiting for an Opus slot: 3 of 3 flying") : null,
+            GitHubLabel = i % 9 == 0 ? "pilot: priority" : null,
             Review = i % 2 == 0 ? new ReviewRow
             {
                 State = (ReviewState)(i % 3),
@@ -183,7 +185,12 @@ internal sealed class PageData
             Report = j % 4 is 2 or 3 ? (lengthen ? LongReport : "Done.") : null,
             StartedAt = now.AddMinutes(-60),
         })).ToList();
-        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, asOf, legRows), "test", asOf);
+        var admission = new AdmissionRow
+        {
+            OpusCount = 3, OpusCap = 3, OneFlightPerRepo = true, Counted = ["pil380 worker", "pil381 reviewer", "pil383 planner on LE1"],
+            PeersNotCounted = lengthen ? "peers not counted: LE1 did not answer: " + LongReport : null,
+        };
+        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, asOf, legRows, admission), "test", asOf) { Admission = admission };
 
         var jobRows = Enumerable.Range(0, jobs).Select(i => new JobRow
         {
