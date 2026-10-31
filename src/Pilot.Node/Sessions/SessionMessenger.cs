@@ -123,9 +123,10 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             return state.Complete(command, message);
         }
         string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
+        // The ledger first: the row's put observes an end, and must find the node's reason there, not "finished".
+        ledger?.Stopped(ids, reason, command.Who);
         // The process is gone: the row says ended at once, not when a later listing happens to agree.
         tracker.MarkStopped(row.Id, reason);
-        ledger?.Stopped(ids, reason, command.Who);
         var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
         await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
