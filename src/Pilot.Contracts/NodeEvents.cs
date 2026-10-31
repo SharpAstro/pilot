@@ -28,6 +28,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
 [JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
+[JsonDerivedType(typeof(AdmissionChangedEvent), "admissionChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
 [JsonDerivedType(typeof(MergeAddedEvent), "mergeAdded")]
@@ -110,6 +111,9 @@ public sealed record SnapshotEvent : NodeEvent
     /// <summary>The machine as last sampled; null before the node has sampled it, and from an older node, whose stream has none.</summary>
     public MachineRow? Machine { get; init; }
 
+    /// <summary>The Opus count, cap and priority flights as last said; null before the node has said, and from an older node.</summary>
+    public AdmissionRow? Admission { get; init; }
+
     /// <summary>Every job, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public JobRow[] Jobs
     {
@@ -172,6 +176,12 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly IssueRow[]? _issues;
+
+    /// <summary>
+    /// Spend as a file holds it (the contract's sample, a capture): what the Spend page and a flight's page draw without a node.
+    /// A live node leaves it null, and the window reads the spend routes instead.
+    /// </summary>
+    public SpendSnapshot? Spend { get; init; }
 
     /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
     public SummaryRow[] Summaries

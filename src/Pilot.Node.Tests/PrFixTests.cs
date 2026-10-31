@@ -16,7 +16,8 @@ public abstract class PrFixTestsBase : IDisposable
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2f-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly InMemoryJournal _journal = new();
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly PrReviews _reviews;
@@ -42,6 +43,7 @@ public abstract class PrFixTestsBase : IDisposable
 
     protected PrFixTestsBase()
     {
+        _state = new NodeState(_journal, TimeProvider.System);
         SeedRepo.CopyTree(Seed.Value.Root, _root);
         var (widgetHead, gadgetHead) = (Seed.Value.WidgetHead, Seed.Value.GadgetHead);
         var gadget = Path.Combine(_root, "github", "gadget.git");
@@ -232,12 +234,16 @@ public sealed class PrFixTests1 : PrFixTestsBase
 public sealed class PrFixTests2 : PrFixTestsBase
 {
     [Fact]
-    public async Task AnUntrackedRepoGetsNoFixerAndNoCard()
+    public async Task AnUntrackedRepoGetsNoFixerAndRingsTheOwnerWithTheFindings()
     {
         await Review("acme/gadget#9", "changes", "README.md:1 wrong");
 
         Fixers.ShouldBeEmpty();
+        // It used to leave only the posted Handled line (pilot #527); now one open Ring card carries the findings.
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixOfferKind || c.Kind == PrReviews.DesignKind || c.Kind == PrReviews.FixFailedKind);
+        var ring = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.NoFixerKind);
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Detail.ShouldNotBeNull().ShouldContain("README.md:1 wrong");
         (await Run(Verbs.FixPr, "acme/gadget#9", "controller")).Error.ShouldNotBeNull().ShouldContain("not a repo the node tracks");
     }
 

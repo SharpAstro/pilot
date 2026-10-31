@@ -40,6 +40,7 @@ public sealed class SessionSendingTests
             {
                 await held.Task;
                 view!.SayStatus = "delivered at once as a message";
+                return null;
             },
         };
         var settled = Leaf(view, screen, "Ctrl+S").ShouldNotBeNull().Color;
@@ -73,7 +74,7 @@ public sealed class SessionSendingTests
             OnSay = async (line, text) =>
             {
                 await gates.Dequeue().Task;
-                view!.SayStatus = $"refused: {text} was not taken";
+                return $"{text} was not taken";
             },
         };
         Leaf(view, screen, "Ctrl+S").ShouldNotBeNull();

@@ -38,6 +38,9 @@ public sealed class NodeMirror
     /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
     public MachineRow? Machine { get; private set; }
 
+    /// <summary>The admission as last said; null before any.</summary>
+    public AdmissionRow? Admission { get; private set; }
+
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before any.</summary>
     public PullRequestsRow? PullRequests { get; private set; }
 
@@ -122,6 +125,7 @@ public sealed class NodeMirror
             }
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
+            Admission = snapshot.Admission;
             PullRequests = snapshot.PullRequests;
             Repos = snapshot.Repos;
             Node = snapshot.Node;
@@ -236,6 +240,9 @@ public sealed class NodeMirror
                 break;
             case UsageChangedEvent usage:
                 Usage = usage.Usage;
+                break;
+            case AdmissionChangedEvent admission:
+                Admission = admission.Admission;
                 break;
             case MachineChangedEvent machine:
                 Machine = machine.Machine;

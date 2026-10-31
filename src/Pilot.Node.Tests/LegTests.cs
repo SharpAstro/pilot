@@ -49,19 +49,22 @@ internal sealed class FakeChecks : ICheckRunner
 {
     public CheckRun Next { get; set; } = new(0, "all green");
 
+    /// <summary>Answered one per run before <see cref="Next"/> is: a first run stopped by its budget, then what the rerun says.</summary>
+    public Queue<CheckRun> Script { get; } = new();
+
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
         if (OnRun is { } wait)
         {
             await wait();
         }
-        return Next;
+        return Script.Count > 0 ? Script.Dequeue() : Next;
     }
 }
 
@@ -430,9 +433,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
+    /// <summary>When set, MergeAsync refuses any head other than the first it took, as a queue does a PR pushed since, whose checks have not run.</summary>
+    public bool MergeRefusesLaid { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefusesLaid && Pr is { } shown && head != shown.Head)
+        {
+            throw new FlightException("the merge queue takes no PR whose required checks have not passed");
+        }
         Merged.Add((number, head, method));
         return Queues;
     }
@@ -474,6 +484,11 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
     public List<string> ProtectionAsked { get; } = [];
+
+    /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
+    public string? MergeQueueMethod { get; set; }
+
+    public Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(MergeQueueMethod);
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -1448,6 +1463,69 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
     }
 
+    private static CheckRun Stopped(double saturation) =>
+        new(-1, "the check ran past 30 minutes of running and was stopped") { StoppedByBudget = true, Saturation = saturation };
+
+    private async Task<FlightRow> TickedLegs()
+    {
+        var flight = await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        return flight;
+    }
+
+    [Fact]
+    public async Task ACheckStoppedByItsBudgetOnASaturatedMachineIsRunOnceMoreAndAPassFinishesTheLeg()
+    {
+        await TickedLegs();
+        _checks.Script.Enqueue(Stopped(0.9));
+        _checks.Next = new CheckRun(0, "Passed: 42");
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+
+        _checks.Runs.Count.ShouldBe(2);
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    public async Task ASecondBudgetStopFailsTheLegAndSaysItWasRetriedOnceOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.9);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(2);
+        failed.Error.ShouldNotBeNull().ShouldContain("stopped by its budget twice; the machine was saturated the first time, so it was retried once");
+        L("parser").State.ShouldBe(LegState.Flying);
+        L("parser").Report.ShouldNotBeNull().ShouldContain("retried once");
+    }
+
+    [Fact]
+    public async Task ACheckStoppedByItsBudgetOnAQuietMachineIsNotRunAgain()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.1);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(1);
+        failed.Error.ShouldNotBeNull().ShouldNotContain("retried");
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryFailingExitIsNeverRunAgainEvenOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = new CheckRun(1, "Failed: 2") { Saturation = 1 };
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldNotBeNull().ShouldContain("failed (1)");
+
+        _checks.Runs.Count.ShouldBe(1);
+    }
+
     [Fact]
     public async Task ALegsCheckRunsWithoutTheLockSoOtherCommandsAreAnsweredAndARetriedFinishDoesNotRunItAgain()
     {
@@ -1895,6 +1973,29 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _state.PutFlight(_state.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", ReviewedHead = head, StartedAt = DateTimeOffset.UtcNow } });
         (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task APlaneWhoseOldCommitsMainHoldsAsOneRebasedCommitLandsByContent()
+    {
+        // A laid PR merged through the rebase queue: main holds its change as one commit, the plane still its two older ones.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser { int X; }\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "parser 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "parser.cs"), "class Parser { int X; }\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser, laid");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
     }
 
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow

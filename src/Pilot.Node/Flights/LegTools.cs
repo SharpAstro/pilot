@@ -117,12 +117,34 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
 public sealed record CheckRun(int ExitCode, string Tail)
 {
     public bool Passed => ExitCode == 0;
+
+    /// <summary>Stopped by its running-time budget, not by its own exit.</summary>
+    public bool StoppedByBudget { get; init; }
+
+    /// <summary>The share (0 to 1) of the check's running time the machine's CPU was above 90%.</summary>
+    public double Saturation { get; init; }
+
+    /// <summary>Stopped by its budget while the machine was saturated for most of the run: worth one more try.</summary>
+    public bool StoppedSaturated => StoppedByBudget && Saturation > JobRunner.SaturatedShare;
 }
 
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>
 public interface ICheckRunner
 {
-    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken);
+    /// <param name="flight">The flight whose leg's check this is, for the job that runs it; null for a check that is no leg's.</param>
+    /// <param name="leg">The leg whose check it is.</param>
+    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null);
+}
+
+/// <summary>
+/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.RunCheckAsync"/>): it
+/// waits its turn with the other jobs, counts against max-jobs and the job-memory floor, and its
+/// <see cref="ShellCheckRunner.Timeout"/> counts from when it starts running.
+/// </summary>
+public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
+{
+    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, ShellCheckRunner.Timeout, cancellationToken);
 }
 
 /// <summary>
@@ -136,7 +158,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     private const int TailLines = 30;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         using var shell = ShellScript.For(command, cwd);
         var start = shell.Start;
@@ -372,6 +394,13 @@ public interface IGitHub
     Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
+    /// The method (<c>REBASE</c>, <c>SQUASH</c> or <c>MERGE</c>) of the merge queue of <paramref name="branch"/> in the repo at
+    /// <paramref name="repoPath"/>: the <c>merge_queue</c> rule's <c>parameters.merge_method</c> of <c>rules/branches/{branch}</c>.
+    /// Null when no such rule applies or GitHub would not say.
+    /// </summary>
+    Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -602,6 +631,9 @@ public static class PilotMarks
     public const string Conflicts = LabelPrefix + "conflicts";
 
     public const string Queued = LabelPrefix + "queued";
+
+    /// <summary>Put on a flight's issue or PR by a person: its starts bypass the Opus cap and the repo hold (still counted as Opus).</summary>
+    public const string Priority = LabelPrefix + "priority";
 
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
@@ -977,6 +1009,39 @@ public sealed partial class GhCli : IGitHub
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    public async Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return exit == 0 ? ParseMergeQueueMethod(rules) : null;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: the <c>merge_queue</c> rule's <c>parameters.merge_method</c>, upper-cased; null with no such rule, no method, or no JSON.</summary>
+    internal static string? ParseMergeQueueMethod(string rulesJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement is not { ValueKind: JsonValueKind.Array } array)
+            {
+                return null;
+            }
+            foreach (var rule in array.EnumerateArray())
+            {
+                if (rule.ValueKind == JsonValueKind.Object && TextOf(rule, "type") == "merge_queue"
+                    && rule.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+                    && TextOf(parameters, "merge_method") is { Length: > 0 } method)
+                {
+                    return method.ToUpperInvariant();
+                }
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

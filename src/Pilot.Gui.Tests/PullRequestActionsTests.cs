@@ -97,6 +97,26 @@ public sealed class PullRequestActionsTests
         Kinds(conflicts).ShouldBe([PullRequestActionKind.Open]);
     }
 
+    // #536, 2026-10-31: Review on PIL525's draft PR was pressed and nothing showed: it sent `pilot review pr`, which the node refuses
+    // on a flight's PR. A draft flight PR says it is in flight; one marked ready offers Review, and that sends the flight's own review.
+    [Fact]
+    public void AFlightsDraftSaysInFlightAndItsReadyPrsReviewIsTheFlightsOwn()
+    {
+        var flying = Pr("SharpAstro/pilot", 536, PullRequestKind.ChecksRunning, "Checks running", flight: "PIL525") with { Draft = true };
+        Kinds(flying).ShouldNotContain(PullRequestActionKind.Review);
+        PullRequestActions.FlightReviewSaid(flying)!.Value.Label.ShouldBe("In flight");
+        PullRequestActions.FlightReviewSaid(flying with { Review = PullRequestReview.Passed }).ShouldBeNull();
+        PullRequestActions.FlightReviewSaid(flying with { Flight = null }).ShouldBeNull();
+
+        var ready = flying with { Draft = false };
+        PullRequestActions.FlightReviewSaid(ready).ShouldBeNull();
+        Kinds(ready).ShouldContain(PullRequestActionKind.Review);
+        var sent = DashboardCommands.ReviewPrRequest(ready, "gui");
+        sent.Verb.ShouldBe(Verbs.StartReview);
+        sent.Target.ShouldBe(Verbs.FlightTarget("PIL525"));
+        DashboardCommands.ReviewPrRequest(ready with { Flight = null }, "gui").Verb.ShouldBe(Verbs.ReviewPr);
+    }
+
     [Fact]
     public void ReviewIsOfferedWherePilotsReviewIsNoneAndNowhereElseAndOpenIsOnEveryRow()
     {
@@ -254,7 +274,7 @@ public sealed class PullRequestActionsTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
         chrome.PullRequests.OnReview = (_, _) => Task.CompletedTask;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         return (chrome, chrome.PullRequests);
     }
 

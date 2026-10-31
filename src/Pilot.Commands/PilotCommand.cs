@@ -791,6 +791,73 @@ public static class PilotCommand
             await output.WriteAsync(merges.Count == 0 ? "No merges.\n" : string.Concat(merges.Select(m => MergeLine(m) + "\n")));
             return 0;
         });
+        var spendWindow = new Option<string>("--window") { Description = "5h, today or week: the account's 5-hour or 7-day window when its reset is known, else counted back from now; today is the local day", DefaultValueFactory = _ => "today" };
+        spendWindow.AcceptOnlyFromAmong("5h", "today", "week");
+        var spendBy = new Option<string?>("--by") { Description = "flight or role; both when left out" };
+        spendBy.AcceptOnlyFromAmong("flight", "role");
+        var spendWaste = new Option<bool>("--waste") { Description = "Only what bought nothing kept, worst first: later rounds of a leg, base-merge re-reviews, sessions that ended without a result, replanned plans, failed starts again" };
+        var spendCommand = Action(new Command("spend", "Tokens spent over a window, by flight and by role, from the node's ledger") { Options = { spendWindow, spendBy, spendWaste } }, async (p, client, ct) =>
+        {
+            var window = p.GetValue(spendWindow)!;
+            if (p.GetValue(spendWaste))
+            {
+                var wasted = await client.GetSpendWasteAsync(window, ct);
+                if (wasted is not { Success: true, Response: { } waste })
+                {
+                    await output.WriteLineAsync($"refused: {wasted.Error}");
+                    return 1;
+                }
+                var culture = CultureInfo.InvariantCulture;
+                var span = $"{waste.From.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)} to {waste.To.ToLocalTime().ToString("yyyy-MM-dd HH:mm", culture)}";
+                var name = window switch { "5h" => "5h window", "week" => "7-day window", _ => "today" };
+                await output.WriteLineAsync($"spend waste, {name}: {span} (local time){(waste.FromAccount ? ", the account's own window" : "")}");
+                await output.WriteLineAsync($"{waste.WasteWeighted.ToString("N0", culture)} of {waste.WindowWeighted.ToString("N0", culture)} weighted tokens spent for nothing kept ({waste.WasteShare.ToString("0.0", culture)} %), {span}");
+                if (waste.Rows.Length == 0)
+                {
+                    await output.WriteLineAsync("  no waste");
+                    return 0;
+                }
+                foreach (var row in waste.Rows)
+                {
+                    var where = string.Join('/', new[] { row.Flight, row.Leg }.Where(x => x is { Length: > 0 }));
+                    await output.WriteLineAsync($"  {row.Kind}: {row.Reason}  {(where.Length > 0 ? where : "-")}  {row.Role}  {row.Model ?? "-"}  {row.Tokens.ToString("N0", culture),14} tokens  {row.Weighted.ToString("N0", culture),14} weighted  {row.Share.ToString("0.0", culture),5} %");
+                }
+                return 0;
+            }
+            var envelope = await client.GetSpendAsync(window, ct);
+            if (envelope is not { Success: true, Response: { } report })
+            {
+                await output.WriteLineAsync($"refused: {envelope.Error}");
+                return 1;
+            }
+
+            var inv = CultureInfo.InvariantCulture;
+            var range = $"{report.From.ToLocalTime().ToString("yyyy-MM-dd HH:mm", inv)} to {report.To.ToLocalTime().ToString("yyyy-MM-dd HH:mm", inv)}";
+            var label = window switch { "5h" => "5h window", "week" => "7-day window", _ => "today" };
+            await output.WriteLineAsync($"spend, {label}: {range} (local time){(report.FromAccount ? ", the account's own window" : "")}");
+            await output.WriteLineAsync($"{report.Messages.ToString("N0", inv)} messages, {report.Tokens.ToString("N0", inv)} tokens, {report.Weighted.ToString("N0", inv)} weighted, {range}");
+            var by = p.GetValue(spendBy);
+            foreach (var (name, rows) in new[] { ("flight", report.Flights), ("role", report.Roles) })
+            {
+                if (by is not null && by != name)
+                {
+                    continue;
+                }
+                await output.WriteLineAsync();
+                await output.WriteLineAsync($"by {name}, {range}:");
+                if (rows.Length == 0)
+                {
+                    await output.WriteLineAsync("  nothing spent");
+                    continue;
+                }
+                var width = rows.Max(r => r.Key.Length);
+                foreach (var row in rows)
+                {
+                    await output.WriteLineAsync($"  {row.Key.PadRight(width)}  {row.Tokens.ToString("N0", inv),14} tokens  {row.Weighted.ToString("N0", inv),14} weighted  {row.Share.ToString("0.0", inv),5} %");
+                }
+            }
+            return 0;
+        });
         var jobId = Arg("job", "The job's id, as j3");
         var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
         {
@@ -1224,7 +1291,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1737,6 +1804,19 @@ public static class PilotCommand
     internal static string LandedHidden(int landed, string command = "pilot status --all") =>
         $"{landed} landed {(landed == 1 ? "flight" : "flights")} not shown: {command}";
 
+    /// <summary>The <c>Opus n/cap</c> line (with <c>peers not counted</c> when so) and the flights waiting for admission with why; nothing from a node that has not said.</summary>
+    internal static IEnumerable<string> AdmissionLines(SnapshotEvent snapshot)
+    {
+        if (snapshot.Admission is { } admission)
+        {
+            yield return $"{admission.Line()}{(admission.Counted.Length > 0 ? ": " + string.Join(", ", admission.Counted) : "")}{(admission.OneFlightPerRepo ? "; one flight per repo" : "")}";
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            yield return $"queued  {queued.Code}{(queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
+        }
+    }
+
     /// <summary>
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
@@ -1765,6 +1845,13 @@ public static class PilotCommand
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {
             text.AppendLine($"machine  {machine.Line()}");
+        }
+        if (!newestOnly && code is null)
+        {
+            foreach (var line in AdmissionLines(snapshot))
+            {
+                text.AppendLine(line);
+            }
         }
         if (!newestOnly && code is null && snapshot.Ideas.Count(i => i.State == IdeaState.Noted) is > 0 and var noted)
         {
