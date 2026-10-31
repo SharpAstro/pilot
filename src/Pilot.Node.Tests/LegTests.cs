@@ -1031,6 +1031,7 @@ public abstract class LegCommanderTestsBase : IDisposable
 }
 
 /// <summary>Part 1 of LegCommanderTests: the class is split so its tests run side by side, not one after another.</summary>
+[Trait("Category", "Slow")]
 public sealed class LegCommanderTests1 : LegCommanderTestsBase
 {
     [Fact]

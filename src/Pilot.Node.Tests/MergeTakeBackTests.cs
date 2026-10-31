@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// go-around: disarmed, dequeued, the PR-ready card's Merge closed and a card saying so, and offered again only once the new leg
 /// is done and a fresh review passes (pilot #342).
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class MergeTakeBackTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

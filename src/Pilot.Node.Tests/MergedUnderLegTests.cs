@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// goes to a new PR from the merged base, and landing never removes a plane holding legs not done, commits past the merged head
 /// or changes not committed. Git is real (a bare origin and a plane); GitHub is the fake.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class MergedUnderLegTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

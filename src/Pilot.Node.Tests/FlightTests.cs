@@ -71,6 +71,7 @@ public sealed class FlightCodeTests
 }
 
 /// <summary>Planes and the flight verbs over a real git repo of the test's own.</summary>
+[Trait("Category", "Slow")]
 public sealed class FlightCommanderTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

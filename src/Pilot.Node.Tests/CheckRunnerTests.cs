@@ -34,6 +34,7 @@ public sealed class CheckRunnerTests
 
     /// <summary>A program's own exit code is the check's, not pwsh's 0 or 1 for a script that ends without exit.</summary>
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AProgramsExitCodeIsTheChecks()
     {
         var run = await new ShellCheckRunner().RunAsync("git --no-such-option", Path.GetTempPath(), Ct);

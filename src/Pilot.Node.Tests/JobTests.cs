@@ -371,6 +371,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobEndsWhenItsProcessExitsThoughAProcessItStartedStillHoldsItsOutput()
     {
         // SE1's j122: the tests passed in 6 minutes, a process they started kept the job's output open, and the job read as
