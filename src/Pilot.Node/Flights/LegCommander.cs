@@ -3100,7 +3100,7 @@ public sealed partial class LegCommander(
         // Each card says what happened, not a review's findings it did not have (the review of #453): a check that failed and a
         // reviewer that never started raise this card too.
         var firstLine = changes.Split('\n', 2)[0].Trim();
-        var because = firstLine.Length > 0 ? $": {Clip(firstLine)}" : "";
+        var because = firstLine.Length > 0 ? $": {Clip(firstLine)}" : ": nothing was written down, see the PR's review";
         var (title, words, said, anyway) = reason switch
         {
             SendBackReason.ChecksFailed => ($"{flight.Code}'s PR fails its checks{because}", "Fix the failing checks", $"The PR of {leg} fails its checks.", $"Land {flight.Code} with its checks failing"),
