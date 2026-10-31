@@ -75,7 +75,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
             nodeInfo: client.GetNodeAsync);
 
-    /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
+    /// <summary>The node's machine as it last sampled it (as <see cref="View.Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
     public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
     /// <summary>

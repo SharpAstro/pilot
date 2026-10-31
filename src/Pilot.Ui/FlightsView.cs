@@ -670,7 +670,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     }
 
     /// <summary>
-    /// The page as a tree, for <paramref name="width"/> design units: what <see cref="Render"/> paints on pixels, and
+    /// The page as a tree of <paramref name="screen"/>, in design units: what <see cref="Render"/> paints on pixels, and
     /// what pilot-tui arranges in terminal cells (the selection, the why field and their callbacks the same).
     /// </summary>
     internal Layout.Node Tree(FlightsScreen screen)
