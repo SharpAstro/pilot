@@ -252,6 +252,30 @@ public sealed class LegWatchTests
         Open().ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, false)]
+    public async Task AWorkerWithAJobOfItsOwnQueuedOrRunningIsNeitherNudgedNorRungFor(JobState jobState, bool byRowId)
+    {
+        Worker(SessionState.Idle);
+        var worker = _state.Sessions().First();
+        _state.PutJob(new JobRow
+        {
+            Id = "j2", Command = "dotnet build", Cwd = "/work/tia1", State = jobState, Owner = byRowId ? worker.Id : "c0000000", OwnerName = worker.Name,
+            LogPath = "/tmp/j2.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await _watch.LookAsync(Ct);
+        }
+
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {

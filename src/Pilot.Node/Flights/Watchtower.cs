@@ -206,8 +206,14 @@ public sealed class Watchtower(
     public SessionRow? Current()
     {
         var rows = state.Sessions().Where(r => IsWatchtower(r) && r.Name == Name).ToList();
-        return rows.FirstOrDefault(r => r.Id == _job)
-            ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
+        if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
+        {
+            return own;
+        }
+        // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
+        // cf26a311 gone and fd282f70, ended 4 h earlier, named), so only a live one stands in and else the look starts a fresh one.
+        var vanished = _job is not null;
+        return rows.Where(r => !vanished || Live(r)).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>

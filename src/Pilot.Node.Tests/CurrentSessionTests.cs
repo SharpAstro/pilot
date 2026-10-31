@@ -176,6 +176,32 @@ public sealed class CurrentSessionTests : IDisposable
     }
 
     [Fact]
+    public async Task AWatchtowerWhoseSessionVanishedGetsAFreshOneAndTheRecordNeverNamesAnEndedOne()
+    {
+        // An older watchtower, ended hours ago, still in the list.
+        Row("t0000001", "du1-watchtower", SessionState.Ended, startedAt: Start.AddHours(-6), lastResponse: Start.AddHours(-5));
+        _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
+        _tower.Current().ShouldNotBeNull().Id.ShouldBe("t0000001");
+
+        // The node starts its own; it shows up, then vanishes from Claude Code's list.
+        await _tower.RestartAsync("test", Ct);
+        var started = _workers.Started.Count;
+        started.ShouldBe(1);
+        Row("job00001", "du1-watchtower", SessionState.Idle, startedAt: Start);
+        _tower.Current()!.Id.ShouldBe("job00001");
+        _state.RemoveSession("job00001");
+
+        // The older ended session is not adopted as current.
+        _tower.Current().ShouldBeNull();
+
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(started + 1);
+        _said.Where(c => c.Verb == Verbs.Say).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TheWatchtowerKeepsItsSessionWhenOneSayIsRefusedForATransientConfigRead()
     {
         Row("t0000001", "du1-watchtower", SessionState.Ended, lastResponse: Start);
