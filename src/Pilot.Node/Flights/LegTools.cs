@@ -394,6 +394,13 @@ public interface IGitHub
     Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
+    /// The method (<c>REBASE</c>, <c>SQUASH</c> or <c>MERGE</c>) of the merge queue of <paramref name="branch"/> in the repo at
+    /// <paramref name="repoPath"/>: the <c>merge_queue</c> rule's <c>parameters.merge_method</c> of <c>rules/branches/{branch}</c>.
+    /// Null when no such rule applies or GitHub would not say.
+    /// </summary>
+    Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -624,6 +631,9 @@ public static class PilotMarks
     public const string Conflicts = LabelPrefix + "conflicts";
 
     public const string Queued = LabelPrefix + "queued";
+
+    /// <summary>Put on a flight's issue or PR by a person: its starts bypass the Opus cap and the repo hold (still counted as Opus).</summary>
+    public const string Priority = LabelPrefix + "priority";
 
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
@@ -999,6 +1009,39 @@ public sealed partial class GhCli : IGitHub
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    public async Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return exit == 0 ? ParseMergeQueueMethod(rules) : null;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: the <c>merge_queue</c> rule's <c>parameters.merge_method</c>, upper-cased; null with no such rule, no method, or no JSON.</summary>
+    internal static string? ParseMergeQueueMethod(string rulesJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement is not { ValueKind: JsonValueKind.Array } array)
+            {
+                return null;
+            }
+            foreach (var rule in array.EnumerateArray())
+            {
+                if (rule.ValueKind == JsonValueKind.Object && TextOf(rule, "type") == "merge_queue"
+                    && rule.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+                    && TextOf(parameters, "merge_method") is { Length: > 0 } method)
+                {
+                    return method.ToUpperInvariant();
+                }
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

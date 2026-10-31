@@ -96,6 +96,13 @@ public sealed record LegRow
     public PackageWait? Hold { get; init; }
 
     /// <summary>
+    /// Why its start waits for admission (<c>waiting for an Opus slot: 1 of 1 flying: ...</c>): the Opus cap or the one-flight-per-repo
+    /// mode. Not a stall and no ring: the node asks again on its sweep and starts it once admitted. Distinct from <see cref="Hold"/>,
+    /// which waits for a package. Null when it waits for nothing.
+    /// </summary>
+    public string? Queued { get; init; }
+
+    /// <summary>
     /// What its worker waits on without a job (<c>pilot leg wait</c>): a file to appear or a time to come. The worker ends its
     /// turn; the node looks about every minute and wakes it once when it comes. Null when it waits on nothing.
     /// </summary>

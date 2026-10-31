@@ -60,12 +60,27 @@ public sealed record NodeInfo
     /// <summary>The Claude account its sessions run under; null when Claude Code has no login on record.</summary>
     public AccountRow? Account { get; init; }
 
+    /// <summary>The Opus cap this node counts against (<c>opus-cap</c>); the fleet's value is the one the holder of the count publishes. Null from an older node.</summary>
+    public int? OpusCap { get; init; }
+
+    /// <summary>Whether this node holds a repo to one flight (<c>one-flight-per-repo</c>); the fleet's value is the holder of the count's. Null from an older node.</summary>
+    public bool? OneFlightPerRepo { get; init; }
+
+    /// <summary>The sessions this node counts against the Opus cap and its start gate, as <c>label (model)</c>; null from an older node.</summary>
+    public string[]? CountedSessions { get; init; }
+
+    /// <summary>The leases this node holds as the keeper of the fleet's Opus count: who has a slot and until when; null when it keeps none or an older node did not say.</summary>
+    public AdmissionLease[]? Leases { get; init; }
+
     /// <summary>How the node's watchtower is doing; null when it keeps none (<c>--no-watchtower</c>) or an older node did not say.</summary>
     public WatchtowerHealth? Watchtower { get; init; }
 
     /// <summary>The node's own network use in the last full clock hour; null when an older node did not say.</summary>
     public NodeTrafficRow? Traffic { get; init; }
 }
+
+/// <summary>A slot of the fleet's Opus count: <paramref name="Node"/> runs <paramref name="Label"/> and holds it until <paramref name="ExpiresAt"/>, unless it renews it.</summary>
+public sealed record AdmissionLease(string Node, string Label, string? Model, DateTimeOffset ExpiresAt);
 
 /// <summary>How a node's watchtower is doing: its state, how often it has had to be started again, and why the last one ended.</summary>
 public sealed record WatchtowerHealth
