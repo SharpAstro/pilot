@@ -293,7 +293,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
     }
 
-    /// <summary>A node-bound button of a page: <paramref name="idle"/> while nothing of <paramref name="key"/> is with the node, else its dimmed working label.</summary>
+    /// <summary>A node-bound button of a page: a pill showing <paramref name="label"/> while nothing of <paramref name="key"/> is with the node, else a dimmed working label made from it.</summary>
     private Layout.Node NodeButton(string key, string hit, string label, Action onClick, bool header = false) =>
         Presses.Button(key, hit,
             () => header ? CardsView<TSurface>.HeaderPill(label, hit, onClick) : CardsView<TSurface>.Pill(label, hit, onClick),

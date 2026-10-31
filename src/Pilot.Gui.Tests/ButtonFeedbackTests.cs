@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
+using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
 using Xunit;
@@ -123,6 +124,44 @@ public sealed class ButtonFeedbackTests
         presses.IsTaken("lapses").ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task AWatchOnlyCardsConnectIsWorkingAtOnceTakesNoSecondPressAndSaysARefusalOnTheCard()
+    {
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var cards = chrome.Cards;
+        var node = new PageButtonFeedbackTests.LateNode();
+        var far = new NodeMark("192.168.0.79:47731", "192.168.0.79:47731", "DE1", Here: false);
+        cards.CanSteer = n => n?.Here != false;
+        cards.OnConnect = n => node.Ask($"connect {n.Name}");
+        var card = new CardRow
+        {
+            Id = "cfar", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight/X", Title = "landed on DE1", At = Live.At, State = CardState.Open,
+            Choices = [new CardChoice { Label = "Merge", Verb = "answer", Target = "card/x" }],
+        };
+        var screen = CardsScreen.Merge([(far, CardsScreen.From([card], [], Live.At))], null);
+        const string connect = "card:cfar:connect";
+
+        // Pressed: the pill says it is working on this frame, with no hit, so a second press asks nothing.
+        PageButtonFeedbackTests.Click(cards.Tree(screen), connect);
+        node.Asked.ShouldBe(["connect DE1"]);
+        PageButtonFeedbackTests.Words(cards.Tree(screen)).ShouldContain("Connect …");
+        PageButtonFeedbackTests.Has(cards.Tree(screen), connect).ShouldBeFalse();
+
+        // Refused: the node's words on the card, and the pill back to press again.
+        node.Answer("DE1 did not allow it");
+        await PageButtonFeedbackTests.Until(() => PageButtonFeedbackTests.Has(cards.Tree(screen), connect));
+        PageButtonFeedbackTests.Words(cards.Tree(screen)).ShouldContain("DE1 did not allow it");
+
+        // Pressed again and taken: the old words go, and nothing is refused.
+        PageButtonFeedbackTests.Click(cards.Tree(screen), connect);
+        node.Asked.Count.ShouldBe(2);
+        node.Answer(null);
+        await PageButtonFeedbackTests.Until(() => PageButtonFeedbackTests.Has(cards.Tree(screen), connect));
+        PageButtonFeedbackTests.Words(cards.Tree(screen)).ShouldNotContain("DE1 did not allow it");
+        cards.RefusedOn("cfar").ShouldBeNull();
+    }
+
     // ---- the buttons that bypass the helper ----
 
     // A button that asks the node nothing: navigation, folds, links, copy; the reason is why it needs no working state.
@@ -150,6 +189,7 @@ public sealed class ButtonFeedbackTests
         (@"^flight:[^:]+:checklist:", "a checklist line of the flight page reveals its leg"),
         (@"^FlightMapLayer|^map:", "the flight map's layer switches, grip and nodes: what the canvas shows and where its cursor is"),
         (@"^cards:chat$", "opens the chat with the watchtower"),
+        (@"^job:[^:]+:(cancel|force|cancel-no|force-no)$", "a job's Cancel… and Force cancel… only ask the question, and Keep running drops it; the answer that cancels goes through its Presses"),
         (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 
@@ -161,11 +201,29 @@ public sealed class ButtonFeedbackTests
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var page in PageTextOverlapTests.Pages)
         {
+            // Every callback a button is gated on is wired, as the per-page tests wire them: a button the page shows only when its host
+            // can do it is arranged too, and a bypass among them fails here rather than passing unseen.
             var arranged = await PageTextOverlapTests.ArrangedOf(page, "sample", 1900, 1f, chrome =>
             {
+                Task<string?> Took() => Task.FromResult<string?>(null);
                 chrome.Cards.OnAnswer = (_, _) => { };
                 chrome.Cards.OnDismiss = _ => { };
+                chrome.Cards.OnConnect = _ => Took();
                 chrome.PullRequests.OnReview = (_, _) => Task.CompletedTask;
+                chrome.PullRequests.OnFixReview = (_, _) => Task.CompletedTask;
+                chrome.Jobs.OnCancel = _ => Took();
+                chrome.Jobs.OnForceCancel = _ => Took();
+                chrome.Jobs.OnPause = _ => Took();
+                chrome.Jobs.OnResume = _ => Took();
+                chrome.Jobs.OnConnect = _ => Took();
+                chrome.Fleet.OnConnect = _ => Took();
+                chrome.Fleet.OnForget = _ => Took();
+                chrome.Fleet.OnMaintenance = (_, _) => Took();
+                chrome.Sessions.OnAction = _ => Took();
+                chrome.Sessions.OnConnect = _ => Took();
+                chrome.Flights.OnAction = _ => Took();
+                chrome.Flights.OnConnect = _ => Took();
+                chrome.Home.OnAction = _ => Took();
             });
             // Made is read after the arranging: the buttons the page made are in it by then.
             made.UnionWith(Presses.Made);
@@ -181,9 +239,12 @@ public sealed class ButtonFeedbackTests
             }
         }
 
-        // The arranging does reach the buttons made through the helper: a PR's Review and a card's Dismiss.
+        // The arranging does reach the buttons made through the helper: a PR's Review, a card's Dismiss, and the ones shown only when
+        // their host callback is set (a watch-only Fleet row's Connect, a node's maintenance switch).
         seen.ShouldContain(h => h.EndsWith(":start-review", StringComparison.Ordinal));
         seen.ShouldContain(h => h.StartsWith("card:", StringComparison.Ordinal) && h.EndsWith(":dismiss", StringComparison.Ordinal));
+        seen.ShouldContain(h => h.StartsWith("fleet:", StringComparison.Ordinal) && h.EndsWith(":connect", StringComparison.Ordinal));
+        seen.ShouldContain(h => h.StartsWith("fleet:", StringComparison.Ordinal) && h.EndsWith(":maintenance", StringComparison.Ordinal));
         unlisted.ShouldBeEmpty("a button that asks the node is made through Presses (working at once, no second press, the outcome or the refusal where it was pressed); one that does not is listed in LocalOnly (why it needs none)");
     }
 }

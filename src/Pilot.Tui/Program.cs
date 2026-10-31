@@ -266,7 +266,7 @@ cards.CanSteer = clients.CanSteer;
 sessions.OnConnect = node => Connect(node.Where, node.Name);
 jobs.OnConnect = node => Connect(node.Where, node.Name);
 flights.OnConnect = node => Connect(node.Where, node.Name);
-cards.OnConnect = node => _ = Connect(node.Where, node.Name);
+cards.OnConnect = node => Connect(node.Where, node.Name);
 // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
 // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
 // the next draw: the steerable set is read again at once, not at the 5 s look.

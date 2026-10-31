@@ -267,8 +267,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Whether this user may command a node's cards (its own, or one it holds a grant for); null: every card.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
-    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    /// <summary>
+    /// Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card. Answers null once the grant is given,
+    /// else what the node said, which the card shows under its buttons.
+    /// </summary>
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
 
     /// <summary>Opens the Fleet page on the node's row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
@@ -784,7 +787,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
             lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Button("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
+            // A grant asks the node like any other press: working at once, and a refusal on the card.
+            var connectHit = $"card:{card.Id}:connect";
+            buttons.Add(NodeButton("Connect", connectHit, () =>
+            {
+                if (OnConnect is { } connect)
+                {
+                    _ = Presses.PressAsync(card.Id, connectHit, _ => connect(watched));
+                }
+            }));
         }
         for (var i = 0; watched is null && i < card.Choices.Length; i++)
         {

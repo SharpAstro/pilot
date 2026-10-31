@@ -147,7 +147,7 @@ public sealed class SteerByNodeTests : IAsyncDisposable
         chrome.Flights.CanSteer = clients.CanSteer;
         chrome.Flights.OnConnect = node => { asked.Add(node.Where); return Task.FromResult<string?>(null); };
         chrome.Cards.CanSteer = clients.CanSteer;
-        chrome.Cards.OnConnect = node => asked.Add(node.Where);
+        chrome.Cards.OnConnect = Taken.By<NodeMark>(node => asked.Add(node.Where));
         var se1Flight = FlightOn("SE11", Se1);
         var le1Flight = FlightOn("LE11", Le1);
         var flights = new FlightsScreen([se1Flight, le1Flight], "test", Live.At);
