@@ -20,7 +20,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("1");
         File.WriteAllText(Path.Combine(Repo, "f.txt"), "x\n");
-        Git(Repo, "add", ".");
+        Git(Repo, "add", "f.txt");
         Commit(Repo, "f");
         File.WriteAllText(Path.Combine(Repo, "f.txt"), "side\n");
         Commit(Repo, "side");
@@ -198,7 +198,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         // What a merge-main leg does once main has moved: merge main, then the remote branch, then push.
         File.WriteAllText(Path.Combine(Repo, "g.txt"), "g\n");
         Git(Repo, "add", "g.txt");
-        Commit(Repo, "g");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "g");
         Git(Repo, "push", "-q", "origin", "main");
         Git(plane, "fetch", "-q", "origin");
         Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "-m", "merge main", "origin/main");
