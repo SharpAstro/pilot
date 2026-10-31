@@ -139,7 +139,7 @@ public abstract class JobTestsBase : IDisposable
     }
 
     // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle()
+    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null)
     {
         var clock = new Clock();
         var cpu = new Dictionary<string, TimeSpan>();
@@ -149,6 +149,7 @@ public abstract class JobTestsBase : IDisposable
             IdleWindow = TimeSpan.FromMinutes(15),
             IdleCpu = TimeSpan.FromSeconds(5),
             JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
+            MachineCpu = machineCpu,
         };
         return (jobs, clock, cpu, async id =>
         {
@@ -921,46 +922,6 @@ public sealed class JobTests2 : JobTestsBase
         started.Ok.ShouldBeTrue();
         (await Ended(started.Made!)).State.ShouldBe(JobState.Succeeded);
     }
-
-    /// <summary>A clock the test moves.</summary>
-    private sealed class Clock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan span) => _now += span;
-    }
-
-    // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null)
-    {
-        var clock = new Clock();
-        var cpu = new Dictionary<string, TimeSpan>();
-        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
-        {
-            FreeMemory = () => null,
-            IdleWindow = TimeSpan.FromMinutes(15),
-            IdleCpu = TimeSpan.FromSeconds(5),
-            JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
-            MachineCpu = machineCpu,
-        };
-        return (jobs, clock, cpu, async id =>
-        {
-            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
-            await Until(id, j => j.EndedAt is not null);
-        });
-    }
-
-    private string Hand(JobRunner jobs, string command)
-    {
-        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [_root, "0", command], Who = "se1-tia1-parser" }).Made!;
-        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
-        return id;
-    }
-
-    private CardRow[] IdleCards(bool openOnly = true) => [.. _state.Cards(openOnly).Where(c => c.Kind == JobRunner.IdleKind)];
-
     [Fact]
     public async Task TwoChecksAndFourJobsAtMaxJobsFourNeverRunMoreThanFourAtOnceAndAllFinish()
     {
