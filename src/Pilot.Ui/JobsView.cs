@@ -63,7 +63,8 @@ internal sealed record JobLine
         Row = job,
         Id = job.Id,
         Command = job.Command,
-        For = job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
+        For = job.Kind == JobKind.Check && job.Flight is { } checkOf ? job.Leg is { } checked_ ? $"{checkOf}/{checked_}'s check" : $"{checkOf}'s check"
+            : job.Flight is { } flight ? job.Leg is { } leg ? $"{flight}/{leg}" : flight : job.OwnerName ?? (job.Owner is null ? "a terminal" : job.Owner),
         State = job.State == JobState.Running && job.PausedAt is not null ? "paused" : job.State.ToString().ToLowerInvariant(),
         StateDetail = job.State switch
         {
@@ -679,7 +680,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Label($"{job.Id} · {line.State}").RowH(20f),
             Fact("runs", job.Command, Body),
             Fact("in", job.Cwd, Dim),
-            Fact("wakes", job.Owner is null ? "nobody: handed over from a terminal" : $"{line.For}{(job.Told ? ", told" : job.EndedAt is null ? "" : ", not told yet")}", Dim),
+            Fact("wakes", job.Kind == JobKind.Check ? $"nobody: the node's check of {line.For.Replace("'s check", "")}" : job.Owner is null ? "nobody: handed over from a terminal" : $"{line.For}{(job.Told ? ", told" : job.EndedAt is null ? "" : ", not told yet")}", Dim),
             Fact("log", job.LogPath, Dim),
             Fact("timeout", JobLine.Duration(job.Timeout), Dim),
         };

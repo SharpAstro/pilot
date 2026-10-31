@@ -1492,7 +1492,15 @@ public sealed partial class LegCommander(
             seen = leg;
             try
             {
-                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken));
+                run = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                if (run.StoppedSaturated)
+                {
+                    // Stopped by its budget on a machine that was saturated for most of the run: run once more, as a fresh job.
+                    var again = await OffLockAsync(null, () => checks.RunAsync(check, flight.Worktree, cancellationToken, flight.Code, leg.Name));
+                    run = again.StoppedByBudget
+                        ? again with { Tail = $"stopped by its budget twice; the machine was saturated the first time, so it was retried once\n{again.Tail}" }
+                        : again;
+                }
             }
             catch (Exception ex)
             {
