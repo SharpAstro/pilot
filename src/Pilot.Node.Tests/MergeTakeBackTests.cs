@@ -130,6 +130,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanLegOnANodeArmedMergeClearsItAndSaysSo()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -171,6 +172,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StartLegOnAQueuedMergeDequeues()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -185,6 +187,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StartLegOnAGitHubArmedMergeDisarmsIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -199,6 +202,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAroundOnAQueuedMergeDequeues()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -216,6 +220,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAroundOnAGitHubArmedMergeDisarmsIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -230,6 +235,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task NoMergeIsOfferedUntilAFreshReviewPasses()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

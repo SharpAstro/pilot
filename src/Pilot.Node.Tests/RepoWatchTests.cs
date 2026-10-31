@@ -102,6 +102,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASweepGitHubRefusesIsTheRepoStatusErrorNotAStop()
     {
         var repo = Clone();

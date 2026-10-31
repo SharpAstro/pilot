@@ -117,6 +117,7 @@ public sealed class PersonsWordTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedLegIsMarkedDoneAnywayAtThePersonsWord()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

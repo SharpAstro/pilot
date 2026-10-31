@@ -37,6 +37,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings()
     {
         var code = await Looping("1", 3);
@@ -52,6 +53,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSecondRoundWithChangesRaisesTheOrdinaryCard()
     {
         await Looping("1", 2);
@@ -61,6 +63,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFourthRoundIsRefusedToTheNodeAndTheWatchtowerButNotThePerson()
     {
         var code = await Looping("1", 3);
@@ -75,6 +78,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePersonsGoAroundAtAHeldLoopLetsTheFourthRoundStartWhenTheWorkerFinishes()
     {
         var code = await Looping("1", 3);
@@ -96,6 +100,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnlyTheWatchtowerOrThePersonMayAllowARound()
     {
         var code = await Looping("1", 3);
@@ -105,6 +110,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheWatchtowersWordAllowsExactlyOneMoreRound()
     {
         var code = await Looping("1", 3);
@@ -125,6 +131,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AllowingARoundWhereNoLoopIsHeldIsRefused()
     {
         var code = await Looping("1", 2);
@@ -133,6 +140,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePassWithNotesChoiceLeavesTheLoopAndPassesTheReview()
     {
         var code = await Looping("1", 3);
@@ -155,6 +163,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewTheNodeTurnedBackAfterAPassingThirdRoundIsNotHeld()
     {
         var code = await PassedAtTheThirdRound("1");
@@ -179,6 +188,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassSpendsNoneOfTheRoundsALoopMayTake()
     {
         var code = await PassedAtTheThirdRound("1");
@@ -194,6 +204,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFlightsOwnWorkerIsNotThePersonAtAHeldLoop()
     {
         var code = await Looping("1", 3);
@@ -205,6 +216,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APersonsStartReviewThatIsRefusedAllowsNoRound()
     {
         var code = await Looping("1", 3);

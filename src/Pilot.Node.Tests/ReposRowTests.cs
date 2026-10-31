@@ -76,6 +76,7 @@ public sealed class ReposRowTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReadReachesASubscriberAsAReposChangedEventAndTheMirrorHoldsIt()
     {
         Clone("alpha");
@@ -98,6 +99,7 @@ public sealed class ReposRowTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AResumedStreamsSnapshotHoldsTheRow()
     {
         Clone("alpha");
@@ -174,6 +176,7 @@ public sealed class ReposRowTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefreshAfterTheMainCheckoutSwitchedBranchShowsTheNewBranch()
     {
         var repo = Path.Combine(_root, "gamma");

@@ -1046,6 +1046,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg()
     {
         var flight = await FlightWithTwoLegs();
@@ -1071,6 +1072,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerAskedForOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
     {
         await FlightWithTwoLegs();
@@ -1098,6 +1100,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APriorityReposPlannerUsesItsOwnLimitAndOneWithNoFiguresIsStartedAtOnce()
     {
         await FlightWithTwoLegs();
@@ -1124,6 +1127,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlannedWithNoLegToStartIsRefusedAndNoLegIsNamedPlan()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -1134,6 +1138,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LegsArePlannedInOrderWithTheirChecklistAndBudget()
     {
         await FlightWithTwoLegs();
@@ -1158,6 +1163,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy()
     {
         await FlightWithTwoLegs();
@@ -1179,6 +1185,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnlyAPlannedLegIsRemovedAFlyingDoneOrFailedOneIsRefusedWithWhy()
     {
         await FlightWithTwoLegs();
@@ -1197,6 +1204,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFlightGoesOnPastARemovedLegToTheOneAfterIt()
     {
         await FlightWithTwoLegs();
@@ -1245,6 +1253,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
         SiblingDirLib(behind: 3);
@@ -1262,6 +1271,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
     {
         SiblingDirLib(behind: 3);
@@ -1278,6 +1288,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
     {
         SiblingDirLib(behind: 3);
@@ -1294,6 +1305,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
     {
         SiblingDirLib(behind: 3);
@@ -1311,6 +1323,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
     {
         SiblingDirLib(behind: 3);
@@ -1327,6 +1340,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
     {
         SiblingDirLib(behind: 2);
@@ -1343,6 +1357,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {
         SiblingDirLib(behind: 0);
@@ -1354,6 +1369,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedInARepoWithoutUseLocalSiblingsRaisesNoCard()
     {
         await FlightWithTwoLegs();
@@ -1381,6 +1397,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartsAFreshWorkerInThePlaneBriefedFromItAndOnlyInOrder()
     {
         var flight = await FlightWithTwoLegs();
@@ -1424,6 +1441,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
 public sealed class LegCommanderTests2 : LegCommanderTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegIsDoneOnlyWithEveryStepTickedAndItsCheckPassingOnARerun()
     {
         var flight = await FlightWithTwoLegs();
@@ -1449,6 +1467,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegsCheckRunsWithoutTheLockSoOtherCommandsAreAnsweredAndARetriedFinishDoesNotRunItAgain()
     {
         await FlightWithTwoLegs();
@@ -1488,6 +1507,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegsRecheckIsClearedWhenItsCheckFailsTheLegChangesOrTheCheckThrows()
     {
         await FlightWithTwoLegs();
@@ -1561,6 +1581,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedCheckThatOutlastedTheReplyDeadlineLeavesItsOutcomeOnTheLegForTheWatchToTell()
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50));
@@ -1583,6 +1604,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortFailedCheckAnsweredInTimeLeavesNoOutcomeSoTheWorkerIsNotToldTwice()
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5));
@@ -1592,6 +1614,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALateCheckWhoseLegChangedOrThatThrewLeavesAnOutcomeAndALateCheckThatPassesLeavesTheLegDoneWithNone()
     {
         await FlightWithTwoLegs();
@@ -1645,6 +1668,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkerThatFinishedItsOwnLegIsStoppedAfterAGrace()
     {
         await FlightWithTwoLegs();
@@ -1678,6 +1702,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundStopsTheWorkerAndStartsAFreshOneToldWhyAndWhatThePlaneHolds()
     {
         var flight = await FlightWithTwoLegs();
@@ -1702,6 +1727,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightMergesOnlyWithEveryLegDoneAndOnTheHeadReviewedThenLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -1748,6 +1774,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThatOnlyJoinsTheMergeQueueLeavesTheFlightFlyingUntilGitHubMergesIt()
     {
         var tip = await ReadyToMerge();
@@ -1762,6 +1789,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergePressedWhileChecksRunWaitsForThemAndTheNodeMergesOnceTheyPass()
     {
         var tip = await ReadyToMerge();
@@ -1788,6 +1816,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain()
     {
         var tip = await ReadyToMerge();
@@ -1805,6 +1834,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneClaudeCodeToreDownIsCheckedOutAgainOnItsBranchBeforeTheNextWorker()
     {
         var flight = await FlightWithTwoLegs();
@@ -1824,6 +1854,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFolderGitLeavesAfterRemovingThePlaneGoesToo()
     {
         var flight = await FlightWithTwoLegs();
@@ -1834,6 +1865,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACleanPlaneWithASubmoduleIsRemoved()
     {
         // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
@@ -1854,6 +1886,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
     {
         // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
@@ -1873,6 +1906,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WorkNotInMainLandsOnlyOnceAPassedReviewHasReadItsHead()
     {
         // TIA368 was landed by hand with a leg added after its pass: two pushed commits no reviewer had seen.
@@ -1904,6 +1938,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     });
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -1916,6 +1951,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task NoLegFinishesAndNoFlightLandsWithItsWorkLeftWhereNobodyLooks()
     {
         var flight = await FlightWithTwoLegs();
@@ -1941,6 +1977,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegDoneStartsTheNextAndTheLastOpensThePrHeldOnlyByASpentWindow()
     {
         await FlightWithTwoLegs();
@@ -1982,6 +2019,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASweepWhileAValidatorsGoStartsTheLegRingsNothing()
     {
         await FlightWithTwoLegs();
@@ -2013,6 +2051,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneAlreadyTornDownStillLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -2067,6 +2106,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkersRowIsMeasuredAgainstItsLegsBudget()
     {
         await FlightWithTwoLegs();

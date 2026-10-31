@@ -109,6 +109,7 @@ public abstract class PrMarksTestsBase : IDisposable
 public sealed class PrMarksTests1 : PrMarksTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OpeningAFlightsPrLabelsItWithThisNodesCodeAndAStateLabelChangeLeavesItBe()
     {
         var flight = await Opened();
@@ -132,6 +133,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr()
     {
         _github.IssueLabelFails = "label refused";
@@ -143,6 +145,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewStartsPendingOnTheHeadItReadsAndTheFlightRowKeepsWhatWasSet()
     {
         var flight = await Opened();
@@ -157,6 +160,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassIsPostedAsACommentReviewAndSetOnTheHeadTheReviewerReadNotALaterOne()
     {
         var flight = await Opened();
@@ -182,6 +186,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesSetFailureWithTheFirstFindingAndTheLabelsReplaceEachOther()
     {
         var flight = await Opened();
@@ -203,6 +208,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OneCommentReviewIsPostedPerGoAroundAndTheEarlierOnesAreLeftAlone()
     {
         var flight = await Opened();
@@ -225,6 +231,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
 public sealed class PrMarksTests2 : PrMarksTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict()
     {
         var flight = await Opened();
@@ -248,6 +255,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusedWriteIsSetAtTheNextLookWithoutPostingTheReviewTwiceAndTheCardCloses()
     {
         var flight = await Opened();
@@ -273,6 +281,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewCommentThatWasRefusedIsPostedAtTheNextLook()
     {
         var flight = await Opened();

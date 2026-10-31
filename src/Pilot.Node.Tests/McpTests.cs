@@ -120,6 +120,7 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACallRunsTheCliHandlerAsTheClient_AndARefusalOrAUsageErrorIsAnErrorResult()
     {
         var replies = await Serve(Server(),

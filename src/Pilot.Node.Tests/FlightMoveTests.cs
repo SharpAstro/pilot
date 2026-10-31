@@ -355,6 +355,7 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
 public sealed class FlightMoveTests1 : FlightMoveTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead()
     {
         var move = Sent();
@@ -403,6 +404,7 @@ public sealed class FlightMoveTests1 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheNextPlannedLegStartsOnTheReceivedPlaneByTheNormalAdvance()
     {
         var result = await Receive(Sent());
@@ -424,6 +426,7 @@ public sealed class FlightMoveTests1 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWithNoLegLeftToStartGoesOnToItsPrAsAnyOtherDoes()
     {
         var move = Sent();
@@ -502,6 +505,7 @@ public sealed class FlightMoveTests1 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABranchThatWasNotPushedIsRefusedAndNoPlaneIsLeftBehind()
     {
         var move = Sent();
@@ -539,6 +543,7 @@ public sealed class FlightMoveTests1 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLegInFlightFinishesFirstThenTheFlightMovesAndTheNextLegStartsOnlyOnTheReceiver()
     {
         Fly(LegState.Flying, unpushedCommit: true);
@@ -588,6 +593,7 @@ public sealed class FlightMoveTests1 : FlightMoveTestsBase
 public sealed class FlightMoveTests2 : FlightMoveTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AtNoPointDoBothNodesFlyTheFlight()
     {
         Fly(LegState.Done);
@@ -619,6 +625,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain()
     {
         Fly(LegState.Done);
@@ -659,6 +666,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushTheRemoteRefusesLeavesTheFlightHereWithTheReason()
     {
         Fly(LegState.Done, unpushedCommit: true);
@@ -677,6 +685,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADirtyPlaneIsNotMovedAndTheFlightStaysHereWithTheReason()
     {
         Fly(LegState.Done);
@@ -695,6 +704,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WhenNoNodeTakesItTheFlightStaysHereAndNamesEachNodeAndWhy()
     {
         Fly(LegState.Done);
@@ -724,6 +734,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WhenTheReceiverRefusesTheFlightStaysHereAndNoPlaneIsLeftOnTheReceiver()
     {
         Fly(LegState.Done);
@@ -757,6 +768,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHandMoveOutsideMaintenanceMovesTheFlightAsWell()
     {
         Fly(LegState.Done);
@@ -769,6 +781,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHeldFlightMovesByHandAndWaitsThereForTheFlightItWaitedForHere()
     {
         Fly(LegState.Planned);
@@ -794,6 +807,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    [Trait("Category", "Slow")]
     public async Task AHeldFlightWaitingForAFlightOfTheReceiverWaitsForItThereAndFliesOnceItHasLanded(bool landed)
     {
         _state.PutFlight(new FlightRow
@@ -831,6 +845,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
 public sealed class FlightMoveTests3 : FlightMoveTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightThatWaitsForAMovedOneKeepsWaiting()
     {
         Fly(LegState.Done);
@@ -850,6 +865,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReplyLostAfterTheReceiverTookTheFlightIsSettledByAskingItAndOnlyTheReceiverFliesIt()
     {
         Fly(LegState.Done);
@@ -868,6 +884,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReplyLostWhileTheReceiverCannotBeAskedKeepsTheFlightOnNoNodeOfTheSenderUntilItIsKnown()
     {
         Fly(LegState.Done);
@@ -901,6 +918,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStillRunningReplyIsNotAMoveUntilTheReceiverHoldsTheFlight()
     {
         Fly(LegState.Done);
@@ -927,6 +945,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightTheReceiverDoesNotHoldAfterTheSettlingTimeStaysHereAsAFailedMoveAndRetriesWithoutFlyingTwice()
     {
         Fly(LegState.Done);
@@ -959,6 +978,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSameHandOverAgainIsAnsweredTakenAndDoesNothingTwice()
     {
         var move = Sent() with { Head = _pushedHead };
@@ -981,6 +1001,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightThatMovedAwayComesBackAndReplacesItsMovedAwayRow()
     {
         var move = Sent() with { Head = _pushedHead };
@@ -1008,6 +1029,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheReceiveIsAnsweredBeforeTheFlightsAdvanceIsDone()
     {
         var gate = new TaskCompletionSource();
@@ -1026,6 +1048,7 @@ public sealed class FlightMoveTests3 : FlightMoveTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive()
     {
         _flights.Advance = (_, _) => throw new InvalidOperationException("the launcher is down");

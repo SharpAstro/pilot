@@ -110,6 +110,7 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePilotMdIsReadAtTheFlightsBaseNotFromTheWorkingTree()
     {
         await CommitAsync(Rules);
@@ -122,6 +123,7 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMissingPilotMdReadsAsNothingAndRaisesNoCard()
     {
         await CommitAsync(null);
@@ -131,6 +133,7 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount()
     {
         await CommitAsync(Lines(PilotMd.MaxLines + 1));
@@ -149,6 +152,7 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheReposOwnPilotMdIsReadByTheNodeAndNotRefusedByTheLimit()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -169,6 +173,7 @@ public sealed class PilotMdTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APilotMdOfExactlyTheLimitIsQuoted()
     {
         await CommitAsync(Lines(PilotMd.MaxLines));

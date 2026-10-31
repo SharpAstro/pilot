@@ -84,6 +84,7 @@ public sealed class AutostartTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public void ASetupCheckFlagsAStaleUnitForRewriteAndPassesACurrentOne()
     {
         var root = Path.Combine(Path.GetTempPath(), "pilot-setup-" + Guid.NewGuid().ToString("N"));

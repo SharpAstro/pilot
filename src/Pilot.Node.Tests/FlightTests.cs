@@ -153,6 +153,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACreateLabelsTheIssueAndTheStoryWithThisNodesCode()
     {
         var (github, shortcut) = Trackered();
@@ -196,6 +197,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnywayCreatesOverAnotherNodesLabelAndCommentsOnTheIssue()
     {
         var (github, shortcut) = Trackered();
@@ -216,6 +218,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAFlightTakesThisNodesLabelOffItsIssueOrStoryAndLeavesOthers()
     {
         var (github, shortcut) = Trackered();
@@ -232,6 +235,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLabelStaysWhileASecondFlightOfThisNodeIsStillOnTheItem()
     {
         var (github, _) = Trackered();
@@ -247,6 +251,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAfterAMergeAndRetiringAFoldedFlightTakeTheLabelOffToo()
     {
         var (github, _) = Trackered();
@@ -263,6 +268,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALabelGitHubWillNotTakeOffIsSaidOnTheLandedCardAndTheFlightLandsAnyway()
     {
         var (github, _) = Trackered();
@@ -276,6 +282,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondFlightOnTheIssueGetsASuffixAndItsOwnPlaneFromAWorktreeToo()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1611");
@@ -299,6 +306,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConnectedFlightHoldsUntilTheOneItWaitsForLandsAndACycleIsRefused()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1");
@@ -316,6 +324,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingRemovesACleanWorktreeKeepsTheBranchAndRefusesOneWithChanges()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "7");
@@ -339,6 +348,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALockedCleanWorktreeIsUnlockedAndLands()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "8");
@@ -351,6 +361,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandedCodeIsNeverGivenAgain()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "3");

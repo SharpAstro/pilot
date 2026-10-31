@@ -37,6 +37,7 @@ public sealed class GitCliBudgetTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitPastItsBudgetIsKilledAndTheMessageNamesItsArgsFolderAndOutput()
     {
         // Long enough for a loaded runner to start sh and say its piece; it only costs the whole budget when git is not killed.
@@ -68,6 +69,7 @@ public sealed class GitCliBudgetTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitThatExitsLeavingAChildHoldingItsPipesIsBoundedByTheBudgetAndSaysSo()
     {
         // The alias backgrounds a sleep that inherits the pipes, so git exits while its output never closes.

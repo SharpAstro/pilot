@@ -31,6 +31,7 @@ public sealed class ReReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondRoundsBriefCarriesTheRangeAndTheFirstRoundsFindings()
     {
         var (code, first) = await Round("1", "changes", "- the null check in Parse is gone");
@@ -54,6 +55,7 @@ public sealed class ReReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFirstReviewReadsTheWholeDiff()
     {
         var start = await Review("1", lines: 1, fiveHour: 10);
@@ -63,6 +65,7 @@ public sealed class ReReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted()
     {
         var (code, first) = await Round("1", "pass", "fine");
@@ -87,6 +90,7 @@ public sealed class ReReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHeadWithARealChangeStartsAReviewer()
     {
         var (code, _) = await Round("1", "pass", "fine");

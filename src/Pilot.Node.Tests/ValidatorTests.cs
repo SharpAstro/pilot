@@ -125,6 +125,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegGoStartsTheWorker()
     {
         await FlightAfterItsFirstLeg();
@@ -139,6 +140,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegNoGoRingsWithTheReportAndItsChoicesAndTheLegStaysPlanned()
     {
         await FlightAfterItsFirstLeg();
@@ -162,6 +164,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegIsRefusedWhenNothingIsPendingAndFromTheNode()
     {
         await FlightAfterItsFirstLeg();
@@ -176,6 +179,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAnywayStartsTheWorkerWithNoSecondValidatorAndClosesTheRing()
     {
         await FlightAfterItsFirstLeg();
@@ -210,6 +214,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanningALegAgainValidatesItAfreshAndRemovingItClosesTheNoGoRing()
     {
         await FlightAfterItsFirstLeg();

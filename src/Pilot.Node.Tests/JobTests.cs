@@ -428,6 +428,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFinishedJobLeavesItsRealExitCodeInTheExitFileAndItsRowHoldsItsPidAndStartTime()
     {
         var before = DateTimeOffset.UtcNow.AddSeconds(-5);
@@ -673,6 +674,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondJobWaitsItsTurnAndStartsWhenTheFirstEnds()
     {
         var first = Run(Sleep(2)).Made!;
@@ -719,6 +721,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondJobIsHeldForTheMedianOfItsKindsPastRunsAndNotForJobMemory()
     {
         // The node ran this kind of command before: three runs, medians of 3, 5 and 4 GB (the estimate is 4), peaks higher.
@@ -742,6 +745,7 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task JobMemoryIsAFloorSoAKindMeasuredAboveItWaitsForAllItNeeds()
     {
         // Review of #357: as a cap, a kind measured at 8 GB started beside another with 2 GB free.
@@ -768,6 +772,7 @@ public sealed class JobTests1 : JobTestsBase
 public sealed class JobTests2 : JobTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARunsSpikeDoesNotRaiseTheEstimateButARunWhoseMedianIsHigherDoesAtOnce()
     {
         // A median of 1 GB with a peak of 7 GB: the spike is shown, never gated on.
@@ -905,6 +910,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARealCommandWithASleepAmongOtherWorkIsNotRefused()
     {
         var started = Run("echo 'tests passed'; sleep 1");
@@ -914,6 +920,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter()
     {
         var (jobs, clock, cpu, gone) = Idle();
@@ -1025,6 +1032,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARestartAskedForWhileAJobRunsLeavesItRunningForTheNextNodeToFollow()
     {
         var first = await Node.StartAsync(_root);
@@ -1063,6 +1071,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobARestartedNodeFindsAgainEndsUnderItWithItsRealExitCodeAndItsOwnerIsToldOnce()
     {
         var first = await Node.StartAsync(_root);
@@ -1102,6 +1111,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobThatEndedWhileNoNodeWasUpIsEndedFromItsExitFile()
     {
         var first = await Node.StartAsync(_root);
@@ -1129,6 +1139,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobThatEndedWhileNoNodeWasUpWithExitCodeZeroSucceeded()
     {
         var first = await Node.StartAsync(_root);
@@ -1224,6 +1235,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task QueuedJobsSurviveARestartAndRunInTheOrderTheyCame()
     {
         // A job runs while the three wait behind it: with nothing running the head would start at once, whatever the memory.
@@ -1258,6 +1270,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACancelKillsAReattachedJobAndItsChildProcessesToo()
     {
         var pidFile = Path.Combine(_root, "child.pid");
@@ -1444,6 +1457,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
     {
         var flag = Path.Combine(_root, "go");
@@ -1473,6 +1487,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
@@ -1496,6 +1511,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
     {
         var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 20).Made!;
@@ -1510,6 +1526,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task CancellingAPausedJobLeavesNoProcessOfItsTreeAliveOrFrozen()
     {
         var id = Run(Busy(Path.Combine(_root, "never"))).Made!;
@@ -1530,6 +1547,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PausingOrResumingAQueuedOrEndedOrUnpausedJobIsRefusedWithAReason()
     {
         var flag = Path.Combine(_root, "go");

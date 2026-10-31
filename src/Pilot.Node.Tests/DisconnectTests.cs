@@ -22,6 +22,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     private CardRow[] Handled() => [.. _state.Cards().Where(c => c.Kind == FlightCommander.DisconnectedKind)];
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task DisconnectingAHandConnectionLetsTheFlightFlyAndAHandledCardNamesTheSender()
     {
         await TwoFlights();
@@ -40,6 +41,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheOtherIsMatchedWithoutRegardToCase()
     {
         await TwoFlights();
@@ -51,6 +53,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightStillHeldByAnotherConnectionSaysWhatHoldsItAndStaysHeld()
     {
         await TwoFlights();
@@ -67,6 +70,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerConnectionAndThePackageWaitsItProducedGoToo()
     {
         await TwoFlights();
@@ -100,6 +104,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConnectionThatIsNotThereIsRefusedNamingWhatTheFlightDoesWaitFor()
     {
         await TwoFlights();
@@ -118,6 +123,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandedFlightIsRefused()
     {
         await TwoFlights();
@@ -131,6 +137,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADisconnectNeedsTheOtherAndAKnownFlight()
     {
         await TwoFlights();
@@ -145,6 +152,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConnectionTheControllerAnsweredAnOverlapWithIsRefusedWithWhyAndGoesOnAnyway()
     {
         await TwoFlights();
@@ -190,6 +198,7 @@ public sealed class DisconnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed()
     {
         var folder = Path.Combine(_root, "journal-disconnect");
@@ -239,6 +248,7 @@ public sealed class DisconnectCliTests : IAsyncDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheCliDisconnectsAndPrintsWhatTheNodeSaid()
     {
         SeedRepo.Make(_nodeRoot);

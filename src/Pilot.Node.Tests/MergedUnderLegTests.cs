@@ -123,6 +123,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanLegAfterTheMergeRingsAtOnceAndTheFlightStaysFlying()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -136,6 +137,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StartLegAfterTheMergeRingsAtOnce()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -148,6 +150,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -177,6 +180,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWhileALegIsPlannedLandsNothingAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -191,6 +195,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWhileALegFliesLandsNothingAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -205,6 +210,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWithUncommittedChangesKeepsThePlaneAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -219,6 +225,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWithCommitsPastTheMergedHeadKeepsThePlaneAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -235,6 +242,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheNodesOwnFirstLookIsOverBeforeStartReturnsSoItNeverLandsAStateTheTestPutsAfter()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -253,6 +261,7 @@ public sealed class MergedUnderLegTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWithNothingLeftStillLandsTheFlight()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

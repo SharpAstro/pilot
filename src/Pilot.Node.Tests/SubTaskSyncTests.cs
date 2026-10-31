@@ -41,6 +41,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARepoNotOptedInWritesNothingToItsTracker()
     {
         OptIn("some-other-repo");
@@ -139,6 +140,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusingTrackerIsLoggedNeverFailsTheLegAndIsTriedAgainAtTheNextChange()
     {
         OptIn("tianwen");
@@ -159,6 +161,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusalToCloseALegDoneIsLoggedAndTheLegIsDoneAllTheSame()
     {
         OptIn("tianwen");
@@ -173,6 +176,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASubIssueAPersonAddedIsListedOnTheFlightRowAndChangesNoLeg()
     {
         OptIn("tianwen");
@@ -272,6 +276,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortcutStoryKeepsATaskPerLegTicksItWhenDoneDeletesItWhenRemovedAndListsAPersonsOwn()
     {
         var shortcut = await ShortcutFlight();

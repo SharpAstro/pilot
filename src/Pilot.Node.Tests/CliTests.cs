@@ -294,6 +294,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OutsideAPlaneALegMustBeNamedAndAPlaneWithoutAFlyingLegSaysSo()
     {
         await Ok(Repo, "flight", "create", "7");
@@ -443,6 +444,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
     {
         var plane = await FlightWithAValidatorFlying("1612");
@@ -471,6 +473,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringGoFromThePlaneStartsTheLegsWorker()
     {
         var plane = await FlightWithAValidatorFlying("8");
@@ -485,6 +488,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringNoGoFromThePlaneRingsAndTheLegStaysPlanned()
     {
         var plane = await FlightWithAValidatorFlying("9");
@@ -652,6 +656,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
@@ -695,6 +700,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
     {
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");

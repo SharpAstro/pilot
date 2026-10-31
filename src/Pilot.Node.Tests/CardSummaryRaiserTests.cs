@@ -9,6 +9,7 @@ namespace Pilot.Node.Tests;
 public sealed class CardSummaryRaiserTests : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone()
     {
         var flight = await NewFlight("41", "parser");
@@ -38,6 +39,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedLegSaysWhichLegGaveUp()
     {
         var flight = await NewFlight("42", "parser");
@@ -52,6 +54,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThatFailedSaysWhichLegIsRedone()
     {
         var (flight, _, checks) = await ArmedPassedFlight("43");
@@ -65,6 +68,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AChecksFailedRingForASendBackTheNodeRefusedDoesNotSayTheLegGoesAround()
     {
         var (flight, _, checks) = await ArmedPassedFlight("44");
@@ -83,6 +87,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConflictsRingKeepsTheSentenceThePrChecksWroteNotTheTables()
     {
         var flight = await NewFlight("45", "parser");

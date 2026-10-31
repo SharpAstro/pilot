@@ -89,6 +89,7 @@ public sealed class RestartTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARunningJobIsFollowedAgainAfterARestartAndItsOwnerToldOnce()
     {
         var first = await StartAsync();
@@ -119,6 +120,7 @@ public sealed class RestartTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobThatEndedWhileNoNodeRanIsEndedFromItsExitFileOnRestart()
     {
         var first = await StartAsync();
@@ -163,6 +165,7 @@ public sealed class RestartTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReattachedJobCanBeCancelledAndItsProcessTreeDies()
     {
         var child = OperatingSystem.IsWindows()
@@ -202,6 +205,7 @@ public sealed class RestartTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AQueuedJobSurvivesARestartInOrderAndRuns()
     {
         var first = await StartAsync();

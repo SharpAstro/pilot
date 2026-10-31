@@ -100,6 +100,7 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task MaintenanceSetOnANodeIsInForceAtOnceAndPublishedOnTheWire()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -128,6 +129,7 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACreateFlightIsRefusedWithTheReasonWhileInMaintenanceAndTakenOnceItIsOff()
     {
         Maintenance(_models, on: true);
@@ -143,6 +145,7 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightAlreadyFlyingStillAdvancesItsLegsWhileInMaintenance()
     {
         (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1", "Planets")).Ok.ShouldBeTrue();
@@ -160,6 +163,7 @@ public sealed class MaintenanceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AHeldFlightStillSettlesWhenWhatItWaitsForLandsWhileInMaintenance()
     {
         (await Flight(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1")).Ok.ShouldBeTrue();

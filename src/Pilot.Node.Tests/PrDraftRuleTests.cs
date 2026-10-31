@@ -21,6 +21,7 @@ public sealed class PrDraftRuleTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightsPrIsReadyInReviewAndADraftOnlyOnChangesOrFailedChecks()
     {
         var flight = await NewFlight("1", "parser");
@@ -64,6 +65,7 @@ public sealed class PrDraftRuleOutsideTests : PrReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrOutsideAFlightIsReadyInReviewAndADraftOnlyOnChanges()
     {
         _github.Login = "ada";

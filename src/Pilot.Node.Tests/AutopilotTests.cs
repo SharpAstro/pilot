@@ -277,6 +277,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANoAutoMergeReposFlightIsAskedNotMergedByAnAssistantEvenWithAutopilotOnButThePersonsOwnMergeWorks()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

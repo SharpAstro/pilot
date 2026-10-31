@@ -126,6 +126,7 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -235,6 +236,7 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheChecksRouteAnswersOverTheWire()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
