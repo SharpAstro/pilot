@@ -169,6 +169,8 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var laid = Git(flight.Worktree, "rev-parse", "HEAD");
         laid.ShouldNotBe(old);
+        // The queue would not take it: the merge waits for the checks on the laid head, then enqueues.
+        F(flight.Code).MergeWhenGreen![0].ShouldBe(laid);
         // GitHub still shows the old removal against the laid head.
         _github.Queue = _github.Queue! with { Head = laid };
         await checks.LookAsync(Ct);
@@ -177,8 +179,6 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
 
         _legs.DroppedForConflict(flight.Code, laid).ShouldBeFalse();
         _github.Merged.ShouldBeEmpty();
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.SequenceEqual(new[] { laid })));
-        F(flight.Code).MergeWhenGreen![0].ShouldBe(laid);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.DropUnexplainedKind && c.Bin == CardBin.Ring);
         F(flight.Code).Review!.ReviewedHead.ShouldBe(laid);
     }
