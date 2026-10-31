@@ -105,7 +105,7 @@ public sealed class CheckRunnerTests
         var run = new ShellCheckRunner().RunAsync(command, Path.GetTempPath(), cancel.Token);
         try
         {
-            while (!File.Exists(marker) || File.ReadAllText(marker).Trim().Length == 0)
+            while (!File.Exists(marker))
             {
                 run.IsCompleted.ShouldBeFalse();
                 await Task.Delay(100, Ct);
