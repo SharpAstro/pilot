@@ -207,7 +207,7 @@ public sealed class AdmissionViewsTests
     [Fact]
     public void EachChangedPageIsCapturedAtANarrowAndAWideSizeWithLongContent()
     {
-        // The newest flight is a priority one too, so a mark is on the first row and card of the list and canvas captures.
+        // The newest flight is a priority one too, so a mark is on the first row of the list capture and first card of the grid capture (the canvas draws the map, not cards).
         var (flights, legs, admission) = Queue(8, newestPriority: true);
         var screen = Screens(flights, legs, admission);
         // Where the captures go (docs/captures, for the PR) when a person asks for them; else a folder that goes with the test.
@@ -221,6 +221,7 @@ public sealed class AdmissionViewsTests
                 {
                     ("home", PilotPage.Home, FlightsViewMode.Canvas, null),
                     ("flights-list", PilotPage.Flights, FlightsViewMode.List, null),
+                    ("flights-grid", PilotPage.Flights, FlightsViewMode.Grid, null),
                     ("flights-canvas", PilotPage.Flights, FlightsViewMode.Canvas, null),
                     ("flight-page", PilotPage.Flights, FlightsViewMode.Canvas, "PIL902"),
                 })
