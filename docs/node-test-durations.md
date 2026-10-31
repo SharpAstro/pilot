@@ -177,3 +177,10 @@ The LfsTests class template (one real git-lfs setup per class, copied per test) 
 Each remaining flight still costs about 32 real git processes started by the node itself (see fix-starts), which a fake `IGit` cannot remove without dropping
 the pushes and merges those tests assert on. The full run is therefore NOT under 15 minutes: that needs fewer git starts per flight in production code
 (memoise repeated fetches, merge `rev-parse --verify` pairs), which is its own reviewed change.
+
+## After the merge of main (go-around 1)
+
+- The four git-bound classes (ReviewTests, PrRecheckTests, LfsTests, PrFixTests): 203 tests pass in 5m 8s.
+- Full Release runs after the merge: 20m 21s (a second job on the machine), 13m 55s and 13m 42s (each failed only on the 5 s guard for tests not yet tagged Slow, since tagged), then 22m 4s on a loaded machine.
+- Only the 13m 55s and 13m 42s runs were on a quiet machine; neither was a clean pass, and no full run has yet passed clean. The remaining cost is real git starts in node code (about 32 per flight), a separate reviewed change.
+- AdmissionFleetTests failed twice in the loaded run on an assertion (two nodes admitted), not on time; not investigated.
