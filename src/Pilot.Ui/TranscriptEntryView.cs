@@ -367,7 +367,7 @@ internal sealed class TranscriptEntryView
         {
             // Wrapped, never cut: a long message (a choice's answer carries its question) ended in an ellipsis (SE1, 2026-10-28).
             var said = i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line;
-            yield return said.Length == 0 ? Layout.Builder.Text(" ", 13f, color) : WrappedProse.Of(said, 13f, color);
+            yield return said.Length == 0 ? Layout.Builder.Text(" ", 13f, color) : WrappedProse.Of(said, 13f, color, selectable: true);
         }
         if (Fold(entry, all.Length, lines) is { } fold)
         {

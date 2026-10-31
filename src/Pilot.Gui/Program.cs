@@ -504,6 +504,11 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Cards.CanTell = true;
     chrome.Cards.OnOpen = url => OpenAway(url);
     chrome.Cards.CopyText = text => SetClipboardText(text);
+    // The pages with no menu of their own copy a text selection all the same.
+    chrome.Home.CopyText = text => SetClipboardText(text);
+    chrome.Ideas.CopyText = text => SetClipboardText(text);
+    chrome.Fleet.CopyText = text => SetClipboardText(text);
+    chrome.PullRequests.CopyText = text => SetClipboardText(text);
     chrome.Cards.Changed = loop.RequestRedraw;
     chrome.Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { chrome.Show(PilotPage.Fleet); } };
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the

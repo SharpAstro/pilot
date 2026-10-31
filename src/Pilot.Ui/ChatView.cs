@@ -454,6 +454,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return line.Length > 60 ? line[..59] + "…" : line;
     }
 
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(RectF32 bounds)
     {
         Palette.Use(Night);
@@ -564,6 +570,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
+        whole = WithSelection(whole);
         return About?.Over(whole) ?? whole;
     }
 

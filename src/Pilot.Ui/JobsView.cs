@@ -335,6 +335,12 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The selected job's log as last read, or null before the first read.</summary>
     public JobLog? Log => Volatile.Read(ref _followed).Log;
 
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen;
+
     public void Render(JobsScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -529,6 +535,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             parts.Add(Details(selected));
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        page = WithSelection(page);
         page = About?.Over(page) ?? page;
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
     }

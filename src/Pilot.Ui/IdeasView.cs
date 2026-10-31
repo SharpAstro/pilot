@@ -601,6 +601,15 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         }
     }
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
+
     public void Render(IdeasScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -799,6 +808,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 break;
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
+        whole = WithSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 

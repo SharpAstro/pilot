@@ -224,6 +224,15 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Shows a job's row on Background tasks.</summary>
     public Action<JobLine>? OnJob { get; set; }
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(HomeScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -254,8 +263,8 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             blocks.Add(card);
             blocks.Add(Layout.Builder.Spacer().RowH(14f));
         }
-        blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).RowH(28f));
-        blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).RowH(28f));
+        blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).Selectable().RowH(28f));
+        blocks.Add(Layout.Builder.Text(screen.Waiting, 16f, screen.Waiting == "Nothing waits on you" ? Dim : Ring).Selectable().RowH(28f));
         Section(blocks, "Flights", screen.FlightChips, "no flight is flying or held");
         MoveFailures(blocks, screen);
         Section(blocks, "Sessions", screen.SessionChips, "no live session");
@@ -263,6 +272,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Machines(blocks, screen);
         var body = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 14f).Stretch();
         var page = Layout.Builder.VStack(Header(screen), body.HStar()).Bg(PageBg).Stretch();
+        page = WithSelection(page);
         return About?.Over(page) ?? page;
     }
 

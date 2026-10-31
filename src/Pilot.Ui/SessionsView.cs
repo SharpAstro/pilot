@@ -327,6 +327,14 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// </summary>
     public void ShareWith(params PixelWidgetBase<TSurface>[] others) => ShareUiContext(others);
 
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override LinkMenu? SelectionLinks => Transcript.IsOpen ? Transcript.Links : _links;
+
+    internal override RectF32 SelectionViewport => Transcript.IsOpen ? Transcript.Viewport : _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen || Gallery.Viewing is not null || Transcript.MenuOpen;
+
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -542,6 +550,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         page = About?.Over(page) ?? page;
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
+        page = WithSelection(page);
         page = Gallery.Over(page);
         page = _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))

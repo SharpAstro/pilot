@@ -379,6 +379,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return cut == text.Value ? button : leaf with { Content = text with { Value = cut }, Tooltip = leaf.Tooltip ?? text.Value };
     }
 
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override LinkMenu? SelectionLinks => _links;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
@@ -421,7 +427,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var blocks = new List<Layout.Node>
         {
             Layout.Builder.HStack(
-                    Layout.Builder.Text("Watchtower", 18f, Bright).WAuto(),
+                    Layout.Builder.Text("Watchtower", 18f, Bright).WAuto().Selectable(),
                     Layout.Builder.Spacer().WStar(),
                     Layout.Builder.Text(said, 12f, colour, TextAlign.Far).WAuto())
                 .RowH(30f),
@@ -579,7 +585,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
-        return _links.Over(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch());
+        return _links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch()));
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -723,7 +729,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 : card.Kind == CardKinds.Overlap
                     // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
                     ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
-                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright).Selectable()).RowH(22f),
                         card.Title, card.Title.Length > TitleFits)),
         };
         if (card.Kind == CardKinds.Overlap)

@@ -445,6 +445,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The selected node's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(FleetScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -489,6 +498,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
+        page = WithSelection(page);
         return About?.Over(page) ?? page;
     }
 
