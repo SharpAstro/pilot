@@ -28,7 +28,6 @@ public sealed class LanTests
     private static CommandRequest Note(string text) => new() { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = [text], Who = "tests" };
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALocalOnlyNodeAskedForTheLanBindsNoTcpPort()
     {
         var port = FreePort();

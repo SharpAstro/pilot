@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
+using Xunit;
 
 namespace Pilot.Node.Tests;
 
@@ -103,6 +106,10 @@ internal sealed class NodeHarness : IAsyncDisposable
                 // The node's file logger stays: logs/node.log in the temp data folder.
 
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
+                // A stop that hangs takes the host's 30 s default and fails the test that disposed the node, whichever it was
+                // (LanTests on ubuntu and MergeFixtureCardTests on windows, #559's runs, both exactly 30 s). Capped here, and
+                // StopNodeAsync names what was still running, so the hang shows as a warning instead of a slow test.
+                builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = StopCap);
                 // A test node never runs the claude CLI or reads this machine's sessions: it tracks what the test gives it.
                 builder.Services.AddSingleton<IClaudeAgents>(agents);
                 builder.Services.AddSingleton<ISessionDelivery>(delivery);
@@ -145,15 +152,31 @@ internal sealed class NodeHarness : IAsyncDisposable
     public async Task StopKeepingFolderAsync()
     {
         Client.Dispose();
-        await App.StopAsync();
+        await StopNodeAsync();
         await App.DisposeAsync();
         _held.Dispose();
+    }
+
+    /// <summary>How long the test node's stop may take before its hosted services are told to give up.</summary>
+    internal static readonly TimeSpan StopCap = TimeSpan.FromSeconds(3);
+
+    private async Task StopNodeAsync()
+    {
+        var took = Stopwatch.StartNew();
+        await App.StopAsync();
+        if (took.Elapsed >= StopCap)
+        {
+            var running = App.Services.GetServices<IHostedService>().OfType<BackgroundService>()
+                .Where(s => s.ExecuteTask is { IsCompleted: false }).Select(s => s.GetType().Name).ToList();
+            TestContext.Current.AddWarning($"The test node's stop took {took.Elapsed.TotalSeconds:0.0} s, its {StopCap.TotalSeconds:0} s cap; " +
+                (running.Count > 0 ? $"still running: {string.Join(", ", running)}" : "no background service was still running (a request or a hosted service's own StopAsync held it)"));
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        await App.StopAsync();
+        await StopNodeAsync();
         await App.DisposeAsync();
         _held.Dispose();
         try
