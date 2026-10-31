@@ -1031,7 +1031,7 @@ public sealed partial class LegCommander(
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 entering();
-                return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low"), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(validator, flight.RepoPath, PlaneOf(flight), brief, model, "low", Reason: SessionStartReasons.LegValidator), CancellationToken.None);
             },
             job =>
             {
@@ -1117,7 +1117,7 @@ public sealed partial class LegCommander(
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
                 var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
             },
             job =>
             {
@@ -1979,7 +1979,7 @@ public sealed partial class LegCommander(
                 var stat = await git.RunAsync(["diff", "--stat", $"{flight.Base}...HEAD"], flight.Worktree, CancellationToken.None);
                 var brief = Briefs.For(flight, next, legs, why, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""), Cli, Socket, machine: options.Machine, update: UpdateInstruction, pilotMd: await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None);
             },
             started =>
             {
@@ -2754,7 +2754,7 @@ public sealed partial class LegCommander(
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
                 var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, await PilotMdOfAsync(flight));
                 entering();
-                return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner), Reason: SessionStartReasons.Planner), CancellationToken.None);
             },
             job =>
             {
@@ -2918,7 +2918,7 @@ public sealed partial class LegCommander(
                 // A re-review reads only what changed, on the leg's model; Opus is for the first review of a large diff (if the setting lets it).
                 model = Models.ReviewerModelFor(plan.Depth, (flight.ReviewRounds?.Length ?? 0) + 1, legs.OrderBy(l => l.Order).LastOrDefault()?.Model);
                 entering();
-                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth)), CancellationToken.None);
+                return await workers.StartAsync(new WorkerStart(reviewer, flight.RepoPath, PlaneOf(flight), brief, model, Models.ReviewerEffort(plan.Depth), Reason: SessionStartReasons.FlightReview), CancellationToken.None);
             },
             job =>
             {
@@ -3665,7 +3665,7 @@ public sealed partial class LegCommander(
     {
         try
         {
-            await workers.StopAsync(job, cancellationToken);
+            await workers.StopAsync(job, SessionEndReasons.Finished, "node", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

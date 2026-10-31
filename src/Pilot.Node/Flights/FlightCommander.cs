@@ -26,6 +26,18 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
+    /// <summary>Says text to a session row (a node say), true when it was delivered; null where there is none (a test that tells no one).</summary>
+    public Func<string, string, CancellationToken, Task<bool>>? Say { get; set; }
+
+    /// <summary>Cancels the queued and running jobs of a flight and of its sessions (flight, session row ids, who); null where there is no job runner.</summary>
+    public Func<string, IReadOnlyCollection<string>, string, int>? CancelJobs { get; set; }
+
+    /// <summary>The node's ledger of launched sessions, whose live entries of a flight are wound down with it; null in a test with none.</summary>
+    public Sessions.SessionLedger? Ledger { get; set; }
+
+    /// <summary>How long the sessions of a landing flight are given to finish and report after being told, before they are stopped.</summary>
+    public TimeSpan FinishGrace { get; set; } = TimeSpan.FromSeconds(10);
+
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
@@ -799,25 +811,52 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
         // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
         // and still able to push. A session's job is its row id.
-        var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
+        // Found by the ledger's flight too, not only by name: a session the node launched for the flight whose row is renamed or gone.
+        var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
+        var sessions = live.Concat(Ledger?.All().Where(e => e.EndReason is null && string.Equals(e.Flight, flight.Code, StringComparison.Ordinal)).Select(e => e.JobId) ?? []).Distinct().ToList();
         var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
+        var endBy = mergedHead is not null ? "merge" : "land";
         var (released, consumed, leftover) = await OffLockAsync(async () =>
         {
             // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
             // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
             if (workers is not null)
             {
+                // Told to finish and report first, with a short grace, so what a reviewer found is not lost with it.
+                var told = false;
+                if (Say is not null)
+                {
+                    var text = $"{flight.Code} has {(mergedHead is not null ? "merged" : "landed")}. Finish now: report what you have (any finding on code already in main goes in your last message), and stop. The node stops you in a moment.";
+                    foreach (var id in live)
+                    {
+                        try
+                        {
+                            told |= await Say(id, text, cancellationToken);
+                        }
+                        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                        {
+                            // Not reachable: stopped below all the same.
+                        }
+                    }
+                }
+                if (told && FinishGrace > TimeSpan.Zero)
+                {
+                    await Task.Delay(FinishGrace, time, cancellationToken);
+                }
                 foreach (var job in jobs)
                 {
                     try
                     {
-                        await workers.StopAsync(job, cancellationToken);
+                        await workers.StopAsync(job, endReason, endBy, cancellationToken);
                     }
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
                         // Gone already.
                     }
                 }
+                // Nothing of its own is left queued or running: its jobs, and those of its sessions.
+                CancelJobs?.Invoke(flight.Code, jobs, endBy);
             }
             // Nothing of the flight's is left where nobody looks: no commit that is on no remote and not in main (TIA1658's
             // last read was one, until it was landed by hand). Such a plane is not landed; it says which commits.
@@ -897,6 +936,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             State = FlightState.Landed,
             LandedAt = landedAt,
+            // Its review ends with it: nothing resumes or nudges a reviewer of a landed flight.
+            Review = f.Review is { State: ReviewState.Reviewing } ? null : f.Review,
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
         }) ?? flight;

@@ -135,6 +135,7 @@ public sealed class Watchtower(
     // An ended watchtower a resuming say did not reach: replaced by a fresh one, not said to again.
     private string? _resumeRefused;
     private bool _adopted;
+    private bool _lastSayTransient;
     // Rows this node has stopped as a second watchtower; the sweep leaves them alone until the tracker shows them ended.
     private readonly HashSet<string> _stopped = new(StringComparer.Ordinal);
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
@@ -205,8 +206,14 @@ public sealed class Watchtower(
     public SessionRow? Current()
     {
         var rows = state.Sessions().Where(r => IsWatchtower(r) && r.Name == Name).ToList();
-        return rows.FirstOrDefault(r => r.Id == _job)
-            ?? rows.OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
+        if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
+        {
+            return own;
+        }
+        // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
+        // cf26a311 gone and fd282f70, ended 4 h earlier, named), so only a live one stands in and else the look starts a fresh one.
+        var vanished = _job is not null;
+        return rows.Where(r => !vanished || Live(r)).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
@@ -631,9 +638,10 @@ public sealed class Watchtower(
                     if (Warm(row, now))
                     {
                         _job = row.Id;
-                        if (await TellNewCardsAsync(row, cancellationToken) == false)
+                        if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)
                         {
-                            // Not delivered: the next look starts a fresh one rather than trying this one again.
+                            // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
+                            // was a transient read of the config file keeps the session: it is tried again after the retry time (#542).
                             _resumeRefused = row.Id;
                         }
                         return;
@@ -772,7 +780,7 @@ public sealed class Watchtower(
         {
             try
             {
-                await launcher.StopAsync(replacing.Id, cancellationToken);
+                await launcher.StopAsync(replacing.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -790,7 +798,8 @@ public sealed class Watchtower(
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
-                DisallowedTools: ["AskUserQuestion"]), cancellationToken);
+                DisallowedTools: ["AskUserQuestion"],
+                Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart), cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -810,6 +819,7 @@ public sealed class Watchtower(
             return false;
         }
 
+        Error.WriteLine($"watchtower: the role moved to session {_job}{(replacing is null ? "" : $" from {replacing.Id}")}: {why}");
         _startedAt = time.GetUtcNow();
         _resumedAfter = null;
         _failCounted = null;
@@ -908,7 +918,7 @@ public sealed class Watchtower(
         {
             try
             {
-                await launcher.StopAsync(other.Id, cancellationToken);
+                await launcher.StopAsync(other.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
@@ -925,7 +935,7 @@ public sealed class Watchtower(
     {
         try
         {
-            await launcher.StopAsync(row.Id, cancellationToken);
+            await launcher.StopAsync(row.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -1021,6 +1031,7 @@ public sealed class Watchtower(
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {
             _unreachableId = null;
