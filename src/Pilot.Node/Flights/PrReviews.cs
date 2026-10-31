@@ -256,7 +256,7 @@ public sealed class PrReviews(
         }
         state.PutPrReview(row with { ReviewerJob = job });
         // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", ReviewCardKinds);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
@@ -1044,6 +1044,13 @@ public sealed class PrReviews(
     /// <summary>The For-you card said when the fixer could not start.</summary>
     public const string FixFailedKind = "pr-fix-failed";
 
+    /// <summary>
+    /// The For-you card of a fixer that pushed when the review of the pushed head could not start. It is about a head newer than the
+    /// review row's, so it is outside <see cref="ReviewCardKinds"/>, which a sweep closes once the head is past the review's own;
+    /// a newer review of the PR closes it.
+    /// </summary>
+    public const string PushedUnreviewedKind = "pr-fix-pushed-unreviewed";
+
     /// <summary>The card's choice that starts the fixer.</summary>
     public const string FixLabel = "Fix it";
 
@@ -1094,7 +1101,7 @@ public sealed class PrReviews(
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer pushed, but its review could not start", $"{ex.Message}\npilot review {pr} tries again.", link: review.Url);
+                state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer pushed, but its review could not start", $"{ex.Message}\npilot review {pr} tries again.", link: review.Url);
             }
             return;
         }
@@ -1234,7 +1241,7 @@ public sealed class PrReviews(
     }
 
     private void RaiseNoFixer(PrRef pr, PrReviewRow review, string subject, string why) =>
-        RaiseOnce(pr, review, CardBin.Ring, NoFixerKind, subject, $"{pr}: the review asks for changes, and no fixer works on it",
+        RaiseOnce(pr, review, CardBin.Ring, NoFixerKind, subject, review.Verdict == "changes" ? $"{pr}: the review asks for changes, and no fixer works on it" : $"{pr}: the review asks a question, and no fixer works on it",
             $"No fixer started: {why}.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}".TrimEnd());
 
     /// <summary>

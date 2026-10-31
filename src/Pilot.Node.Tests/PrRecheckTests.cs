@@ -401,6 +401,79 @@ public sealed class PrRecheckTests : IDisposable
     public async Task ARecheckStartsNoFixerOnSomeoneElsesPrUntilFixItIsChosen() =>
         await NoFixerAsync(r => r, "it is ada's PR, and Fix it has not been chosen", login: "grace");
 
+    private CardRow[] NoFixerCards(bool openOnly = false) => [.. _state.Cards(openOnly: openOnly).Where(c => c.Kind == PrReviews.NoFixerKind)];
+
+    private static PrReviewRow AsksDesign(PrReviewRow r) =>
+        r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] };
+
+    [Fact]
+    public async Task ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves()
+    {
+        await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
+
+        var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Detail.ShouldNotBeNull().ShouldContain("design: is this wanted?");
+        ring.Detail.ShouldContain("the author's to decide");
+
+        // A sweep, and the same recheck again, leave it open and add no second.
+        await _reviews.SweepAsync(Ct);
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        NoFixerCards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ring.Id);
+
+        // Dismissed, the label put back: a recheck, a sweep and another recheck raise nothing again.
+        _state.CloseCard(ring.Id, "dismissed", "controller");
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        await _reviews.SweepAsync(Ct);
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        NoFixerCards().ShouldHaveSingleItem().Outcome.ShouldBe("dismissed");
+
+        // Nothing the node closed on its own says a bare "handled" (the Handled lines are born closed, as records).
+        _state.Cards().Where(c => c.Bin != CardBin.Handled && c.State == CardState.Closed && c.ClosedBy == "node")
+            .ShouldNotContain(c => c.Outcome == "handled");
+    }
+
+    [Fact]
+    public async Task TheNoFixerRingClosesNamingTheHeadThatMovedPastIt()
+    {
+        await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
+        var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        _github.Labels[7] = [PilotMarks.Recheck];
+
+        await LookAsync();
+
+        var closed = NoFixerCards().ShouldHaveSingleItem();
+        closed.Id.ShouldBe(ring.Id);
+        (closed.State, closed.ClosedBy).ShouldBe((CardState.Closed, "node"));
+        closed.Outcome.ShouldNotBeNull().ShouldContain("the head moved past");
+        closed.Outcome.ShouldContain(Short(moved));
+    }
+
+    [Fact]
+    public async Task TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep()
+    {
+        _github.Login = "ada";
+        await ReviewedAsync("changes");
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        Review()!.Fixer.ShouldNotBeNull();
+
+        // The fixer pushed, and the review of the pushed head cannot start.
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        Directory.Delete(WidgetClone, recursive: true);
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.PushedUnreviewedKind);
+    }
+
     [Fact]
     public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
     {
