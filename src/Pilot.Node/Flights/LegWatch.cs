@@ -625,6 +625,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             if (why is null && Ledger is not null && Ledger.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is null)
             {
+                if (KnownByRole(row, sessions, out var pr))
+                {
+                    Ledger.Adopt(row, pr);
+                    continue;
+                }
                 why = "the node's ledger has no entry for it: it did not start it";
             }
             if (why is null || !_strays.Add(row.Id))
@@ -636,6 +641,38 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
         }
+    }
+
+    /// <summary>
+    /// Whether the node knows <paramref name="row"/> by its role: the current watchtower, a flying leg's worker, a planner of an
+    /// existing flight, a flight reviewer, or a PR reviewer or fixer (<paramref name="pr"/> is that PR's number).
+    /// </summary>
+    private bool KnownByRole(SessionRow row, SessionRow[] sessions, out int? pr)
+    {
+        pr = null;
+        if (row.Role == SessionRole.Watchtower)
+        {
+            return Sessions.SessionMessenger.ReplacedBy(row, sessions) is null;
+        }
+        if (row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
+            && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg && leg.WorkerJob == row.Id)
+        {
+            return true;
+        }
+        if (row is { Role: SessionRole.Planner, Flight: { } planned } && state.Flights().Any(f => f.Code == planned))
+        {
+            return true;
+        }
+        if (state.Flights().Any(f => f.Review?.ReviewerJob == row.Id))
+        {
+            return true;
+        }
+        if (state.PrReviews().FirstOrDefault(r => r.ReviewerJob == row.Id || r.FixerJob == row.Id) is { } review)
+        {
+            pr = review.Number;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>How long a leg may be done before its worker still running is a stray: the node stops a finished worker itself, after its grace.</summary>

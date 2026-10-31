@@ -12,6 +12,8 @@ public static class SessionStartReasons
     public const string WatchtowerStart = "watchtower start";
     public const string WatchtowerRestart = "watchtower restart";
     public const string Compaction = "compaction";
+    /// <summary>A live session the node knows by its role but has no ledger entry for: adopted by the sweep.</summary>
+    public const string BeforeLedger = "before the ledger";
     public const string Other = "other";
 }
 

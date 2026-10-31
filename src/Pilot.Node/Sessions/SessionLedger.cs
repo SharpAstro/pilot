@@ -85,6 +85,34 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         }
     }
 
+    /// <summary>
+    /// Takes in a live session the node knows by role but did not record: an entry keyed by the row's id with start reason
+    /// <see cref="SessionStartReasons.BeforeLedger"/>. A no-op when the ledger already knows the row.
+    /// </summary>
+    public void Adopt(SessionRow row, int? pr = null)
+    {
+        lock (_lock)
+        {
+            var entries = Load();
+            if (FindLocked(entries, [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is not null)
+            {
+                return;
+            }
+            entries.Add(new SessionLedgerEntry
+            {
+                JobId = row.Id,
+                SessionIds = [.. new[] { row.Id, row.SessionId }.Concat(row.EarlierSessionIds ?? []).Distinct()],
+                Name = row.Name, Role = row.Role, Flight = row.Flight, Leg = row.Leg, Pr = pr,
+                StartReason = SessionStartReasons.BeforeLedger, Model = row.Model, StartedAt = row.StartedAt, Tokens = row.SpendWeighted,
+            });
+            if (entries.Count > Capacity)
+            {
+                entries.RemoveRange(0, entries.Count - Capacity);
+            }
+            Save(entries);
+        }
+    }
+
     /// <summary>The entry of the session known by one of <paramref name="ids"/> (job, row or session ids), else null.</summary>
     public SessionLedgerEntry? Find(IEnumerable<string> ids)
     {
