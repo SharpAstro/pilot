@@ -1174,8 +1174,7 @@ public sealed class PrReviews(
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}
-The push stands; the review has not started on it.",
+                state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}\nThe push stands; the review has not started on it.",
                     [new CardChoice { Label = $"Start the review of {pr} on the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
             }
             return;
