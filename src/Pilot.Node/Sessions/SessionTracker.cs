@@ -65,6 +65,9 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>What each session was started on, to check a live one against; null checks none.</summary>
     public StartOptionsBook? Starts { get; init; }
 
+    /// <summary>The ledger of the sessions the node launched, which gives each of their rows its start and end reason; null keeps none.</summary>
+    public SessionLedger? Launched { get; init; }
+
     /// <summary>Whether a session or row id is one of the node's watchtowers (known by id, not by name); null knows none.</summary>
     public Func<string, bool>? IsWatchtowerId { get; init; }
 
@@ -652,6 +655,18 @@ public sealed class SessionTracker : BackgroundService
 
     private void Put(SessionRow row)
     {
+        if (Launched?.Observe(row, _endedAt.TryGetValue(row.Id, out var endedAt) ? endedAt : null) is { } entry)
+        {
+            // The ledger's account of a session the node launched: what started it, and once it ended, why, when and at what wall time.
+            var ended = entry.EndReason is not null;
+            row = row with
+            {
+                StartReason = entry.StartReason,
+                EndReason = entry.EndReason,
+                EndedAt = ended ? entry.EndedAt : null,
+                WallSeconds = ended ? entry.WallSeconds : null,
+            };
+        }
         _rows[row.Id] = row;
         _state.PutSession(row);
     }

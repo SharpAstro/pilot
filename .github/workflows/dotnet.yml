@@ -94,11 +94,21 @@ jobs:
     - name: Build
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
-      run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed"
+      # --blame-hang-timeout: one test that runs 5 minutes (the slowest takes ~16 s) is a hang; the run is stopped with a
+      # mini dump and the hung test is named in the log, instead of the job running to its 20 minute limit with no name
+      # (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
+      run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini
     - name: Test (slow)
       # Tests tagged [Trait("Category", "Slow")] are exempt from the 5 s guard and run here. Exit code 8 means none matched.
       run: |
-        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category=Slow' --logger "console;verbosity=detailed" || [ $? -eq 8 ]
+        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini || [ $? -eq 8 ]
+    - name: Upload the hang dump
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: node-tests-hang-${{ matrix.os }}
+        path: src/Pilot.Node.Tests/TestResults/**/*.dmp
+        if-no-files-found: ignore
     - name: Test the GUI
       # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"

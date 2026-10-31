@@ -21,11 +21,28 @@ public sealed class PullRequestsTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
+        // A node just disposed can still hold a clone for a moment on Windows (its git or watcher handles): the delete is tried
+        // again for a few seconds, then left, as a temp folder is no reason to fail a test (#546's run 41183059493).
+        for (var attempt = 0; ; attempt++)
         {
-            File.SetAttributes(file, FileAttributes.Normal);
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+                Directory.Delete(_root, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= 50)
+                {
+                    return;
+                }
+                Thread.Sleep(100);
+            }
         }
-        Directory.Delete(_root, recursive: true);
     }
 
     // A recorded answer of GitHub's search: Fixtures/PullRequests/<name>.json.

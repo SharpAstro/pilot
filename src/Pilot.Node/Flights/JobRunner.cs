@@ -680,11 +680,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private int SignalTree(string id, JobProcess process, bool stop)
     {
         var reached = 0;
-        foreach (var info in Tree.Read(id, process).Tree)
+        // A freeze reads the tree again until a pass finds nothing it has not frozen: a process a running one started between
+        // the read and its suspend (PIL537) would otherwise keep running through the pause. Each pid is suspended once, since
+        // suspends nest on Windows and one resume must undo it. A thaw is one pass: nothing runs to start another.
+        var seen = new HashSet<int>();
+        for (var pass = 0; pass < (stop ? 8 : 1); pass++)
         {
-            if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+            var fresh = false;
+            foreach (var info in Tree.Read(id, process).Tree)
             {
-                reached++;
+                if (!seen.Add(info.Pid))
+                {
+                    continue;
+                }
+                fresh = true;
+                if (stop ? ProcessTable.Suspend(info.Pid) : ProcessTable.Resume(info.Pid))
+                {
+                    reached++;
+                }
+            }
+            if (!fresh)
+            {
+                break;
             }
         }
         // setsid made the wrapper its own group leader: its group is the job's, children that left the tree by parent pid included.
@@ -761,6 +778,38 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"cancel-job takes only `{Verbs.ForceArg}`, not {string.Join(' ', args)}");
         }
         return state.Complete(command, CancelJob(id, command.Who, args.Length > 0));
+    }
+
+    /// <summary>
+    /// Cancels every queued or running job of <paramref name="flight"/> (its check, a worker's run) and every one owned by one of
+    /// <paramref name="owners"/> (session row ids): a landed or merged flight leaves nothing of its own on the queue. Returns how many.
+    /// </summary>
+    public int CancelFor(string flight, IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued
+            && (string.Equals(j.Flight, flight, StringComparison.OrdinalIgnoreCase) || (j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>Cancels every queued or running job owned by one of <paramref name="owners"/> (session row ids); returns how many.</summary>
+    public int CancelOwnedBy(IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// <summary>Stops a running job or takes a queued one out; null when it did, else why not.</summary>
@@ -1128,12 +1177,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal string WakeTarget(string owner, string? ownerName)
     {
+        // By id only, never a namesake (#542): the owner's own row, or the row its id moved to (a continuation lists it among its
+        // earlier ids), else the owner as recorded.
         var sessions = state.Sessions();
-        if (sessions.FirstOrDefault(s => s.Id == owner) is { State: not SessionState.Ended } || ownerName is not { Length: > 0 } name)
+        if (sessions.FirstOrDefault(s => s.Id == owner) is not null)
         {
             return owner;
         }
-        return sessions.Where(s => s.State != SessionState.Ended && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+        return sessions.Where(s => s.SessionId == owner || s.EarlierSessionIds?.Contains(owner) == true)
             .OrderByDescending(s => s.StartedAt).FirstOrDefault()?.Id ?? owner;
     }
 

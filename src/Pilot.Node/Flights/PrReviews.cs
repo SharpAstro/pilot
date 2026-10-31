@@ -279,7 +279,7 @@ public sealed class PrReviews(
         Slots.Begin("review-pr:" + reviewer, counting, reviewer, null, AdmissionRole.Reviewer, Models.Model(RoleModels.Reviewer));
         try
         {
-            job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer)), cancellationToken);
+            job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer), Reason: SessionStartReasons.PrReview, Pr: pr.Number), cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -1427,7 +1427,7 @@ public sealed class PrReviews(
         try
         {
             job = await workers.StartAsync(new WorkerStart(fixer, clone, plane, Briefs.FixPr(fixing, branch, CiShape.Of(worktree)),
-                Models.Model(RoleModels.Worker), Models.Effort(RoleModels.Worker)), cancellationToken);
+                Models.Model(RoleModels.Worker), Models.Effort(RoleModels.Worker), Reason: SessionStartReasons.PrFix, Pr: pr.Number), cancellationToken);
         }
         catch (FlightException)
         {
@@ -1638,7 +1638,7 @@ public sealed class PrReviews(
     {
         try
         {
-            await workers.StopAsync(job, cancellationToken);
+            await workers.StopAsync(job, SessionEndReasons.Landed, "pr reviews", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
