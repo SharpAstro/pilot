@@ -389,7 +389,11 @@ public static class NodeApp
             services.GetRequiredService<ISessionDelivery>(),
             logWriter,
             services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>()));
+            services.GetRequiredService<SessionLedger>())
+        {
+            // Ending a session cancels the jobs it owns.
+            CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
+        });
         configure?.Invoke(builder);
 
         var app = builder.Build();

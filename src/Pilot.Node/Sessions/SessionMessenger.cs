@@ -67,7 +67,28 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     }
 
     /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
-    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null)
+    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null) =>
+        await StopCoreAsync(command, cancellationToken, reason, cancelJobs: false);
+
+    /// <summary>Cancels the queued and running jobs a session owns, by its row ids and who asked; set by the node. Null: none are cancelled.</summary>
+    public Func<IReadOnlyCollection<string>, string, int>? CancelJobs { get; init; }
+
+    /// <summary>
+    /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c>: <see cref="StopAsync"/> with a reason that is required, the session's jobs cancelled,
+    /// and the reason (with who asked) kept in the ledger.
+    /// </summary>
+    public async Task<CommandResult> EndAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        if (why.Length == 0)
+        {
+            return state.Complete(command, "end-session needs a reason: pilot session end <id> <why>");
+        }
+        var by = command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
+        return await StopCoreAsync(command, cancellationToken, $"{by}: {why}", cancelJobs: true);
+    }
+
+    private async Task<CommandResult> StopCoreAsync(CommandRequest command, CancellationToken cancellationToken, string? reason, bool cancelJobs)
     {
         var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : null;
         if (id is null || state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row)
@@ -92,9 +113,11 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
         }
-        ledger?.Stopped([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], reason, command.Who);
+        string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
+        ledger?.Stopped(ids, reason, command.Who);
+        var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
-        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped");
+        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
         return state.Complete(command, null);
     }
 

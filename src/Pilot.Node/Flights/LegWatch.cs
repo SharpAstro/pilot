@@ -280,6 +280,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return;
         }
+        // Or one whose leg's check is queued or running: a check job has the flight and leg but no owner, and its end wakes the worker.
+        if (state.Jobs().Any(j => j.Kind == JobKind.Check && j.State is JobState.Running or JobState.Queued
+            && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
         var since = worker.LastResponseAt ?? worker.StartedAt;
         if (_wokenAt.TryGetValue(leg.WorkerJob!, out var woken) && woken > since)
         {

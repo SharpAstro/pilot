@@ -781,6 +781,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return count;
     }
 
+    /// <summary>Cancels every queued or running job owned by one of <paramref name="owners"/> (session row ids); returns how many.</summary>
+    public int CancelOwnedBy(IReadOnlyCollection<string> owners, string who)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)))
+        {
+            if (CancelJob(job.Id, who, force: false) is null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
     /// <summary>Stops a running job or takes a queued one out; null when it did, else why not.</summary>
     private string? CancelJob(string id, string who, bool force)
     {

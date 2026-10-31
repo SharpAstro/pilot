@@ -621,6 +621,13 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
+    /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
+    /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
+    /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.
+    /// </summary>
+    public const string EndSession = "end-session";
+
+    /// <summary>
     /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does
     /// it to every ended one. <c>undo</c> brings it (or them) back.
     /// </summary>

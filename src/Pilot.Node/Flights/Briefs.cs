@@ -856,6 +856,8 @@ public static class Briefs
         text.AppendLine("turn: between messages you sit idle, and that is fine. Do not poll or wait in a loop: the node watches the");
         text.AppendLine("workers for stalls and says the cards to you. Idle for long, you are compacted (/compact) before your prompt");
         text.AppendLine("cache goes cold, and wake on a summary: `pilot status` and `pilot cards` always say where things stand now.");
+        text.AppendLine($"To end a session that should not run on (a stray, a duplicate, one past its purpose), use `{pilot} session end <id> \"<why>\"`, never `claude stop`:");
+        text.AppendLine("the node stops it, cancels its jobs and keeps your reason in its ledger, while `claude stop` from here is refused. A reason is required.");
         text.AppendLine();
         // DE1's watchtower told the controller it could not read SE1's cards (2026-10-29): nothing here said --node reaches them.
         // The Chat is the fleet's (PIL468): each node's own watchtower chat stays, as its own page.

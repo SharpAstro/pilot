@@ -353,6 +353,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.EndSession)
+        {
+            return await Get<SessionMessenger>().EndAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);

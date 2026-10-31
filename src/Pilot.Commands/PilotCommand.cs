@@ -908,6 +908,13 @@ public static class PilotCommand
         var say = Action(new Command("say", "Say something to a session through the node") { Arguments = { session, text } },
             (p, client, ct) => Send(client, Verbs.Say, Verbs.SessionTarget(p.GetValue(session)!), [Join(p, text)], who, ct));
 
+        // session end: the node ends a background session with a reason (the watchtower's way, as claude stop is refused under auto mode).
+        var endSession = Arg("session", "The session's row id");
+        var endWhy = Words("why", "Why it ends (required): kept in the session ledger");
+        var endCommand = Action(new Command("end", "End a running background session through the node, cancelling its jobs, with a reason") { Arguments = { endSession, endWhy } },
+            (p, client, ct) => Send(client, Verbs.EndSession, Verbs.SessionTarget(p.GetValue(endSession)!), [Join(p, endWhy)], who, ct));
+        var sessionCommand = new Command("session", "Act on one session") { Subcommands = { endCommand } };
+
         // say-all: the same say to each session the filters pick, one Send each; the picking is SayAllFilter's, shared with the Sessions page.
         var sayAllText = Words("text", "What to say to each");
         var sayAllActive = new Option<bool>("--active") { Description = "Working or waiting sessions only: the default" };
@@ -1291,7 +1298,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
