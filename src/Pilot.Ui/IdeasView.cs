@@ -949,7 +949,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var key = (KeyOf(idea), idea.Body, IsNight);
         if (!_markdown.TryGetValue(key, out var document))
         {
-            _markdown[key] = document = Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+            _markdown[key] = document = SelectableTree.Of(Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) }));
         }
         return document;
     }

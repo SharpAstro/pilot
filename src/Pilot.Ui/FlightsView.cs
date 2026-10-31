@@ -900,7 +900,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     };
 
     // A line of the panel: one row, ending in an ellipsis where the column is narrower than it, with the whole of it on hover.
-    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).WithTooltip(text).RowH(20f);
+    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).Selectable().WithTooltip(text).RowH(20f);
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
@@ -1035,7 +1035,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         ["Sessions"] = l => l.Sessions.Length > 0 && char.IsDigit(l.Sessions[0]) ? int.Parse(l.Sessions.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture) : 0,
     };
 
-    private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+    private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint).Selectable();
 
     // Past these a text may well be cut by its column's ellipsis, so it carries its whole text as hover text: what a flight or leg
     // is held for runs past a column ("waiting for PNG243, SharpAstro.Png.Extensions.Experimental 3.23 on nuget.org").

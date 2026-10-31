@@ -485,30 +485,30 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var session = worktree.Session is { } line
             ? Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                    Layout.Builder.Text(worktree.Activity, 12f, activityColor).WAuto(),
+                    Layout.Builder.Text(worktree.Activity, 12f, activityColor).WAuto().Selectable(),
                     Layout.Builder.Text(line.Name, 12f, Link).WStar().BgHover(RowHoverBg)
                         .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:session:{line.Key}"), _ => OnSession?.Invoke(line))).WithGap(8f).RowH(20f),
-                Layout.Builder.Text(worktree.LastMessage, 11f, Dim).RowH(18f))
-            : Layout.Builder.VStack(Layout.Builder.Text(worktree.Activity, 12f, activityColor).RowH(20f), Layout.Builder.Spacer().RowH(18f));
+                Layout.Builder.Text(worktree.LastMessage, 11f, Dim).Selectable().RowH(18f))
+            : Layout.Builder.VStack(Layout.Builder.Text(worktree.Activity, 12f, activityColor).Selectable().RowH(20f), Layout.Builder.Spacer().RowH(18f));
         var flight = worktree.FlightCode is { } code
             ? Layout.Builder.Text($"✈ {code}", 12f, Link).BgHover(RowHoverBg)
                 .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
-            : Layout.Builder.Text("no flight", 12f, Dim);
+            : Layout.Builder.Text("no flight", 12f, Dim).Selectable();
         var pull = worktree.Pull is { } pr
             ? PullRequestLink.Of(_links, $"repo:{repo.Key}:pr:{pr.Pr.Number}", $"PR #{pr.Pr.Number}", $"{repo.Status.GitHub}#{pr.Pr.Number}", pr.Pr.Url, OnOpen,
                 RowRoute(repo.Status.GitHub, pr), "the Pull requests page", Link, RowHoverBg, mayBeCut: false, fill: false)
-            : Layout.Builder.Text("no PR", 12f, Dim);
+            : Layout.Builder.Text("no PR", 12f, Dim).Selectable();
         var cells = new List<Layout.Node>
         {
             Layout.Builder.HStack(
                 Layout.Builder.Spacer().WFixed(IndentWidth),
                 Layout.Builder.VStack(
-                        Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).RowH(22f),
-                        Layout.Builder.Text(worktree.Name, 11f, Dim).RowH(18f))
+                        Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).Selectable().RowH(22f),
+                        Layout.Builder.Text(worktree.Name, 11f, Dim).Selectable().RowH(18f))
                     .WStar()),
-            ListTable.Top(Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body)),
+            ListTable.Top(Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body).Selectable()),
             session,
-            ListTable.Top(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim)),
+            ListTable.Top(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim).Selectable()),
             Layout.Builder.VStack(flight.RowH(20f), pull.RowH(18f)),
         };
         if (_marked)
