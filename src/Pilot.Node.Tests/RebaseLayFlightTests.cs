@@ -197,7 +197,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
 
         // What a merge-main leg does once main has moved: merge main, then the remote branch, then push.
         File.WriteAllText(Path.Combine(Repo, "g.txt"), "g\n");
-        Git(Repo, "add", ".");
+        Git(Repo, "add", "g.txt");
         Commit(Repo, "g");
         Git(Repo, "push", "-q", "origin", "main");
         Git(plane, "fetch", "-q", "origin");
