@@ -280,16 +280,16 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         TopBar.Build(new PageHeader("home")
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
-            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).RowH(20f)] : [],
+            Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).Selectable().RowH(20f)] : [],
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {
         blocks.Add(Layout.Builder.Spacer().RowH(14f));
-        blocks.Add(Layout.Builder.Text(title, 13f, Dim).RowH(22f));
+        blocks.Add(Layout.Builder.Text(title, 13f, Dim).Selectable().RowH(22f));
         if (chips.Count == 0)
         {
-            blocks.Add(Layout.Builder.Text(none, 12f, Dim).RowH(22f));
+            blocks.Add(Layout.Builder.Text(none, 12f, Dim).Selectable().RowH(22f));
             return;
         }
         var shown = chips.Take(HomeScreen.MaxChips).ToList();
@@ -298,7 +298,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         blocks.Add(Layout.Builder.WrapH([.. shown.Select(Chip)]).WithGap(8f).WithLineGap(8f).WStar());
         if (chips.Count > shown.Count)
         {
-            blocks.Add(Layout.Builder.Text($"and {chips.Count - shown.Count} more on its page", 12f, Dim).RowH(22f));
+            blocks.Add(Layout.Builder.Text($"and {chips.Count - shown.Count} more on its page", 12f, Dim).Selectable().RowH(22f));
         }
     }
 
@@ -356,27 +356,27 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             return;
         }
         blocks.Add(Layout.Builder.Spacer().RowH(14f));
-        blocks.Add(Layout.Builder.Text(lines.Count == 1 ? "Machine" : "Machines", 13f, Dim).RowH(22f));
+        blocks.Add(Layout.Builder.Text(lines.Count == 1 ? "Machine" : "Machines", 13f, Dim).Selectable().RowH(22f));
         foreach (var line in lines)
         {
             if (line.Node is { } node)
             {
-                blocks.Add(Layout.Builder.Text(node.Name, 13f, Bright).RowH(22f));
+                blocks.Add(Layout.Builder.Text(node.Name, 13f, Bright).Selectable().RowH(22f));
             }
             // Wrapping, as the chips are, so a narrow page drops the last gauge to the next line rather than cutting a figure.
             blocks.Add(Layout.Builder.WrapH([.. line.Row.Gauges().Select(Gauge)]).WithGap(GaugeSpacing).WithLineGap(0f).WStar());
             blocks.Add(Layout.Builder.HStack(
-                Layout.Builder.Text("process", 11f, Dim).WStar().HStar(),
-                Folder(Layout.Builder.Text("working dir", 11f, Dim)),
-                Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
-                Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).WFixed(CpuWidth).HStar(),
-                Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).WFixed(MemoryWidth).HStar(),
-                Layout.Builder.Text("owner", 11f, Dim).WFixed(OwnerWidth).HStar()).WithGap(ColumnGap).RowH(22f).WStar(1f, 0f, TableMaxWidth));
+                Layout.Builder.Text("process", 11f, Dim).Selectable().WStar().HStar(),
+                Folder(Layout.Builder.Text("working dir", 11f, Dim).Selectable()),
+                Layout.Builder.Text("pid", 11f, Dim, TextAlign.Far).Selectable().WFixed(PidWidth).HStar(),
+                Layout.Builder.Text("cpu", 11f, Dim, TextAlign.Far).Selectable().WFixed(CpuWidth).HStar(),
+                Layout.Builder.Text("memory", 11f, Dim, TextAlign.Far).Selectable().WFixed(MemoryWidth).HStar(),
+                Layout.Builder.Text("owner", 11f, Dim).Selectable().WFixed(OwnerWidth).HStar()).WithGap(ColumnGap).RowH(22f).WStar(1f, 0f, TableMaxWidth));
             for (var i = 0; i < MachineLine.ProcessRows; i++)
             {
                 blocks.Add(i < line.Row.Processes.Length
                     ? ProcessRow(screen, line, line.Row.Processes[i])
-                    : Layout.Builder.Text(i == 0 ? "no process is busy" : "", 12f, Dim).RowH(ProcessRowHeight));
+                    : Layout.Builder.Text(i == 0 ? "no process is busy" : "", 12f, Dim).Selectable().RowH(ProcessRowHeight));
             }
             blocks.Add(Layout.Builder.Spacer().RowH(8f));
         }
@@ -385,26 +385,26 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // CPU, GPU or MEM: its label, a bar for how full it is and its figure, each GaugeRow high and centred on the row's middle.
     private static Layout.Node Gauge(MachineGauge gauge) =>
         Layout.Builder.HStack(
-            Layout.Builder.Text(gauge.Label.ToUpperInvariant(), 12f, Dim).WFixed(GaugeLabelWidth).HStar(),
+            Layout.Builder.Text(gauge.Label.ToUpperInvariant(), 12f, Dim).Selectable().WFixed(GaugeLabelWidth).HStar(),
             Layout.Builder.VStack(
                 Layout.Builder.Spacer().HStar(),
                 SessionsView<TSurface>.Bar((float)gauge.Fraction).RowH(GaugeBarHeight),
                 Layout.Builder.Spacer().HStar()).WFixed(GaugeBarWidth),
-            Layout.Builder.Text(gauge.Figure, 12f, Bright).WFixed(GaugeFigureWidth).HStar())
+            Layout.Builder.Text(gauge.Figure, 12f, Bright).Selectable().WFixed(GaugeFigureWidth).HStar())
             .WithGap(GaugeGap)
             .WAuto()
             .HFixed(GaugeRow);
 
     private Layout.Node ProcessRow(HomeScreen screen, MachineLine line, MachineProcess process)
     {
-        var name = Layout.Builder.Text(process.Name, 13f, Bright).WStar().HStar();
-        var folder = Layout.Builder.Text(MachineLine.Folder(process), 12f, Dim);
+        var name = Layout.Builder.Text(process.Name, 13f, Bright).Selectable().WStar().HStar();
+        var folder = Layout.Builder.Text(MachineLine.Folder(process), 12f, Dim).Selectable();
         return Layout.Builder.HStack(
             name.WithTooltip(MachineLine.Hover(process)),
             Folder(process.WorkingDirectory is { } directory ? folder.WithTooltip(directory) : folder),
-            Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).WFixed(PidWidth).HStar(),
-            Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).WFixed(CpuWidth).HStar(),
-            Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).WFixed(MemoryWidth).HStar(),
+            Layout.Builder.Text(process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Far).Selectable().WFixed(PidWidth).HStar(),
+            Layout.Builder.Text(MachineLine.Cpu(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(CpuWidth).HStar(),
+            Layout.Builder.Text(MachineLine.Memory(process), 13f, Bright, TextAlign.Far).Selectable().WFixed(MemoryWidth).HStar(),
             Owner(screen.OwnerChip(line, process), process.Owner))
             .WithGap(ColumnGap)
             .RowH(ProcessRowHeight).WStar(1f, 0f, TableMaxWidth);
@@ -420,7 +420,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     {
         if (chip is null)
         {
-            var cell = Layout.Builder.Text(owner ?? "", 12f, Dim).WFixed(OwnerWidth).HStar();
+            var cell = Layout.Builder.Text(owner ?? "", 12f, Dim).Selectable().WFixed(OwnerWidth).HStar();
             return owner is { Length: > 0 } ? cell.WithTooltip(owner) : cell;
         }
         var tint = chip.Tone is "queued" ? Amber : Green;

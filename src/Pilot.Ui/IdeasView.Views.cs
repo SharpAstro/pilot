@@ -184,21 +184,21 @@ internal sealed partial class IdeasView<TSurface>
         {
             title.Add(grip);
         }
-        title.Add(Layout.Builder.Text(Label(item), 12f, Link).WAuto());
-        title.Add(Layout.Builder.Text(item.Title, 14f, P.Bright).WStar().Whole(item.Title));
+        title.Add(Layout.Builder.Text(Label(item), 12f, Link).Selectable().WAuto());
+        title.Add(Layout.Builder.Text(item.Title, 14f, P.Bright).Selectable().WStar().Whole(item.Title));
 
         var cells = new List<Layout.Node>
         {
             ListTable.Top(Layout.Builder.HStack([.. title]).WithGap(8f).WStar().HAuto()),
-            ListTable.Top(Layout.Builder.Text(KindOf(item), 13f, P.Body)),
+            ListTable.Top(Layout.Builder.Text(KindOf(item), 13f, P.Body).Selectable()),
             ListTable.Top(readiness is null
-                ? Layout.Builder.Text("not checked", 12f, P.Dim).Whole("Ready? asks the node whether it can fly as a flight")
-                : Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 13f, readiness.Ready ? P.Flying : P.Failed)),
+                ? Layout.Builder.Text("not checked", 12f, P.Dim).Selectable().Whole("Ready? asks the node whether it can fly as a flight")
+                : Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 13f, readiness.Ready ? P.Flying : P.Failed).Selectable()),
             ListTable.Top(item.Flight is { } flight
                 ? Layout.Builder.Text(flight, 13f, Link).BgHover(Tint.Hover)
                     .Follows(new HitResult.ButtonHit($"ideas:tree-flight:{item.Key}"), _ => OnFlight?.Invoke(flight)).WAuto().WithTooltip($"Open the flight {flight}")
                 : Layout.Builder.Text("", 1f, P.Dim)),
-            ListTable.Top(Layout.Builder.Text(item.Age, 13f, P.Dim)),
+            ListTable.Top(Layout.Builder.Text(item.Age, 13f, P.Dim).Selectable()),
         };
         // The stripe marks the pick, and nothing else: what the node found of readiness is in words in its column, and a stripe in the colour of
         // it would be the only thing to say it where a narrow page has dropped that column.

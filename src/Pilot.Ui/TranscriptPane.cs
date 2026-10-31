@@ -294,7 +294,7 @@ internal sealed class TranscriptPane
             rows.AddRange(queued.Select(q => TranscriptEntryView.Waiting(q).WStar()));
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Stretch()
+            ? Layout.Builder.Text(problem ?? "reading the transcript…", 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(from >= 0 ? _atScroll : _scroll).Stretch();
         // The banner is a row of the page, not of the list: it stays under the entries, whatever is scrolled.
         var banner = Banner(current, now ?? DateTimeOffset.UtcNow);

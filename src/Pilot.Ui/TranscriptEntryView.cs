@@ -148,10 +148,10 @@ internal sealed class TranscriptEntryView
     /// <summary>A message handed to the session that it has not read yet: last, dim, and saying so.</summary>
     internal static Layout.Node Waiting(string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text("queued", 12f, Faint).WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
+                Layout.Builder.Text("queued", 12f, Faint).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole("queued"),
                 Layout.Builder.VStack([
-                    Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint),
-                    .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim)),
+                    Layout.Builder.Text("not read yet: it reads this at its next step", 11f, Faint).Selectable(),
+                    .. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
                 ]).WStar(BodyWeight))
             .WithGap(10f);
 
@@ -199,7 +199,7 @@ internal sealed class TranscriptEntryView
         var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
         return Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).WStarUpToContent(BodyWeight).WithTooltip(said),
+                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).Selectable().WStarUpToContent(BodyWeight).WithTooltip(said),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);
@@ -215,9 +215,9 @@ internal sealed class TranscriptEntryView
         var open = _expanded.Contains(call.Index);
         var said = call.Description is { Length: > 0 } description ? description : call.Text;
         var line = Layout.Builder.HStack(
-                Layout.Builder.Text(mark, 12f, markColor).WAuto(),
-                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).WStar(LabelWeight, 0f, ToolWidth).Whole(call.Tool ?? "tool"),
-                Layout.Builder.Text(said, 13f, Dim).WStar(BodyWeight),
+                Layout.Builder.Text(mark, 12f, markColor).Selectable().WAuto(),
+                Layout.Builder.Text(call.Tool ?? "tool", 12f, Tool).Selectable().WStar(LabelWeight, 0f, ToolWidth).Whole(call.Tool ?? "tool"),
+                Layout.Builder.Text(said, 13f, Dim).Selectable().WStar(BodyWeight),
                 Stamp(call.At).CollapseBelow(TimeMin))
             .WithGap(6f)
             .BgHover(ButtonHover)
@@ -237,7 +237,7 @@ internal sealed class TranscriptEntryView
         }
         if (result?.Denied is { } denied)
         {
-            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
+            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed).Selectable());
             if (command.Length > 0 && CopyText is { } copy)
             {
                 body.Add(Layout.Builder.HStack(
@@ -253,7 +253,7 @@ internal sealed class TranscriptEntryView
             {
                 // A file read in full says nothing a reader wants in the transcript: how much was read is enough.
                 var count = result.Text.Length == 0 ? 0 : result.Text.ReplaceLineEndings("\n").Split('\n').Length;
-                body.Add(Layout.Builder.Text($"└ Read {count} {(count == 1 ? "line" : "lines")}", 12f, Faint));
+                body.Add(Layout.Builder.Text($"└ Read {count} {(count == 1 ? "line" : "lines")}", 12f, Faint).Selectable());
             }
             else if (open || failed)
             {
@@ -284,7 +284,7 @@ internal sealed class TranscriptEntryView
     internal static Layout.Node Stamp(DateTimeOffset? at) =>
         at is { } when
             ? Layout.Builder.HStack(
-                    Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).WStar()
+                    Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).Selectable().WStar()
                         .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
                     Layout.Builder.Spacer().WFixed(ScrollGutter))
                 .WStar(1f, 0f, TimeWidth)
@@ -293,7 +293,7 @@ internal sealed class TranscriptEntryView
     // A line of a command or its output. One helper for all of it, so a monospace face for a text leaf lands here once:
     // DIR.Lib has none yet (SharpAstro/DIR.Lib#152). An empty line keeps its height as a space.
     private static Layout.Node Mono(string line, RGBAColor32 color) =>
-        Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, color);
+        Layout.Builder.Text(line.Length == 0 ? " " : line, 13f, color).Selectable();
 
     private Layout.Node Row(TranscriptEntry entry)
     {
@@ -328,18 +328,18 @@ internal sealed class TranscriptEntryView
         {
             body.Add(Subagents.FirstOrDefault(s => s.Id == entry.FromAgent) is { } reporter
                 ? Layout.Builder.HStack(Layout.Builder.Text("reported · ", 12f, Dim).WAuto(), AgentLink(reporter, "open its transcript", $"transcript:report:{entry.Index}"), Layout.Builder.Spacer().WStar())
-                : Layout.Builder.Text("reported", 12f, Dim));
+                : Layout.Builder.Text("reported", 12f, Dim).Selectable());
         }
         if (entry.Denied is { } denied)
         {
-            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed));
+            body.Add(Layout.Builder.Text($"Denied · {denied}", 13f, Failed).Selectable());
         }
         // What the assistant wrote, and what a subagent reported, is Markdown; prompts and notes are said as typed.
         body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
             : Folded(entry, entry.Text, textColor, lines, ""));
         var row = Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.Text(label, 12f, labelColor).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
                 Layout.Builder.VStack([.. body]).WStar(BodyWeight),
                 ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
             .WithGap(10f);
@@ -350,7 +350,7 @@ internal sealed class TranscriptEntryView
     // A prompt row with its own label and words: a relayed message's sender and body.
     private Layout.Node Said(TranscriptEntry entry, string label, RGBAColor32 labelColor, RGBAColor32 textColor, string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, labelColor).WStar(LabelWeight, 0f, LabelWidth).Whole(label),
+                Layout.Builder.Text(label, 12f, labelColor).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
                 Layout.Builder.VStack([.. Folded(entry, text, textColor, 12, "")]).WStar(BodyWeight),
                 ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
             .WithGap(10f)
@@ -367,7 +367,7 @@ internal sealed class TranscriptEntryView
         {
             // Wrapped, never cut: a long message (a choice's answer carries its question) ended in an ellipsis (SE1, 2026-10-28).
             var said = i == 0 ? lead + line : lead.Length > 0 ? "  " + line : line;
-            yield return said.Length == 0 ? Layout.Builder.Text(" ", 13f, color) : WrappedProse.Of(said, 13f, color, selectable: true);
+            yield return said.Length == 0 ? Layout.Builder.Text(" ", 13f, color).Selectable() : WrappedProse.Of(said, 13f, color, selectable: true);
         }
         if (Fold(entry, all.Length, lines) is { } fold)
         {
@@ -385,7 +385,7 @@ internal sealed class TranscriptEntryView
         {
             var source = open || all.Length <= lines ? entry.Text : string.Join("\n", all.Take(lines));
             // A long word of it (a path, a check's name) is cut after its separators: Markdown wraps at white space only (PIL380).
-            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = SelectableTree.Of(Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true, selectable: false);
+            _markdown[(entry.Index, open, ReferenceEquals(Palette.Current, Palette.Night))] = document = SelectableTree.Of(Layout.Builder.Markdown(source, style with { OnLink = OpenLink is null ? null : Follow }), breakLongWords: true);
         }
         yield return document;
         if (Fold(entry, all.Length, lines) is { } fold)

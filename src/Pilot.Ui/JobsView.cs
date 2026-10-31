@@ -553,7 +553,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     {
         if (screen.Lines.Count == 0)
         {
-            return Layout.Builder.Text(screen.Hidden is null ? "No jobs yet: a worker hands one over with pilot run -- <command>" : "No job in play: Everything, above, shows the finished", 16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text(screen.Hidden is null ? "No jobs yet: a worker hands one over with pilot run -- <command>" : "No job in play: Everything, above, shows the finished", 16f, Dim, TextAlign.Center).Selectable().Stretch();
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
@@ -567,7 +567,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var table = new List<Layout.Node>();
         if (screen.Holder is { } holder)
         {
-            table.Add(Layout.Builder.Text(holder, 13f, Queued).RowH(24f));
+            table.Add(Layout.Builder.Text(holder, 13f, Queued).Selectable().RowH(24f));
         }
         table.Add(Table.Header(columns, Scale));
         table.Add(Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch());
@@ -629,19 +629,19 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var stuck = line.Row.State == JobState.Running ? StuckOf(line) : null;
         var cells = new List<Layout.Node>
         {
-            Top(Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright)),
-            Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body)),
-            Top(Layout.Builder.Text(line.For, 13f, Dim)),
+            Top(Layout.Builder.Text(line.Id, 15f, ended ? Dim : Bright).Selectable()),
+            Top(Layout.Builder.Text(line.Command, 14f, ended ? Dim : Body).Selectable()),
+            Top(Layout.Builder.Text(line.For, 13f, Dim).Selectable()),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).RowH(22f),
+                Layout.Builder.Text(line.Untold ? $"{line.State} · owner not told" : line.State, 14f, line.Untold ? Queued : color).Selectable().RowH(22f),
                 // The state column can be narrower than the stuck line: it ends in an ellipsis and says the whole of it on hover.
-                (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim) : Layout.Builder.Text(stuck, 11f, Queued).WithTooltip(stuck)).RowH(18f)),
-            Top(Layout.Builder.Text(line.Started, 13f, Dim)),
-            Top(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body)),
+                (stuck is null ? Layout.Builder.Text(line.StateDetail ?? "", 11f, Dim).Selectable() : Layout.Builder.Text(stuck, 11f, Queued).Selectable().WithTooltip(stuck)).RowH(18f)),
+            Top(Layout.Builder.Text(line.Started, 13f, Dim).Selectable()),
+            Top(Layout.Builder.Text(line.Took, 13f, ended ? Dim : Body).Selectable()),
         };
         if (marked)
         {
-            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).Whole(line.Node?.Name)));
+            cells.Insert(0, Top(Layout.Builder.Text(line.Node?.Name ?? "", 13f, ended ? Dim : Body).Selectable().Whole(line.Node?.Name)));
         }
         var row = Table.Row(columns, Layout.Builder.Spacer().Bg(color), cells)
             .RowH(RowHeight)
@@ -758,15 +758,15 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             var process = below[i];
             yield return Layout.Builder.HStack(
-                    Layout.Builder.Text(i == 0 ? "tree" : "", 12f, Faint).WFixed(FactLabel),
-                    Layout.Builder.Text($"{Branch(process.Depth)}{process.Name} {process.Pid}", 12f, Body).WStar())
+                    Layout.Builder.Text(i == 0 ? "tree" : "", 12f, Faint).Selectable().WFixed(FactLabel),
+                    Layout.Builder.Text($"{Branch(process.Depth)}{process.Name} {process.Pid}", 12f, Body).Selectable().WStar())
                 .RowH(TreeRowHeight);
         }
         if (below.Count > TreeRows)
         {
             yield return Layout.Builder.HStack(
                     Layout.Builder.Spacer().WFixed(FactLabel),
-                    Layout.Builder.Text($"and {below.Count - TreeRows} more", 12f, Dim).WStar())
+                    Layout.Builder.Text($"and {below.Count - TreeRows} more", 12f, Dim).Selectable().WStar())
                 .RowH(TreeRowHeight);
         }
     }
@@ -809,21 +809,21 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var lines = new List<Layout.Node>();
         if (problem is not null)
         {
-            lines.Add(Layout.Builder.Text($"could not read the log: {problem}", 11f, Failed).RowH(LogLineHeight));
+            lines.Add(Layout.Builder.Text($"could not read the log: {problem}", 11f, Failed).Selectable().RowH(LogLineHeight));
         }
         else if (log is null)
         {
-            lines.Add(Layout.Builder.Text(LoadLog is null ? "its output is in its log, on the node's machine" : "reading…", 11f, Dim).RowH(LogLineHeight));
+            lines.Add(Layout.Builder.Text(LoadLog is null ? "its output is in its log, on the node's machine" : "reading…", 11f, Dim).Selectable().RowH(LogLineHeight));
         }
         else if (log.Lines.Length == 0)
         {
-            lines.Add(Layout.Builder.Text(job.State == JobState.Queued ? "nothing yet: it has not started" : "nothing written yet", 11f, Dim).RowH(LogLineHeight));
+            lines.Add(Layout.Builder.Text(job.State == JobState.Queued ? "nothing yet: it has not started" : "nothing written yet", 11f, Dim).Selectable().RowH(LogLineHeight));
         }
         else
         {
             foreach (var text in log.Lines)
             {
-                lines.Add(Layout.Builder.Text(text, 11f, Body).RowH(LogLineHeight));
+                lines.Add(Layout.Builder.Text(text, 11f, Body).Selectable().RowH(LogLineHeight));
             }
         }
         return Layout.Builder.VStack(
@@ -837,8 +837,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private static Layout.Node Fact(string label, string text, RGBAColor32 color) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(label, 12f, Faint).WFixed(FactLabel),
-                Layout.Builder.Text(text, 12f, color).WStar())
+                Layout.Builder.Text(label, 12f, Faint).Selectable().WFixed(FactLabel),
+                Layout.Builder.Text(text, 12f, color).Selectable().WStar())
             .RowH(20f);
 
     private static Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);

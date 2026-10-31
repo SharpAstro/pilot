@@ -555,10 +555,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var sending = Volatile.Read(ref _sending) > 0;
         if (held.Working || sending)
         {
-            rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Pad(0f, 4f).WStar());
+            rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Selectable().Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = !canSend
@@ -591,13 +591,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     // A message that did not go.
     private static Layout.Node Sent(string text, bool sending) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).WFixed(96f),
-                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim))]).WStar())
+                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).Selectable().WFixed(96f),
+                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable())]).WStar())
             .WithGap(10f);
 
     private static Layout.Node Notice(string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text("pilot", 12f, Failed).WFixed(96f),
+                Layout.Builder.Text("pilot", 12f, Failed).Selectable().WFixed(96f),
                 WrappedProse.Of(text, 13f, Failed, 3))
             .WithGap(10f)
             .WStar();
@@ -608,11 +608,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var body = new List<Layout.Node>();
         if (saidAlready)
         {
-            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim));
+            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim).Selectable());
         }
         else
         {
-            body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim));
+            body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim).Selectable());
             // Whole, never cut: a long question scrolls inside the capped card instead.
             body.Add(WrappedProse.Of(question, 14f, Bright));
         }

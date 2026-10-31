@@ -429,9 +429,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             Layout.Builder.HStack(
                     Layout.Builder.Text("Watchtower", 18f, Bright).WAuto().Selectable(),
                     Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(said, 12f, colour, TextAlign.Far).WAuto())
+                    Layout.Builder.Text(said, 12f, colour, TextAlign.Far).Selectable().WAuto())
                 .RowH(30f),
-            Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
+            Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).Selectable().RowH(18f),
         };
         // The link's row is kept whether there is a link or not: the block is always as tall, so the cards under it never
         // move when the watchtower gains or loses its Remote Control, or a fresh one starts (SE1, 2026-10-24).
@@ -465,7 +465,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static List<Layout.Node> NoWatchtower() =>
     [
         Layout.Builder.HStack(
-                Layout.Builder.Text("Watchtower", 18f, Dim).WAuto(),
+                Layout.Builder.Text("Watchtower", 18f, Dim).Selectable().WAuto(),
                 Layout.Builder.Spacer().WStar(),
                 Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WStarUpToContent().Whole("not running"))
             .RowH(30f),
@@ -515,7 +515,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var rows = new List<Layout.Node> { Layout.Builder.Spacer().RowH(6f) };
         if (screen.Watchtower is null)
         {
-            rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).RowH(16f));
+            rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).Selectable().RowH(16f));
         }
         rows.Add(Layout.Builder.HStack(
                 Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()).WStarUpToContent().WithTooltip("Chat with the watchtower"),
@@ -533,11 +533,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var here = screen.Open.Concat(screen.Merged).Select(c => c.Id).ToHashSet();
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Any(id => !here.Contains(id)) ? open.Intersect(here) : open);
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
-        blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
+        blocks.Add(Layout.Builder.Text("For you", 18f, Bright).Selectable().RowH(30f));
         blocks.Add(_waiting.Count == 0
-            ? Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f)
+            ? Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().RowH(20f)
             : Layout.Builder.HStack([
-                    Layout.Builder.Text(screen.Summary, 12f, Dim).WAuto(),
+                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WAuto(),
                     Layout.Builder.Spacer().WStar(),
                     .. _waiting.Select(Waiting)])
                 .RowH(20f));
@@ -572,11 +572,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             else
             {
-                blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
+                blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).Selectable().RowH(22f));
             }
             foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
-                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f);
+                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).Selectable().RowH(20f);
                 blocks.Add(line);
                 if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
                 {
@@ -591,7 +591,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
     private Layout.Node HeldLine(HeldNode held)
     {
-        var line = WrappedProse.Of(held.Shown, 11f, HeldText, HeldLines)
+        // Not selectable: the whole row is a press (it opens the node on the Fleet page) and a drag would fight it.
+        var line = WrappedProse.Of(held.Shown, 11f, HeldText, HeldLines, selectable: false)
             .BgHover(CardHover)
             .Follows(new HitResult.ButtonHit($"cards:node:{held.Node.Key}"), _ => OnFleet?.Invoke(held.Node));
         // Also on hover when it is not cut: the click's way, which the dim line alone does not say.
@@ -716,7 +717,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         };
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
+            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable().RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
@@ -790,7 +791,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is not null)
         {
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
-            lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
+            lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).Selectable().RowH(18f));
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Button("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
         }
