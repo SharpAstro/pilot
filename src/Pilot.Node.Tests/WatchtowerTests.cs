@@ -863,6 +863,8 @@ public sealed class WatchtowerTests : IDisposable
 
         // Its turn over: the next look ends it through the end path, its jobs cancelled and the reason the watchtower's.
         real.Agents.Json = AgentRows.List(OldRow("running", "idle"), FreshRow());
+        await real.Tracker.PollAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Idle);
         _time.Advance(TimeSpan.FromSeconds(30));
         await tower.LookAsync(Ct);
 
