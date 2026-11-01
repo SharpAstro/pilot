@@ -129,6 +129,8 @@ public sealed class WeekPaceTests
 }
 
 /// <summary>The week-pace guard at the commander's own call sites: the sweep's start of a leg, for a repo and for a priority repo.</summary>
+/// <remarks>Slow: both tests start legs of real flights on the sweep (6.9 and 9.9 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class WeekPaceLegTests : LegHoldTestsBase
 {
     // At Start four of seven days have elapsed (57 %), so 70 % spent is 13 points ahead.
@@ -171,7 +173,6 @@ public sealed class WeekPaceLegTests : LegHoldTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithWeekPaceUnsetTheSweepStartsTheNextLegHoweverFastTheWeekIsSpent()
     {
         await ParserDone();
