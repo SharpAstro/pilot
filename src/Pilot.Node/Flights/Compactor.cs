@@ -88,7 +88,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     public IEnumerable<(SessionRow Row, string Focus)> Kept()
     {
         var waiting = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
-        var watching = watchtower.Watching() is not null;
+        var watching = watchtower.Keeping() is not null;
         var current = watchtower.Current()?.Id;
         foreach (var row in state.Sessions().Where(r => r is { Kind: SessionKind.Background, State: SessionState.Idle }))
         {

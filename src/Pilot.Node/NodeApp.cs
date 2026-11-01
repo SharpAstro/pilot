@@ -260,6 +260,7 @@ public static class NodeApp
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                UiConnected = () => services.GetRequiredService<PageViews>().Any,
                 Error = logWriter,
                 JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),

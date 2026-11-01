@@ -152,7 +152,7 @@ public static partial class CardSummaries
             "watchtower-resumed" => "The watchtower resumed after its usage limit reset. Nothing to do.",
             "watchtower-started" => "The node started a fresh watchtower. Nothing to do.",
             "watchtower-duplicate" => "A second live watchtower was stopped so that only one runs. Nothing to do.",
-            "watchtower-parked" => "The watchtower was stopped because there was nothing to watch. The next card resumes it or starts a fresh one; nothing to do.",
+            "watchtower-parked" => "The watchtower was stopped because no flight was in the air and no UI was connected. A flight or a UI connecting resumes it or starts a fresh one; nothing to do.",
             Watchtower.Waits => "The watchtower waits to start until the usage window resets. The node starts it then.",
             CardKinds.WatchtowerChurning => "The watchtower keeps ending soon after it starts. The card says how often; it closes itself when it calms down.",
             CardKinds.IdeaConflict => "Your edit of an idea contradicts what GitHub holds now. Keep the merge, yours or GitHub's; nothing is written until you choose.",

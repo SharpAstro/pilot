@@ -193,7 +193,7 @@ public sealed class WatchtowerTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(2));
         await _tower.LookAsync(Ct);
         Ended().ShouldBe(["job00007"]);
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: nothing to watch");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air and no UI connected");
         _said.ShouldBeEmpty();
 
         // The next thing to watch starts a fresh one, and says why.

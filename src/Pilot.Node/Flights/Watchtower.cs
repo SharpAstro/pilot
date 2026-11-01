@@ -63,7 +63,13 @@ public sealed class Watchtower(
     /// </summary>
     public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(30);
 
-    /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
+    /// <summary>
+    /// Whether any UI (GUI or TUI, local or over the LAN) is connected: on a node with no flight to watch it keeps the watchtower live,
+    /// so a chat is relayed into the live process. A CLI command or an MCP call is no UI.
+    /// </summary>
+    public Func<bool> UiConnected { get; set; } = () => false;
+
+    /// <summary>How long it is kept once there is nothing to watch and no UI is connected, idle, before it is stopped.</summary>
     public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>How long after a failed start the next one is tried.</summary>
@@ -556,6 +562,9 @@ public sealed class Watchtower(
             : null;
     }
 
+    /// <summary>What keeps it live: <see cref="Watching"/>, else a connected UI, else null (the quiet stop applies after <see cref="QuietFor"/>).</summary>
+    public string? Keeping() => Watching() ?? (UiConnected() ? "a UI is connected" : null);
+
     /// <summary>One look: keeps it running while there is something to watch, and tells it the cards it has not heard of.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
@@ -571,7 +580,7 @@ public sealed class Watchtower(
             // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
             Generations();
             KeepChurnCard(Health());
-            var watching = Watching();
+            var watching = Keeping();
             NoteHeld();
             if (watching is not null || _watchingAt is null)
             {
@@ -1001,7 +1010,7 @@ public sealed class Watchtower(
     /// <summary>Ends a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
     private async Task StopQuietAsync(SessionRow row, CancellationToken cancellationToken)
     {
-        if (!await EndOneAsync(row, "nothing to watch", time.GetUtcNow(), cancellationToken))
+        if (!await EndOneAsync(row, $"quiet: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes", time.GetUtcNow(), cancellationToken))
         {
             // Not confirmed: kept as current, so the next look ends it again; the messenger's card says when it will not stop.
             return;
@@ -1009,7 +1018,7 @@ public sealed class Watchtower(
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
-            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next card resumes it within the hour, else starts a fresh one");
+            $"Stopped the watchtower: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one");
     }
 
     private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower), options.Machine);

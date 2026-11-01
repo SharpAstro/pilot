@@ -209,7 +209,7 @@ internal static class CardKindCatalog
         ("pr-recheck", "recheck of", null),
         ("watchtower-resumed", "resumed after its usage limit reset", null),
         ("watchtower-started", "Started a fresh watchtower", null),
-        ("watchtower-parked", "nothing to watch", null),
+        ("watchtower-parked", "no flight in the air and no UI connected", null),
         ("store", "could not write its snapshot", null),
     ];
 }
