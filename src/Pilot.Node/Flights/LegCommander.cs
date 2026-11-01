@@ -470,6 +470,8 @@ public sealed partial class LegCommander(
                 return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
+            // The merged base's push went up: what it brought may share a file with another flight (rings, never fails the update).
+            await CheckAfterPushAsync(flight, cancellationToken);
             if (kept is { Length: > 0 })
             {
                 // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the
@@ -770,6 +772,7 @@ public sealed partial class LegCommander(
             {
                 await OffLockAsync(null, () => PushAsync(flight, cancellationToken, brought));
             }
+            await CheckAfterPushAsync(flight, cancellationToken);
         }
         await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
     }

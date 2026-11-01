@@ -17,9 +17,24 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task CheckLegEndOverlapAsync(string legTarget, CancellationToken cancellationToken)
     {
+        var (flight, leg) = LegOf(legTarget);
+        await CheckOverlapAsync(flight.Code, leg.Name, cancellationToken);
+    }
+
+    /// <summary>
+    /// The check after the node pushes a go-around's or a base merge's head: what the push added may share a file with another flight. It rings
+    /// like a leg's end, with the lock let go for it, and never fails the push.
+    /// </summary>
+    private Task CheckAfterPushAsync(FlightRow flight, CancellationToken cancellationToken) =>
+        OffLockAsync(null, () => CheckOverlapAsync(flight.Code,
+            state.Legs(flight.Code).Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name ?? "the push", cancellationToken));
+
+    internal async Task CheckOverlapAsync(string code, string legName, CancellationToken cancellationToken)
+    {
         try
         {
-            var (flight, leg) = LegOf(legTarget);
+            var flight = FlightOf(Verbs.FlightTarget(code));
+            var leg = new { Name = legName };
             if (flight.State == FlightState.Landed || flight.Overlaps.Any(o => o.Answer == OverlapAnswer.Pending))
             {
                 return;
@@ -69,7 +84,7 @@ public sealed partial class LegCommander
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await Error.WriteLineAsync($"leg-end overlap: the check of {legTarget} failed, nothing rung: {ex.Message}");
+            await Error.WriteLineAsync($"leg-end overlap: the check of {code} failed, nothing rung: {ex.Message}");
         }
     }
 
@@ -115,10 +130,10 @@ public sealed partial class LegCommander
         choices.Add(new CardChoice { Label = $"Plan {flight.Code} in parallel with {code}", Verb = Verbs.Separate, Target = target, Args = [code] });
         var at = isPr ? $"open PR {code}" : other.Node is null ? code : $"{code} on {other.Node}";
         var detail = new System.Text.StringBuilder();
-        detail.Append($"{flight.Code}/{leg} is done, and the plane now changes {files.Length} file{(files.Length == 1 ? "" : "s")} that {at} changes too, which its plan did not foresee.");
+        detail.Append($"Found at {leg}: {flight.Code}'s plane now changes {files.Length} file{(files.Length == 1 ? "" : "s")} that {at} changes too, which its plan did not foresee.");
         if (!isPr)
         {
-            detail.Append($" Connect holds {flight.Code} until {code} has landed.");
+            detail.Append($" Connect holds the next leg of {flight.Code}, not {leg}, which stays done, until {code} has landed.");
         }
         detail.Append(" Plan in parallel flies both; the second to land resolves the conflicts.");
         detail.Append($" The next leg of {flight.Code} waits for your answer.");
