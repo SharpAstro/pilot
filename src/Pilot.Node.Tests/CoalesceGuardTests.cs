@@ -65,6 +65,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
 
         again.Ok.ShouldBeTrue(again.Error);
         again.Made.ShouldNotBeNull().ShouldContain(LegCommander.AlreadyInProgress);
+        again.Way.ShouldBe(MergeWays.InProgress);
         open.SetResult();
         (await merge).Ok.ShouldBeTrue();
         _github.Merged.ShouldHaveSingleItem();

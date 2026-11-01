@@ -461,6 +461,11 @@ public sealed class PrRecheck : IHostedService
             {
                 return await FinishAsync(entry, pr, $"passed and green, but behind its base: brought up to date and reviewed afresh", null, cancellationToken);
             }
+            if (merged.Way == MergeWays.InProgress)
+            {
+                // A merge is already running: not merged yet, so no finish here; the next sweep looks again.
+                return Outcome.Kept;
+            }
             return merged.Way is null
                 ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
                 : await FinishAsync(entry, pr, $"passed and green, queued for merge at {head}", PilotMarks.Queued, cancellationToken);

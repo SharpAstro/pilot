@@ -2148,7 +2148,8 @@ public sealed partial class LegCommander(
             // The entry is the job row: live while it is open and moved within StuckAfter. Asked again, the merge answers ok and the entry is left as it is.
             if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is { Open: true } live && time.GetUtcNow() - live.ChangedAt < StuckAfter)
             {
-                return (false, AlreadyInProgress, null);
+                // The repeat's own head and method are ignored: the first merge's stand. Its Way says "not merged, no news" to callers.
+                return (false, AlreadyInProgress, MergeWays.InProgress);
             }
             throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
         }

@@ -799,6 +799,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} was brought up to date on autopilot and is reviewed afresh", result.Made);
             return;
         }
+        if (result.Ok && result.Way == MergeWays.InProgress)
+        {
+            // Another merge of this flight is running: the card stays, and a later look finds where it ended.
+            return;
+        }
         if (result.Ok)
         {
             state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");
