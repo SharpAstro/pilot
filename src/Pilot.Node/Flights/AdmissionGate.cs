@@ -60,10 +60,11 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         var jobs = state.Jobs();
         var cards = state.Cards(openOnly: true);
         var legs = state.Legs();
-        var idleNotes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Every live-listed row decides a flight's phase and repo hold; only the counted subset takes an Opus slot (an Idle row counts while it has work pending).
         var live = state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && ignoring?.Contains(s.Name) != true
-            && (s.State is SessionState.Working or SessionState.Waiting
-                || s.State is SessionState.Idle && PendingWork(s, jobs, cards, legs) is { } pending && idleNotes.TryAdd(s.Name, pending))).ToArray();
+            && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToArray();
+        var counted = live.Select(s => (Row: s, Note: s.State == SessionState.Idle ? PendingWork(s, jobs, cards, legs) : null))
+            .Where(c => c.Row.State != SessionState.Idle || c.Note is not null).ToArray();
         // Starts out, and sessions the node recorded (a flying leg's worker, a review's reviewer) that the tracker has not listed yet: they count by what they
         // were started with, until a session row of their name takes over.
         var rows = state.Sessions();
@@ -74,7 +75,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             .Concat(state.Flights().Where(f => f.Review is { State: ReviewState.Reviewing, Reviewer: not null })
                 .Select(f => new Start(f, f.Review!.Reviewer!, f.Code, AdmissionRole.Reviewer, settings.ReviewerModel(ReviewDepth.Standard), f.Review.StartedAt)));
         var starts = _starts.Values.Concat(recorded).Where(s => ignoring?.Contains(s.Label) != true && !Listed(s)).ToArray();
-        var sessions = live.Select(s => new FleetSession(machine, s.Name, s.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(s.Role), s.Flight), Note = idleNotes.GetValueOrDefault(s.Name) })
+        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row.Role), c.Row.Flight), Note = c.Note })
             .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight) })).ToArray();
         if (localOnly)
         {
@@ -109,12 +110,20 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     /// </summary>
     private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
     {
-        if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && string.Equals(j.Owner, session.Id, StringComparison.Ordinal)) is { } job)
+        // A session the node just started has taken no first turn: it holds the slot it was admitted for.
+        if (session is { ContextTokens: 0, LastResponseAt: null, Gone: false })
+        {
+            return "idle, no first turn yet";
+        }
+        // The owner is matched as JobRunner.WakeTarget does: by the row's id, session id or an earlier session id (a continuation, #560).
+        bool Owns(string? owner) => owner is not null && (string.Equals(owner, session.Id, StringComparison.Ordinal) || string.Equals(owner, session.SessionId, StringComparison.Ordinal)
+            || session.EarlierSessionIds?.Contains(owner) == true);
+        if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && Owns(j.Owner)) is { } job)
         {
             return $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}";
         }
         // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
-        if (jobs.FirstOrDefault(j => !j.Told && j.Kind == JobKind.Run && string.Equals(j.Owner, session.Id, StringComparison.Ordinal)) is { } ended)
+        if (jobs.FirstOrDefault(j => !j.Told && j.Kind == JobKind.Run && Owns(j.Owner)) is { } ended)
         {
             return $"idle, job {ended.Id} result to tell";
         }

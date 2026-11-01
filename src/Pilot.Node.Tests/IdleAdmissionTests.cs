@@ -8,26 +8,57 @@ namespace Pilot.Node.Tests;
 /// <summary>An Idle session holds an Opus slot only while it has work pending (#569).</summary>
 public sealed class IdleAdmissionTests : LegCommanderTestsBase
 {
-    private void Settings(int cap)
+    private void Settings(int cap, string onePerRepo = "off")
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", [cap.ToString()]).Settings!;
         settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
-        settings = NodeSettings.With(settings, "one-flight-per-repo", ["off"]).Settings!;
+        settings = NodeSettings.With(settings, "one-flight-per-repo", [onePerRepo]).Settings!;
         _legs.Models = new RoleModels(settings);
     }
 
-    private void Put(string name, SessionState state) =>
+    // A session that has taken its first turn, unless <paramref name="turned"/> is false (just started: no context, no response yet).
+    private void Put(string name, SessionState state, bool turned = true, string? flight = null) =>
         _state.PutSession(new SessionRow
         {
+            Flight = flight,
             Id = name[^8..], SessionId = name[^8..] + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/elsewhere",
-            Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+            Role = SessionRole.Worker, ContextTokens = turned ? 5_000 : 0, LastResponseAt = turned ? DateTimeOffset.UtcNow : null, ContextWindow = 200_000, State = state,
+            SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
 
-    private async Task QueueLeg()
+    private async Task QueueLeg(string number = "1", string code = "TIA1")
     {
-        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Work"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
-        (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=one", "goal=Do it", "done-when=It is done")).Ok.ShouldBeTrue();
-        (await Leg(Verbs.StartLeg, Verbs.LegTarget("TIA1", "one"))).Ok.ShouldBeTrue();
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = [number, "Work"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, $"flight/{code}", "name=one", "goal=Do it", "done-when=It is done")).Ok.ShouldBeTrue();
+        (await Leg(Verbs.StartLeg, Verbs.LegTarget(code, "one"))).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AnIdleSessionThatTookNoFirstTurnYetStillHoldsTheSlotItWasAdmittedFor()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle, turned: false);
+
+        await QueueLeg();
+
+        _workers.Started.ShouldBeEmpty();
+        _legs.Slots.PublishState();
+        _state.Admission().ShouldNotBeNull().Counted.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, no first turn yet)");
+    }
+
+    [Fact]
+    public async Task AFlyingLegWhoseWorkerIsIdleWithNothingPendingStillHoldsItsRepo()
+    {
+        Settings(cap: 3, onePerRepo: "on");
+        await QueueLeg();
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        Put("du1-tia1-one", SessionState.Idle, flight: "TIA1");
+        _state.Legs("TIA1").Single().State.ShouldBe(LegState.Flying);
+
+        await QueueLeg("2", "TIA2");
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _state.Legs("TIA2").Single().Queued.ShouldNotBeNull();
     }
 
     [Fact]
