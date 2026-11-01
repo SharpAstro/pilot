@@ -1487,8 +1487,10 @@ how its row looks. A flying leg's worker stalling is: its flight is derailing (s
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Redo leg**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
-watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
-`worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings
+watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed`, `worker-waiting-job` and
+`worker-nudged`); an idle worker over 90% of its context window is never nudged: it is compacted once
+(`worker-compacted`), and if it is idle and still full after that the leg goes round with a fresh worker
+(`worker-replaced`), ringing `worker-idle` only when that replacement fills and stalls too; a session that stopped twice in a turn with files not committed in its plane rings
 (`stopped-uncommitted`, see Hooks); and a PR's review rings with its verdict (`pr-review-ready`, about
 `pr/<owner>/<repo>#<n>`) and **Post**, which posts it to GitHub once, its worktree going when the card closes (see Any
 PR's review).
