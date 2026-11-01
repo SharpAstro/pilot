@@ -80,6 +80,20 @@ public sealed partial class LegCommander
         {
             return KnownAnswer(flight, known);
         }
+        if (node is null && AnswerOnPair(flight, other.Code, null) is { Reverse: true } reverse)
+        {
+            // Answered on the other's card (PIL589): mirrored onto this flight so the next ask finds it on its own side. Connecting back would cycle.
+            var mirrored = new OverlapRow
+            {
+                Other = other.Code, Node = null, Files = files.Length > 0 ? files : reverse.Row.Files, Pick = Verbs.OverlapPickConnect,
+                Why = $"answered from {other.Code}'s card ({reverse.Answer.ToString().ToLowerInvariant()})", Answer = OverlapAnswer.Separate, At = time.GetUtcNow(),
+            };
+            state.PutFlight(flight with { Overlaps = [.. flight.Overlaps, mirrored] });
+            var how = reverse.Answer == OverlapAnswer.Connect
+                ? $"{other.Code} was connected to {flight.Code} on its card, so {flight.Code} cannot connect back"
+                : $"{flight.Code} and {other.Code} were answered on {other.Code}'s card";
+            return $"{how}: plan {flight.Code} in parallel with {other.Code}, and connect it (flight connect) only if it still depends on it; no card rings again";
+        }
         if (why.Length == 0)
         {
             throw new FlightException($"overlap needs why {flight.Code} overlaps {other.Code}, as in overlap flight/{flight.Code} {other.Code} file=src/Parser.cs <why>");
