@@ -38,12 +38,12 @@ is neither built nor tested by CI.
 
 - A session's role is known by its **session id**, never by its name. Claude Code retitles a session after its work, and a
   resume or a compaction can continue it under a new id; neither changes its role. A renamed watchtower is still the
-  watchtower and is never stopped or replaced for being renamed (#560).
-- A resume keeps the name and model the node started the session with. Code that resumes or messages a session goes through
-  the node's own path (`SessionMessenger`, which builds the resume through `ClaudeCliDelivery.ResumeArguments`), never a
-  bare `claude --resume`.
-- Only the node ends a session, and it records a reason from `SessionEndReasons` in its `SessionLedger`. A rename or a
-  retitle is never a reason. A session is ended with `pilot session end`, never `claude stop` from a session.
+  watchtower, and a rename or a retitle is never a reason to stop or replace a session (#560).
+- A resume keeps the name and model the node started the session with. Resumes and messages go through the node's own path
+  (`SessionMessenger`, which builds them with `ClaudeCliDelivery`), never a bare `claude --resume`.
+- Only the node ends a session, and it records why in its session ledger (a reason from `SessionEndReasons`): a replaced
+  watchtower, a duplicate, a flight that landed or merged, or `pilot session end` from a person or the watchtower. A session
+  never ends another with `claude stop`.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
 
