@@ -2212,7 +2212,9 @@ public sealed partial class LegCommander(
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
-        if (DroppedForConflict(flight.Code, pr.Head))
+        // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
+        // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
+        if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
             throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
