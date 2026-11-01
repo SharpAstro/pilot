@@ -1280,10 +1280,12 @@ public sealed class PrReviews(
             if (flight is not null)
             {
                 RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
-                    $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer.");
+                    $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
+                    [AnswerChoice(subject)]);
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide. Answer posts what you type on the PR and starts the fixer.",
+                [AnswerChoice(subject)]);
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -1584,6 +1586,12 @@ public sealed class PrReviews(
     /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
     /// review raised the kind already.
     /// </summary>
+    /// <summary>The label of the design card's Answer choice.</summary>
+    public const string AnswerLabel = "Answer";
+
+    /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
+    internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
+
     private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
     {
         var current = Of(pr) ?? review;

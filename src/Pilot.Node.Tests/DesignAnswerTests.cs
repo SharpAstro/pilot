@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using Xunit;
 
@@ -192,5 +193,66 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         refused.Error.ShouldNotBeNull().ShouldContain("no answer yet");
         LastLeg(flight.Code).State.ShouldBe(LegState.Done);
         Fixers.ShouldBeEmpty();
+    }
+}
+
+/// <summary>
+/// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
+/// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
+/// </summary>
+public sealed class DesignAnswerCardChoiceTests : PrFixTestsBase
+{
+    private const string Question = "README.md:1 design: should this be a service at all?";
+
+    private NodeCommands Commands()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_reviews);
+        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => Task.FromResult(new CommandResult()), _options, TimeProvider.System));
+        services.AddSingleton(new RoleModels(null));
+        return new NodeCommands(services.BuildServiceProvider(), _state);
+    }
+
+    private Task<CommandResult> Answer(CardRow card, params string[] args) =>
+        Commands().RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = args, Who = "controller" }, Ct);
+
+    private CardRow OpenDesign() => _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+
+    [Fact]
+    public async Task TheDesignCardOffersAnAnswerThatAsksForWords()
+    {
+        await Review("acme/widget#7", "comment", Question);
+
+        var choice = OpenDesign().Choices.ShouldHaveSingleItem();
+        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Answer", Verbs.FixPr, "pr/acme/widget#7"));
+        choice.AsksFor.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task AnsweringWithWordsPostsThemOnThePrStartsTheFixerAndClosesTheCard()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        var card = OpenDesign();
+
+        var result = await Answer(card, "1", "Keep", "it", "a", "library");
+
+        result.Error.ShouldBeNull();
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep it a library");
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("Keep it a library");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    public async Task AnsweringWithNoWordsIsRefusedAndTheCardStaysOpen()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        var card = OpenDesign();
+
+        (await Answer(card, "Answer")).Error.ShouldNotBeNull().ShouldContain("needs words");
+        (await Answer(card, "1")).Error.ShouldNotBeNull().ShouldContain("needs words");
+
+        Fixers.ShouldBeEmpty();
+        _github.IssueComments.ShouldBeEmpty();
+        OpenDesign().Id.ShouldBe(card.Id);
     }
 }

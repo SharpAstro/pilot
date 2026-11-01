@@ -436,6 +436,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     /// <c>answer</c> runs the chosen button's command as the one answering, and closes the card when it was done; a
     /// refused command leaves the card open, its reason in the answer's error. <c>dismiss</c> closes it with nothing done.
     /// </summary>
+    private static CardChoice? FindChoice(CardRow card, string which) =>
+        int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
+            ? card.Choices[number - 1]
+            : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
+
     private async Task<CommandResult> AnswerAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var id = command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.CardTargetPrefix.Length..] : null;
@@ -468,9 +473,22 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
 
         var which = string.Join(' ', args).Trim();
-        var choice = int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
-            ? card.Choices[number - 1]
-            : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
+        var choice = FindChoice(card, which);
+        // A choice that asks for words: the first arg is the choice, the rest are its words.
+        if (choice is null && args.Length > 1 && FindChoice(card, args[0].Trim()) is { AsksFor: not null } asking)
+        {
+            choice = asking;
+            var words = string.Join(' ', args.Skip(1)).Trim();
+            if (words.Length == 0)
+            {
+                return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}); the card stays open");
+            }
+            choice = choice with { Args = [.. choice.Args, words] };
+        }
+        else if (choice is { AsksFor: not null })
+        {
+            return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}): pilot card answer {card.Id} {choice.Label} --words <text>; the card stays open");
+        }
         if (choice is null)
         {
             return state.Complete(command, card.Choices.Length == 0
