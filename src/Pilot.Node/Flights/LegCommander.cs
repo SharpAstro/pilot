@@ -1518,7 +1518,7 @@ public sealed partial class LegCommander(
                     {
                         var seenLeg = leg;
                         await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
-                        leg = Unchanged(flight.Code, seenLeg) is { } current
+                        leg = UnchangedFinishing(flight.Code, seenLeg) is { } current
                             ? current
                             : throw new FlightException($"{flight.Code}/{seenLeg.Name} changed while it was brought up to date: nothing was recorded, look again and finish again");
                     }
@@ -1552,7 +1552,7 @@ public sealed partial class LegCommander(
                     {
                         await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));
                     }
-                    if (Unchanged(flight.Code, leg) is null)
+                    if (UnchangedFinishing(flight.Code, leg) is null)
                     {
                         throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
                     }
@@ -1655,7 +1655,7 @@ public sealed partial class LegCommander(
         {
             return false;
         }
-        leg = Unchanged(flight.Code, seen) is { } current
+        leg = UnchangedFinishing(flight.Code, seen) is { } current
             ? current
             : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was looked at: nothing was recorded, look again and finish again");
         var target = Verbs.LegTarget(flight.Code, leg.Name);
@@ -1727,7 +1727,7 @@ public sealed partial class LegCommander(
         {
             throw new FlightException(problem);
         }
-        leg = Unchanged(flight.Code, seen) is { } current
+        leg = UnchangedFinishing(flight.Code, seen) is { } current
             ? current
             : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was pushed: it is up, look again and finish again");
         var done = leased is null ? $"origin/{flight.Branch} merged into the plane and pushed, check passing" : $"rebased branch pushed with lease over origin/{flight.Branch} at {Short(leased)}, check passing";
@@ -1790,7 +1790,7 @@ public sealed partial class LegCommander(
             }
             late = call.Refused || time.GetUtcNow() - since > ReplyDeadline();
         }
-        if (Unchanged(flight.Code, seen) is not { } still)
+        if (UnchangedFinishing(flight.Code, seen) is not { } still)
         {
             EndRecheck(flight.Code, seen.Name, late ? LegRecheck.ChangedOutcome(check) : null);
             throw new FlightException($"{flight.Code}/{seen.Name} changed while its check ran: nothing was recorded, look again and finish again");
@@ -1937,7 +1937,7 @@ public sealed partial class LegCommander(
         {
             return (false, notWhy, false);
         }
-        if (Unchanged(flight.Code, leg) is not { } now)
+        if (UnchangedFinishing(flight.Code, leg) is not { } now)
         {
             return (false, "the leg changed while it was checked", false);
         }
@@ -1955,7 +1955,7 @@ public sealed partial class LegCommander(
         if (pushes)
         {
             await OffLockAsync(flight, () => EnsureNotArmedAsync(flight, cancellationToken));
-            if (Unchanged(flight.Code, leg) is null)
+            if (UnchangedFinishing(flight.Code, leg) is null)
             {
                 throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
             }
