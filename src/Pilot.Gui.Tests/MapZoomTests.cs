@@ -159,6 +159,19 @@ public sealed class MapZoomTests
     }
 
     [Fact]
+    public void AnEmptyPageAfterTheMapLeavesTheKeysToThePage()
+    {
+        var (renderer, view, _) = Open();
+        using var _ = renderer;
+
+        view.Render(new FlightsScreen([], "test", Live.At), new RectF32(0, 0, Width, Height));
+        view.HandleInput(Ctrl(InputKey.D0)).ShouldBeFalse();
+        view.HandleInput(Ctrl(InputKey.D1)).ShouldBeFalse();
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Up)).ShouldBeFalse();
+        view.HandleInput(new InputEvent.Scroll(-1f, 640f, 400f, InputModifier.Ctrl)).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ZoomIsHeldBetweenTheFloorAndTheCeiling()
     {
         var (renderer, view, show) = Open();
@@ -169,7 +182,7 @@ public sealed class MapZoomTests
             view.HandleInput(Ctrl(InputKey.Minus));
         }
         show();
-        view.Viewport.Scale.ShouldBe(MapViewport.MinScale, 0.0001f);
+        view.Viewport.Scale.ShouldBe(MapViewport.MinZoom, 0.0001f);
         for (var i = 0; i < 80; i++)
         {
             view.HandleInput(Ctrl(InputKey.Plus));

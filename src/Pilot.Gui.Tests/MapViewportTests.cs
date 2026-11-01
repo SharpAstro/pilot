@@ -132,6 +132,8 @@ public sealed class MapViewportTests
         vp.Moved.ShouldBeTrue();
         var (scale, panX, panY) = (vp.Scale, vp.PanX, vp.PanY);
         panY.ShouldNotBe(0f);
+        // The map's top-left corner on screen: a stop of the first flights must not slide when the map grows.
+        var (cornerX, cornerY) = (vp.ViewX(0f), vp.ViewY(0f));
 
         // A new leg on each flight, then a state change, then a feed refresh: the view stays.
         show(Lines(3, 4));
@@ -139,8 +141,15 @@ public sealed class MapViewportTests
         show(Lines(3, 4, LegState.Flying, FlightState.Held));
         vp.Moved.ShouldBeTrue();
         vp.Scale.ShouldBe(scale);
-        vp.PanX.ShouldBe(panX);
-        vp.PanY.ShouldBe(panY);
+        vp.ViewX(0f).ShouldBe(cornerX, 0.01f);
+        vp.ViewY(0f).ShouldBe(cornerY, 0.01f);
+        // A flight more, then one fewer: still in place.
+        show(Lines(4, 4));
+        vp.ViewX(0f).ShouldBe(cornerX, 0.01f);
+        vp.ViewY(0f).ShouldBe(cornerY, 0.01f);
+        show(Lines(3, 4));
+        vp.ViewX(0f).ShouldBe(cornerX, 0.01f);
+        vp.ViewY(0f).ShouldBe(cornerY, 0.01f);
     }
 
     [Fact]
@@ -237,7 +246,7 @@ public sealed class MapViewportTests
         {
             vp.ZoomAt(0.5f, 700f, 200f);
         }
-        vp.Scale.ShouldBe(MapViewport.MinScale);
+        vp.Scale.ShouldBe(MapViewport.MinZoom);
         for (var i = 0; i < 40; i++)
         {
             vp.ZoomAt(2f, 700f, 200f);

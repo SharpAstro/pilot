@@ -16,6 +16,9 @@ internal sealed class MapViewport
     /// <summary>The smallest scale a fit or a zoom reaches: below it the map's 9 pt labels are unreadable.</summary>
     public const float MinScale = 0.5f;
 
+    /// <summary>The smallest scale a zoom reaches (a fit never goes below <see cref="MinScale"/>), so a wide map can be seen whole.</summary>
+    public const float MinZoom = 0.25f;
+
     /// <summary>The largest scale a fit reaches: past it a small map is blown up, and its labels with it.</summary>
     public const float MaxFitScale = 1.5f;
 
@@ -25,7 +28,7 @@ internal sealed class MapViewport
     // How much of the map must stay in view when it is panned away, so it can always be dragged back.
     private const float KeepInView = 80f;
 
-    private readonly PanZoomController _pan = new() { MinZoom = MinScale, MaxZoom = MaxScale };
+    private readonly PanZoomController _pan = new() { MinZoom = MinZoom, MaxZoom = MaxScale };
     private float _viewWidth;
     private float _viewHeight;
     private float _contentWidth;
@@ -77,6 +80,7 @@ internal sealed class MapViewport
     /// </summary>
     public void Update(float contentWidth, float contentHeight, object? key)
     {
+        var (oldWidth, oldHeight) = (_contentWidth, _contentHeight);
         _contentWidth = contentWidth;
         _contentHeight = contentHeight;
         var changed = !_keyed || !Equals(_key, key);
@@ -87,6 +91,8 @@ internal sealed class MapViewport
         }
         else
         {
+            // The map's centre anchors the view, so growth would slide it; keep its top-left corner where it was.
+            _pan.PanOffset += new Vector2((contentWidth - oldWidth) * Scale / 2f, (contentHeight - oldHeight) * Scale / 2f);
             Clamp();
         }
     }
@@ -139,7 +145,7 @@ internal sealed class MapViewport
     public bool ZoomCentre(float factor) => ZoomAt(factor, _viewWidth / 2f, _viewHeight / 2f);
 
     /// <summary>Sets the scale (kept within the floor and the ceiling) about the view's centre; the view counts as moved.</summary>
-    public void SetScale(float scale) => ZoomCentre(Math.Clamp(scale, MinScale, MaxScale) / Scale);
+    public void SetScale(float scale) => ZoomCentre(Math.Clamp(scale, MinZoom, MaxScale) / Scale);
 
     /// <summary>Whether a drag that moves the map is in flight.</summary>
     public bool IsPanning => _pan.IsPanning;

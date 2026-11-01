@@ -110,10 +110,12 @@ public sealed class FlightMapFixtureTests
         && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > tolerance;
 
     [Theory]
+    [InlineData(900, 800, 0.25f)]
     [InlineData(900, 800, 0.5f)]
     [InlineData(900, 800, 1f)]
     [InlineData(900, 800, 1.5f)]
     [InlineData(900, 800, 3f)]
+    [InlineData(1800, 1000, 0.25f)]
     [InlineData(1800, 1000, 0.5f)]
     [InlineData(1800, 1000, 1f)]
     [InlineData(1800, 1000, 1.5f)]

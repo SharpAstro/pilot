@@ -94,7 +94,7 @@ internal sealed partial class FlightsView<TSurface>
     }
 
     // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
-    private bool MapLive => MapShown && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
+    private bool MapLive => MapShown && _mapBodySeen is not null && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
 
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;
@@ -112,7 +112,7 @@ internal sealed partial class FlightsView<TSurface>
 
     private bool HandleMapScroll(InputEvent.Scroll scroll)
     {
-        if (!MapShown || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
+        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
         {
             return false;
         }
