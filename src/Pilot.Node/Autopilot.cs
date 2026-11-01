@@ -55,7 +55,13 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
         var why = command.Why?.Trim();
         state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Subject(command), $"{command.Who} {Describe(command).Done} on autopilot",
             why is { Length: > 0 } ? $"Acting on: {why}" : "No message given", askedBy: command.Who, why: why is { Length: > 0 } ? why : null);
+        state.RecordDecision(Subject(command), DecisionSources.KindOf(command.Verb, command.Args) ?? DecisionKinds.Card,
+            $"Run {command.Verb} {command.Target} for {command.Who}?", [RunItOption, AskOption], RunItOption, command.Who, DecisionByKinds.Autopilot,
+            why is { Length: > 0 } ? why : "autopilot is on and no message was given");
     }
+
+    private const string RunItOption = "Run it";
+    private const string AskOption = "Ask the person";
 
     /// <summary>
     /// Tells the session that asked what the person answered on <paramref name="card"/>. A session the node no longer

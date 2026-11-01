@@ -2272,6 +2272,12 @@ public sealed partial class LegCommander(
             (_, false) => [pr.Head, method, how!],
             _ => [pr.Head, method, how ?? "", ArmedByAutopilot],
         } });
+        if (byAutopilot)
+        {
+            state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{pr.Number} now, or arm it to merge when its checks pass?",
+                ["Merge now", "Arm the merge"], "Arm the merge", "node", DecisionByKinds.Autopilot,
+                $"autopilot on, review passed, checks {checks?.Status ?? ChoiceStatus.Pending}: armed to merge when they pass");
+        }
         return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
     }
 

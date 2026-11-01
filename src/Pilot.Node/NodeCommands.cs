@@ -194,7 +194,17 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
             command = command with { Autopilot = true };
         }
+        // A choice a card's answer runs is recorded by that answer, once; a decision verb given straight is recorded here. An assistant's
+        // your-only command run on autopilot is recorded by Autopilot.Handled.
+        var fromCard = _fromCard.Value;
+        _fromCard.Value = false;
         var result = await RouteAsync(command, cancellationToken);
+        if (result.Ok && !fromCard && !onAutopilot && DecisionSources.IsDirect(command.Verb, command.Args))
+        {
+            var kind = DecisionSources.KindOf(command.Verb, command.Args)!;
+            state.RecordDecision(command.Target, kind, DecisionSources.QuestionOf(command), [], DecisionSources.ChoiceOf(command),
+                command.Who, ByKindOf(command, standing), DecisionSources.ReasonOf(command));
+        }
         if (wordRecord is var (answered, chosen, said) && result.Ok)
         {
             state.RaiseCard(CardBin.Handled, CardKinds.PersonsWord, Verbs.CardTarget(answered.Id),
@@ -214,6 +224,27 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         return result;
     }
+
+    // Set around the command a card's answer runs, so that command's own run does not record a second decision (it flows with the call).
+    private static readonly AsyncLocal<bool> _fromCard = new();
+
+    // As what a command's sender chose: the autopilot (its flag, or the node's own path with autopilot on), the watchtower on its own,
+    // the person (their word in the chat, or a client of theirs), else the node.
+    private string ByKindOf(CommandRequest command, Standing standing)
+    {
+        if (command.Autopilot || command.Who == "node" && Get<RoleModels>().Autopilot)
+        {
+            return DecisionByKinds.Autopilot;
+        }
+        if (command.PersonsWord is not null || standing.Kind == StandingKind.Person)
+        {
+            return DecisionByKinds.Person;
+        }
+        return command.Who == Get<Watchtower>().Name ? DecisionByKinds.Watchtower : DecisionByKinds.Node;
+    }
+
+    private string ByKindOf(CommandRequest command) =>
+        ByKindOf(command, command.PersonsWord is not null ? Standing.Person : Standing.Of(command, state, Get<Watchtower>().Name, Get<Watchtower>().ActingForPerson));
 
     // The label of the choice an answer names (by number or label), or "dismissed" for a dismissal; what it was, as the person's word is recorded.
     private static string ChosenOf(CommandRequest command, CardRow card)
@@ -466,6 +497,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             var why = string.Join(' ', args).Trim();
             state.CloseCard(card.Id, why.Length > 0 ? $"dismissed: {why}" : "dismissed", command.Who);
+            RecordCardDecision(command, card, DecisionKinds.Dismiss, "dismissed", why);
             // A PR review's card closed: its worktree goes now, not at the next sweep.
             if (card.Kind == PrReviews.ReadyKind)
             {
@@ -481,6 +513,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
 
         var which = string.Join(' ', args).Trim();
         var choice = FindChoice(card, which);
+        string? given = null;
         // A choice that asks for words: the first arg is the choice, the rest are its words.
         if (choice is null && args.Length > 1 && FindChoice(card, args[0].Trim()) is { AsksFor: not null } asking)
         {
@@ -491,6 +524,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}); the card stays open");
             }
             choice = choice with { Args = [.. choice.Args, words] };
+            given = words;
         }
         else if (choice is { AsksFor: not null })
         {
@@ -508,6 +542,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))
         {
             state.CloseCard(card.Id, choice.Label, command.Who);
+            RecordCardDecision(command, card, DecisionKinds.Dismiss, choice.Label, "");
             await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             return state.Complete(command, null);
         }
@@ -530,6 +565,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         CommandResult result;
         try
         {
+            _fromCard.Value = true;
             result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, RequestId = null }, cancellationToken);
         }
         catch
@@ -539,10 +575,19 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             state.ReopenCard(card.Id);
             throw;
         }
+        finally
+        {
+            _fromCard.Value = false;
+        }
         if (!result.Ok)
         {
             state.ReopenCard(card.Id);
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
+        }
+        // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
+        if (choice.Verb != Verbs.FixPr)
+        {
+            RecordCardDecision(command, card, DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card, choice.Label, given ?? "");
         }
         if (inProgress)
         {
@@ -569,6 +614,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             await Get<Autopilot>().TellAsync(card, allowed: true, AnsweredBy(command), cancellationToken);
         }
         return state.Complete(command, null);
+    }
+
+    // A card answered or dismissed: what it asked (its title), what it offered (its choices' labels), what was chosen and why.
+    private void RecordCardDecision(CommandRequest command, CardRow card, string kind, string choice, string words)
+    {
+        var reason = words.Trim().Length > 0 ? words.Trim() : command.Why?.Trim() is { Length: > 0 } why ? why : $"answered card {card.Id}";
+        state.RecordDecision(card.Subject, kind, card.Title, [.. card.Choices.Select(c => c.Label)],
+            words.Trim().Length > 0 && kind != DecisionKinds.Dismiss ? $"{choice}: {words.Trim()}" : choice,
+            command.Who, ByKindOf(command), reason);
     }
 
     // Who an asking session is told answered its ask: the person when the watchtower acted at their word in its chat.

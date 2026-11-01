@@ -792,6 +792,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             return;
         }
         var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args ?? [], Who = "node" }, cancellationToken);
+        var rule = $"autopilot on, review passed, checks {status ?? "unknown"}";
+        state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?", ["Merge", "Wait"],
+            result.Ok ? "Merge" : "Wait", "node", DecisionByKinds.Autopilot,
+            result.Ok ? rule : $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}");
         if (result.Ok && result.Way == MergeWays.Updated)
         {
             // Behind its base: brought up to date and reviewed afresh, which closed the card and offers the merge again. Handled, not refused.
