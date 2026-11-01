@@ -598,6 +598,9 @@ if (feed is not null && client is not null && clients is not null)
         Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
         return reply;
     };
+    chrome.Ideas.LoadRepos = async ct => (await client.GetReposAsync(ct)) is { Success: true, Response: { } repos }
+        ? repos
+        : throw new InvalidOperationException("the node did not list its repos");
     chrome.Ideas.OnAnswer = chrome.Cards.OnAnswer;
     chrome.Ideas.OnOpen = url => OpenAway(url);
     chrome.Ideas.Track = (run, what) => tracker.Run(run, what);

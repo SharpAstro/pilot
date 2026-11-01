@@ -101,6 +101,9 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     /// </summary>
     public Func<string, string, string[], CancellationToken, Task<IdeaReply>>? Send { get; set; }
 
+    /// <summary>The node's repos with their checkout paths: Make flight needs the path of an issue's repo, which the page's rows know only by name.</summary>
+    public Func<CancellationToken, Task<RepoInfo[]>>? LoadRepos { get; set; }
+
     /// <summary>Answers an idea card's choice (its number, from 1): the node's answer verb.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 
@@ -775,11 +778,12 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
+        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
         // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
         var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
-            Buttons = [ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            Buttons = [.. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
             {
                 ViewMode = mode;
                 Changed?.Invoke();
@@ -807,7 +811,6 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         }
         var ideating = Volatile.Read(ref _noting);
         var empty = UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
-        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
 
         Layout.Node body;
         switch (ViewMode)

@@ -545,6 +545,21 @@ public static class Verbs
     /// <summary>The milestone of <see cref="SetMilestone"/> that takes the issue out of every milestone.</summary>
     public const string NoMilestone = "none";
 
+    /// <summary>
+    /// <c>pin-issue issue/&lt;repo&gt;/#&lt;n&gt; [off]</c> (an idea target works too): puts the pin label on the issue (made in the repo when it has none), or with the
+    /// argument <see cref="PinOff"/> takes it off. The pin lives on GitHub, so every node sees it; the rows are read again and say it (<see cref="IssueRow.Pinned"/>).
+    /// </summary>
+    public const string PinIssue = "pin-issue";
+
+    /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
+    public const string PinOff = "off";
+
+    /// <summary>
+    /// <c>set-priority issue/&lt;repo&gt;/#&lt;n&gt; &lt;urgent|high|medium|low|none&gt;</c> (an idea target works too): writes the Priority issue field of the
+    /// open issue (<c>none</c> clears it) and reads the rows again (<see cref="IssueRow.Priority"/>). The field is never made; refused where the repo has none.
+    /// </summary>
+    public const string SetPriority = "set-priority";
+
     /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
     public const string IssueTargetPrefix = "issue/";
 

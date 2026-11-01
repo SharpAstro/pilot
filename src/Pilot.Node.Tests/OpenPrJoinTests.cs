@@ -9,6 +9,7 @@ namespace Pilot.Node.Tests;
 /// A sweep that finds the flight's PR open already under way waits for it instead of asking again (PIL606): two opens at once make one
 /// PR and no card, and only a failed open rings, once.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class OpenPrJoinTests : ReviewTestsBase
 {
     private async Task Reaches(TaskCompletionSource reached) =>

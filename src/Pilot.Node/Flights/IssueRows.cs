@@ -33,6 +33,8 @@ public static class IssueRows
             Age = IdeaIds.Age(issue.CreatedAt, now),
             Author = issue.Author,
             Url = issue.Url,
+            Pinned = issue.Pinned,
+            Priority = issue.Priority,
             Flight = FlightOf(flights, repo, issue.Number),
         })];
 
