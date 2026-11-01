@@ -131,6 +131,7 @@ public sealed class CompactorTests
         Handled().ShouldBe(["Compacted du1-watchtower: the chat has 40 person messages since its last compaction"]);
 
         // Answered; thirty-nine more messages is under the count, forty is not.
+        _time.Advance(TimeSpan.FromMinutes(1));
         Row("t0000001", "du1-watchtower", context: 60_000, lastResponse: _time.GetUtcNow());
         _persons = 79;
         await _compactor.LookAsync(Ct);
@@ -164,6 +165,7 @@ public sealed class CompactorTests
         _said.ShouldHaveSingleItem();
 
         // Answered, and still at 75%: a fresh watchtower in its place, through the watchtower's own start.
+        _time.Advance(TimeSpan.FromMinutes(1));
         Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
         await _compactor.LookAsync(Ct);
         _said.Count.ShouldBe(1);
