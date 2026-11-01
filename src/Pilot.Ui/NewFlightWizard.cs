@@ -695,14 +695,7 @@ internal static class NewFlights
                 problems.Add($"{codes[i]} does not wait for {codes[i - 1]}: {connected?.Error}");
             }
         }
-        foreach (var code in codes)
-        {
-            var planning = await SendAsync(client, Verbs.PlanFlight, Verbs.FlightTarget(code), [], who, cancellationToken);
-            if (planning is not { Ok: true })
-            {
-                problems.Add($"{code} has no planner: {planning?.Error}");
-            }
-        }
+        // The node starts each new flight's planner itself, off the create's reply; a refusal raises a card there.
         var line = $"made {string.Join(", ", codes)}; {(codes.Count == 1 ? "its planner is" : "their planners are")} planning the legs";
         if (routed.Count > 0)
         {

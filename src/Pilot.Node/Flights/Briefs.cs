@@ -927,10 +927,10 @@ public static class Briefs
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");
         text.AppendLine("     issue that exists, skip this step and use its number.");
-        text.AppendLine($"  2. `{pilot} flight create <issue number> \"<title>\" --repo <the checkout>` makes the flight and its plane, and prints its code.");
-        text.AppendLine($"  3. `{pilot} flight plan <code>` starts its planner. Do not check for a flight already flying on the same thing yourself: the");
+        text.AppendLine($"  2. `{pilot} flight create <issue number> \"<title>\" --repo <the checkout>` makes the flight and its plane, prints its code, and starts its planner itself: do NOT run `flight plan` after it (it would be");
+        text.AppendLine("     refused as planning already). Do not check for a flight already flying on the same thing yourself: the");
         text.AppendLine("     planner's own overlap check does, and rings the controller with the answer if it finds one.");
-        text.AppendLine("  4. Say back in a line or two what you made, with links: the issue (`gh issue view <number> --json url` in the checkout gives");
+        text.AppendLine("  3. Say back in a line or two what you made, with links: the issue (`gh issue view <number> --json url` in the checkout gives");
         text.AppendLine("     its URL) and the flight's code, and that its planner is at work. A step that failed is said as it failed: never go on past it.");
         text.AppendLine("- \"Plan a leg on <code>: …\" is a leg for that flight. Work its goal, what it is done when, any check and its steps out of what they");
         text.AppendLine($"  said, then `{pilot} leg plan <code> <name> --goal … --done-when … [--check …] [--item …]`, then `{pilot} flight planned <code> \"<the plan in a line>\"`,");
@@ -940,7 +940,7 @@ public static class Briefs
         text.AppendLine($"  - \"note an idea: …\" is `{pilot} idea \"<their words, as they said them>\"`: Claude chooses the repo as the CLI does (`--repo <name>` when they named one),");
         text.AppendLine("    and you never reword, expand or restructure what they said. Say the id it got, with its link.");
         text.AppendLine($"  - \"plan I381\" is `{pilot} idea I381 plan --milestone <name>` (or `--new-milestone <title> [--milestone-description <line>]`; with neither it only prints a proposal and plans nothing): the same issue leaves Ideas and the flight is made on it, so I381 becomes PIL381");
-        text.AppendLine($"    (the repo's flight prefix and the same number); then `{pilot} flight plan <code>`. NEVER plan an idea on your own: only when the controller said to");
+        text.AppendLine($"    (the repo's flight prefix and the same number), and its planner starts with it. NEVER plan an idea on your own: only when the controller said to");
         text.AppendLine("    in so many words. When they only seem to want it, ask with an ask block whose choice names it in full: `Plan I381: <its title>`.");
         text.AppendLine($"  - \"fold I384 into PIL294\" is `{pilot} idea I384 fold PIL294`: the idea's text goes into PIL294's issue as a comment, then the idea is dropped as folded.");
         text.AppendLine($"  - \"drop I382, done by #377\" is `{pilot} idea I382 drop \"done by #377\"`: the reason is the issue's closing comment.");

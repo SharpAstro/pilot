@@ -210,6 +210,10 @@ public sealed class CliTests : IAsyncLifetime
     {
         // The controller, in the repo: a flight and its one leg.
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
+        // The create started the flight's planner; this test flies the leg itself, so the planner's start is set aside.
+        await _node.PlannedAsync();
+        _node.Workers.Started.ShouldHaveSingleItem().Name.ShouldEndWith("-tia1611-plan");
+        _node.Workers.Started.Clear();
         var flight = _node.State.Flights().Single();
         flight.Code.ShouldBe("TIA1611");
         await Ok(_root, "leg", "plan", "TIA1611", "gpu", "--goal", "Draw the planets on the GPU", "--done-when", "The capture shows them",
