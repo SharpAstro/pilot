@@ -219,6 +219,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     private static string ChosenOf(CommandRequest command, CardRow card)
     {
         var which = string.Join(' ', command.Args ?? []).Trim();
+        // A choice that asks for words carries them after its label: the choice is the first word.
+        var first = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+        if (command.Verb != Verbs.Dismiss && first.Length > 0 && first != which
+            && card.Choices.FirstOrDefault(c => c.AsksFor is not null && string.Equals(c.Label, first, StringComparison.OrdinalIgnoreCase)) is { } asking)
+        {
+            return asking.Label;
+        }
         return command.Verb == Verbs.Dismiss ? "dismissed"
             : (int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
                 ? card.Choices[number - 1]
@@ -432,15 +439,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         return state.Execute(command);
     }
 
-    /// <summary>
-    /// <c>answer</c> runs the chosen button's command as the one answering, and closes the card when it was done; a
-    /// refused command leaves the card open, its reason in the answer's error. <c>dismiss</c> closes it with nothing done.
-    /// </summary>
     private static CardChoice? FindChoice(CardRow card, string which) =>
         int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
             ? card.Choices[number - 1]
             : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// <c>answer</c> runs the chosen button's command as the one answering, and closes the card when it was done; a
+    /// refused command leaves the card open, its reason in the answer's error. <c>dismiss</c> closes it with nothing done.
+    /// </summary>
     private async Task<CommandResult> AnswerAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var id = command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.CardTargetPrefix.Length..] : null;
@@ -487,7 +494,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         else if (choice is { AsksFor: not null })
         {
-            return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}): pilot card answer {card.Id} {choice.Label} --words <text>; the card stays open");
+            return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}): pilot answer {card.Id} {choice.Label} --words <text>; the card stays open");
         }
         if (choice is null)
         {

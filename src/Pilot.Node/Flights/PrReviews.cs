@@ -1390,12 +1390,14 @@ public sealed class PrReviews(
         string? given = null;
         if (asksDesign)
         {
-            given = words.Length > 0 ? words : await AnswerCommentAsync(pr, review, cancellationToken);
+            given = words.Length > 0 ? words : review.DesignAnswer is { Length: > 0 } stored ? stored : await AnswerCommentAsync(pr, review, cancellationToken);
             if (given is not { Length: > 0 })
             {
                 throw new FlightException($"{pr}'s review asks a question of design and it has no answer yet: answer it on the PR, or give the answer with review fix {pr} <answer>");
             }
             review = review with { DesignAnswer = given };
+            // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
+            state.PutPrReview(review);
         }
         if (asksDesign && FlightOf(pr) is { } flight)
         {
@@ -1423,12 +1425,15 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
+        var started = await StartFixerAsync(pr, review, cancellationToken);
         if (asksDesign && words.Length > 0)
         {
-            // The words given are the answer, so they are on the PR first, where the author reads them too.
-            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+            // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
+            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):
+
+{words}", cancellationToken);
         }
-        return await StartFixerAsync(pr, review, cancellationToken);
+        return started;
     }
 
     /// <summary>
@@ -1581,17 +1586,17 @@ public sealed class PrReviews(
     /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
     private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
 
-    /// <summary>
-    /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a
-    /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
-    /// review raised the kind already.
-    /// </summary>
     /// <summary>The label of the design card's Answer choice.</summary>
     public const string AnswerLabel = "Answer";
 
     /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
     internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
 
+    /// <summary>
+    /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a
+    /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
+    /// review raised the kind already.
+    /// </summary>
     private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
     {
         var current = Of(pr) ?? review;

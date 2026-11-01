@@ -47,6 +47,26 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AnAnswerGivenToAFixerThatWaitsForAnOpusSlotIsInItsBriefWhenItStarts()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        _reviews.Models = AdmissionHeld.CapOfOne();
+        _state.PutSession(AdmissionHeld.Opus("du1-other-worker"));
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        Fixers.ShouldBeEmpty();
+        Row.DesignAnswer.ShouldBe("Keep it a library");
+
+        _state.PutSession(AdmissionHeld.Opus("du1-other-worker", SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+
+        var brief = Fixers.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("should this be a service at all?");
+        brief.ShouldContain("Keep it a library");
+        brief.ShouldContain("### Answer");
+    }
+
+    [Fact]
     public async Task ADesignQuestionWithNoAnswerIsRefusedSayingAnAnswerIsNeeded()
     {
         await Review("acme/widget#7", "comment", Question);

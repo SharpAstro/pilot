@@ -715,7 +715,7 @@ public static class Briefs
                 text.AppendLine($"- {finding.Path}:{finding.Line} {finding.Body}");
             }
         }
-        var questions = review.Findings.Where(f => f.Body.StartsWith("design:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var questions = review.Findings.Where(f => f.Body.StartsWith(PrReviews.DesignPrefix, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (questions.Length > 0 && review.DesignAnswer is { Length: > 0 } answer)
         {
             text.AppendLine();

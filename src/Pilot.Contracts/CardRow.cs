@@ -83,7 +83,7 @@ public sealed record CardChoice
 
     /// <summary>
     /// The hint of a field the choice needs words in, such as <c>Your answer</c>: a client draws a text field beside the button and sends
-    /// what was typed after the choice (<c>pilot card answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
+    /// what was typed after the choice (<c>pilot answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
     /// </summary>
     public string? AsksFor { get; init; }
 }
