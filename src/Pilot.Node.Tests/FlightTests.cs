@@ -194,7 +194,8 @@ public sealed class FlightCommanderTests : IDisposable
 
         Flight("TIA61").State.ShouldBe(FlightState.Flying);
         github.IssueLabels[61].ShouldBe(["pilot node: DE1"]);
-        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused");
+        // The fake org cannot make the field either, so that refusal is a card of its own beside the label's.
+        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused" && c.Title.StartsWith("The label", StringComparison.Ordinal));
         card.Bin.ShouldBe(CardBin.Handled);
     }
 
