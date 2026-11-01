@@ -105,7 +105,8 @@ public sealed class LegCardTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked");
-        card.Detail.ShouldStartWith("nudged 2 times with no answer, and the node nudges no more");
+        card.Detail!.ShouldContain("idle with room in its context");
+        card.Detail!.ShouldContain("nudged 2 times with no answer, and the node nudges no more");
         card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
     }
 
@@ -120,7 +121,8 @@ public sealed class LegCardTests
 
         var card = Open().ShouldHaveSingleItem();
         card.Title.ShouldBe("TIA1/parser's worker has been idle 10 min with 1 of 2 steps ticked, and could not be nudged: the folder is gone");
-        card.Detail.ShouldBe("the node tried to nudge it: the folder is gone");
+        card.Detail.ShouldEndWith("the node tried to nudge it: the folder is gone");
+        card.Detail.ShouldStartWith("idle with room in its context");
     }
 
     [Fact]
