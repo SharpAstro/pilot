@@ -91,6 +91,10 @@ internal sealed record Palette(
     RGBAColor32 RailInactiveText,
     RGBAColor32 RailClose,
     RGBAColor32 RailDisabled,
+    RGBAColor32 Land,
+    RGBAColor32 LandHere,
+    RGBAColor32 RoutePassed,
+    RGBAColor32 RouteAhead,
     RGBAColor32 FailedBg,
     RGBAColor32 FailedFocusBg,
     RGBAColor32 FailedText,
@@ -209,6 +213,11 @@ internal sealed record Palette(
         RailInactiveText: new(0x9a, 0x9a, 0xa6, 0xff),
         RailClose: new(0xc0, 0xc0, 0xc8, 0xff),
         RailDisabled: new(0x4a, 0x4a, 0x58, 0xff),
+        // The map's land is a shade off the ground, the node the window runs on a shade lighter; routes passed are bright, ahead dim.
+        Land: new(0x1a, 0x1e, 0x2a, 0xff),
+        LandHere: new(0x1e, 0x2a, 0x38, 0xff),
+        RoutePassed: new(0x6f, 0x9b, 0xd8, 0xff),
+        RouteAhead: new(0x5c, 0x5f, 0x6c, 0xff),
         // A flight whose move failed: a red ground for its row and band, words on it (Bright, Body and FailedText are 6:1 or
         // more on it), and a light Retry button that stands out from the red (its edge is 11:1 against it, its words 13:1).
         FailedBg: new(0x4a, 0x1a, 0x1e, 0xff),
@@ -299,6 +308,10 @@ internal sealed record Palette(
         RailInactiveText: new(0x84, 0x00, 0x00, 0xff),
         RailClose: new(0xa3, 0x00, 0x00, 0xff),
         RailDisabled: new(0x40, 0x00, 0x00, 0xff),
+        Land: new(0x14, 0x00, 0x00, 0xff),
+        LandHere: new(0x1c, 0x00, 0x00, 0xff),
+        RoutePassed: new(0xa0, 0x00, 0x00, 0xff),
+        RouteAhead: new(0x58, 0x00, 0x00, 0xff),
         FailedBg: new(0x20, 0x00, 0x00, 0xff),
         FailedFocusBg: new(0x30, 0x00, 0x00, 0xff),
         FailedText: new(0xff, 0x00, 0x00, 0xff),

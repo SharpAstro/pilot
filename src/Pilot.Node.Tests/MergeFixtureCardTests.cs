@@ -102,7 +102,7 @@ public sealed class MergeFixtureCardTests
     [Theory]
     [InlineData("conflicts", "conflicts with its base")]
     [InlineData("behind", "is behind its base")]
-    public async Task ConflictsAndBehindShowAsAGoAroundThatRebasesAndLinkTheirPr(string fixture, string title)
+    public async Task ConflictsAndBehindShowAsAGoAroundAndLinkTheirPr(string fixture, string title)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Ready(node);
@@ -113,7 +113,7 @@ public sealed class MergeFixtureCardTests
         card.State.ShouldBe(CardState.Open);
         card.Title.ShouldContain(title);
         card.Link.ShouldBe(PrUrl);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR unmergeable)", Verbs.GoAround)]);
     }
 
     [Fact]

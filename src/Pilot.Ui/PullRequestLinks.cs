@@ -14,7 +14,7 @@ internal static class PullRequestLinks
     private static readonly HashSet<string> PullRequestCards = new(StringComparer.Ordinal)
     {
         "pr-ready", "review-changes", "queue-dropped", "merge-dropped", "pr-conflicts", "pr-marks-refused",
-        "pr-review-ready", "pr-review-started", "pr-review-left", "autopilot-merge-refused",
+        "pr-review-ready", "pr-review-started", "pr-review-left", "pr-review-restarted", "pr-review-lost", "autopilot-merge-refused",
     };
 
     /// <summary>

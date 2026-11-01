@@ -15,9 +15,15 @@ public sealed partial class LegCommander
     // What each flight has calls out for, by code; the value says what, and is freed when its command is done.
     private readonly ConcurrentDictionary<string, FlightCall> _calling = new(StringComparer.Ordinal);
 
-    private sealed class FlightCall(LegCommander owner, string code, string what) : IDisposable
+    private sealed class FlightCall(LegCommander owner, string code, string what, string advice) : IDisposable
     {
         public string What { get; } = what;
+
+        /// <summary>What a command refused for it is told to do instead.</summary>
+        public string Advice { get; } = advice;
+
+        /// <summary>Set when a command was refused because of this call: its holder's own answer may not be the one its worker hears.</summary>
+        public bool Refused { get; set; }
 
         /// <summary>Completed when the calls are done with: what the node's own rebase waits on.</summary>
         public TaskCompletionSource Free { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,12 +39,17 @@ public sealed partial class LegCommander
     /// Takes the flight for the calls a command is about to make, to be called under the lock: refused, saying what has it, while
     /// another command has calls out for the flight. Disposed when the command is done with them, under the lock.
     /// </summary>
-    private FlightCall Calling(string code, string what)
+    private FlightCall Calling(string code, string what, string advice = "wait for its answer, then ask again")
     {
-        var call = new FlightCall(this, code, what);
+        var call = new FlightCall(this, code, what, advice);
         if (!_calling.TryAdd(code, call))
         {
-            throw new FlightException($"{code} is {(_calling.TryGetValue(code, out var busy) ? busy.What : "being changed")} already: wait for its answer, then ask again");
+            if (!_calling.TryGetValue(code, out var busy))
+            {
+                throw new FlightException($"{code} is being changed already: wait for its answer, then ask again");
+            }
+            busy.Refused = true;
+            throw new FlightException($"{code} is {busy.What} already: {busy.Advice}");
         }
         return call;
     }

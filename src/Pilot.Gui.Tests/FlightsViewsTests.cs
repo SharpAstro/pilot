@@ -87,7 +87,7 @@ public sealed class FlightsViewsTests
             var narrowRow = PerRow(narrowView);
             wideRow.ShouldBeGreaterThan(narrowRow);
             narrowRow.ShouldBeGreaterThan(0);
-            wideView.Canvas.Edges.ShouldBeEmpty();
+            wideView.Map.Connections.ShouldBeEmpty();
         }
     }
 
@@ -207,31 +207,17 @@ public sealed class FlightsViewsTests
             (r >= g && r >= b && g == 0 && b == 0).ShouldBeTrue($"pixel {i} is {r:x2}{g:x2}{b:x2}");
         }
         painted.ShouldBeGreaterThan(1000);
-        // An arrow is dashed: a row of several horizontal runs of the held red, each longer than a card's 4-wide stripe.
-        var dashes = 0;
-        for (var y = 0; y < image.Height; y++)
+        // The held connection and the gate are in the held red, over the map's other reds.
+        var heldRed = 0;
+        for (var i = 0; i < image.Width * image.Height; i++)
         {
-            var run = 0;
-            var inRow = 0;
-            for (var x = 0; x <= image.Width; x++)
+            if (image.Pixels[i * 4] == 0xe0 && image.Pixels[i * 4 + 1] == 0 && image.Pixels[i * 4 + 2] == 0)
             {
-                var held = x < image.Width && image.Pixels[(y * image.Width + x) * 4] == 0xe0
-                    && image.Pixels[(y * image.Width + x) * 4 + 1] == 0 && image.Pixels[(y * image.Width + x) * 4 + 2] == 0;
-                if (held)
-                {
-                    run++;
-                    continue;
-                }
-                if (run >= 5)
-                {
-                    inRow++;
-                }
-                run = 0;
+                heldRed++;
             }
-            dashes = Math.Max(dashes, inRow);
         }
-        dashes.ShouldBeGreaterThan(2);
-        view.Canvas.Edges.Count.ShouldBe(2);
+        heldRed.ShouldBeGreaterThan(60);
+        view.Map.Connections.Count.ShouldBe(1);
     }
 
     [Fact]
@@ -244,5 +230,67 @@ public sealed class FlightsViewsTests
         };
 
         FlightLine.Build([Flight("A")], [], Live.At, [leg]).Single().Legs.ShouldBe(@"1 leg · 0 done · render waiting for C:\x\done.txt");
+    }
+
+    private static void ClickTitle(FlightsView<RgbaImage> view, FlightsScreen screen, string title, int width = 1400)
+    {
+        var bounds = new RectF32(0, 0, width, 800);
+        view.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "flights:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, bounds);
+    }
+
+    private static FlightsScreen SortScreen() => new(FlightLine.Build(
+        [Flight("C", minutes: 1), Flight("A", minutes: 2), Flight("B", FlightState.Held, 3, "A")],
+        [],
+        Live.At,
+        [
+            new LegRow { Flight = "C", Name = "x", Order = 0, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "C", Name = "y", Order = 1, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "A", Name = "x", Order = 0, State = LegState.Done, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "A", Name = "y", Order = 1, State = LegState.Planned, Goal = "g", DoneWhen = "d" },
+            new LegRow { Flight = "B", Name = "x", Order = 0, State = LegState.Planned, Goal = "g", DoneWhen = "d" },
+        ]), "test", Live.At);
+
+    [Fact]
+    public void AClickOnATitleSortsTheFlightListByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        var screen = SortScreen();
+
+        ClickTitle(view, screen, "Flight");
+        view.Shown.Select(l => l.Code).ShouldBe(["A", "B", "C"]);
+        ClickTitle(view, screen, "Flight");
+        view.Shown.Select(l => l.Code).ShouldBe(["C", "B", "A"]);
+
+        // Legs by how many are done, most first at the first click.
+        ClickTitle(view, screen, "Legs");
+        view.Shown.Select(l => l.Code).ShouldBe(["C", "A", "B"]);
+        ClickTitle(view, screen, "Legs");
+        view.Shown.Select(l => l.Code).ShouldBe(["B", "A", "C"]);
+        view.Table.Sort.ShouldBe(new ListTable.SortState("Legs", Descending: false));
+    }
+
+    [Fact]
+    public void TheSelectedFlightStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1400, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List };
+        var screen = SortScreen();
+        view.Render(screen, new RectF32(0, 0, 1400, 800));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        regions.First(r => r.Result is HitResult.ListItemHit { Index: 0 }).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Render(screen, new RectF32(0, 0, 1400, 800));
+        var code = view.Shown[view.Selected].Code;
+        code.ShouldBe("C");
+
+        ClickTitle(view, screen, "Flight");
+
+        view.Shown[view.Selected].Code.ShouldBe(code);
+        view.Selected.ShouldBe(2, "A, B, C puts C last, and the selection went with it");
     }
 }

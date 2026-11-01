@@ -39,6 +39,14 @@ internal static class StatusMarkdown
         {
             facts.Add($"**machine** {Text(machine.Line())}");
         }
+        if (snapshot.Admission is { } admission)
+        {
+            facts.Add($"**{Text(admission.Line())}**{(admission.Counted.Length > 0 ? ": " + Text(string.Join(", ", admission.Counted)) : "")}");
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            facts.Add($"**queued** {queued.Code}{(queued.Priority ? " (priority)" : "")} {Text(queued.Title ?? "")}: {Text(queued.Why)}");
+        }
         if (facts.Count > 0)
         {
             foreach (var fact in facts)
@@ -92,7 +100,7 @@ internal static class StatusMarkdown
                 text.AppendLine("|--:|-----|-------|------:|--------|");
                 foreach (var leg in legs)
                 {
-                    var legState = FlightWaiting.LegState(leg) + (leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "");
+                    var legState = FlightWaiting.LegState(leg) + (leg.GoArounds > 0 ? $", go-around {leg.GoArounds}" : "") + (Verbs.AttemptOf(leg) is { } attempt ? $", {attempt}" : "");
                     var steps = leg.Checklist.Length == 0 ? "" : $"{leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length}";
                     var worker = leg.Worker is { } w && leg.State == LegState.Flying ? Text(w) : "";
                     text.AppendLine($"| {leg.Order} | {Text(leg.Name)} | {Text(legState)} | {steps} | {worker} |");

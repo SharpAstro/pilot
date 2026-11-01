@@ -37,7 +37,7 @@ public sealed class TerminalTests
         flights.CanvasAvailable = false; // as pilot-tui sets it: cells keep the list
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
 
         var arranged = Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
         var described = CellLayout.Describe(arranged);
@@ -65,7 +65,7 @@ public sealed class TerminalTests
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
         var copied = new List<string>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
         flights.OnOpen = _ => { };
         flights.CopyText = copied.Add;
         var screen = Screen();
@@ -99,7 +99,7 @@ public sealed class TerminalTests
         flights.CanvasAvailable = false;
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
         var screen = Screen();
         flights.Tree(screen);
 
@@ -134,7 +134,7 @@ public sealed class TerminalTests
 
         CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 100, 40), CellMeasureContext.PixelAuthored))
             .ShouldNotContain("flight/tia1611");
-        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored))
+        CellLayout.Describe(Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored))
             .ShouldContain("flight/tia1611");
     }
 
@@ -164,7 +164,7 @@ public sealed class TerminalTests
                 }
                 : new TranscriptPage { Total = 4, Entries = [new() { Index = 3, Kind = TranscriptKind.Assistant, Text = "Fixed it." }] });
         };
-        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        string Described() => CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
         Described();
 
         sessions.HandleInput(new InputEvent.KeyDown(InputKey.Enter)).ShouldBeTrue();
@@ -452,7 +452,7 @@ public sealed class TerminalTests
         narrow.ShouldContain("worker · ORB204 / parser");
         narrow.ShouldContain("xy1-orb204-parser");
 
-        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 160, 40), CellMeasureContext.PixelAuthored));
+        var wide = CellLayout.Describe(Layout.Engine.Arrange(sessions.Tree(screen), new Rect<int>(0, 0, 200, 40), CellMeasureContext.PixelAuthored));
         wide.ShouldContain("Model");
         wide.ShouldContain("Last response");
         wide.ShouldContain("Spend");

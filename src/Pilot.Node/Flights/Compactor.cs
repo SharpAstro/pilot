@@ -21,6 +21,9 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The ledger of launched sessions, which says which were stopped on a land or merge; null in a test with none.</summary>
+    public Sessions.SessionLedger? Ledger { get; set; }
+
     /// <summary>What its Handled lines are.</summary>
     public const string Kind = "session-compacted";
 
@@ -86,8 +89,19 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     {
         var waiting = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
         var watching = watchtower.Watching() is not null;
+        var current = watchtower.Current()?.Id;
         foreach (var row in state.Sessions().Where(r => r is { Kind: SessionKind.Background, State: SessionState.Idle }))
         {
+            if (row.Name == watchtower.Name && row.Id != current)
+            {
+                // A replaced watchtower is never compacted or resumed: the role's current session is the only one the node wakes (#542).
+                continue;
+            }
+            if (WindDown.Why(state, Ledger, row) is not null)
+            {
+                // A session of a landed flight, or one stopped on land or merge, is never compacted: it is to be gone.
+                continue;
+            }
             if (waiting.Contains(row.Id))
             {
                 yield return (row, row.Name == watchtower.Name ? WatchtowerFocus : JobFocus);

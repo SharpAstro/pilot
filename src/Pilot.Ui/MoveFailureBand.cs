@@ -27,7 +27,7 @@ internal static class MoveFailureBand
     /// <paramref name="line"/>'s band, or null when its move did not fail. <paramref name="retry"/> is the page's way of running
     /// the action (null draws no button: a snapshot has no node to ask, or the flight is on a node this window only watches).
     /// </summary>
-    public static Layout.Node? Build<TSurface>(FlightLine line, Palette p, Action<FlightAction>? retry, string idPrefix = "")
+    public static Layout.Node? Build<TSurface>(FlightLine line, Palette p, Action<FlightAction>? retry, string idPrefix = "", Presses? presses = null)
     {
         if (line.MoveFailure is not { } reason)
         {
@@ -43,8 +43,16 @@ internal static class MoveFailureBand
         var columns = new List<Layout.Sizing> { Layout.Sizing.Fixed(StripeWidth), Layout.Sizing.Fixed(Gap), Layout.Sizing.Star() };
         if (retry is not null && FlightAction.For(line).FirstOrDefault(a => a.Verb == Verbs.MoveFlight) is { } action)
         {
-            var button = CardsView<TSurface>.Pill(action.Label, idPrefix + ActionId(line.Code), () => retry(action), (p.RetryBg, p.RetryHover), p.RetryText)
+            var hit = idPrefix + ActionId(line.Code);
+            Layout.Node Idle() => CardsView<TSurface>.Pill(action.Label, hit, () => retry(action), (p.RetryBg, p.RetryHover), p.RetryText);
+            // A Retry that asks the node says it is working, dimmed and with no hit, from the press until the node answers.
+            var button = (presses is null ? Idle() : presses.Button(line.Code, hit, Idle, pressed => CardsView<TSurface>.Dead(pressed ? $"{action.Label} …" : action.Label)))
                 .RowH(ButtonHeight);
+            // A refusal is said beside the band's button, in the node's words.
+            if (presses?.RefusalLine(line.Code, 11f, p.FailedText, 3) is { } refusal)
+            {
+                button = Layout.Builder.VStack(button, refusal).WAuto();
+            }
             cells.Add(Layout.Builder.Spacer());
             cells.Add(Layout.Builder.VStack(button).Pad(0f, 8f).WAuto());
             columns.Add(Layout.Sizing.Fixed(ButtonGap));
@@ -66,12 +74,12 @@ internal static class MoveFailureBand
     /// The bands of the flights in <paramref name="lines"/> whose move failed, at most <see cref="MaxBands"/>, then a line saying how
     /// many more there are and where to read them; nothing when none failed.
     /// </summary>
-    public static IEnumerable<Layout.Node> All<TSurface>(IEnumerable<FlightLine> lines, Palette p, Func<FlightLine, Action<FlightAction>?> retryOf, string idPrefix = "")
+    public static IEnumerable<Layout.Node> All<TSurface>(IEnumerable<FlightLine> lines, Palette p, Func<FlightLine, Action<FlightAction>?> retryOf, string idPrefix = "", Presses? presses = null)
     {
         var failed = lines.Where(l => l.MoveMark is not null).ToList();
         foreach (var line in failed.Take(MaxBands))
         {
-            if (Build<TSurface>(line, p, retryOf(line), idPrefix) is { } band)
+            if (Build<TSurface>(line, p, retryOf(line), idPrefix, presses) is { } band)
             {
                 yield return band;
             }

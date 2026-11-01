@@ -18,6 +18,28 @@ public sealed class DetachedShellScopeTests
     }
 
     [Fact]
+    public async Task TheUnitOverrideSetInOneFlowIsNotSeenInAnotherStartedBeside()
+    {
+        var set = new TaskCompletionSource();
+        var seen = new TaskCompletionSource();
+        var setter = Task.Run(async () =>
+        {
+            NodeRestarter.UnitMainProcessOverride = true;
+            set.SetResult();
+            await seen.Task;
+            var own = NodeRestarter.UnitMainProcessOverride;
+            NodeRestarter.UnitMainProcessOverride = null;
+            return own;
+        });
+        await set.Task;
+        var beside = await Task.Run(() => NodeRestarter.UnitMainProcessOverride);
+        seen.SetResult();
+
+        beside.ShouldBeNull();
+        (await setter).ShouldBe(true);
+    }
+
+    [Fact]
     public void ElsewhereItIsSetsidAlone()
     {
         var (program, args) = DetachedShell.UnixArgv("echo hi", "pilot-job-j1-ABC", "/usr/bin/setsid", null);

@@ -22,14 +22,24 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
     public Func<string, bool> RestartedBySystemd { get; init; } = UnderSystemdUnit;
 
     /// <summary>
-    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess"/>,
+    /// The node runs as <paramref name="nodePath"/> as the main process of a systemd unit (see <see cref="IsUnitMainProcess()"/>,
     /// and it is pilot-node): the unit restarts it when it exits, whatever the exit code but those in
     /// <c>RestartPreventExitStatus</c>, so a clean stop is a restart and a successor would only fight the unit for the socket.
     /// </summary>
     public static bool UnderSystemdUnit(string nodePath) => IsNode(nodePath) && IsUnitMainProcess();
 
-    /// <summary>A test's answer to <see cref="IsUnitMainProcess()"/>, in place of the real process's; null reads the process.</summary>
-    internal static bool? UnitMainProcessOverride { get; set; }
+    /// <summary>
+    /// A test's answer to <see cref="IsUnitMainProcess()"/>, in place of the real process's; null reads the process. It holds
+    /// for the flow that set it only: a static one leaked into a restart test running beside it on Linux CI, which then
+    /// read "under systemd" and started no successor.
+    /// </summary>
+    internal static bool? UnitMainProcessOverride
+    {
+        get => UnitMainProcessOverrideFlow.Value;
+        set => UnitMainProcessOverrideFlow.Value = value;
+    }
+
+    private static readonly AsyncLocal<bool?> UnitMainProcessOverrideFlow = new();
 
     /// <summary>
     /// This process is the main process of a systemd service. <c>INVOCATION_ID</c> alone is not enough: every child inherits it,

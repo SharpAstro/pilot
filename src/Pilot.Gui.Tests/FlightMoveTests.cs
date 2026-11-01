@@ -97,7 +97,7 @@ public sealed class FlightMoveTests
     private static readonly string ReasonWords = Regex.Replace(Reason, @"\s+", " ").Trim();
 
     private static FlightsView<RgbaImage> View(RgbaImageRenderer renderer, Action<FlightAction>? onAction = null, bool canCommand = true) =>
-        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List, CanCommand = canCommand, OnAction = onAction ?? (_ => { }), OnChat = _ => { } };
+        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.List, CanCommand = canCommand, OnAction = Taken.By(onAction ?? (_ => { })), OnChat = _ => { } };
 
     /// <summary>The band: the red node taller than a row, which the page puts above its table.</summary>
     private static Layout.ArrangedNode<float> Band(ImmutableArray<Layout.ArrangedNode<float>> arranged, RGBAColor32 red) =>
@@ -243,7 +243,7 @@ public sealed class FlightMoveTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Play.ShowEverything();
         chrome.Flights.CanCommand = canCommand;
-        chrome.Flights.OnAction = sent.Add;
+        chrome.Flights.OnAction = Taken.By<FlightAction>(sent.Add);
         chrome.Flights.Mode = FlightsViewMode.List;
         chrome.LinkCardTranscripts(() => NoSessions, () => screen, jobs: () => NoJobs);
         chrome.Show(page);
@@ -351,7 +351,7 @@ public sealed class FlightMoveTests
         home.ToDump().ShouldContain($"move failed: TIA1611 | {Reason}");
 
         using var renderer = new RgbaImageRenderer(760, 900);
-        var view = new HomeView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = _ => { } };
+        var view = new HomeView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnAction = _ => Task.FromResult<string?>(null) };
         var arranged = Arrange(view.Tree(home), renderer, 700, 900);
         var p = Palette.Standard;
 

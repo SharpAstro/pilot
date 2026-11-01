@@ -59,6 +59,8 @@ public sealed class PullRequestWatchPaceTests : IDisposable
     private Rig NewRig(TimeSpan? idle = null)
     {
         Directory.CreateDirectory(Path.Combine(_root, "pilot", ".git"));
+        // A clone is read on GitHub only when pilot works in it: its PILOT.md says so.
+        File.WriteAllText(Path.Combine(_root, "pilot", RepoCatalog.MarkerFile), "rules");
         File.WriteAllText(Path.Combine(_root, "pilot", ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();

@@ -25,6 +25,12 @@ public sealed class PrReviews(
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>
+    /// Gives a flight a PR review's approve of its PR: code, the head reviewed, the verdict, the report; null when taken, else why
+    /// not. Set where the node is built, so this needs nothing of the leg commander's.
+    /// </summary>
+    public Func<string, string, string, string, CancellationToken, Task<string?>>? TakeFlightVerdict { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
@@ -33,11 +39,50 @@ public sealed class PrReviews(
     /// <summary>The card a verdict raises: the review is ready for the controller.</summary>
     public const string ReadyKind = "pr-review-ready";
 
+    /// <summary>The Handled line a review or fixer that waits for admission leaves, naming why; it closes when the start goes.</summary>
+    public const string WaitingKind = "pr-review-waiting";
+
+    /// <summary>Whether a start may go: the Opus cap and priority are asked here, as a flight's starts are (one gate, shared with the legs).</summary>
+    public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
+
+    // The reviews and fixers admission holds, by PR target: the sweep asks again and starts them in turn.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PrRef Pr, bool Fix)> _queued = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _queuedSaid = new(StringComparer.Ordinal);
+
+    // True when the start waits: said once per reason by a Handled card (no ring), kept for the sweep. False clears any earlier wait.
+    private bool WaitsForSlot(PrRef pr, bool fix, string? model, string? replacing = null)
+    {
+        var target = Verbs.PrTarget(pr.Repo, pr.Number);
+        if (Slots.Ask(fix ? AdmissionRole.Fixer : AdmissionRole.Reviewer, model, null, replacing is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { replacing }, subject: target) is not AdmissionDecision.Wait wait)
+        {
+            _queued.TryRemove(target, out _);
+            if (_queuedSaid.TryRemove(target, out _))
+            {
+                state.CloseCardsAbout(target, "its start was admitted", WaitingKind);
+            }
+            return false;
+        }
+        _queued[target] = (pr, fix);
+        if (!_queuedSaid.TryGetValue(target, out var said) || said != wait.Why)
+        {
+            _queuedSaid[target] = wait.Why;
+            state.CloseCardsAbout(target, "its wait changed", WaitingKind);
+            state.RaiseCard(CardBin.Handled, WaitingKind, target, $"{pr}: the {(fix ? "fixer" : "review")} waits to start", wait.Why);
+        }
+        return true;
+    }
+
     /// <summary>The Handled line a start leaves.</summary>
     public const string StartedKind = "pr-review-started";
 
     /// <summary>The card said when a review's worktree could not be removed after its card closed.</summary>
     public const string LeftKind = "pr-review-left";
+
+    /// <summary>The Handled line a review started afresh after a node restart leaves.</summary>
+    public const string RestartedKind = "pr-review-restarted";
+
+    /// <summary>The For-you card said when a review lost in a node restart could not be started afresh.</summary>
+    public const string LostKind = "pr-review-lost";
 
     /// <summary>The verdicts a PR reviewer gives, as GitHub's review events will take them: approve, request changes, comment.</summary>
     public static readonly string[] Verdicts = ["approve", "changes", "comment"];
@@ -84,6 +129,8 @@ public sealed class PrReviews(
     {
         await _one.WaitAsync(cancellationToken);
         string? error = null;
+        // What a review-pr or fix-pr made, for the one line it leaves in node.log; null for the other verbs.
+        string? made = null;
         try
         {
             var pr = PrRef.Parse(command.Target) is { } parsed && command.Target.StartsWith(Verbs.PrTargetPrefix, StringComparison.Ordinal)
@@ -92,7 +139,7 @@ public sealed class PrReviews(
             switch (command.Verb)
             {
                 case Verbs.ReviewPr:
-                    await StartAsync(pr, cancellationToken);
+                    made = await StartAsync(pr, cancellationToken);
                     break;
                 case Verbs.PrVerdict:
                     if (await VerdictAsync(pr, command, cancellationToken))
@@ -105,7 +152,7 @@ public sealed class PrReviews(
                     await FixAfterPostAsync(pr, cancellationToken);
                     break;
                 case Verbs.FixPr:
-                    await FixAsync(pr, command, cancellationToken);
+                    made = await FixAsync(pr, command, cancellationToken);
                     break;
                 case Verbs.Merge:
                     await MergeAsync(pr, command, cancellationToken);
@@ -122,8 +169,27 @@ public sealed class PrReviews(
             // written) is a refusal that says so, not an exception out of the route: that answered 500 with an empty body.
             error = $"{command.Verb} failed: {ex.GetType().Name}: {ex.Message}";
         }
+        catch (OperationCanceledException)
+        {
+            // Cut off (the caller went away, the node stops): the line still says so, in the finally, and the cancellation goes on.
+            error = $"{command.Verb} was cancelled";
+            throw;
+        }
         finally
         {
+            // One line per review-pr and fix-pr, written whatever came of it, so a start that left no trace is not a mystery
+            // (SE1's review of tianwen#1930, 2026-10-30, left nothing in node.log to say it had been asked for).
+            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr)
+            {
+                try
+                {
+                    await Error.WriteLineAsync($"{command.Verb} {command.Target}, asked by {command.Who}: {made ?? $"refused: {error ?? "without a reason"}"}");
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    // A log that cannot be written is not a reason to fail the command.
+                }
+            }
             _one.Release();
         }
         return state.Complete(command, error);
@@ -133,7 +199,8 @@ public sealed class PrReviews(
     public PrReviewRow? Of(PrRef pr) =>
         state.PrReviews().FirstOrDefault(r => string.Equals(r.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && r.Number == pr.Number);
 
-    private async Task StartAsync(PrRef pr, CancellationToken cancellationToken)
+    /// <summary>Starts a fresh review of <paramref name="pr"/>; says what it started, as <c>started &lt;reviewer&gt; at &lt;head8&gt;</c>.</summary>
+    private async Task<string> StartAsync(PrRef pr, CancellationToken cancellationToken)
     {
         var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
@@ -143,6 +210,16 @@ public sealed class PrReviews(
         if (read.Head.Length == 0 || read.Base.Length == 0)
         {
             throw new FlightException($"gh did not say {pr}'s head and base");
+        }
+        if (FlightOwner(pr, read.HeadRef, read.Fork) is { } owner)
+        {
+            throw new FlightException($"{pr} is {owner.Code}'s PR, which has one review, the flight's: pilot flight review {owner.Code}");
+        }
+
+        // Admission: a review waits for a free Opus slot, and the sweep starts it; an earlier review's own reviewer does not count against it.
+        if (WaitsForSlot(pr, fix: false, Models.Model(RoleModels.Reviewer), Of(pr)?.Reviewer))
+        {
+            return $"queued: {pr} waits for a free Opus slot";
         }
 
         // One review of a PR at a time: an earlier one, still on or waiting on its card, ends first.
@@ -198,9 +275,17 @@ public sealed class PrReviews(
         var brief = Briefs.ReviewPr(row, new Briefs.PlaneState(commits.Ok ? commits.Output : "", stat.Ok ? stat.Output : ""),
             await github.LoginAsync(cancellationToken), Briefs.Run(Cli, Socket), options.Machine);
         string job;
+        var counting = new object();
+        Slots.Begin("review-pr:" + reviewer, counting, reviewer, null, AdmissionRole.Reviewer, Models.Model(RoleModels.Reviewer));
         try
         {
-            job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer)), cancellationToken);
+            job = await workers.StartAsync(new WorkerStart(reviewer, clone, plane, brief, Models.Model(RoleModels.Reviewer), Models.Effort(RoleModels.Reviewer), Reason: SessionStartReasons.PrReview, Pr: pr.Number), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cut off before its row was written: nothing says a review is on, so no worktree stays and no status was set.
+            await planes.RemoveAsync(clone, worktree, CancellationToken.None, force: true);
+            throw;
         }
         catch (FlightException ex)
         {
@@ -210,10 +295,43 @@ public sealed class PrReviews(
                 ? $"{ex.Message}. Claude Code starts no background session in a folder never trusted: run claude in {CloneCache} once and accept its prompt, which covers every clone the node makes there, then review it again"
                 : ex.Message);
         }
+        finally
+        {
+            // From here the row (put below) counts it.
+            Slots.End("review-pr:" + reviewer, counting);
+        }
         state.PutPrReview(row with { ReviewerJob = job });
+        // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
+        if (read.Draft)
+        {
+            await SetDraftAsync(row, draft: false, cancellationToken);
+        }
+        return $"started {reviewer} at {Short(read.Head)}";
+    }
+
+    /// <summary>
+    /// Draft follows the verdict for a PR outside a flight (PIL483): ready from the start of a review, a draft only on
+    /// changes. A flight's PR is skipped, its draft is the flight path's. GitHub refusing it is a For-you card, as a label is.
+    /// </summary>
+    private async Task SetDraftAsync(PrReviewRow review, bool draft, CancellationToken cancellationToken)
+    {
+        if (FlightOwns(review))
+        {
+            return;
+        }
+        try
+        {
+            await github.SetDraftAsync(review.ClonePath, review.Number, draft, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, Verbs.PrTarget(review.Repo, review.Number),
+                $"GitHub refused to mark {review.Repo}#{review.Number} {(draft ? "a draft" : "ready")}: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}. The review itself stands.", link: review.Url);
+        }
     }
 
     /// <summary>
@@ -232,7 +350,7 @@ public sealed class PrReviews(
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             state.CloseCardsAbout(subject, "refused again", PrMarks.RefusedKind);
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}",
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {PilotMarks.StatusContext} status on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
@@ -257,16 +375,27 @@ public sealed class PrReviews(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}",
+            state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused the {label} label on {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
                 $"{ex.Message}. The review itself stands.", link: review.Url);
         }
     }
 
     /// <summary>Whether the reviewed PR is a flight's: its PR, on the same repo.</summary>
-    // A landed flight's PR is no longer kept by it: a later review of that PR labels it as any PR's.
-    private bool FlightOwns(PrReviewRow review) =>
-        state.Flights().Any(f => f.State != FlightState.Landed && f.PullRequest == review.Number && f.PullRequestUrl is { } url
-            && url.Contains($"/{review.Repo}/pull/{review.Number}", StringComparison.OrdinalIgnoreCase));
+    private bool FlightOwns(PrReviewRow review) => PrRef.Parse($"{review.Repo}#{review.Number}") is { } pr && FlightOwner(pr) is not null;
+
+    /// <summary>
+    /// The flight of this node that owns <paramref name="pr"/>, or null: its PR on the same repo, or a PR whose head ref is the
+    /// flight's branch in a repo the flight flies from. A landed flight's PR is no longer kept by it: a later review labels it as
+    /// any PR's.
+    /// </summary>
+    public FlightRow? FlightOwner(PrRef pr, string headRef = "", bool fork = false) =>
+        state.Flights().FirstOrDefault(f => f.State != FlightState.Landed
+            && (f.PullRequest == pr.Number && f.PullRequestUrl is { } url && url.Contains($"/{pr.Repo}/pull/{pr.Number}", StringComparison.OrdinalIgnoreCase)
+                || headRef.Length > 0 && !fork && string.Equals(headRef, f.Branch, StringComparison.Ordinal) && FliesFrom(f, pr)));
+
+    private bool FliesFrom(FlightRow flight, PrRef pr) =>
+        repos.Repos().Any(r => string.Equals(r.GitHub, pr.Repo, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(r.Path)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(flight.RepoPath)), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
     internal static (string State, string Description) StatusOf(PrReviewRow review)
@@ -401,6 +530,12 @@ public sealed class PrReviews(
         var (verdictStatus, verdictDescription) = StatusOf(reviewed);
         await SetStatusAsync(reviewed, verdictStatus, verdictDescription, review.Url, cancellationToken);
         await SetLabelAsync(reviewed, cancellationToken);
+        // Only changes turns it into a draft: the start made it ready, and an approve or comment leaves it as it is.
+        if (verdict == "changes")
+        {
+            await SetDraftAsync(reviewed, draft: true, cancellationToken);
+        }
+        await GiveFlightVerdictAsync(reviewed, pr, cancellationToken);
         // The node posts first and asks after. The Post card used to be raised before the node's own post, which takes some 30 s,
         // and was pressed meanwhile: the press was refused as a second post and reopened the card (DIR.Lib#168, SE1, 2026-10-28).
         var (posted, notPosted) = await PostIfOpenAsync(pr, subject, cancellationToken);
@@ -484,6 +619,34 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             return (false, ex.Message);
+        }
+    }
+
+    /// <summary>An approve of a flight's PR at the flight's current head is the flight's verdict (PIL483); what the flight refuses is said in the log, the review stands.</summary>
+    private async Task GiveFlightVerdictAsync(PrReviewRow review, PrRef pr, CancellationToken cancellationToken)
+    {
+        if (review.Verdict != "approve" || TakeFlightVerdict is not { } take)
+        {
+            return;
+        }
+        var headRef = "";
+        var fork = false;
+        try
+        {
+            var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+            (headRef, fork) = (read.HeadRef, read.Fork);
+        }
+        catch (FlightException)
+        {
+        }
+        if (FlightOwner(pr, headRef, fork) is not { } owner)
+        {
+            return;
+        }
+        var why = await take(owner.Code, review.Head, "approve", review.Report ?? "", cancellationToken);
+        if (why is not null)
+        {
+            await Error.WriteLineAsync($"pr reviews: {pr}'s approve was not taken by {owner.Code}: {why}");
         }
     }
 
@@ -694,6 +857,77 @@ public sealed class PrReviews(
 
     private static string Plural(int count, string what) => count == 1 ? $"1 {what}" : $"{count} {what}s";
 
+    private bool _recovered;
+
+    /// <summary>
+    /// The first sweep after the node starts looks once at every PR review still Reviewing whose reviewer session is absent or
+    /// over (a restart ends the sessions it did not outlive, and the row it left says reviewing with no reviewer): each is
+    /// started afresh at once, as review-pr does, and a Handled line says so. One that cannot be started takes back what it set
+    /// on GitHub (its pending status, its reviewing label) and says on a For-you card that it was lost, with Review again as
+    /// its choice. Left to <see cref="LegWatch"/>'s ladder alone it waited out the grace, whose counts a restart also forgets
+    /// (SE1's review of tianwen#1930, 2026-10-30, had neither reviewer nor recovery five minutes on).
+    /// </summary>
+    private async Task RecoverLostReviewsAsync(CancellationToken cancellationToken)
+    {
+        if (_recovered)
+        {
+            return;
+        }
+        _recovered = true;
+        var sessions = state.Sessions();
+        foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewing, ReviewerJob: not null }))
+        {
+            var seen = sessions.FirstOrDefault(s => s.Id == review.ReviewerJob);
+            if (seen is { Gone: false, State: not (SessionState.Ended or SessionState.Failed) })
+            {
+                continue;
+            }
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            var pr = PrRef.Parse(subject) ?? throw new InvalidOperationException($"{subject} is no PR target");
+            var lost = seen is null ? $"its session {review.ReviewerJob} is gone" : $"its session {review.ReviewerJob} {(seen.Gone ? "has no process" : seen.State.ToString().ToLowerInvariant())}";
+            try
+            {
+                var made = await StartAsync(pr, cancellationToken);
+                state.RaiseCard(CardBin.Handled, RestartedKind, subject, $"{pr}'s review started afresh after a node restart", $"{lost}; {made}", link: review.Url);
+                await Error.WriteLineAsync($"pr reviews: {pr} was reviewing with no reviewer after a restart ({lost}): {made}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var why = ex is FlightException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+                await Error.WriteLineAsync($"pr reviews: {pr} was reviewing with no reviewer after a restart ({lost}), and could not be started afresh: {why}");
+                await TakeBackAsync(review, pr, lost, why, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>Ends a review lost in a restart that would not start again: its marks on GitHub taken back, and a For-you card that says why.</summary>
+    private async Task TakeBackAsync(PrReviewRow review, PrRef pr, string lost, string why, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (Of(pr) is { State: not PrReviewState.Closed } open)
+        {
+            await EndAsync(open, "the review was lost in a restart", cancellationToken);
+        }
+        // The status is a mark that cannot be deleted, only replaced: an error says the review is not running, where pending said it was.
+        await SetStatusAsync(review, "error", "the review was lost in a node restart", review.Url, cancellationToken);
+        if (!FlightOwns(review))
+        {
+            try
+            {
+                await github.RemoveLabelAsync(review.ClonePath, review.Number, PilotMarks.Reviewing, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                state.RaiseCard(CardBin.ForYou, PrMarks.RefusedKind, subject, $"GitHub refused taking the {PilotMarks.Reviewing} label off {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}",
+                    $"{ex.Message}. The review itself stands.", link: review.Url);
+            }
+        }
+        state.RaiseCard(CardBin.ForYou, LostKind, subject, $"{pr}: the review was lost in a node restart and starting it again failed: {LegCommander.OneLine(why)}",
+            $"{lost}, and starting it again failed: {why}",
+            [new CardChoice { Label = $"Start the review of {pr} afresh", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url,
+            summary: $"The review of {pr} was running when the node restarted and could not be started again. Review again starts it afresh.");
+    }
+
     /// <summary>
     /// Every review whose verdict card has closed (dismissed, or answered) ends: its reviewer stopped if it still runs, its
     /// worktree removed. What the sweep does every <see cref="Interval"/>, and the node at once after a card is closed.
@@ -703,10 +937,39 @@ public sealed class PrReviews(
         await _one.WaitAsync(cancellationToken);
         try
         {
+            await RecoverLostReviewsAsync(cancellationToken);
+            // The reviews and fixers admission holds start by themselves once a slot frees, in the order they asked.
+            foreach (var (pr, fix) in _queued.Values.ToArray())
+            {
+                try
+                {
+                    if (fix)
+                    {
+                        if (Of(pr) is { Fixer: null } waiting)
+                        {
+                            await StartFixerAsync(pr, waiting, cancellationToken);
+                        }
+                        else
+                        {
+                            _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
+                        }
+                    }
+                    else
+                    {
+                        await StartAsync(pr, cancellationToken);
+                    }
+                }
+                catch (FlightException ex)
+                {
+                    _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
+                    state.RaiseCard(CardBin.ForYou, WaitingKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: the start that waited did not go", ex.Message);
+                }
+            }
             foreach (var fixing in state.PrReviews().Where(r => r.Fixer is not null))
             {
                 await TendFixerAsync(fixing, cancellationToken);
             }
+            await CloseCardsOfOvertakenReviewsAsync(cancellationToken);
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             // A review the node posted itself has no card to close: posted, it is over all the same.
             foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed } && (r.Card is { } card && closed.Contains(card) || r.PostedId is not null)))
@@ -806,8 +1069,8 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {ex.Message}" });
-            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}", ex.Message,
-                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {review.Head[..Math.Min(8, review.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
@@ -853,6 +1116,13 @@ public sealed class PrReviews(
 
     /// <summary>The For-you card said when the fixer could not start.</summary>
     public const string FixFailedKind = "pr-fix-failed";
+
+    /// <summary>
+    /// The For-you card of a fixer that pushed when the review of the pushed head could not start. It is about a head newer than the
+    /// review row's, so it is outside <see cref="ReviewCardKinds"/>, which a sweep closes once the head is past the review's own;
+    /// a newer review of the PR closes it.
+    /// </summary>
+    public const string PushedUnreviewedKind = "pr-fix-pushed-unreviewed";
 
     /// <summary>The card's choice that starts the fixer.</summary>
     public const string FixLabel = "Fix it";
@@ -904,7 +1174,8 @@ public sealed class PrReviews(
             }
             catch (FlightException ex)
             {
-                state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer pushed, but its review could not start", $"{ex.Message}\npilot review {pr} tries again.", link: review.Url);
+                state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", $"{ex.Message}\nThe push stands; the review has not started on it.",
+                    [new CardChoice { Label = $"Start the review of {pr} on the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
             }
             return;
         }
@@ -965,7 +1236,7 @@ public sealed class PrReviews(
     /// <summary>Whether a flight's PR is this one: a flight's own review and fix are the flight's.</summary>
     private bool FlightOwns(PrRef pr) =>
         state.Flights().Any(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
-            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number);
+            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) || FlightOwner(pr) is not null;
 
     /// <summary>
     /// A changes verdict on a PR now posted (#290). On the controller's own PR in a repo the node tracks, with no flight owning
@@ -975,35 +1246,42 @@ public sealed class PrReviews(
     /// </summary>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
-        if (Of(pr) is not { Verdict: "changes", Fixer: null } review || TrackedClone(pr) is null || FlightOwns(pr))
+        if (Of(pr) is not { Fixer: null } review || FlightOwns(pr))
         {
             return;
         }
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
-        if (review.Findings.Any(IsDesign))
+        var asksDesign = review.Findings.Any(IsDesign);
+        if (review.Verdict != "changes" && !asksDesign)
+        {
+            return;
+        }
+        if (TrackedClone(pr) is null)
+        {
+            // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
+            RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
+            return;
+        }
+        if (asksDesign)
         {
             var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
-            state.RaiseCard(CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.", link: review.Url);
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
             return;
         }
         var rounds = review.FixRound ?? 0;
         if (rounds >= MaxFixRounds)
         {
-            state.RaiseCard(CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
-                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}",
-                link: review.Url);
+            RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
+                $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
             return;
         }
         // A PR the controller already chose Fix it on goes on by itself, whoever owns it.
         var own = rounds > 0 || Own(review, await github.LoginAsync(cancellationToken));
         if (!own)
         {
-            if (!state.Cards(openOnly: true).Any(c => c.Kind == FixOfferKind && c.Subject == subject))
-            {
-                state.RaiseCard(CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
-                    $"{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them.",
-                    [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
-            }
+            RaiseOnce(pr, review, CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
+                $"{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them.",
+                [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }]);
             return;
         }
         try
@@ -1013,10 +1291,32 @@ public sealed class PrReviews(
         catch (FlightException ex)
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
-            state.RaiseCard(CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start", ex.Message,
-                [new CardChoice { Label = "Retry", Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+            RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
+
+    /// <summary>The Ring card of a review that asks for changes while no fixer works on the PR: the report, the findings and why none runs (pilot #527).</summary>
+    public const string NoFixerKind = "pr-review-no-fixer";
+
+    /// <summary>
+    /// Rings the owner with the review's report and findings and the reason no fixer runs. Once per review (<see cref="RaiseOnce"/>), so a
+    /// dismissal sticks. It is never closed as handled: it closes only when its cause is gone, saying which (the head moved, a newer
+    /// review, a fixer started), as <see cref="ReviewCardKinds"/> and <c>StartFixerAsync</c> do.
+    /// </summary>
+    public void RingNoFixer(PrRef pr, PrReviewRow review, string why)
+    {
+        // A review that raised its own card for this reason (design, cap, offer, failed start) is not rung a second time.
+        if ((Of(pr) ?? review).Raised.Any(k => k is DesignKind or FixCappedKind or FixOfferKind or FixFailedKind))
+        {
+            return;
+        }
+        RaiseNoFixer(pr, review, Verbs.PrTarget(pr.Repo, pr.Number), why);
+    }
+
+    private void RaiseNoFixer(PrRef pr, PrReviewRow review, string subject, string why) =>
+        RaiseOnce(pr, review, CardBin.Ring, NoFixerKind, subject, review.Verdict == "changes" ? $"{pr}: the review asks for changes, and no fixer works on it" : $"{pr}: the review asks a question, and no fixer works on it",
+            $"No fixer started: {why}.\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}".TrimEnd());
 
     /// <summary>
     /// Why a fixer must not start on its own for this review, or null when one may: the guards <see cref="FixAfterPostAsync"/> keeps
@@ -1049,18 +1349,29 @@ public sealed class PrReviews(
         return null;
     }
 
-    /// <summary>The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own.</summary>
-    private async Task FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
+    /// <summary>
+    /// The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own. A PR this node holds no
+    /// review of (the Pull requests page's Review word is the pilot/review status, which another node may have set, or the review
+    /// was lost) gets pilot's review first; its findings are fixed when it asks for changes, by the way a posted verdict goes.
+    /// </summary>
+    private async Task<string> FixAsync(PrRef pr, CommandRequest command, CancellationToken cancellationToken)
     {
         if (Of(pr) is not { } review)
         {
-            throw new FlightException($"{pr} has no review; review-pr starts one");
+            var started = await StartAsync(pr, cancellationToken);
+            return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
         if (review.Verdict != "changes")
         {
             throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
         }
-        await StartFixerAsync(pr, review, cancellationToken);
+        // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
+        // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
+        if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
+        {
+            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+        }
+        return await StartFixerAsync(pr, review, cancellationToken);
     }
 
     /// <summary>
@@ -1068,7 +1379,7 @@ public sealed class PrReviews(
     /// a session briefed with the review. Refused for a repo the node does not track, a PR a flight owns, one that is not
     /// open, and one that has a fixer already.
     /// </summary>
-    private async Task StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
     {
         if (review.Fixer is { } on)
         {
@@ -1078,6 +1389,10 @@ public sealed class PrReviews(
         if (FlightOwns(pr))
         {
             throw new FlightException($"a flight owns {pr}: its own legs fix it");
+        }
+        if (WaitsForSlot(pr, fix: true, Models.Model(RoleModels.Worker)))
+        {
+            return $"queued: the fixer of {pr} waits for a free Opus slot";
         }
         var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
@@ -1108,28 +1423,36 @@ public sealed class PrReviews(
         var fixer = $"{options.Machine.ToLowerInvariant()}-fix-{name}-{pr.Number}";
         var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1 };
         string job;
+        var counting = new object();
+        Slots.Begin("fix-pr:" + fixer, counting, fixer, null, AdmissionRole.Fixer, Models.Model(RoleModels.Worker));
         try
         {
             job = await workers.StartAsync(new WorkerStart(fixer, clone, plane, Briefs.FixPr(fixing, branch, CiShape.Of(worktree)),
-                Models.Model(RoleModels.Worker), Models.Effort(RoleModels.Worker)), cancellationToken);
+                Models.Model(RoleModels.Worker), Models.Effort(RoleModels.Worker), Reason: SessionStartReasons.PrFix, Pr: pr.Number), cancellationToken);
         }
         catch (FlightException)
         {
             await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
             throw;
         }
+        finally
+        {
+            Slots.End("fix-pr:" + fixer, counting);
+        }
         state.PutPrReview(fixing with { FixerJob = job });
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
+        return $"started {fixer} at {Short(read.Head)}";
     }
 
     /// <summary>
-    /// Rebases the branch of <paramref name="pr"/> onto its base in a throwaway worktree of the clone pilot holds and pushes it
-    /// with <c>--force-with-lease</c> on the head read; a recheck of the controller's own PR (#286). Null when it is pushed; else
-    /// why not, and whether the rebase conflicted (undone, nothing pushed).
+    /// Merges the base of <paramref name="pr"/> into its branch (<c>git merge --no-edit</c>) in a throwaway worktree of the clone pilot
+    /// holds and pushes it plainly, a fast-forward of the head read; a recheck of the controller's own PR (#286). Never a rebase and
+    /// never a force push, as with a flight's branch (#395). Null when it is pushed; else why not, and whether the merge conflicted
+    /// (aborted, nothing pushed).
     /// </summary>
-    public async Task<(bool Conflicts, string Why)?> RebaseOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
+    public async Task<(bool Conflicts, string Why)?> MergeBaseIntoOwnBranchAsync(PrRef pr, PullRequest read, CancellationToken cancellationToken)
     {
         var clone = TrackedClone(pr);
         if (clone is null)
@@ -1145,7 +1468,7 @@ public sealed class PrReviews(
             return (false, "a fixer is working on its branch");
         }
         var branch = read.HeadRef;
-        var worktree = Path.Combine(clone, ".claude", "worktrees", $"rebase-{Slug(pr.Name)}-{pr.Number}");
+        var worktree = Path.Combine(clone, ".claude", "worktrees", $"update-{Slug(pr.Name)}-{pr.Number}");
         try
         {
             var fetch = await git.RunAsync(["fetch", "--quiet", "origin", read.Base, $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
@@ -1159,13 +1482,14 @@ public sealed class PrReviews(
                 return (false, $"{branch} is not at the head read from GitHub ({Short(read.Head)}), so it is left alone");
             }
             worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
-            var rebase = await git.RunAsync(["rebase", $"origin/{read.Base}"], worktree, cancellationToken);
-            if (!rebase.Ok)
+            var merge = await git.RunAsync(["merge", "--no-edit", $"origin/{read.Base}"], worktree, cancellationToken);
+            if (!merge.Ok)
             {
-                await git.RunAsync(["rebase", "--abort"], worktree, cancellationToken);
-                return (true, $"rebasing {branch} onto {read.Base} conflicts ({rebase.Why})");
+                await git.RunAsync(["merge", "--abort"], worktree, cancellationToken);
+                return (true, $"merging {read.Base} into {branch} conflicts ({merge.Why})");
             }
-            var push = await git.RunAsync(["push", $"--force-with-lease=refs/heads/{branch}:{read.Head}", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
+            // A plain push: the merge sits on the head read, so it is a fast-forward, refused if the branch moved since.
+            var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
             return push.Ok ? null : (false, $"git could not push {branch}: {push.Why}");
         }
         catch (FlightException ex)
@@ -1179,6 +1503,67 @@ public sealed class PrReviews(
     }
 
     private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+
+    /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
+    private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
+
+    /// <summary>
+    /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a
+    /// card dismissed is never raised again from the same review and head, by a recheck, a sweep or a node restart. Null when this
+    /// review raised the kind already.
+    /// </summary>
+    private CardRow? RaiseOnce(PrRef pr, PrReviewRow review, CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices = null)
+    {
+        var current = Of(pr) ?? review;
+        if (current.Raised.Contains(kind))
+        {
+            return null;
+        }
+        var card = state.RaiseCard(bin, kind, subject, title, detail, choices, link: review.Url);
+        state.PutPrReview(current with { Raised = [.. current.Raised, kind] });
+        return card;
+    }
+
+    /// <summary>
+    /// Closes the open cards of <paramref name="review"/> when the PR's head is past the commit it read, saying which: a review of a
+    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it.
+    /// </summary>
+    public bool CloseCardsPastHead(PrReviewRow review, string head)
+    {
+        if (head.Length == 0 || string.Equals(head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+        {
+            return false;
+        }
+        state.CloseCardsAbout(subject, $"the head moved past {Short(review.Head)} to {Short(head)}", ReviewCardKinds);
+        return true;
+    }
+
+    /// <summary>Reads the head only of the reviews with a card of theirs open, and closes those cards when it has moved past the reviewed commit.</summary>
+    private async Task CloseCardsOfOvertakenReviewsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
+        {
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+            {
+                continue;
+            }
+            try
+            {
+                var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+                CloseCardsPastHead(review, read.Head);
+            }
+            catch (FlightException)
+            {
+                // GitHub not answering is not a reason to close a card: the next sweep looks again.
+            }
+        }
+    }
 
     /// <summary>Ends a review: its reviewer stopped, its worktree removed, its open cards closed. A worktree held open is said on a card and tried again.</summary>
     private async Task EndAsync(PrReviewRow review, string why, CancellationToken cancellationToken)
@@ -1254,7 +1639,7 @@ public sealed class PrReviews(
     {
         try
         {
-            await workers.StopAsync(job, cancellationToken);
+            await workers.StopAsync(job, SessionEndReasons.Landed, "pr reviews", cancellationToken);
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

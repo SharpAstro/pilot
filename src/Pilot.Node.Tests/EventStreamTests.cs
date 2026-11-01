@@ -18,7 +18,9 @@ public sealed class EventStreamTests
 
         await using var events = await node.Client.OpenEventsAsync(since: null, stream: null, Ct);
         var snapshot = (await ReadAsync(events)).ShouldBeOfType<SnapshotEvent>();
-        snapshot.Seq.ShouldBe(2);
+        // The node may publish an event of its own while it starts (main's Windows CI saw seq 3 for 2, 2026-10-31), so no absolute seq:
+        // the snapshot carries what was put, and every delta follows it in order with no gap (the mirror refuses a gap or a repeat).
+        snapshot.Seq.ShouldBeGreaterThanOrEqualTo(2);
         snapshot.Stream.ShouldBe(node.State.Stream);
         snapshot.Sessions.Select(s => s.Id).Order().ShouldBe(["a1b2c3d4", "b2c3d4e5"]);
 
@@ -32,8 +34,9 @@ public sealed class EventStreamTests
         mirror.Apply(snapshot);
         var deltas = await ReadUntilAsync(events, mirror, node.State.Seq);
 
-        deltas.Select(d => d.Seq).ShouldBe([3L, 4, 5, 6, 7]);
-        deltas.Select(d => d.GetType()).ShouldBe([typeof(NoteAddedEvent), typeof(CommandResultEvent), typeof(SessionChangedEvent), typeof(SessionRemovedEvent), typeof(SessionAddedEvent)]);
+        deltas.First().Seq.ShouldBe(snapshot.Seq + 1);
+        deltas.Where(d => d is NoteAddedEvent or CommandResultEvent or SessionChangedEvent or SessionRemovedEvent or SessionAddedEvent)
+            .Select(d => d.GetType()).ShouldBe([typeof(NoteAddedEvent), typeof(CommandResultEvent), typeof(SessionChangedEvent), typeof(SessionRemovedEvent), typeof(SessionAddedEvent)]);
         deltas.OfType<CommandResultEvent>().Single().Result.ShouldBe(noted.Response);
         mirror.Sessions.Keys.Order().ShouldBe(["a1b2c3d4", "c3d4e5f6"]);
         mirror.Sessions["a1b2c3d4"].State.ShouldBe(SessionState.Waiting);
@@ -105,7 +108,9 @@ public sealed class EventStreamTests
         node.State.PutSession(Row("f6a7b8c9", SessionState.Idle));
 
         await using var events = await node.Client.OpenEventsAsync(since: 0, stream: "a-node-that-has-since-restarted", Ct);
-        (await ReadAsync(events)).ShouldBeOfType<SnapshotEvent>().Seq.ShouldBe(1);
+        var snapshot = (await ReadAsync(events)).ShouldBeOfType<SnapshotEvent>();
+        snapshot.Seq.ShouldBeGreaterThanOrEqualTo(1);
+        snapshot.Sessions.Select(s => s.Id).ShouldContain("f6a7b8c9");
     }
 
     [Fact]

@@ -46,6 +46,7 @@ public sealed class AutopilotSwitchTests
         yield return ("Pull requests", chrome.PullRequests.Tree(new PullRequestsScreen(null, "test", now)));
         yield return ("Settings", chrome.Settings.Tree(now));
         yield return ("Chat", chrome.Chat.Tree());
+        yield return ("Ideas", chrome.Ideas.Tree(IdeasScreen.Empty));
     }
 
     private static PilotChrome<RgbaImage> NewChrome(RgbaImageRenderer renderer) =>
@@ -64,13 +65,13 @@ public sealed class AutopilotSwitchTests
     {
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
 
         foreach (var on in new[] { false, true })
         {
             chrome.Autopilot.On = on;
             var pages = Pages(chrome).ToList();
-            pages.Count.ShouldBe(9);
+            pages.Count.ShouldBe(10);
             foreach (var (page, tree) in pages)
             {
                 var arranged = Arrange(tree);
@@ -100,7 +101,7 @@ public sealed class AutopilotSwitchTests
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = NewChrome(renderer);
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Autopilot.On = true;
         var sessions = new SessionsScreen(SessionLine.Order([SessionLine.From(Live.Row("aaaa0000", "worker", SessionState.Working), Live.At)]), "test", Live.At);
         var fleet = new FleetScreen([FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", autopilot: true))], Live.At);
@@ -130,7 +131,7 @@ public sealed class AutopilotSwitchTests
         using var renderer = new RgbaImageRenderer(1, 1);
         var chrome = NewChrome(renderer);
         var asked = new List<bool>();
-        chrome.Autopilot.OnToggle = asked.Add;
+        chrome.Autopilot.OnToggle = Taken.By<bool>(asked.Add);
 
         foreach (var on in new[] { false, true })
         {
@@ -140,6 +141,8 @@ public sealed class AutopilotSwitchTests
                 var arranged = Arrange(tree);
                 var found = SwitchIn(arranged);
                 CellLayout.HitTest(arranged, found.Bounds.X + 1, found.Bounds.Y);
+                // The node's own look shows the outcome: the taken mark gives way to its state.
+                chrome.Autopilot.Presses.ClearTaken(AutopilotSwitch.Action);
             }
         }
         asked.ShouldBe([true, true, true, false, false, false]);

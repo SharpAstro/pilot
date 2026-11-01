@@ -102,7 +102,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
     private static readonly HashSet<string> FlightCards =
     [
         LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind,
-        LegWatch.ReviewStalled, LegWatch.ValidationStalled, LegWatch.Stopped, LegWatch.Idle, LegWatch.OverBudget, "leg-failed", LegCommander.NextStepKind,
+        LegWatch.ReviewStalled, LegWatch.ValidationStalled, LegWatch.Stopped, LegWatch.Idle, LegWatch.OverBudget, "leg-failed", LegCommander.PushBlockedKind, LegCommander.NextStepKind,
     ];
 
     // Kinds that are the person's to decide: said as such when proposed, so a refusal is not mistaken for a check that failed.

@@ -27,6 +27,15 @@ internal static class PullRequestsMarkdown
     /// <summary>How long ago, in the unit that reads shortest: <c>just now</c>, <c>5m ago</c>, <c>3h ago</c>, <c>2d ago</c>.</summary>
     internal static string Age(DateTimeOffset? then, DateTimeOffset now) => PullRequestsRow.Age(then, now);
 
+    /// <summary>
+    /// What a row whose review asks for changes offers: a flight's PR, its open review-changes card's Fix the review's findings (the row
+    /// does not know the card's id, so it names the flight); any other PR, <c>pilot review fix</c>. Null for a row whose review passed or is not there.
+    /// </summary>
+    internal static string? Hint(PullRequestRow pr) =>
+        pr.Review != PullRequestReview.Changes ? null
+        : pr.Flight is { } code ? $"review asks for changes: answer {code}'s review-changes card with Fix the review's findings (pilot cards lists it)"
+        : $"review asks for changes: pilot review fix {pr.Repo}#{pr.Number}";
+
     private static string Review(PullRequestRow pr) => pr.Review is { } review ? $"review {review}" : "";
 
     // The row's note (the read is rate-limited), then a line for each org that could not be read.
@@ -68,6 +77,10 @@ internal static class PullRequestsMarkdown
                 {
                     var more = new[] { pr.Flight, pr.Author, Review(pr), $"updated {Age(pr.UpdatedAt, now)}" }.Where(s => !string.IsNullOrEmpty(s));
                     text.AppendLine($"      #{pr.Number} {pr.Title}  {pr.Label}  {string.Join("  ", more)}");
+                    if (Hint(pr) is { } hint)
+                    {
+                        text.AppendLine($"          -> {hint}");
+                    }
                 }
             }
         }
@@ -106,6 +119,16 @@ internal static class PullRequestsMarkdown
                     text.AppendLine($"| {Markdown.Text(pr.Label)} | {link} | {Markdown.Text(pr.Flight ?? "")} | {Markdown.Text(pr.Author ?? "")} | {review} | {Age(pr.UpdatedAt, now)} |");
                 }
                 text.AppendLine();
+                // Under the table, a bullet a PR: a line between rows would end it.
+                var hinted = group.PullRequests.Where(pr => Hint(pr) is not null).ToArray();
+                foreach (var pr in hinted)
+                {
+                    text.AppendLine($"- #{pr.Number}: {Markdown.Text(Hint(pr)!)}");
+                }
+                if (hinted.Length > 0)
+                {
+                    text.AppendLine();
+                }
             }
         }
         text.Append(NoteLine(row, Markdown.Text, "- "));

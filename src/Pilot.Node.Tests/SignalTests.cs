@@ -107,9 +107,10 @@ public sealed class SignalTests
         await watch.LookAsync(Ct);
 
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
-        (card.Bin, card.Kind, card.Detail).ShouldBe((CardBin.Ring, LegWatch.OverBudget, "1,200,000 of 1,000,000 weighted tokens; it keeps working until you choose"));
+        (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Ring, LegWatch.OverBudget, "TIA3/parser's worker has spent 1,200,000 of its 1,000,000 budget"));
+        card.Detail.ShouldNotBeNull().ShouldContain("it keeps working until you choose");
         card.Choices.Select(c => (c.Label, c.Verb, c.Args.FirstOrDefault())).ShouldBe(
-            [("Extend to 1,500,000", Verbs.ExtendBudget, "1500000"), ("Redo leg parser", Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
+            [("Let TIA3/parser's worker spend up to 1,500,000", Verbs.ExtendBudget, "1500000"), ("Start a fresh worker on parser (the last one spent 1,200,000 of a 1,000,000 budget)", Verbs.GoAround, "the last worker spent 1,200,000 of a 1,000,000 budget")]);
 
         var git = new GitCli();
         var legs = new LegCommander(_state, new FakeWorkers(), new FakeChecks(), new FakeGitHub(), git, new Planes(git), new FlightCommander(_state, new Planes(git), _time),

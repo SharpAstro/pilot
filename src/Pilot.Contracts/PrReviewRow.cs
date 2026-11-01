@@ -56,6 +56,12 @@ public sealed record PrReviewRow
     /// <summary>The card that carries the verdict; the worktree goes when it closes.</summary>
     public string? Card { get; init; }
 
+    /// <summary>
+    /// The kinds of card (design question, fix capped, fix offer, fix failed) this review has raised, open or closed since: a
+    /// review raises each once, so a dismissal is never undone from the same review and head (pilot #527).
+    /// </summary>
+    public string[] Raised { get; init => field = value ?? []; } = [];
+
     /// <summary>The review as GitHub will take it, written out when the verdict came in and again just before it is posted.</summary>
     public string? Draft { get; init; }
 

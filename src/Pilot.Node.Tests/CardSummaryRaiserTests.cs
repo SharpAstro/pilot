@@ -9,7 +9,7 @@ namespace Pilot.Node.Tests;
 public sealed class CardSummaryRaiserTests : ReviewTestsBase
 {
     [Fact]
-    public async Task AReviewThatAsksForChangesSaysWhichLegIsRedone()
+    public async Task AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone()
     {
         var flight = await NewFlight("41", "parser");
         await Fly(flight, "parser");
@@ -19,7 +19,10 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Redo leg");
+        // The findings are fixed on the leg's work as it stands: nothing is thrown away, so never "redo" (the owner, 2026-10-29).
+        card.Summary.ShouldContain("Fix the review's findings");
+        card.Summary.ShouldContain("nothing thrown away");
+        card.Summary.ShouldNotContain("Redo");
     }
 
     [Fact]
@@ -28,14 +31,14 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var card = _state.RaiseCard(CardBin.Ring, LegCommander.NoGoKind, "flight/TIA1/render", "NO-GO", "gone",
             [new CardChoice { Label = "Go anyway", Verb = Verbs.StartLeg, Target = "flight/TIA1/render" }]);
 
-        card.Summary.ShouldNotBeNull().ShouldContain("Go anyway");
-        card.Summary.ShouldContain("Remove leg");
-        card.Summary.ShouldContain("Re-plan");
+        card.Summary.ShouldNotBeNull().ShouldContain("Start the leg as the tree is");
+        card.Summary.ShouldContain("drop it");
+        card.Summary.ShouldContain("plan the flight again");
         card.Summary.ShouldNotContain("Redo leg");
     }
 
     [Fact]
-    public async Task AFailedLegSaysWhichLegGaveUp()
+    public async Task AFailedLegSaysWhichLegStopped()
     {
         var flight = await NewFlight("42", "parser");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
@@ -45,7 +48,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
         var card = Open().Single(c => c.Kind == "leg-failed");
         card.Summary.ShouldNotBeNull().ShouldContain($"{flight.Code}/parser");
-        card.Summary.ShouldContain("Redo leg");
+        card.Summary.ShouldContain("Send parser round again");
+        card.Summary.ShouldNotContain("gave up");
     }
 
     [Fact]
@@ -57,8 +61,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == LegCommander.MergeFailed);
-        card.Summary.ShouldNotBeNull().ShouldContain("Redo leg parser");
-        card.Summary.ShouldContain("Re-run checks");
+        card.Summary.ShouldNotBeNull().ShouldContain("Start a fresh worker on parser (the last one left the PR's checks failing)");
+        card.Summary.ShouldContain("Re-run the checks of TIA43's PR");
     }
 
     [Fact]
@@ -73,9 +77,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == "pr-checks-failed");
-        card.Choices.ShouldBeEmpty();
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.GoAround);
         var summary = card.Summary.ShouldNotBeNull();
-        summary.ShouldContain("could not send the last leg back");
+        summary.ShouldContain("tried to send the last leg back and could not");
         summary.ShouldNotContain("goes around");
     }
 
@@ -98,7 +102,7 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == "pr-conflicts");
-        card.Summary.ShouldNotBeNull().ShouldContain("could not be rebased by the node");
-        card.Summary.ShouldNotContain("The node could not rebase it");
+        card.Summary.ShouldNotBeNull().ShouldContain("watchtower merges the base into the plane");
+        card.Summary.ShouldNotContain("rebase");
     }
 }

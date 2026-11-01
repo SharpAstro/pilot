@@ -65,7 +65,8 @@ public static class FlightMoves
 /// <param name="Usage">The account's usage as the peer last read it; null before it has read any.</param>
 /// <param name="Flights">Every flight the peer has, landed ones included.</param>
 /// <param name="PrReviews">Every PR review the peer has, closed ones included; none when it did not say.</param>
-public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow[]? PrReviews = null);
+/// <param name="Sessions">Every session the peer tracks, which is what says whether a flight of it holds its repo; none when it did not say.</param>
+public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow[]? PrReviews = null, SessionRow[]? Sessions = null);
 
 /// <summary>Everything judging a peer takes, read of it; null where it could not be read.</summary>
 /// <param name="Name">The peer's machine prefix, or its endpoint when it was not reached.</param>
@@ -162,7 +163,7 @@ public sealed class HeldTokenFleet(string tokenFile) : IFleet
             await using var events = await client.OpenEventsAsync(since: null, stream: null, ct).ConfigureAwait(false);
             var snapshot = await events.ReadAsync(ct).ConfigureAwait(false) as SnapshotEvent
                 ?? throw new IOException($"{Endpoint}'s stream did not start with a snapshot");
-            return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews);
+            return new FleetLoad(snapshot.Usage, snapshot.Flights, snapshot.PrReviews, snapshot.Sessions);
         }, cancellationToken);
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)

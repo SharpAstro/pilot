@@ -294,8 +294,8 @@ public sealed class PrRecheckTests : IDisposable
 
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
-        card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to rebase");
-        Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to rebase: a card asks you"]);
+        card.Detail.ShouldNotBeNull().ShouldContain("not pilot's branch to update");
+        Handled().ShouldBe(["recheck of widget#7: conflicts with its base, not pilot's branch to update: a card asks you"]);
         _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
         _github.Merged.ShouldBeEmpty();
     }
@@ -329,7 +329,7 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsIsRebasedAndReviewedAfresh()
+    public async Task AReviewedPrOnTheControllersOwnBranchThatConflictsGetsItsBaseMergedInAndIsReviewedAfresh()
     {
         var (head, main) = OwnBranch(touchesReadme: false, mainEditsReadme: false);
         await ReviewedAsync();
@@ -337,18 +337,20 @@ public sealed class PrRecheckTests : IDisposable
 
         await LookAsync();
 
-        var rebased = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
-        rebased.ShouldNotBe(head);
-        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, rebased).ShouldBeEmpty();
-        Handled().ShouldBe(["recheck of widget#7: rebased onto main, review restarted"]);
+        var updated = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
+        updated.ShouldNotBe(head);
+        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", main, updated).ShouldBeEmpty();
+        // The base was merged in, not rebased onto: the head read is kept, and the push was a plain fast-forward of it.
+        PrOrigins.Git(Origin, "merge-base", "--is-ancestor", head, updated).ShouldBeEmpty();
+        Handled().ShouldBe(["recheck of widget#7: main merged in, review restarted"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
         Review().ShouldNotBeNull().State.ShouldBe(PrReviewState.Reviewing);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrRecheck.ConflictKind);
-        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "rebase-widget-7")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(WidgetClone, ".claude", "worktrees", "update-widget-7")).ShouldBeFalse();
     }
 
     [Fact]
-    public async Task AReviewedPrOnTheControllersOwnBranchWhoseRebaseConflictsGetsTheCardAndTheConflictsLabel()
+    public async Task AReviewedPrOnTheControllersOwnBranchWhoseBaseMergeConflictsGetsTheCardAndTheConflictsLabel()
     {
         var (head, _) = OwnBranch(touchesReadme: true, mainEditsReadme: true);
         await ReviewedAsync();
@@ -360,7 +362,7 @@ public sealed class PrRecheckTests : IDisposable
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.ConflictKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "pr/acme/widget#7"));
         card.Detail.ShouldNotBeNull().ShouldContain("conflicts");
-        Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, not rebased (rebasing feature/seven onto main conflicts");
+        Handled().ShouldHaveSingleItem().ShouldStartWith("recheck of widget#7: conflicts with its base, its base not merged in (merging main into feature/seven conflicts");
         _github.Labels[7].ShouldBe([PilotMarks.Conflicts]);
     }
 
@@ -416,6 +418,80 @@ public sealed class PrRecheckTests : IDisposable
     [Fact]
     public async Task ARecheckStartsNoFixerOnSomeoneElsesPrUntilFixItIsChosen() =>
         await NoFixerAsync(r => r, "it is ada's PR, and Fix it has not been chosen", login: "grace");
+
+    private CardRow[] NoFixerCards(bool openOnly = false) => [.. _state.Cards(openOnly: openOnly).Where(c => c.Kind == PrReviews.NoFixerKind)];
+
+    private static PrReviewRow AsksDesign(PrReviewRow r) =>
+        r with { Findings = [new PrFinding { Path = "README.md", Line = 1, Body = "design: is this wanted?", Inline = false }] };
+
+    [Fact]
+    public async Task ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves()
+    {
+        await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
+
+        var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Kind.ShouldBe(PrReviews.NoFixerKind);
+        ring.Detail.ShouldNotBeNull().ShouldContain("design: is this wanted?");
+        ring.Detail.ShouldContain("the author's to decide");
+
+        // A sweep, and the same recheck again, leave it open and add no second.
+        await _reviews.SweepAsync(Ct);
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        NoFixerCards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ring.Id);
+
+        // Dismissed, the label put back: a recheck, a sweep and another recheck raise nothing again.
+        _state.CloseCard(ring.Id, "dismissed", "controller");
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        await _reviews.SweepAsync(Ct);
+        _github.Labels[7] = [PilotMarks.Recheck];
+        await LookAsync();
+        NoFixerCards().ShouldHaveSingleItem().Outcome.ShouldBe("dismissed");
+
+        // Nothing the node closed on its own says a bare "handled" (the Handled lines are born closed, as records).
+        _state.Cards().Where(c => c.Bin != CardBin.Handled && c.State == CardState.Closed && c.ClosedBy == "node")
+            .ShouldNotContain(c => c.Outcome == "handled");
+    }
+
+    [Fact]
+    public async Task TheNoFixerRingClosesNamingTheHeadThatMovedPastIt()
+    {
+        await NoFixerAsync(AsksDesign, "its review asks a question of design, which is the author's to decide");
+        var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "a later push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        _github.Labels[7] = [PilotMarks.Recheck];
+
+        await LookAsync();
+
+        var closed = NoFixerCards().ShouldHaveSingleItem();
+        closed.Id.ShouldBe(ring.Id);
+        (closed.State, closed.ClosedBy).ShouldBe((CardState.Closed, "node"));
+        closed.Outcome.ShouldNotBeNull().ShouldContain("the head moved past");
+        closed.Outcome.ShouldContain(Short(moved));
+    }
+
+    [Fact]
+    public async Task TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep()
+    {
+        _github.Login = "ada";
+        await ReviewedAsync("changes");
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        Review()!.Fixer.ShouldNotBeNull();
+
+        // The fixer pushed, and the review of the pushed head cannot start.
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        _workers.Fail = new FlightException("claude would not start");
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.PushedUnreviewedKind);
+    }
 
     [Fact]
     public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
@@ -483,7 +559,7 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task AFlightsPrBehindItsBaseIsRebasedAndItsReviewRestarted()
+    public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
         MainMoves();
@@ -494,16 +570,18 @@ public sealed class PrRecheckTests : IDisposable
         var now = _state.Flights().Single();
         PrOrigins.Git(now.Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         var review = now.Review.ShouldNotBeNull();
-        review.State.ShouldBe(ReviewState.Reviewing);
+        // Only a clean merge of the base moved the head: the pass goes with it.
+        review.State.ShouldBe(ReviewState.Passed);
         var read = review.ReviewedHead.ShouldNotBeNull();
         read.ShouldNotBe(flight.Review!.ReviewedHead);
-        Handled().ShouldBe([$"recheck of widget#7: rebased onto main, review restarted at {Short(read)}"]);
-        _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
+        read.ShouldBe(PrOrigins.Git(now.Worktree, "rev-parse", "HEAD").Trim());
+        Handled().ShouldBe([$"recheck of widget#7: brought up to date with main, its review carried over to {Short(read)}"]);
+        _github.Labels[7].ShouldBe([PilotMarks.Passed]);
         _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task AFlightsPrWhoseRebaseConflictsIsSentBackAsChangesAndTheHandledLineSaysSo()
+    public async Task AFlightsPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndTheHandledLineSaysSo()
     {
         await PassedFlightAsync(readme: "theirs\n");
         MainMoves("README.md", "ours\n");
@@ -511,13 +589,14 @@ public sealed class PrRecheckTests : IDisposable
 
         await LookAsync();
 
-        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        // No go-around: the review stays passed and the watchtower is told by a ring card.
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         var said = Handled().ShouldHaveSingleItem();
-        said.ShouldStartWith("recheck of widget#7: rebasing ");
+        said.ShouldStartWith("recheck of widget#7: merging ");
         said.ShouldContain("conflicts");
-        said.ShouldContain("sent back as changes");
-        _github.Labels[7].ShouldBe([PilotMarks.Changes]);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+        said.ShouldContain("the watchtower is told");
+        _state.Legs(_state.Flights().Single().Code).ShouldAllBe(l => l.GoArounds == 0);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrConflictsKind && c.Bin == CardBin.Ring);
     }
 
     [Fact]
@@ -687,6 +766,8 @@ public sealed class PrRecheckTests : IDisposable
         var time = new ManualClock(DateTimeOffset.Parse("2026-10-31T12:00:00Z"));
         var github = new FakeGitHub();
         github.PullRequestsOnGitHub.AddRange(WatchRead());
+        // The watch reads only the repos pilot works in: this clone says it does with a PILOT.md.
+        File.WriteAllText(Path.Combine(WidgetClone, RepoCatalog.MarkerFile), "rules");
         var catalogOptions = new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);
         var catalog = new RepoCatalog(_state, catalogOptions);
         var watch = new PullRequestWatch(_state, catalog, github, time) { Interval = TimeSpan.FromMinutes(1), Idle = () => TimeSpan.FromMinutes(15) };

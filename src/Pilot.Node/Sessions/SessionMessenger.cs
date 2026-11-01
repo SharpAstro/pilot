@@ -21,7 +21,7 @@ namespace Pilot.Node.Sessions;
 /// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's log: who, the target, the way and the
 /// outcome, with how long it took.
 /// </remarks>
-public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log)
+public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null, SessionLedger? ledger = null)
 {
     // One say at a time per row: a second resume of a session mid-resume would continue the old id twice.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
@@ -35,15 +35,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>The command a compaction resumes a session with: Claude Code's own, its words what the summary keeps.</summary>
     public static string CompactPrompt(string focus) => focus.Length == 0 ? "/compact" : $"/compact {focus}";
 
+    /// <summary>How a message another node's watchtower passed on begins, its node's name following.</summary>
+    public const string FromWatchtowerPrefix = "[From the watchtower of node ";
+
     private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
         string? way = null;
         string? sessionId = null;
+        string? route = null;
         string? error;
         try
         {
-            (way, sessionId) = await DeliverAsync(command, compact, cancellationToken);
+            (way, sessionId, route) = await DeliverAsync(command, compact, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -57,13 +61,34 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
         var result = state.Complete(command, error, way, sessionId);
         var outcome = error is null ? "delivered" + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
-        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
     }
 
     /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
-    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken)
+    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null) =>
+        await StopCoreAsync(command, cancellationToken, reason, cancelJobs: false);
+
+    /// <summary>Cancels the queued and running jobs a session owns, by its row ids and who asked; set by the node. Null: none are cancelled.</summary>
+    public Func<IReadOnlyCollection<string>, string, int>? CancelJobs { get; init; }
+
+    /// <summary>
+    /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c>: <see cref="StopAsync"/> with a reason that is required, the session's jobs cancelled,
+    /// and the reason (with who asked) kept in the ledger.
+    /// </summary>
+    public async Task<CommandResult> EndAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        if (why.Length == 0)
+        {
+            return state.Complete(command, "end-session needs a reason: pilot session end <id> <why>");
+        }
+        var by = command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
+        return await StopCoreAsync(command, cancellationToken, $"{by}: {why}", cancelJobs: true);
+    }
+
+    private async Task<CommandResult> StopCoreAsync(CommandRequest command, CancellationToken cancellationToken, string? reason, bool cancelJobs)
     {
         var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : null;
         if (id is null || state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row)
@@ -78,6 +103,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} has {row.State.ToString().ToLowerInvariant()} already");
         }
+        // A stop from the watchtower's own session is the watchtower's; any other is a person's.
+        reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         try
         {
             await delivery.StopAsync(row.SessionId, cancellationToken);
@@ -86,12 +113,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
         }
+        string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
+        ledger?.Stopped(ids, reason, command.Who);
+        var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
-        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped");
+        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
         return state.Complete(command, null);
     }
 
-    private async Task<(string? Way, string? SessionId)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
+    private async Task<(string? Way, string? SessionId, string? Route)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
@@ -113,6 +143,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // take them for the node's and not a person's (NodeVoice).
             text = NodeVoice.Prefix + text;
         }
+        else if (FromAnotherWatchtower(command) is { } node)
+        {
+            // Another node's watchtower passing work on (fleet chat): marked with its node, so this one reports back with
+            // `tell --node` and does not take the words for the person's.
+            text = $"{FromWatchtowerPrefix}{node}] {text}";
+        }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
@@ -123,6 +159,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             await tracker.PollAsync(cancellationToken);
             var rows = state.Sessions();
             var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            if (command.Who == Flights.LegWatch.Who && ReplacedBy(row, rows) is { } newer)
+            {
+                // The node's own words go to a role's current session only (#542): this one was replaced, and resuming it would
+                // bring back a conversation nobody is meant to be having.
+                throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {newer.Id}, the current session of its role; the node does not wake a replaced session");
+            }
             if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
             {
                 throw new SessionDeliveryException(row.Kind == SessionKind.Background
@@ -133,17 +175,36 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             switch (Choose(row))
             {
                 case SayWays.Resumed:
-                    return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken));
+                    var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
+                    return (SayWays.Resumed, resumedAs, null);
                 default:
                     RefuseAmbiguous(row, rows);
-                    await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who)), cancellationToken);
-                    return (SayWays.Relayed, null);
+                    var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId), cancellationToken);
+                    return (SayWays.Relayed, null, route);
             }
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// The node whose watchtower sent <paramref name="command"/> over the LAN under its grant, else null. The node is named by
+    /// the watchtower's own session name (<c>de1-watchtower</c> after the grant's <c>/</c>), which is the prefix <c>--node</c>
+    /// resolves; the grant's label (<c>user@machine</c> by default) is no node's name, so it is only the fallback.
+    /// </summary>
+    internal static string? FromAnotherWatchtower(CommandRequest command)
+    {
+        if (command.Grant is not { Length: > 0 } grant || !command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var session = command.Who[(command.Who.LastIndexOf('/') + 1)..];
+        var node = session[..^"-watchtower".Length].ToUpperInvariant();
+        return node.Length > 0 ? node : grant;
     }
 
     /// <summary>
@@ -160,6 +221,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// </summary>
     public static string? ReplyTo(SessionRow[] rows, SessionRow recipient, string? who) =>
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
+
+    /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
+    internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows) =>
+        row.Kind != SessionKind.Background ? null
+        : rows.Where(r => r.Id != row.Id && r.Kind == SessionKind.Background && r.Name == row.Name && r.Role == row.Role && r.StartedAt > row.StartedAt
+                && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                && r.EarlierSessionIds?.Contains(row.SessionId) != true && row.EarlierSessionIds?.Contains(r.SessionId) != true)
+            .OrderByDescending(r => r.StartedAt).FirstOrDefault();
 
     /// <summary>The way to <paramref name="row"/>, or why there is none.</summary>
     public static string Choose(SessionRow row) => (row.Kind, row.State) switch
@@ -198,7 +267,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             {
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
-            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, tracker.ListedName(row), row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null), cancellationToken);
+            var listedName = tracker.ListedName(row);
+            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file.
+            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id);
+            // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
+            // earlier ids) and else by its name, which a compaction keeps too.
+            var recorded = onFile ? null : starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
+                StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

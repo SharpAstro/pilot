@@ -110,7 +110,13 @@ internal sealed record FleetLine
     /// <summary>The mark's words, which stay text beside the wrench.</summary>
     public const string MaintenanceWord = "maintenance";
 
-    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>); <c>—</c> for a node not reached, null for one that keeps none.</summary>
+    /// <summary>The node's own network use in its last full hour (<see cref="TrafficWords"/>); null for a node that does not say, or one never reached.</summary>
+    public string? Traffic { get; init; }
+
+    /// <summary><see cref="Traffic"/> as the two lines the machine cell draws (the node's HTTP, then its git and gh children), each short enough for the column; empty without traffic.</summary>
+    public string[] TrafficLines => Traffic?.Split(" · ") ?? [];
+
+    /// <summary>The node's watchtower in words (<see cref="Pilot.Commands.WatchtowerWords.Line"/>);<c>—</c> for a node not reached, null for one that keeps none.</summary>
     public string? Watchtower { get; init; }
 
     /// <summary>Whether the node's watchtower keeps ending (<see cref="WatchtowerHealth.Churning"/>); false for a node not reached.</summary>
@@ -155,7 +161,16 @@ internal sealed record FleetLine
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
-        + (WatchtowerSummary is { } summary ? " | " + summary : "");
+        + (WatchtowerSummary is { } summary ? " | " + summary : "")
+        + (Traffic is { } traffic ? " | " + traffic : "");
+
+    /// <summary>The traffic row in words: the node's HTTP is exact, what its git and gh children moved is an upper estimate (unknown off Windows).</summary>
+    public static string TrafficWords(NodeTrafficRow row)
+    {
+        static string Mb(long bytes) => (bytes / 1_000_000d).ToString(bytes < 10_000_000 ? "0.0" : "0", System.Globalization.CultureInfo.InvariantCulture);
+        var children = row.ChildBytes is { } moved ? $"up to {Mb(moved)} MB/h (est.)" : "unknown";
+        return $"node http {Mb(row.HttpIn)}/{Mb(row.HttpOut)} MB/h (in/out) · git+gh {children}";
+    }
 
     public static FleetLine From(string where, bool here, bool canCommand, string? announcedAs, NodeSummary summary, DateTimeOffset? now = null)
     {
@@ -183,6 +198,7 @@ internal sealed record FleetLine
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
+            Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
@@ -255,8 +271,8 @@ internal sealed class FleetWatch : IAsyncDisposable
     }
 
     /// <summary>Every page's screen for the fleet: each node's rows merged and marked, filtered by <paramref name="filter"/>.</summary>
-    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now, bool reposWanted = false) =>
-        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now, reposWanted);
+    public FleetPages Pages(string hereWhere, NodeFeed here, NodeFilter filter, DateTimeOffset now) =>
+        FleetPages.Merge(Feeds(hereWhere, here, now), filter, now);
 
     private string? _page;
 
@@ -401,7 +417,38 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Action<FleetLine>? OnOpen { get; set; }
 
     /// <summary>Asks the node at that address for a grant to command it, as <c>pilot connect</c> does.</summary>
-    public Action<FleetLine>? OnConnect { get; set; }
+    public Func<FleetLine, Task<string?>>? OnConnect { get; set; }
+
+    /// <summary>
+    /// What a press of a row's button is doing, by the row's address: working with the node (the row's buttons read their working
+    /// word, dimmed, no second press), taken, or refused in the node's words beside the buttons.
+    /// </summary>
+    internal Presses Presses { get; } = new();
+
+    /// <summary>Called when a press changed what the page shows, from whichever thread: the host redraws.</summary>
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
+
+    // A row's press through the helper: the button reads its working word at once and the node's refusal is said beside the row's
+    // buttons; the host says the outcome in <see cref="Said"/>, as it always did.
+    private void Press(FleetLine line, string kind, Func<FleetLine, Task<string?>> send)
+    {
+        _ = PressedAsync();
+
+        async Task PressedAsync()
+        {
+            await Presses.PressAsync(line.Where, $"fleet:{line.Where}:{kind}", _ => send(line));
+        }
+    }
+
+    // A button of a row that asks the node: its working word while any press of the row is with the node (the others dimmed, no hit).
+    private Layout.Node NodeButton(FleetLine line, string label, string kind, string working, Action onClick)
+    {
+        var hit = $"fleet:{line.Where}:{kind}";
+        return Presses.Button(line.Where, hit, () => Pill(label, hit, onClick), pressed => CardsView<TSurface>.Dead(pressed ? working : label));
+    }
+
+    /// <summary>Opens the Chat page on a reached node's own watchtower (this node's row: the fleet chat). Null leaves the row without the button.</summary>
+    public Action<FleetLine>? OnChat { get; set; }
 
     /// <summary>
     /// Takes a row's "N waiting on you" to those sessions (the Sessions page, filtered to that node); null (the default)
@@ -413,13 +460,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// Lets go of a node held in the grants and never reached: the host drops its token and stops watching it, as the
     /// Settings page's Forget does; null (the default) shows no such button.
     /// </summary>
-    public Action<FleetLine>? OnForget { get; set; }
+    public Func<FleetLine, Task<string?>>? OnForget { get; set; }
 
     /// <summary>
     /// Turns maintenance on (true) or off (false) on that row's node, as <c>set node maintenance on|off</c> does: offered on
     /// this window's node and on a node this user holds a grant for, and only while it answers. Null (the default) shows no such button.
     /// </summary>
-    public Action<FleetLine, bool>? OnMaintenance { get; set; }
+    public Func<FleetLine, bool, Task<string?>>? OnMaintenance { get; set; }
 
     /// <summary>What the last Open, Connect, Forget or Maintenance said, under the header.</summary>
     public string? Said { get; set; }
@@ -439,6 +486,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The selected node's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(FleetScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -455,6 +511,14 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (Nodes is { All: false } nodes)
         {
             screen = screen with { Lines = [.. screen.Lines.Where(l => nodes.Picked.Contains(l.Where))] };
+        }
+        // A clicked title's order; the node selected before it is found again by where it is reached, wherever the sort puts it.
+        var kept = Table.Sort is not null && _shown.Count > 0 && Selected >= 0 && Selected < _shown.Count ? _shown[Selected] : null;
+        screen = screen with { Lines = Table.Order(screen.Lines, _ => "", SortKeys) };
+        _shown = [.. screen.Lines.Select(l => l.Where)];
+        if (kept is not null && screen.Lines.ToList().FindIndex(l => l.Where == kept) is >= 0 and var moved)
+        {
+            ListCursor.Open(ListId, moved, screen.Lines.Count);
         }
         if (screen.Lines.Count == 0)
         {
@@ -475,8 +539,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
+        page = WithSelection(page);
         return About?.Over(page) ?? page;
     }
+
+    /// <summary>Where each node the last frame showed is reached, in the order it showed them (the clicked sort's).</summary>
+    internal IReadOnlyList<string> Shown => _shown;
+
+    // Where each row of the last frame is reached, in the order it showed them: what the selection follows through a sort.
+    private IReadOnlyList<string> _shown = [];
 
     // The node whose row is to be selected the next time the page is built (the panel's held line asked for it), by where it is reached.
     private string? _wanted;
@@ -513,13 +584,40 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     private static readonly IReadOnlyList<ListColumn> Columns =
     [
-        ListColumn.Fixed("Node", MachineWidth, MachineMin),
-        ListColumn.Fixed("Account and usage", AccountWidth),
-        ListColumn.Fixed("Sessions", SessionsWidth),
-        ListColumn.Optional("Flights and jobs", WorkWidth),
-        ListColumn.Fixed("Rings", RingsWidth, RingsMin),
+        Sorted(ListColumn.Fixed("Node", MachineWidth, MachineMin)),
+        Sorted(ListColumn.Fixed("Account and usage", AccountWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Sessions", SessionsWidth), descendingFirst: true),
+        Sorted(ListColumn.Optional("Flights and jobs", WorkWidth), descendingFirst: true),
+        Sorted(ListColumn.Fixed("Rings", RingsWidth, RingsMin), descendingFirst: true),
         ListColumn.Fixed("", ButtonsWidth, ButtonsMin),
     ];
+
+    // A column that sorts by a click on its title, as its squeezed form does.
+    private static ListColumn Sorted(ListColumn column, bool descendingFirst = false) =>
+        column with
+        {
+            Sortable = true,
+            DescendingFirst = descendingFirst,
+            Squeezed = column.Squeezed is { } squeezed ? Sorted(squeezed, descendingFirst) : null,
+        };
+
+    // The first number a count is worded with (<c>3 live · 1 waiting on you</c>); a dash or none is below every count.
+    private static int Lead(string words) =>
+        System.Text.RegularExpressions.Regex.Match(words, @"\d+") is { Success: true } m && int.TryParse(m.Value, out var n) ? n : -1;
+
+    // The biggest percentage the usage line states (the window nearest its limit); a node with no usage line sorts below the rest.
+    private static double Used(string usage) =>
+        System.Text.RegularExpressions.Regex.Matches(usage, @"(\d+(?:\.\d+)?)\s*%").Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).DefaultIfEmpty(-1d).Max();
+
+    // What each column sorts by: the figures as numbers, not as the words they are drawn in; the buttons column has none.
+    private static readonly IReadOnlyDictionary<string, Func<FleetLine, object?>> SortKeys = new Dictionary<string, Func<FleetLine, object?>>(StringComparer.Ordinal)
+    {
+        ["Node"] = l => l.Machine,
+        ["Account and usage"] = l => (Used(l.Usage), l.Account),
+        ["Sessions"] = l => (Lead(l.Sessions), l.WaitingOnYou),
+        ["Flights and jobs"] = l => (Lead(l.Flights), Lead(l.Jobs)),
+        ["Rings"] = l => l.Rings,
+    };
 
     // The columns as the page can hold them (ListTable.Fit).
     private IReadOnlyList<ListColumn> FitColumns => Table.Fit(Columns);
@@ -530,6 +628,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         (line.WatchtowerSummary is null ? RowHeight : SummaryRowHeight)
         + (line.Connected ? 0f : 16f)
         + (line.StateLines.Length > 1 ? 16f : 0f)
+        + line.TrafficLines.Length * 16f
         + LastKnownUsageHeight(line);
 
     private Layout.Node Row(FleetLine line, int index)
@@ -541,52 +640,62 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Open in its own window stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             buttons.Add(Pill("Open in its own window", $"fleet:{line.Where}:open", () => open(line)));
         }
+        if (line.Connected && line.Watchtower is { } tower && tower != "—" && OnChat is { } chat)
+        {
+            buttons.Add(Pill("Watchtower", $"fleet:{line.Where}:chat", () => chat(line)));
+        }
         if (!line.CanCommand && OnConnect is { } connect)
         {
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Pill("Connect", $"fleet:{line.Where}:connect", () => connect(line)));
+            buttons.Add(NodeButton(line, "Connect", "connect", "asking…", () => Press(line, "connect", connect)));
         }
         if (line.CanForget && OnForget is { } forget)
         {
-            buttons.Add(Pill("Forget", $"fleet:{line.Where}:forget", () => forget(line)));
+            buttons.Add(NodeButton(line, "Forget", "forget", "forgetting…", () => Press(line, "forget", forget)));
         }
         if (line.CanSetMaintenance && OnMaintenance is { } maintenance)
         {
             // The row's menu item: it names what it does, so a node in maintenance offers to end it.
-            buttons.Add(Pill(line.Maintenance ? "Take out of maintenance" : "Put into maintenance", $"fleet:{line.Where}:maintenance", () => maintenance(line, !line.Maintenance)));
+            var leaving = line.Maintenance;
+            buttons.Add(NodeButton(line, leaving ? "Take out of maintenance" : "Put into maintenance", "maintenance", leaving ? "taking out…" : "putting into maintenance…",
+                () => Press(line, "maintenance", l => maintenance(l, !leaving))));
         }
         var where = line.Here ? $"{line.Where} · this window" : line.CanCommand ? line.Where : $"{line.Where} · watch only";
         var rings = line.Rings == 0 ? "—" : $"{line.Rings} ringing";
         var cells = new List<Layout.Node>
         {
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Whole(line.Machine).RowH(22f),
-                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f)),
+                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Selectable().Whole(line.Machine).RowH(22f),
+                Layout.Builder.Text(where, 11f, Dim).Selectable().Whole(where).RowH(18f),
+                Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
+                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Whole(line.Account).RowH(22f),
+                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Selectable().Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
-                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).WFixed(MarkIconWidth),
-                                Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
-                            .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
-                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
-                            Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).WStar()]).WithGap(MarkGap).RowH(18f)
-                    : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).RowH(18f),
+                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).Selectable().WFixed(MarkIconWidth),
+                                Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).Selectable().WAuto()).WAuto()] : (Layout.Node[])[]),
+                            .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).Selectable().WAuto()] : (Layout.Node[])[]),
+                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).Selectable().WAuto()] : (Layout.Node[])[]),
+                            Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().WStar()]).WithGap(MarkGap).RowH(18f)
+                    : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().RowH(18f),
                 // An unreachable node's last known usage and its status (when last heard, why) each have a line of their own, so they read in full.
-                Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).RowH(LastKnownUsageHeight(line)),
-                Layout.Builder.Text(line.Connected ? "" : line.StateLines[0], 11f, Dim).RowH(line.Connected ? 0f : 16f),
-                Layout.Builder.Text(line.StateLines.Length > 1 ? line.StateLines[1] : "", 11f, Dim).RowH(line.StateLines.Length > 1 ? 16f : 0f),
+                Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).Selectable().RowH(LastKnownUsageHeight(line)),
+                Layout.Builder.Text(line.Connected ? "" : line.StateLines[0], 11f, Dim).Selectable().RowH(line.Connected ? 0f : 16f),
+                Layout.Builder.Text(line.StateLines.Length > 1 ? line.StateLines[1] : "", 11f, Dim).Selectable().RowH(line.StateLines.Length > 1 ? 16f : 0f),
                 // Its own line, so a narrow column clips this one and not the marks above.
-                Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),
+                Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).Selectable().RowH(16f),
                 // A churning one says why, on a line of its own under the words.
-                Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).RowH(line.WatchtowerSummary is null ? 0f : 16f)),
+                Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).Selectable().RowH(line.WatchtowerSummary is null ? 0f : 16f)),
             SessionsCell(line),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).RowH(22f),
-                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).RowH(18f)),
-            ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Whole(rings)),
-            Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
+                Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).Selectable().RowH(22f),
+                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).Selectable().RowH(18f)),
+            ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Selectable().Whole(rings)),
+            Layout.Builder.VStack(
+                Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
+                Presses.RefusalLine(line.Where, 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f)),
         };
         var row = Table.Row(FitColumns, Layout.Builder.Spacer().Bg(line.Connected ? Live : Away), cells)
             .RowH(RowHeightOf(line))
@@ -603,7 +712,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var split = line.Sessions.IndexOf(" · ", StringComparison.Ordinal);
         if (line.WaitingOnYou <= 0 || OnWaiting is not { } onWaiting || split < 0)
         {
-            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, line.LastKnown ? Dim : waiting ? Ringing : Body));
+            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, line.LastKnown ? Dim : waiting ? Ringing : Body).Selectable());
         }
         return ListTable.Top(Layout.Builder.HStack(
                 Layout.Builder.Text(line.Sessions[..split] + " ·", 13f, Body).WAuto(),
@@ -639,11 +748,19 @@ internal static class FleetCommands
     /// <c>set node maintenance on|off</c> on <paramref name="line"/>'s node, through the client its grant gives (this window's
     /// own for its node); what became of it in a line, or the watch-only hint for a node this user holds no grant for.
     /// </summary>
-    public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)
+    public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken) =>
+        (await TrySetMaintenanceAsync(clients, line, on, who, cancellationToken)).Said;
+
+    /// <summary>As <see cref="SetMaintenanceAsync"/>, and the node's refusal in its words (null when it took it), for the row's button to say where it was pressed.</summary>
+    public static async Task<(string? Refused, string Said)> TrySetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)
     {
         var node = new NodeMark(line.Where, line.Where, line.Machine, line.Here);
-        return clients.For(node) is { } client
-            ? $"{line.Machine}: {(await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken)).Line}"
-            : FleetClients.WatchOnly(node);
+        if (clients.For(node) is not { } client)
+        {
+            var hint = FleetClients.WatchOnly(node);
+            return (hint, hint);
+        }
+        var reply = await SettingsCommands.SendAsync(client, Verbs.Set, ["maintenance", on ? "on" : "off"], who, cancellationToken);
+        return (reply.Kind == ReplyKind.Done ? null : reply.Line, $"{line.Machine}: {reply.Line}");
     }
 }

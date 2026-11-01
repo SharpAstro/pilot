@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Pilot.Commands;
 using Pilot.Contracts;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -89,11 +90,11 @@ public sealed class LanTests
         (await remote.AskGrantAsync("se3-gui", Ct)).Error.ShouldNotBeNull().ShouldContain("Another ask is waiting");
         var card = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Ring, NodeLan.AskedKind, "se2-gui asks to fly flights on this node"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Allow", "Deny"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Allow se2-gui to run commands here until revoked", "Refuse se2-gui"]);
         (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!.Token.ShouldBeNull();
 
         // This machine's person allows it; the token comes back once.
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var allowed = (await remote.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull();
         (allowed.Outcome, allowed.Token).ShouldSatisfyAllConditions(t => t.Outcome.ShouldBe("accepted"), t => t.Token.ShouldNotBeNullOrEmpty());
         (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!.Token.ShouldBeNull();
@@ -130,7 +131,7 @@ public sealed class LanTests
         var ticket = (await remote.AskGrantAsync("se2-gui", Ct)).Response!;
         var card = node.State.Cards(openOnly: true).Single();
 
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Deny"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[1].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
 
         var read = (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!;
         (read.Outcome, read.Token).ShouldBe(("declined", (string?)null));
@@ -165,12 +166,99 @@ public sealed class LanTests
                 card = node.State.Cards(openOnly: true).FirstOrDefault(c => c.Kind == NodeLan.AskedKind);
             }
             card.ShouldNotBeNull().Title.ShouldStartWith("se2-cli asks");
-            await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct);
+            await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct);
             (await connecting).ShouldBe(0);
             NodeTargets.TokenFor($"127.0.0.1:{port}", tokens).ShouldNotBeNullOrEmpty();
 
             (await Pilot("note", "hi")).Exit.ShouldBe(0);
             node.State.Snapshot().Notes.Single().Who.ShouldStartWith("se2-cli/");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
+        }
+    }
+
+    private static async Task<NodeClient> GrantedAsync(NodeHarness node, int port, string label) =>
+        NodeClient.Remote($"127.0.0.1:{port}", await GrantTokenAsync(node, port, label));
+
+    private static async Task<string> GrantTokenAsync(NodeHarness node, int port, string label)
+    {
+        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
+        var ticket = (await asking.AskGrantAsync(label, Ct)).Response.ShouldNotBeNull();
+        var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
+        token.ShouldNotBeNullOrEmpty();
+        return token!;
+    }
+
+    private static async Task WatchtowerRowAsync(NodeHarness node, string name, string sessionId = AgentRows.SessionA)
+    {
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(sessionId, 4242, name, status: "busy"));
+        for (var i = 0; i < 100 && !node.State.Sessions().Any(s => s.Name == name); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        node.State.Sessions().Single(s => s.Name == name);
+    }
+
+    [Fact]
+    public async Task ATellFromAnotherNodesWatchtowerArrivesMarkedAsItsAndIsNotThePersonsAndTheTellBackIsMarkedAsTheSeconds()
+    {
+        var (portA, portB) = (FreePort(), FreePort());
+        await using var a = await NodeHarness.StartAsync(Ct, lanPort: portA);
+        await using var b = await NodeHarness.StartAsync(Ct, lanPort: portB);
+        var name = $"{a.Options.Machine.ToLowerInvariant()}-watchtower";
+        await WatchtowerRowAsync(a, name);
+        await WatchtowerRowAsync(b, name);
+        // Grants carry the label `pilot connect` defaults to, user@machine, which is no node's name: the marker names the
+        // node from the sending watchtower's own session name.
+        using var toB = await GrantedAsync(b, portB, "someone@de1-host");
+        using var toA = await GrantedAsync(a, portA, "someone@se1-host");
+
+        // DE1's watchtower asks SE1's: it arrives marked with the sending node.
+        (await toB.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["how is PIL411?"], Who = "de1-watchtower" }, Ct)).Success.ShouldBeTrue();
+        var told = b.Delivery.Relays.ShouldHaveSingleItem();
+        told.Text.ShouldStartWith("[From the watchtower of node DE1] ");
+        told.Text.ShouldContain("how is PIL411?");
+
+        // SE1's watchtower tells back through its grant on DE1: marked as from the second.
+        (await toA.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["PIL411 is at review"], Who = "se1-watchtower" }, Ct)).Success.ShouldBeTrue();
+        a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
+    }
+
+    [Fact]
+    public async Task AWatchtowersTellThroughTheCliOverNodeIsNamedByThisMachinesNodeSoItArrivesMarked()
+    {
+        var (portA, portB) = (FreePort(), FreePort());
+        await using var a = await NodeHarness.StartAsync(Ct, lanPort: portA, machine: "DE1");
+        await using var b = await NodeHarness.StartAsync(Ct, lanPort: portB, machine: "SE1");
+        await WatchtowerRowAsync(a, "de1-watchtower", AgentRows.SessionA);
+        await WatchtowerRowAsync(b, "se1-watchtower", AgentRows.SessionB);
+        var tokens = Path.Combine(a.Options.DataFolder, "client-grants.json");
+        NodeTargets.Save($"127.0.0.1:{portB}", await GrantTokenAsync(b, portB, "someone@de1-host"), tokens);
+        NodeTargets.Save($"127.0.0.1:{portA}", await GrantTokenAsync(a, portA, "someone@se1-host"), tokens);
+        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
+        try
+        {
+            // The watchtower's own CLI: --node is the other node, --node-socket this machine's, where the session runs.
+            async Task Tell(NodeHarness from, int to, string sessionId, string words)
+            {
+                var output = new StringWriter();
+                var exit = await PilotCommand.RunAsync(["--node", $"127.0.0.1:{to}", "--node-socket", from.SocketPath, "tell", words], Path.GetTempPath(), output, output, Ct, agent: true, sessionId: sessionId);
+                exit.ShouldBe(0, output.ToString());
+            }
+
+            // DE1's watchtower asks SE1's: SE1's node has no session of that id, so DE1's node names it.
+            await Tell(a, portB, AgentRows.SessionA, "how is PIL411?");
+            var told = b.Delivery.Relays.ShouldHaveSingleItem();
+            told.Text.ShouldStartWith("[From the watchtower of node DE1] ");
+            told.Text.ShouldContain("how is PIL411?");
+
+            // SE1's watchtower tells back the same way: marked as SE1's.
+            await Tell(b, portA, AgentRows.SessionB, "PIL411 is at review");
+            a.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldStartWith("[From the watchtower of node SE1] ");
         }
         finally
         {

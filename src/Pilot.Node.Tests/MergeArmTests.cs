@@ -69,7 +69,8 @@ public sealed class MergeArmTests
         card.State.ShouldBe(CardState.Open);
         card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
         card.Detail.ShouldNotBeNull().ShouldStartWith("merging when checks pass: 1 of 3 done");
-        card.Title.ShouldContain("merges when its checks pass");
+        // The node waits (GitHub has no auto-merge set here), and the card says so rather than that it is armed.
+        card.Title.ShouldContain("waits for its checks, then the node queues it");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ready.Id);
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
@@ -110,7 +111,7 @@ public sealed class MergeArmTests
         card.Title.ShouldContain("build (linux)");
         card.Detail.ShouldNotBeNull().ShouldContain("build (linux) failed");
         card.Link.ShouldBe(CheckLink);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Re-run checks", Verbs.RerunChecks), ("Merge again", Verbs.Merge)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR's checks failing)", Verbs.GoAround), ("Re-run the checks of TIA1's PR", Verbs.RerunChecks), ("Merge TIA1's PR again as it is", Verbs.Merge)]);
         card.Choices.ShouldAllBe(c => c.Status != ChoiceStatus.Armed);
         // One card, not a second dropped-merge card beside it.
         node.State.Cards().ShouldHaveSingleItem();
@@ -127,7 +128,7 @@ public sealed class MergeArmTests
         await Look(node);
 
         node.GitHub.Summary = Pending(0);
-        (await Answer(node, Card(node, ready), "Re-run checks")).Error.ShouldBeNull();
+        (await Answer(node, Card(node, ready), "Re-run the checks of TIA1's PR")).Error.ShouldBeNull();
 
         node.GitHub.Reruns.ShouldBe([63]);
         var card = Card(node, ready);
@@ -278,7 +279,8 @@ public sealed class MergeArmTests
 
         var detail = Card(node, ready).Detail.ShouldNotBeNull();
         detail.ShouldContain("Dropped from the merge queue: merge conflict");
-        detail.ShouldContain("rebase it");
+        detail.ShouldContain("The watchtower merges the base into the plane");
+        detail.ShouldNotContain("rebase it");
     }
 
     [Fact]
@@ -295,7 +297,7 @@ public sealed class MergeArmTests
         detail.ShouldContain("checks passed: GitHub queues it again");
         detail.ShouldContain("Dropped from the merge queue: failed checks");
         detail.ShouldNotContain("merges it now");
-        detail.ShouldNotContain("rebase it");
+        detail.ShouldNotContain("watchtower merges the base");
     }
 
     [Fact]
@@ -582,7 +584,7 @@ public sealed class MergeArmTests
     [Theory]
     [InlineData(MergeKinds.Conflicts)]
     [InlineData(MergeKinds.Behind)]
-    public async Task ANativelyArmedMergeThatConflictsOrFallsBehindIsDisarmedBeforeTheNodeRebasesIt(string kind)
+    public async Task ANativelyArmedMergeThatConflictsOrFallsBehindIsDisarmedBeforeTheBaseIsMergedIn(string kind)
     {
         var (node, ready) = await ArmedNatively(Pending(1));
         await using var _ = node;
@@ -596,7 +598,7 @@ public sealed class MergeArmTests
 
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
-        // The card loop took over: a go-around that rebases, no Merge, and no card of a dropped merge beside it.
+        // The card loop took over: a go-around, no Merge, and no card of a dropped merge beside it.
         var card = Card(node, ready);
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
         node.State.Cards().Where(c => c.Kind == PrChecks.MergeDropped).ShouldBeEmpty();

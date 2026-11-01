@@ -135,7 +135,7 @@ public sealed class FolderReleaseFeed(string folder, string product) : IReleaseF
 /// <param name="repo"><c>owner/name</c>.</param>
 /// <param name="channel">On <see cref="UpdateChannel.Beta"/>, the <see cref="BetaTag"/> prerelease is looked at too, and
 /// the newer of it and the latest release is the latest.</param>
-public sealed class GhReleaseFeed(string repo, string gh = "gh", UpdateChannel channel = UpdateChannel.Stable) : IReleaseFeed
+public sealed class GhReleaseFeed(string repo, string gh = "gh", UpdateChannel channel = UpdateChannel.Stable, NodeTraffic? traffic = null) : IReleaseFeed
 {
     /// <summary>The tag of the prerelease every push to main replaces the zips of; its title is their version.</summary>
     public const string BetaTag = "beta";
@@ -263,15 +263,17 @@ public sealed class GhReleaseFeed(string repo, string gh = "gh", UpdateChannel c
         start.Environment["GH_PROMPT_DISABLED"] = "1";
         start.Environment["GH_NO_UPDATE_NOTIFIER"] = "1";
         Process process;
+        NodeTraffic.Child counted;
         try
         {
-            process = Process.Start(start) ?? throw new IOException("gh did not start");
+            (process, counted) = (traffic ?? NodeTraffic.Shared).Start("gh", start);
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
             return (-1, "", $"gh did not start: {ex.Message}");
         }
         using (process)
+        using (counted)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(budget);

@@ -11,12 +11,22 @@ internal sealed record GuiSettings
     /// <summary>The dragged column widths, design units: a page's name (<c>sessions</c>), then a column's title.</summary>
     public Dictionary<string, Dictionary<string, float>> Tables { get; init; } = [];
 
+    /// <summary>The sort of each page that has one, by the page's name; an optional property, so an older build reads the file as before.</summary>
+    public Dictionary<string, SavedSort>? Sorts { get; init; }
+
     /// <summary>Whether the window is painted red on black (the header's Night switch).</summary>
     public bool Night { get; init; }
+
+    /// <summary>Which layers of the Flights page's map are on.</summary>
+    public MapLayerSettings? MapLayers { get; init; }
 }
 
-[JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+/// <summary>A page's saved sort: the column's title and whether it runs descending.</summary>
+internal sealed record SavedSort(string? Column, bool Descending);
+
+[JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(GuiSettings))]
+[JsonSerializable(typeof(MapLayerSettings))]
 internal sealed partial class GuiSettingsJsonContext : JsonSerializerContext;
 
 /// <summary>
@@ -33,15 +43,20 @@ internal sealed class GuiSettingsFile : IDisposable
     // swapped whole, the dirty mark is one Interlocked int, and the one timer is moved, never replaced, so neither thread
     // waits on the other.
     private ImmutableDictionary<string, IReadOnlyDictionary<string, float>> _tables;
+    private ImmutableDictionary<string, SavedSort> _sorts;
     private ImmutableList<ListTable> _attached = [];
     private readonly Timer _pending;
     private int _dirty;
     private volatile bool _night;
+    private MapLayerSettings? _layers;
+    private FlightMapLayerState? _layerState;
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, bool night)
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers)
     {
         Path = path;
         _night = night;
+        _layers = layers;
+        _sorts = sorts.ToImmutableDictionary(StringComparer.Ordinal);
         _tables = tables.ToImmutableDictionary(t => t.Key, t => (IReadOnlyDictionary<string, float>)t.Value, StringComparer.Ordinal);
         _pending = new Timer(_ => Flush(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
@@ -57,13 +72,23 @@ internal sealed class GuiSettingsFile : IDisposable
     {
         path ??= DefaultPath;
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
+        var sorts = new Dictionary<string, SavedSort>(StringComparer.Ordinal);
         var night = false;
+        MapLayerSettings? layers = null;
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
-                foreach (var (page, widths) in settings.Tables)
+                layers = settings.MapLayers;
+                foreach (var (page, sort) in settings.Sorts ?? [])
+                {
+                    if (sort is { Column.Length: > 0 })
+                    {
+                        sorts[page] = sort;
+                    }
+                }
+                foreach (var (page, widths) in settings.Tables ?? [])
                 {
                     if (widths is not null)
                     {
@@ -75,9 +100,11 @@ internal sealed class GuiSettingsFile : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException or InvalidOperationException)
         {
             tables.Clear();
+            sorts.Clear();
             night = false;
+            layers = null;
         }
-        return new GuiSettingsFile(path, tables, night);
+        return new GuiSettingsFile(path, tables, sorts, night, layers);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -102,7 +129,16 @@ internal sealed class GuiSettingsFile : IDisposable
     {
         ImmutableInterlocked.Update(ref _attached, attached => attached.Add(table));
         table.Restore(Volatile.Read(ref _tables).GetValueOrDefault(table.Page));
+        table.RestoreSort(Volatile.Read(ref _sorts).TryGetValue(table.Page, out var saved) && saved.Column is { } column ? new ListTable.SortState(column, saved.Descending) : null);
         table.Changed += Touch;
+    }
+
+    /// <summary>Gives <paramref name="layers"/> the choice this file holds, and keeps the file current: a toggle writes it a moment later.</summary>
+    public void Attach(FlightMapLayerState layers)
+    {
+        layers.Restore(_layers);
+        _layerState = layers;
+        layers.Changed += Touch;
     }
 
     private void Touch()
@@ -119,8 +155,23 @@ internal sealed class GuiSettingsFile : IDisposable
             return;
         }
         ImmutableInterlocked.Update(ref _tables, held => held.SetItems(Volatile.Read(ref _attached).Select(t => KeyValuePair.Create(t.Page, t.Saved))));
+        ImmutableInterlocked.Update(ref _sorts, held =>
+        {
+            foreach (var t in Volatile.Read(ref _attached))
+            {
+                held = t.Sort is { } s ? held.SetItem(t.Page, new SavedSort(s.Column, s.Descending)) : held.Remove(t.Page);
+            }
+            return held;
+        });
+        _layers = _layerState?.Snapshot() ?? _layers;
         var json = JsonSerializer.Serialize(
-            new GuiSettings { Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal), Night = _night },
+            new GuiSettings
+            {
+                MapLayers = _layers,
+                Tables = Volatile.Read(ref _tables).ToDictionary(t => t.Key, t => new Dictionary<string, float>(t.Value, StringComparer.Ordinal), StringComparer.Ordinal),
+                Sorts = Volatile.Read(ref _sorts).Count > 0 ? new Dictionary<string, SavedSort>(Volatile.Read(ref _sorts), StringComparer.Ordinal) : null,
+                Night = _night,
+            },
             GuiSettingsJsonContext.Default.GuiSettings);
 
         try

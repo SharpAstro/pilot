@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
@@ -6,7 +7,7 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-/// <summary>The Flights page's canvas: where each flight's card goes, where each arrow runs, and that both reach the pixels.</summary>
+/// <summary>The Flights page's canvas as a map: that it reaches the pixels in both palettes, fits narrow and wide, and its signs click.</summary>
 public sealed class FlightsCanvasTests
 {
     private static FlightRow Flight(string code, FlightState state = FlightState.Flying, params string[] waitsFor) => new()
@@ -24,143 +25,23 @@ public sealed class FlightsCanvasTests
         CreatedAt = Live.At,
     };
 
-    private static FlightCanvas Canvas(params FlightRow[] flights) => FlightCanvas.Build(FlightLine.Build(flights, [], Live.At));
+    private static LegRow Leg(string flight, string name, int order, LegState state) =>
+        new() { Flight = flight, Name = name, Order = order, Goal = "g", DoneWhen = "d", State = state };
 
-    private static (int Column, int Row) Place(FlightCanvas canvas, string code)
+    private static FlightLine[] Lines(params FlightRow[] flights) => [.. FlightLine.Build(flights, [], Live.At, flights.SelectMany(f => new[]
     {
-        var card = canvas.Cards.Single(c => c.Code == code);
-        return (card.Column, card.Row);
-    }
+        Leg(f.Code, "parser", 1, LegState.Done), Leg(f.Code, "drawing", 2, LegState.Flying), Leg(f.Code, "polish", 3, LegState.Planned),
+    }))];
 
-    [Fact]
-    public void FlightsWithNoConnectionsStandInOneColumn()
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(bool canvas, params FlightRow[] flights) =>
+        Show(canvas ? FlightsViewMode.Canvas : FlightsViewMode.List, 1280, Lines(flights));
+
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Show(FlightsViewMode mode, int width, FlightLine[] lines, Action<FlightsView<RgbaImage>>? setup = null)
     {
-        var canvas = Canvas(Flight("A"), Flight("B"), Flight("C"));
-
-        canvas.Edges.ShouldBeEmpty();
-        canvas.Cards.Select(c => c.Column).ShouldAllBe(c => c == 0);
-        canvas.Cards.Select(c => c.Row).OrderBy(r => r).ShouldBe([0, 1, 2]);
-    }
-
-    [Fact]
-    public void AChainRunsLeftToRight()
-    {
-        var canvas = Canvas(Flight("C", FlightState.Held, "B"), Flight("B", FlightState.Held, "A"), Flight("A"));
-
-        Place(canvas, "A").ShouldBe((0, 0));
-        Place(canvas, "B").ShouldBe((1, 0));
-        Place(canvas, "C").ShouldBe((2, 0));
-        canvas.Edges.Select(e => (e.From, e.To)).ShouldBe([("B", "C"), ("A", "B")], ignoreOrder: true);
-        canvas.Edges.ShouldAllBe(e => e.X1 > e.X0);
-    }
-
-    [Fact]
-    public void APickedFlightsChainIsEveryFlightItWaitsOnOrIsWaitedOnByAndNoOther()
-    {
-        // TIA1827 waits for TIA1774; PIL207 waits for TIA1827; TIA1781 stands alone.
-        var canvas = Canvas(Flight("TIA1774"), Flight("TIA1827", FlightState.Held, "TIA1774"), Flight("PIL207", FlightState.Held, "TIA1827"), Flight("TIA1781"));
-
-        canvas.Chain("TIA1827").ShouldBe(["TIA1774", "TIA1827", "PIL207"], ignoreOrder: true);
-        canvas.Chain("TIA1774").ShouldBe(["TIA1774", "TIA1827", "PIL207"], ignoreOrder: true);
-        canvas.Chain("TIA1781").ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void ADiamondPutsTheTwoMiddlesInOneColumnAndTheJoinAfterBoth()
-    {
-        var canvas = Canvas(Flight("A"), Flight("B", FlightState.Held, "A"), Flight("C", FlightState.Held, "A"), Flight("D", FlightState.Held, "B", "C"));
-
-        Place(canvas, "A").Column.ShouldBe(0);
-        Place(canvas, "B").Column.ShouldBe(1);
-        Place(canvas, "C").Column.ShouldBe(1);
-        Place(canvas, "D").Column.ShouldBe(2);
-        canvas.Edges.Count.ShouldBe(4);
-        canvas.Edges.ShouldAllBe(e => e.X1 > e.X0);
-    }
-
-    [Fact]
-    public void AFlightNotOnThePageIsAGhostInTheFirstColumn()
-    {
-        var canvas = Canvas(Flight("B", FlightState.Held, "GONE1"));
-
-        var ghost = canvas.Cards.Single(c => c.Code == "GONE1");
-        ghost.IsGhost.ShouldBeTrue();
-        ghost.Column.ShouldBe(0);
-        Place(canvas, "B").Column.ShouldBe(1);
-        var edge = canvas.Edges.Single();
-        (edge.From, edge.To).ShouldBe(("GONE1", "B"));
-    }
-
-    [Fact]
-    public void ACycleDoesNotHangAndNoArrowPointsBack()
-    {
-        var canvas = Canvas(Flight("A", FlightState.Held, "B"), Flight("B", FlightState.Held, "A"), Flight("S", FlightState.Held, "S"));
-
-        canvas.Cards.Count.ShouldBe(3);
-        canvas.Broken.ShouldNotBeEmpty();
-        canvas.Edges.ShouldAllBe(e => e.X1 > e.X0);
-    }
-
-    [Fact]
-    public void AnArrowRunsFromTheRightEdgeOfTheWaitedForCardToTheLeftEdgeOfTheHeldOne()
-    {
-        var canvas = Canvas(Flight("A"), Flight("B", FlightState.Held, "A"));
-        var a = canvas.Cards.Single(c => c.Code == "A");
-        var b = canvas.Cards.Single(c => c.Code == "B");
-
-        var edge = canvas.Edges.Single();
-
-        (edge.X0, edge.Y0).ShouldBe((a.Right, a.Y + FlightCanvas.CardHeight / 2f));
-        (edge.X1, edge.Y1).ShouldBe((b.X, b.Y + FlightCanvas.CardHeight / 2f));
-        canvas.At(a.X + 5f, a.Y + 5f)!.Value.Code.ShouldBe("A");
-        canvas.At(a.Right + 1f, a.Y + 5f).ShouldBeNull();
-    }
-
-    [Fact]
-    public void TwoNodesWithTheSameCodeBothGetACardAndTheArrowStaysOnItsNode()
-    {
-        var desktop = new NodeMark("d", "d", "desktop", true);
-        var laptop = new NodeMark("l", "l", "laptop", false);
-        FlightLine Line(FlightRow row, NodeMark node) => FlightLine.Build([row], [], Live.At)[0] with { Node = node };
-        var lines = new[]
-        {
-            Line(Flight("PIL51"), desktop),
-            Line(Flight("PIL51"), laptop),
-            Line(Flight("PIL52", FlightState.Held, "PIL51"), laptop),
-        };
-
-        var canvas = FlightCanvas.Build(lines);
-
-        canvas.Cards.Count.ShouldBe(3);
-        canvas.Cards.Count(c => c.Code == "PIL51").ShouldBe(2);
-        var edge = canvas.Edges.Single();
-        var from = canvas.Cards.Single(c => c.Right == edge.X0 && c.Y + FlightCanvas.CardHeight / 2f == edge.Y0);
-        from.Line!.Node.ShouldBe(laptop);
-        canvas.Cards[edge.ToCard].Code.ShouldBe("PIL52");
-    }
-
-    [Fact]
-    public void TwoNodesWithTheSameCodeAndNoConnectionsBuild()
-    {
-        var a = new NodeMark("a", "a", "A", true);
-        var b = new NodeMark("b", "b", "B", false);
-        var lines = new[]
-        {
-            FlightLine.Build([Flight("X")], [], Live.At)[0] with { Node = a },
-            FlightLine.Build([Flight("X")], [], Live.At)[0] with { Node = b },
-        };
-
-        var canvas = FlightCanvas.Build(lines);
-
-        canvas.Cards.Count.ShouldBe(2);
-        canvas.Edges.ShouldBeEmpty();
-    }
-
-    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Page(bool canvas, params FlightRow[] flights)
-    {
-        var renderer = new RgbaImageRenderer(1280, 800);
-        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = canvas ? FlightsViewMode.Canvas : FlightsViewMode.List };
-        view.Render(new FlightsScreen(FlightLine.Build(flights, [], Live.At), "test", Live.At), new RectF32(0, 0, 1280, 800));
+        var renderer = new RgbaImageRenderer((uint)width, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode };
+        setup?.Invoke(view);
+        view.Render(new FlightsScreen(lines, "test", Live.At), new RectF32(0, 0, width, 800));
         return (renderer, view);
     }
 
@@ -182,7 +63,7 @@ public sealed class FlightsCanvasTests
     }
 
     [Fact]
-    public void TheCanvasPaintsItsArrowsAndTheListDoesNot()
+    public void TheCanvasPaintsItsMapAndTheListDoesNot()
     {
         var flights = new[] { Flight("A"), Flight("B", FlightState.Held, "A") };
 
@@ -193,20 +74,6 @@ public sealed class FlightsCanvasTests
         {
             HeldPixels(withCanvas.Surface).ShouldBeGreaterThan(HeldPixels(withList.Surface) + 60);
         }
-    }
-
-    [Fact]
-    public void EachCardIsAClickTargetForItsFlightAndAGhostIsNone()
-    {
-        var (renderer, view) = Page(true, Flight("A"), Flight("B", FlightState.Held, "A", "GONE1"));
-        using var _ = renderer;
-
-        var regions = new List<ClickableRegion>();
-        view.CollectPaintedRegions(regions);
-
-        regions.Select(r => r.Result).OfType<HitResult.ListItemHit>().Where(h => h.ListId == FlightsView<RgbaImage>.ListId).Select(h => h.Index)
-            .OrderBy(i => i).ShouldBe([0, 1]);
-        view.Canvas.Cards.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -226,43 +93,6 @@ public sealed class FlightsCanvasTests
         return image.Pixels[i] == 0xf0 && image.Pixels[i + 1] == 0xb4 && image.Pixels[i + 2] == 0x3c;
     }
 
-    [Fact]
-    public void AnArrowIsDashedAndItsHeadIsSolid()
-    {
-        var (renderer, _) = Page(true, Flight("A"), Flight("B", FlightState.Held, "A"));
-        using var _ = renderer;
-        var image = renderer.Surface;
-
-        // The arrow's row: the one with the most of the held colour (the card text is anti-aliased, so it never matches).
-        var arrowY = Enumerable.Range(0, image.Height).MaxBy(y => Enumerable.Range(0, image.Width).Count(x => IsHeld(image, x, y)));
-        // B's stripe is the first held pixel on a row well below the arrow, and the arrow ends on its left edge.
-        var tipX = Enumerable.Range(0, image.Width).First(x => IsHeld(image, x, arrowY + 20));
-        var startX = Enumerable.Range(0, image.Width).First(x => IsHeld(image, x, arrowY));
-
-        // Short of the head, the run is painted and unpainted in turn.
-        var run = Enumerable.Range(startX, tipX - 14 - startX).Select(x => IsHeld(image, x, arrowY)).ToArray();
-        run.ShouldContain(true);
-        run.ShouldContain(false);
-        run.Zip(run.Skip(1), (a, b) => a && !b).Count(gapStarts => gapStarts).ShouldBeGreaterThan(2);
-
-        // The head's two strokes, either side of the line just before its tip, are painted solid.
-        foreach (var side in new[] { -1, 1 })
-        {
-            Enumerable.Range(tipX - 12, 11).Any(x => Enumerable.Range(2, 4).Any(dy => IsHeld(image, x, arrowY + side * dy))).ShouldBeTrue();
-        }
-    }
-
-    [Fact]
-    public void TwoArrowsIntoOneCardStartTheirDashesAtDifferentPhases()
-    {
-        var canvas = Canvas(Flight("A"), Flight("B"), Flight("C", FlightState.Held, "A", "B"));
-
-        canvas.Edges.Count.ShouldBe(2);
-        canvas.Edges.Select(e => e.ToCard).Distinct().Count().ShouldBe(1);
-        ArrowDashes.Phase(0).ShouldNotBe(ArrowDashes.Phase(1));
-        ArrowDashes.Opening(ArrowDashes.Phase(0), 6f, 4f).ShouldNotBe(ArrowDashes.Opening(ArrowDashes.Phase(1), 6f, 4f));
-    }
-
     [Theory]
     [InlineData(0f, 6f, 10f)]
     [InlineData(0.3f, 3f, 7f)]
@@ -273,5 +103,366 @@ public sealed class FlightsCanvasTests
 
         opening.FirstDash.ShouldBe(firstDash, 0.001f);
         opening.Start.ShouldBe(start, 0.001f);
+    }
+
+    private static int Count(RgbaImage image, RGBAColor32 c)
+    {
+        var n = 0;
+        for (var i = 0; i < image.Width * image.Height; i++)
+        {
+            if (image.Pixels[i * 4] == c.Red && image.Pixels[i * 4 + 1] == c.Green && image.Pixels[i * 4 + 2] == c.Blue)
+            {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static FlightRow WithPr(FlightRow f) => f with { PullRequest = 7, PullRequestUrl = "https://github.com/x/y/pull/7" };
+
+    [Theory]
+    [InlineData(900, false)]
+    [InlineData(1800, false)]
+    [InlineData(900, true)]
+    [InlineData(1800, true)]
+    public void TheMapShowsAContinentARouteAPlaneAndADestinationInBothPalettes(int width, bool night)
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, width, Lines(WithPr(Flight("A")) with { State = FlightState.Flying }), v => v.Night = new NightSwitch { On = night });
+        using var _ = renderer;
+        var p = night ? Palette.Night : Palette.Standard;
+        var image = renderer.Surface;
+
+        view.Map.Continents.Count.ShouldBe(1);
+        Count(image, p.LandHere).ShouldBeGreaterThan(500);
+        // The passed run into the done leg and its airport.
+        Count(image, p.RoutePassed).ShouldBeGreaterThan(20);
+        // The plane's ring and the flying airport.
+        Count(image, p.Flying).ShouldBeGreaterThan(20);
+        // The destination's square for an open PR.
+        Count(image, p.Held).ShouldBeGreaterThan(20);
+        if (night)
+        {
+            Count(image, Palette.Standard.LandHere).ShouldBe(0);
+        }
+    }
+
+    // The map's stop targets (planes, airports, gates, destinations), each a small square with a tooltip.
+    private static List<ClickableRegion> Targets(FlightsView<RgbaImage> view)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return [.. regions.Where(r => r.Tooltip is not null && r.Result is HitResult.ListItemHit or HitResult.ButtonHit && r.Width < 40f)];
+    }
+
+    [Theory]
+    [InlineData(900, 9)]
+    [InlineData(1800, 14)]
+    public void AMapWiderThanTheWindowIsDrawnSmallerAndEveryTargetStaysInIt(int width, int legs)
+    {
+        // Two continents of `legs` stops a route: wider than the window, and no wider than twice it, so the map is drawn smaller.
+        var rows = Enumerable.Range(0, 3).Select(i => Flight("F" + i)).ToArray();
+        var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, legs).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
+        using var _ = renderer;
+        // The same map in a window wide enough to hold it at its full size.
+        var full = (int)view.Map.Width + 200;
+        var (wideRenderer, wide) = Show(FlightsViewMode.Canvas, full, lines);
+        using var __ = wideRenderer;
+
+        view.Map.Width.ShouldBeGreaterThan(width);
+        view.Map.Continents.Count.ShouldBe(2);
+        view.MapShown.ShouldBeTrue();
+        var targets = Targets(view);
+        targets.ShouldNotBeEmpty();
+        targets.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
+        // Each stop is drawn at the window's share of the map's width, never under half: the first airport's square at the two sizes.
+        var first = targets.Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
+        var whole = Targets(wide).Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
+        whole.Width.ShouldBe(2f * FlightMap.AirportRadius, 0.5f);
+        var scale = first.Width / whole.Width;
+        scale.ShouldBeLessThan(1f);
+        scale.ShouldBeGreaterThanOrEqualTo(0.5f);
+        scale.ShouldBe(MathF.Min(1f, (width - 48f) / view.Map.Width), 0.03f);
+    }
+
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1280)]
+    public void AMapWiderThanTwiceThePageShowsTheGridWithEveryFlightInReach(int width)
+    {
+        // Two continents of 24 legs a route: the map is wider than twice the page, so at half size its far side would be cut off.
+        var rows = Enumerable.Range(0, 4).Select(i => Flight("F" + i)).ToArray();
+        var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, 24).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
+        using var _ = renderer;
+
+        view.Map.Width.ShouldBeGreaterThan(2f * width);
+        view.CanvasShown.ShouldBeTrue();
+        view.MapShown.ShouldBeFalse();
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        // The grid's cards, one a flight, each inside the page; and no map target and no layer menu.
+        var cards = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ToList();
+        cards.Select(r => ((HitResult.ListItemHit)r.Result).Index).Distinct().Count().ShouldBe(rows.Length);
+        cards.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
+        regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action ?? "")
+            .Where(a => a.StartsWith("map:", StringComparison.Ordinal) || a.StartsWith(FlightMapLayerPalette.GripAction, StringComparison.Ordinal))
+            .ShouldBeEmpty();
+    }
+
+    private static ClickableRegion Region(FlightsView<RgbaImage> view, Func<string, bool> tooltip)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Single(r => r.Tooltip is { } t && tooltip(t) && r.Width < 40f);
+    }
+
+    private static PointerPress Right(ClickableRegion r) => new(r.X + 2f, r.Y + 2f, MouseButton.Right, InputModifier.None, 1);
+
+    [Fact]
+    public void ClickingAPlaneSelectsItsFlightAndItsMenuOffersOpenFlight()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, Lines(Flight("A"), Flight("B")), v => v.CanCommand = true);
+        using var _ = renderer;
+        var b = FlightLine.Build([Flight("B")], [], Live.At)[0];
+        var plane = Region(view, t => t == ChipBrief.Text(ChipBrief.Flight(Lines(Flight("B"))[0])));
+
+        plane.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.Selected.ShouldBe(1);
+        plane.OnContextMenu.ShouldNotBeNull().Invoke(Right(plane));
+
+        view.MenuItems.Select(i => i.Label).ShouldContain("Open flight");
+        plane.OnDoubleClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        view.IsDetailOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnAirportsMenuOffersTheLegActionsAFlightHasToday()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, Lines(Flight("A")), v => v.CanCommand = true);
+        using var _ = renderer;
+        var airport = Region(view, t => t.StartsWith("A/drawing: flying"));
+
+        airport.OnContextMenu.ShouldNotBeNull().Invoke(Right(airport));
+
+        var labels = view.MenuItems.Select(i => i.Label).ToList();
+        labels.ShouldContain("Redo leg drawing…");
+        labels.ShouldContain("Plan a leg…");
+        labels.ShouldContain("Open flight");
+    }
+
+    [Fact]
+    public void ADestinationOpensItsPrAndOffersItInItsMenu()
+    {
+        var opened = new List<string>();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, Lines(WithPr(Flight("A"))), v =>
+        {
+            v.CanCommand = true;
+            v.OnOpen = opened.Add;
+        });
+        using var _ = renderer;
+        var destination = Region(view, t => t.StartsWith("tianwen PR #7: open\n", StringComparison.Ordinal));
+
+        destination.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        opened.ShouldBe(["https://github.com/x/y/pull/7"]);
+        destination.OnContextMenu.ShouldNotBeNull().Invoke(Right(destination));
+        view.MenuItems.Select(i => i.Label).ShouldContain("Open PR #7");
+    }
+
+    // The region a click at (x, y) reaches: the last painted that holds the point, as ClickableRegionTracker.HitTest answers.
+    private static ClickableRegion? TopAt(FlightsView<RgbaImage> view, float x, float y)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        for (var i = regions.Count - 1; i >= 0; i--)
+        {
+            var r = regions[i];
+            if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AClickOnADestinationWithItsPlaneParkedOnItOpensThePr(bool listed)
+    {
+        // Every leg done and the PR open: the plane waits on the destination, the usual state of a flight with an open PR.
+        var row = WithPr(Flight("A"));
+        var line = FlightLine.Build([row], [], Live.At, [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)])[0];
+        var opened = new List<string>();
+        var shown = new List<(string Repo, int Number)>();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, [line], v =>
+        {
+            v.CanCommand = true;
+            v.OnOpen = opened.Add;
+            if (listed)
+            {
+                v.OnPullRequest = (repo, number) => shown.Add((repo, number));
+                v.PullRequests = new PullRequestsRow
+                {
+                    Orgs = ["x"],
+                    ReadAt = Live.At,
+                    PullRequests = [new PullRequestRow { Repo = "x/y", Number = 7, Title = "A", Url = "https://github.com/x/y/pull/7", Kind = PullRequestKind.Ready, Label = "Ready", Flight = "A" }],
+                };
+            }
+        });
+        using var _ = renderer;
+        var route = view.Map.Route("A")!;
+        route.PlaneAtDestination.ShouldBeTrue();
+        var map = view.Map.At(route.Destination.X, route.Destination.Y).ShouldNotBeNull();
+        (map.Kind, map.PullRequest).ShouldBe((MapHitKind.Destination, 7));
+
+        // The sign's centre: the plane's ring is drawn there, and no target of the plane's is over the sign's.
+        var sign = Region(view, t => t.StartsWith("tianwen PR #7: open\n", StringComparison.Ordinal));
+        var top = TopAt(view, sign.X + sign.Width / 2f, sign.Y + sign.Height / 2f).ShouldNotBeNull();
+        top.Result.ShouldBe(new HitResult.ButtonHit(listed ? "flight:A:pr-chip" : "flight:A:pr"));
+        top.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+
+        if (listed)
+        {
+            shown.ShouldBe([("x/y", 7)]);
+            opened.ShouldBeEmpty();
+        }
+        else
+        {
+            opened.ShouldBe(["https://github.com/x/y/pull/7"]);
+        }
+        view.Selected.ShouldBe(0);
+        // The plane's own target is not drawn there, and its hover says the flight under the PR.
+        top.Tooltip.ShouldNotBeNull().ShouldContain("A · ");
+    }
+
+    [Fact]
+    public void ASignSaysItsRepoAndNumberAndAConnectionsDropPassesClearOfIt()
+    {
+        // Each flight waits for the one before it, so a connection drops out right of every sign but the last.
+        FlightRow Pr(string code, string repo, int? number, params string[] waits) =>
+            Flight(code, FlightState.Flying, waits) with { Repo = repo, PullRequest = number, PullRequestUrl = number is { } n ? $"https://github.com/SharpAstro/{repo}/pull/{n}" : null };
+        var rows = new[]
+        {
+            Pr("A", "tianwen", 7), Pr("B", "tianwen", 1896, "A"), Pr("C", "SdlVulkan.Renderer", 12, "B"), Pr("D", "pilot", 447, "C"), Pr("E", "orbit", null, "D"), Pr("F", "x", 3, "E"),
+        };
+        var lines = rows.Select(r => FlightLine.Build([r], [], Live.At, [Leg(r.Code, "one", 1, LegState.Flying)])[0]).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, lines);
+        using var _ = renderer;
+
+        // The repo and number where both fit a leg label's ten characters, the repo cut for the number where not.
+        var signs = new[] { "tianwen #7", "tia… #1896", "SdlVu… #12", "pilot #447", "orbit", "x #3" };
+        var words = view.MapWords.Select(w => w.Text).ToList();
+        foreach (var sign in signs)
+        {
+            words.ShouldContain(sign);
+        }
+        view.Map.Domestic.Count().ShouldBe(rows.Length - 1);
+        // The ink of each sign is narrower than the drop: half its width stays left of where a connection drops out of it.
+        var measure = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        foreach (var text in signs.Append("SdlVulkan…"))
+        {
+            (measure.MeasureText(text, 9f).Width / 2f).ShouldBeLessThan(FlightMap.DropOffset, text);
+        }
+    }
+
+    private static ClickableRegion Hit(FlightsView<RgbaImage> view, string action)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Single(r => Equals(r.Result, new HitResult.ButtonHit(action)));
+    }
+
+    // The pixels exactly the palette's Bright inside a target's square. Inside a stop's ring only a plane's glyph (fuselage, wing,
+    // tail) is: the stop's disc or sign is in its state's colour, and the code over it and the words under it stay outside.
+    private static int BrightIn(RgbaImage image, ClickableRegion r, RGBAColor32 bright)
+    {
+        var n = 0;
+        for (var y = (int)r.Y; y < (int)(r.Y + r.Height); y++)
+        {
+            for (var x = (int)r.X; x < (int)(r.X + r.Width); x++)
+            {
+                var i = (y * image.Width + x) * 4;
+                if (image.Pixels[i] == bright.Red && image.Pixels[i + 1] == bright.Green && image.Pixels[i + 2] == bright.Blue)
+                {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void APlaneIsDrawnInItsRingAndNotOnceItsFlightHasLanded(bool parked, bool night)
+    {
+        // On its flying leg, or parked on its destination with every leg done and the PR open; then the same flight landed, which
+        // has no plane and keeps its stops where they were.
+        LegRow[] legs = parked
+            ? [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)]
+            : [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Flying), Leg("A", "polish", 3, LegState.Planned)];
+        FlightLine[] Line(FlightState state) => [FlightLine.Build([WithPr(Flight("A", state))], [], Live.At, legs)[0]];
+        var (flying, view) = Show(FlightsViewMode.Canvas, 1280, Line(FlightState.Flying), v => v.Night = new NightSwitch { On = night });
+        using var _ = flying;
+        var (landed, landedView) = Show(FlightsViewMode.Canvas, 1280, Line(FlightState.Landed), v => v.Night = new NightSwitch { On = night });
+        using var __ = landed;
+        var bright = (night ? Palette.Night : Palette.Standard).Bright;
+
+        view.Map.Route("A")!.PlaneAtDestination.ShouldBe(parked);
+        landedView.Map.Route("A")!.Plane.ShouldBeNull();
+        // The plane's own target, or for one parked on its sign the sign's, which is as wide as the ring.
+        var ring = Hit(view, parked ? "map:A:destination" : "map:A:plane");
+        ring.Width.ShouldBe(2f * FlightMap.PlaneRadius, 0.5f);
+        BrightIn(flying.Surface, ring, bright).ShouldBeGreaterThan(10);
+        // The landed flight's stop under it is centred where the plane was, and nothing in the ring's square is Bright.
+        var stop = Hit(landedView, parked ? "map:A:destination" : "map:A:leg:drawing");
+        (stop.X + stop.Width / 2f).ShouldBe(ring.X + ring.Width / 2f, 0.5f);
+        (stop.Y + stop.Height / 2f).ShouldBe(ring.Y + ring.Height / 2f, 0.5f);
+        BrightIn(landed.Surface, ring, bright).ShouldBe(0);
+    }
+
+    [Fact]
+    public void AMapOfThousandsOfTargetsIsAShallowTree()
+    {
+        // A thousand flights of five legs over two nodes, each with its PR: seven targets a flight (five airports, the destination
+        // and the plane). Nested one an Overlay, the tree was as deep as that, and the engine's recursion overflowed at about 2,400.
+        var de1 = new NodeMark("de1", "DE1", "DE1", Here: true);
+        var se1 = new NodeMark("se1", "SE1", "SE1", Here: false);
+        var rows = Enumerable.Range(0, 1000).Select(i => WithPr(Flight("F" + i))).ToArray();
+        var legs = rows.SelectMany(f => new[]
+        {
+            Leg(f.Code, "a", 1, LegState.Done), Leg(f.Code, "b", 2, LegState.Done), Leg(f.Code, "c", 3, LegState.Flying), Leg(f.Code, "d", 4, LegState.Planned), Leg(f.Code, "e", 5, LegState.Planned),
+        });
+        var lines = FlightLine.Build(rows, [], Live.At, legs).Select(l => l with { Node = int.Parse(l.Code[1..]) % 2 == 0 ? de1 : se1 }).ToArray();
+        using var renderer = new RgbaImageRenderer(1800, 1000);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, PageWidth = 1800f };
+
+        // Arranged on a thread with room to recurse, so a tree as deep as its targets fails the depth below rather than killing the
+        // test host with a stack overflow.
+        IReadOnlyList<Layout.ArrangedNode<float>> arranged = [];
+        Exception? failed = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                arranged = Layout.Engine.Arrange(view.Tree(new FlightsScreen(lines, "test", Live.At)), new Rect<float>(0, 0, 1800, 1000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            }
+            catch (Exception e)
+            {
+                failed = e;
+            }
+        }, 64 * 1024 * 1024);
+        thread.Start();
+        thread.Join();
+
+        failed.ShouldBeNull(failed?.ToString());
+        view.MapShown.ShouldBeTrue();
+        view.Map.Continents.Count.ShouldBe(2);
+        view.Map.Routes.Count.ShouldBe(1000);
+        arranged.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: var action } && action.StartsWith("map:", StringComparison.Ordinal)).ShouldBeGreaterThan(6000);
+        arranged.Max(a => a.Depth).ShouldBeLessThan(64);
     }
 }

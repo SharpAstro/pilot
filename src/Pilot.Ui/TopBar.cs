@@ -45,7 +45,8 @@ internal sealed record PageHeader(string Title)
 /// <param name="Autopilot">The Autopilot switch.</param>
 /// <param name="About">The ? card, and the update light before it.</param>
 /// <param name="Night">The Night switch, whose state paints the bar on every page.</param>
-internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null);
+/// <param name="NodePills">Pills that stand in place of <paramref name="Nodes"/>' multi-select ones: the Chat page's single choice of watchtower.</param>
+internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null, IReadOnlyList<Layout.Node>? NodePills = null);
 
 /// <summary>
 /// The one top bar every page shows, Home included (#231): <b>pilot v2</b> and the page's name, then the node pills and the In
@@ -55,6 +56,12 @@ internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, Autopilo
 /// </summary>
 internal static class TopBar
 {
+    /// <summary>The name of this window's node, for a page that shows only that node's rows.</summary>
+    public static string ThisNodeName(NodeFilter? nodes) => nodes?.Choices.FirstOrDefault(c => c.Here)?.Name ?? Environment.MachineName;
+
+    /// <summary>The title of a page whose rows are this window's node's only, e.g. "DE1's ideas (this machine)".</summary>
+    public static string ThisNodeTitle(NodeFilter? nodes, string page) => $"{ThisNodeName(nodes)}'s {page} (this machine)";
+
     /// <summary>The row of the bar itself, design units.</summary>
     public const float RowHeight = 32f;
 
@@ -89,7 +96,7 @@ internal static class TopBar
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
             Layout.Builder.Text(page.Title, 20f, palette.Dim, TextAlign.Near, TextAlign.Far).WAuto(),
         };
-        items.AddRange(parts.Nodes?.Pills(night) ?? []);
+        items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);
         if (!page.CountsFit && !string.IsNullOrEmpty(page.Counts))
         {

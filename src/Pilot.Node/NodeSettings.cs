@@ -30,9 +30,12 @@ public sealed record NodeSettings
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
     public const string WeekLimitKey = "week-limit";
+    public const string WeekPaceKey = "week-pace";
+    public const string SpendAlertKey = "spend-alert";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
+    public const string ReviewDeepFirstKey = "review-deep-first";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
@@ -40,6 +43,17 @@ public sealed record NodeSettings
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
+    public const string OpusCapKey = "opus-cap";
+    public const string OneFlightPerRepoKey = "one-flight-per-repo";
+    /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
+    public const string SubTaskReposKey = "sub-task-repos";
+    public const string MergeBatchKey = "merge-batch";
+    /// <summary>The strongest model a leg's worker steps up to (<see cref="RoleModels.WorkerFor"/>); opus unless set.</summary>
+    public const string WorkerModelMaxKey = "worker-model-max";
+    /// <summary>The highest effort a leg's worker steps up to; max unless set.</summary>
+    public const string WorkerEffortMaxKey = "worker-effort-max";
+    /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
+    public const string WorkerLadderKey = "worker-ladder";
 
     /// <summary>How a flight's PR is merged when the merge names no method: rebase keeps every commit's subject, which a
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
@@ -47,13 +61,19 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, PrWatchIdleKey,
-         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey)];
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
+         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
-    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r));
+    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r)) || key is WorkerModelMaxKey or WorkerEffortMaxKey;
 
     public bool? Lan { get; init; }
+
+    /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
+    public int? OpusCap { get; init; }
+
+    /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool? OneFlightPerRepo { get; init; }
 
     /// <summary>Whether the node takes no new flight (<see cref="MaintenanceKey"/>): flights already made carry on, a create-flight is refused.</summary>
     public bool? Maintenance { get; init; }
@@ -61,8 +81,17 @@ public sealed record NodeSettings
     /// <summary>Whether the node is willing to take a flight another node of the fleet routes to it (<see cref="AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool? AcceptFleetFlights { get; init; }
 
+    /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
+    public bool? MergeBatch { get; init; }
+
     /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
     public bool? Autopilot { get; init; }
+
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
+    public bool? ReviewDeepFirst { get; init; }
+
+    /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
+    public bool? WorkerLadder { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>
     public string? ShortcutToken { get; init; }
@@ -92,6 +121,11 @@ public sealed record NodeSettings
 
     /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
     public TimeSpan? PrWatchIdle { get; init; }
+    /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
+    public double? WeekPace { get; init; }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next round rings; 3 when unset.</summary>
+    public double? SpendAlert { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -101,6 +135,9 @@ public sealed record NodeSettings
 
     /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
     public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
+
+    /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>
+    public IReadOnlyList<string>? SubTaskRepos { get; init; }
 
     /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
@@ -148,12 +185,17 @@ public sealed record NodeSettings
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
+                    OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
+                    OpusCapKey => JsonValue.Create(OpusCap),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
+                    ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
+                    MergeBatchKey => JsonValue.Create(MergeBatch),
+                    WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
@@ -173,8 +215,13 @@ public sealed record NodeSettings
     {
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
+        OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
+        OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
+        ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
+        MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
+        WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
         ShortcutTokenKey => ShortcutToken is { } token ? [token] : null,
         MachineKey => Machine is { } machine ? [machine] : null,
@@ -188,9 +235,12 @@ public sealed record NodeSettings
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
+        WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
+        SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
+        SubTaskReposKey => SubTaskRepos,
         _ when IsRoleKey(key) && Roles?.GetValueOrDefault(key) is { } role => [role],
         _ => null,
     };
@@ -225,6 +275,22 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } maintenance
                     ? (settings with { Maintenance = maintenance }, null)
                     : (null, "maintenance takes on or off");
+            case OneFlightPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { OneFlightPerRepo = null }, null);
+                }
+                return OnOff(One()) is { } oneFlight
+                    ? (settings with { OneFlightPerRepo = oneFlight }, null)
+                    : (null, "one-flight-per-repo takes on or off");
+            case OpusCapKey:
+                if (clear)
+                {
+                    return (settings with { OpusCap = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
+                    ? (settings with { OpusCap = opus }, null)
+                    : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -241,6 +307,30 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } autopilot
                     ? (settings with { Autopilot = autopilot }, null)
                     : (null, "autopilot takes on or off");
+            case ReviewDeepFirstKey:
+                if (clear)
+                {
+                    return (settings with { ReviewDeepFirst = null }, null);
+                }
+                return OnOff(One()) is { } deepFirst
+                    ? (settings with { ReviewDeepFirst = deepFirst }, null)
+                    : (null, "review-deep-first takes on or off");
+            case MergeBatchKey:
+                if (clear)
+                {
+                    return (settings with { MergeBatch = null }, null);
+                }
+                return OnOff(One()) is { } mergeBatch
+                    ? (settings with { MergeBatch = mergeBatch }, null)
+                    : (null, "merge-batch takes on or off");
+            case WorkerLadderKey:
+                if (clear)
+                {
+                    return (settings with { WorkerLadder = null }, null);
+                }
+                return OnOff(One()) is { } ladder
+                    ? (settings with { WorkerLadder = ladder }, null)
+                    : (null, "worker-ladder takes on or off");
             case ShortcutTokenKey:
                 return clear
                     ? (settings with { ShortcutToken = null }, null)
@@ -326,6 +416,29 @@ public sealed record NodeSettings
                 return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
                     ? (settings with { PrWatchIdle = idle }, null)
                     : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
+            case WeekPaceKey:
+            {
+                var raw = clear ? "off" : One();
+                if (raw is "off" or "none")
+                {
+                    return (settings with { WeekPace = null }, null);
+                }
+                if (raw == "on")
+                {
+                    return (settings with { WeekPace = 10 }, null);
+                }
+                return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var margin) && margin is >= 0 and <= 100
+                    ? (settings with { WeekPace = margin }, null)
+                    : (null, "week-pace takes off, on (a margin of 10 points) or a margin in points, 0 to 100");
+            }
+            case SpendAlertKey:
+                if (clear)
+                {
+                    return (settings with { SpendAlert = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && share is > 0 and <= 100
+                    ? (settings with { SpendAlert = share }, null)
+                    : (null, "spend-alert takes the 7-day window's share in percent, above 0 and up to 100");
             case PriorityReposKey:
             {
                 if (clear)
@@ -343,6 +456,15 @@ public sealed record NodeSettings
                 }
                 var (noMerge, noMergeError) = RepoNames(given);
                 return noMerge is null ? (null, noMergeError) : (settings with { NoAutoMergeRepos = noMerge }, null);
+            }
+            case SubTaskReposKey:
+            {
+                if (clear)
+                {
+                    return (settings with { SubTaskRepos = null }, null);
+                }
+                var (subTask, subTaskError) = RepoNames(given);
+                return subTask is null ? (null, subTaskError) : (settings with { SubTaskRepos = subTask }, null);
             }
             case RepoTrackersKey:
             {
@@ -395,7 +517,7 @@ public sealed record NodeSettings
                     return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
                 }
                 var value = One()?.ToLowerInvariant();
-                var effort = role.EndsWith("-effort", StringComparison.Ordinal);
+                var effort = role.Contains("-effort", StringComparison.Ordinal);
                 if (value is null || (value != RoleModels.NoneValue && (effort ? !RoleModels.Efforts.Contains(value) : !RoleModels.IsModel(value))))
                 {
                     return (null, effort

@@ -53,9 +53,10 @@ public sealed partial class LegCommander
         {
             return $"{flight.Code} may already be {unknown.To}'s: it is not known yet whether {unknown.To} took it, so it is not moved again until that is known";
         }
-        if (flight.State != FlightState.Flying)
+        // A held flight moves as readily as a flying one, more so: nothing of it has started. Its waits go with it (HandOverAsync).
+        if (flight.State == FlightState.Landed)
         {
-            return $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.MovedTo is { } to ? $" ({to.Text})" : "")}: only a flying flight is moved";
+            return $"{flight.Code} is landed{(flight.MovedTo is { } to ? $" ({to.Text})" : "")}: only a flight in the air is moved";
         }
         var legs = state.Legs(flight.Code);
         if (legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying)
@@ -79,7 +80,8 @@ public sealed partial class LegCommander
             return $"{working.Name} is still working on {flight.Code}'s plane: a flight moves once it has stopped";
         }
         // A validator reading the next leg, a package the flight holds for, an overlap's answer, or no leg planned yet: left to whoever has it.
-        return Due(flight) is null ? $"{flight.Code} waits for something else (a validation, a package, an overlap's answer, or its plan): move it once that is done" : null;
+        // A held flight's wait is a flight or a package, which it takes with it.
+        return flight.State == FlightState.Flying && Due(flight) is null ? $"{flight.Code} waits for something else (a validation, a package, an overlap's answer, or its plan): move it once that is done" : null;
     }
 
     /// <summary>
@@ -191,7 +193,7 @@ public sealed partial class LegCommander
         var move = FlightMoves.Gather(state, flight.Code, options.Machine);
         // What is the sender's alone does not go: the failure of an earlier try, and its card. The head is what origin was read back to hold.
         var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
-        move = move with { Head = head.Ok ? head.Output.Trim() : null, Flight = move.Flight with { MoveFailure = null, MoveUnknown = null }, Cards = [.. move.Cards.Where(c => c.Kind != MoveFailedKind)] };
+        move = move with { Head = head.Ok ? head.Output.Trim() : null, Flight = WaitsFromAfar(move.Flight with { MoveFailure = null, MoveUnknown = null }), Cards = [.. move.Cards.Where(c => c.Kind != MoveFailedKind)] };
         var refused = new List<string>();
         foreach (var verdict in willing)
         {
@@ -232,6 +234,33 @@ public sealed partial class LegCommander
             return (null, $"{flight.Code} may have moved to {verdict.Name}: {lost}. {flight.Code} stays here and is flown by nobody until {verdict.Name} says whether it holds it (asked again every sweep, and settled {MoveSettle.TotalMinutes:0} min after it was sent), or move it again.", unknown);
         }
         return (null, Failed(flight, named, $"{string.Join("; ", refused)}. Put that right there, or move it again."), null);
+    }
+
+    /// <summary>
+    /// The flight's waits as another node reads them: a flight of this node it waits for becomes a wait for that flight on this node
+    /// (or on the node it moved to), and one that landed here is waited for no longer. The receiver takes a wait naming itself back as its own.
+    /// </summary>
+    private FlightRow WaitsFromAfar(FlightRow flight)
+    {
+        if (flight.Connections.Length == 0)
+        {
+            return flight;
+        }
+        var flights = state.Flights().ToDictionary(f => f.Code, StringComparer.Ordinal);
+        var now = time.GetUtcNow();
+        var waits = flight.PeerConnections.ToList();
+        foreach (var code in flight.Connections)
+        {
+            var node = !flights.TryGetValue(code, out var other) ? options.Machine
+                : other.MovedTo is { } moved ? moved.To
+                : other.State != FlightState.Landed ? options.Machine
+                : null;
+            if (node is not null && !waits.Any(w => string.Equals(w.Code, code, StringComparison.OrdinalIgnoreCase)))
+            {
+                waits.Add(new PeerConnection { Code = code, Node = node, Since = now });
+            }
+        }
+        return flight with { Connections = [], PeerConnections = [.. waits] };
     }
 
     // A connection that was never made: the request did not reach the node, so it cannot have taken the flight.

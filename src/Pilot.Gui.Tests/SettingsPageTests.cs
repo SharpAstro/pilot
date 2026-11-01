@@ -385,6 +385,59 @@ public sealed class SettingsPageTests
         }
     }
 
+    private static async Task<(PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Renderer)> WithNodesAsync(params NodeMark[] marks)
+    {
+        var renderer = new RgbaImageRenderer(1280, 2000);
+        var chrome = Chrome(renderer);
+        var filter = new NodeFilter { Choices = marks };
+        chrome.Settings.Nodes = filter;
+        chrome.Settings.Load = _ => Task.FromResult(Sample);
+        chrome.Settings.LoadChecks = (_, _) => Task.FromResult(Measured(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(3)));
+        chrome.Show(PilotPage.Settings);
+        Draw(chrome);
+        await WaitAsync(() => chrome.Settings.Page is not null && chrome.Settings.Checks is not null);
+        return (chrome, renderer);
+    }
+
+    private static readonly NodeMark Here = new("here", "/sock", "DE1", Here: true);
+    private static readonly NodeMark Other = new("se1", "http://se1", "SE1", Here: false);
+
+    [Fact]
+    public async Task TheTitleAndTheSetupHintNameWhoseNodeItIsAndNoNodePillIsOffered()
+    {
+        var (chrome, renderer) = await WithNodesAsync(Here, Other);
+        using var _ = renderer;
+
+        var (texts, buttons) = Look(chrome, renderer, DateTimeOffset.UtcNow);
+
+        texts.ShouldContain("DE1's settings (this machine)");
+        texts.ShouldContain("what it takes for DE1 to be part of the fleet");
+        buttons.ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheLineAboutOtherNodesShowsOnlyWhileThereIsMoreThanOneNode()
+    {
+        var (chrome, renderer) = await WithNodesAsync(Here, Other);
+        using var _ = renderer;
+        Look(chrome, renderer, DateTimeOffset.UtcNow).Texts.ShouldContain(SettingsView<RgbaImage>.OtherNodesLine);
+
+        chrome.Settings.Nodes = new NodeFilter { Choices = [Here] };
+        var (texts, buttons) = Look(chrome, renderer, DateTimeOffset.UtcNow);
+        texts.ShouldNotContain(SettingsView<RgbaImage>.OtherNodesLine);
+        texts.ShouldContain("DE1's settings (this machine)");
+        buttons.ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WithNoHereChoiceTheTitleNamesTheMachine()
+    {
+        var (chrome, renderer) = await WithNodesAsync();
+        using var _ = renderer;
+
+        Look(chrome, renderer, DateTimeOffset.UtcNow).Texts.ShouldContain($"{Environment.MachineName}'s settings (this machine)");
+    }
+
     /// <summary>The page drawn with the clock the chrome gives it, as the rows are drawn: the words each shows and the buttons it offers.</summary>
     private static (string[] Texts, string[] Buttons) Look(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer, DateTimeOffset now)
     {

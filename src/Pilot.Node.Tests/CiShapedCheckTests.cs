@@ -257,6 +257,19 @@ public sealed class CiShapedCheckTests : IDisposable
     }
 
     [Fact]
+    public void ThePlannerAndTheWorkerAreToldNeverToLoadTheMachineWithoutTheOwnersOkay()
+    {
+        var leg = new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
+        var rule = Briefs.MachineLoadRule("pilot").Split('\n')[0];
+
+        Briefs.Plan(Flight, [], "pilot").ShouldContain(rule);
+        Briefs.For(Flight, leg, [leg]).ShouldContain(rule);
+        // The ask is a command that parses: ring takes a subject, then the title (the review of #457).
+        Briefs.For(Flight, leg, [leg]).ShouldContain("ring flight/<code>[/<leg>] \"<what load, for how long, and why>\"");
+        Briefs.For(Flight, leg, [leg]).ShouldContain("say in your report that it was not run");
+    }
+
+    [Fact]
     public void TheBriefsKeepTheGeneralRuleWhereThereIsNoWorkflowToNameButNoConfigurationLine()
     {
         var leg = new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };

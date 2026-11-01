@@ -267,10 +267,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Whether this user may command a node's cards (its own, or one it holds a grant for); null: every card.</summary>
     public Func<NodeMark?, bool>? CanSteer { get; set; }
 
-    /// <summary>Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card.</summary>
-    public Action<NodeMark>? OnConnect { get; set; }
+    /// <summary>
+    /// Asks a node for a grant, as the Fleet page's Connect does: the pill on a watch-only card. Answers null once the grant is given,
+    /// else what the node said, which the card shows under its buttons.
+    /// </summary>
+    public Func<NodeMark, Task<string?>>? OnConnect { get; set; }
 
-    /// <summary>Opens the Fleet page on <paramref name="node"/>'s row: what a click on its held line (a node out of reach) does.</summary>
+    /// <summary>Opens the Fleet page on the node's row: what a click on its held line (a node out of reach) does.</summary>
     public Action<NodeMark>? OnFleet { get; set; }
 
     /// <summary>
@@ -294,10 +297,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The session a card is about, whose transcript its <b>Its transcript</b> opens; null for a card about none.</summary>
     public Func<CardRow, SessionLine?>? TranscriptOf { get; set; }
 
-    /// <summary>Opens <paramref name="line"/>'s transcript at the moment the card was raised.</summary>
+    /// <summary>Opens the session's transcript at the moment the card was raised.</summary>
     public Action<CardRow, SessionLine>? OnTranscript { get; set; }
 
-    /// <summary>Shows <paramref name="line"/> itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
+    /// <summary>Shows the session itself on the Sessions page (<b>Open</b>): offered on a waiting session's card when the session is an interactive one.</summary>
     public Action<CardRow, SessionLine>? OnOpenSession { get; set; }
 
     /// <summary>The flight the page in front is about (open, or selected): its cards are lit in the panel. Null lights none.</summary>
@@ -311,6 +314,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The window's In play / Everything choice: In play folds the Handled list to one line; null lists it, as a capture does.</summary>
     public PlayFilter? Play { get; set; }
+
+    /// <summary>The ideas and flights a text names by id (<c>I381</c>), as links; null finds none.</summary>
+    public Func<string, IReadOnlyList<IdeaLink>>? IdeaLinks { get; set; }
+
+    /// <summary>Follows an idea link: a planned idea's goes to its flight, the others open the idea's issue.</summary>
+    public Action<IdeaLink>? OnIdeaLink { get; set; }
+
+    /// <summary>The links in <paramref name="text"/> as a row of small links, or null when it names no idea; <paramref name="key"/> keeps their hits apart.</summary>
+    private Layout.Node? IdeaLinkRow(string text, string key)
+    {
+        if (IdeaLinks?.Invoke(text) is not { Count: > 0 } found)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. found.Select(link => Layout.Builder.Text(link.FlightCode is { } code ? $"{link.Text} → {code}" : link.Text + Followable.Away, 11f, Link)
+                .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
+    }
 
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
@@ -362,6 +382,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return cut == text.Value ? button : leaf with { Content = text with { Value = cut }, Tooltip = leaf.Tooltip ?? text.Value };
     }
 
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override LinkMenu? SelectionLinks => _links;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
     public void Render(CardsScreen screen, RectF32 bounds)
     {
         BeginFrame();
@@ -404,11 +430,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var blocks = new List<Layout.Node>
         {
             Layout.Builder.HStack(
-                    Layout.Builder.Text("Watchtower", 18f, Bright).WAuto(),
+                    Layout.Builder.Text("Watchtower", 18f, Bright).WAuto().Selectable(),
                     Layout.Builder.Spacer().WStar(),
-                    Layout.Builder.Text(said, 12f, colour, TextAlign.Far).WAuto())
+                    Layout.Builder.Text(said, 12f, colour, TextAlign.Far).Selectable().WAuto())
                 .RowH(30f),
-            Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).RowH(18f),
+            Layout.Builder.Text($"{row.Name}{(row.ContextWindow > 0 ? $" · context {100.0 * row.ContextTokens / row.ContextWindow:0}%" : "")}", 11f, Dim).Selectable().RowH(18f),
         };
         // The link's row is kept whether there is a link or not: the block is always as tall, so the cards under it never
         // move when the watchtower gains or loses its Remote Control, or a fresh one starts (SE1, 2026-10-24).
@@ -442,7 +468,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static List<Layout.Node> NoWatchtower() =>
     [
         Layout.Builder.HStack(
-                Layout.Builder.Text("Watchtower", 18f, Dim).WAuto(),
+                Layout.Builder.Text("Watchtower", 18f, Dim).Selectable().WAuto(),
                 Layout.Builder.Spacer().WStar(),
                 Layout.Builder.Text("not running", 12f, Dim, TextAlign.Far).WStarUpToContent().Whole("not running"))
             .RowH(30f),
@@ -451,27 +477,22 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         Layout.Builder.Spacer().RowH(10f),
     ];
 
-    // Noted from the pool (a button's answer) while the render thread draws them: swapped whole, never waited on.
-    private System.Collections.Immutable.ImmutableDictionary<string, string> _refused = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+    // What a button's press is doing, by card id: working with the node, refused in its words. One helper for every button that asks the node.
+    internal Presses Presses { get; } = new();
 
     /// <summary>
     /// What the node said when it refused a button on card <paramref name="cardId"/>, shown on the card in red until the
     /// card changes or closes; null clears it (the next press that went through).
     /// </summary>
-    public void NoteRefused(string cardId, string? why) =>
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _refused, refused => why is null ? refused.Remove(cardId) : refused.SetItem(cardId, why));
-
-    // The button of each card whose press is with the node now, by its action id (card:c9:1): swapped whole, never waited on.
-    private System.Collections.Immutable.ImmutableDictionary<string, string> _working = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+    public void NoteRefused(string cardId, string? why) => Presses.NoteRefused(cardId, why);
 
     /// <summary>
     /// Marks the button <paramref name="action"/> (its hit id, <c>card:c9:1</c>) of card <paramref name="cardId"/> as with the
     /// node: it reads "…" and the card's buttons take no press until it is cleared (null), when the node has answered.
     /// </summary>
-    public void NoteWorking(string cardId, string? action) =>
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _working, working => action is null ? working.Remove(cardId) : working.SetItem(cardId, action));
+    public void NoteWorking(string cardId, string? action) => Presses.NotePending(cardId, action);
 
-    // Cards whose detail fold is open, by id: swapped whole, as _working is.
+    // Cards whose detail fold is open, by id: swapped whole, as the presses are.
     private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
 
     private void ToggleDetail(string cardId) =>
@@ -481,10 +502,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public bool DetailOpenOn(string cardId) => Volatile.Read(ref _detailOpen).Contains(cardId);
 
     /// <summary>The button of card <paramref name="cardId"/> whose press is with the node now, or null: the flight page reads it too.</summary>
-    public string? WorkingOn(string cardId) => Volatile.Read(ref _working).GetValueOrDefault(cardId);
+    public string? WorkingOn(string cardId) => Presses.PendingOf(cardId);
 
     /// <summary>The card's refusal as it stands, for a test or a dump; null when none.</summary>
-    public string? RefusedOn(string cardId) => Volatile.Read(ref _refused).GetValueOrDefault(cardId);
+    public string? RefusedOn(string cardId) => Presses.RefusedOf(cardId);
 
     /// <summary>The panel's foot, which stays in view while the cards above scroll: the way into the chat with the watchtower.</summary>
     private Layout.Node Foot(CardsScreen screen)
@@ -492,7 +513,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var rows = new List<Layout.Node> { Layout.Builder.Spacer().RowH(6f) };
         if (screen.Watchtower is null)
         {
-            rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).RowH(16f));
+            rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).Selectable().RowH(16f));
         }
         rows.Add(Layout.Builder.HStack(
                 Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()).WStarUpToContent().WithTooltip("Chat with the watchtower"),
@@ -510,11 +531,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var here = screen.Open.Concat(screen.Merged).Select(c => c.Id).ToHashSet();
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Any(id => !here.Contains(id)) ? open.Intersect(here) : open);
         var blocks = screen.Watchtower is { } tower ? Watchtower(tower) : NoWatchtower();
-        blocks.Add(Layout.Builder.Text("For you", 18f, Bright).RowH(30f));
+        blocks.Add(Layout.Builder.Text("For you", 18f, Bright).Selectable().RowH(30f));
         blocks.Add(_waiting.Count == 0
-            ? Layout.Builder.Text(screen.Summary, 12f, Dim).RowH(20f)
+            ? Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().RowH(20f)
             : Layout.Builder.HStack([
-                    Layout.Builder.Text(screen.Summary, 12f, Dim).WAuto(),
+                    Layout.Builder.Text(screen.Summary, 12f, Dim).Selectable().WAuto(),
                     Layout.Builder.Spacer().WStar(),
                     .. _waiting.Select(Waiting)])
                 .RowH(20f));
@@ -549,21 +570,27 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             else
             {
-                blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).RowH(22f));
+                blocks.Add(Layout.Builder.Text("Handled", 13f, Dim).Selectable().RowH(22f));
             }
             foreach (var card in folds && !HandledOpen ? Enumerable.Empty<CardRow>() : screen.Handled)
             {
-                blocks.Add(Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).RowH(20f));
+                var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).Selectable().RowH(20f);
+                blocks.Add(line);
+                if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
+                {
+                    blocks.Add(handledLinks);
+                }
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
-        return _links.Over(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch());
+        return _links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch()));
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
     private Layout.Node HeldLine(HeldNode held)
     {
-        var line = WrappedProse.Of(held.Shown, 11f, HeldText, HeldLines)
+        // Not selectable: the whole row is a press (it opens the node on the Fleet page) and a drag would fight it.
+        var line = WrappedProse.Of(held.Shown, 11f, HeldText, HeldLines, selectable: false)
             .BgHover(CardHover)
             .Follows(new HitResult.ButtonHit($"cards:node:{held.Node.Key}"), _ => OnFleet?.Invoke(held.Node));
         // Also on hover when it is not cut: the click's way, which the dim line alone does not say.
@@ -607,6 +634,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // the rest (TIA1818's ring, SE1 2026-10-25).
     private const int TitleFits = 34;
     private const int DetailFits = 120;
+
+    /// <summary>
+    /// What a line of a card's text is judged to hold when its words are made: generous for the panel (about sixty characters at
+    /// 11pt, 340 wide), so a capped text is cut only well past what its lines could show, and a frame fits a bounded few leaves.
+    /// </summary>
+    internal const int LineChars = 75;
+
+    /// <summary>The longest summary made into leaves (it has no line cap); its whole text is on hover past this.</summary>
+    internal const int SummaryChars = 240;
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
@@ -679,7 +715,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         };
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).RowH(16f),
+            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable().RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
@@ -692,7 +728,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 : card.Kind == CardKinds.Overlap
                     // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
                     ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
-                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright)).RowH(22f),
+                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright).Selectable()).RowH(22f),
                         card.Title, card.Title.Length > TitleFits)),
         };
         if (card.Kind == CardKinds.Overlap)
@@ -704,7 +740,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(summary, 12f, Body, SummaryLines, linker(12f)), summary, false));
+            lines.Add(Whole(WrappedProse.Of(WrappedProse.Bound(summary, SummaryChars), 12f, Body, SummaryLines, linker(12f), lineChars: LineChars), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -728,15 +764,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // The whole text is on hover wherever it could pass the cap: a narrow panel wraps a detail of a few hundred characters
                 // past eight lines, and a later paragraph gets one line, so the length is judged at the narrowest width (DetailFits per
                 // DetailLines), never scaled up by the cap, and a second paragraph is a cut of its own.
-                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap), detail,
+                lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
         }
-        // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        var working = Volatile.Read(ref _working).GetValueOrDefault(card.Id);
-        if (working is null && Volatile.Read(ref _refused).TryGetValue(card.Id, out var refused))
+        if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
         {
-            lines.Add(WrappedProse.Paragraphs(refused, 11f, Ring, DetailLines));
+            lines.Add(ideaLinks);
+        }
+        // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
+        var working = Presses.PendingOf(card.Id);
+        if (Presses.RefusalLine(card.Id, 11f, Ring, DetailLines, LineChars) is { } refusal)
+        {
+            lines.Add(refusal);
         }
 
         var buttons = new List<Layout.Node>();
@@ -745,13 +785,24 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // 2026-10-25).
         Layout.Node Button(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
             closed ? Dead(label) : working is not null ? Dead(action == working ? $"{label} …" : label) : Pill(label, action, onClick, tint);
+        // A button that asks the node goes through the shared helper, which says it is working and takes no second press.
+        Layout.Node NodeButton(string label, string action, Action onClick) =>
+            closed ? Dead(label) : Presses.Button(card.Id, action, () => Pill(label, action, onClick), pressed => Dead(pressed ? $"{label} …" : label));
         var watched = node is { Here: false } && CanSteer?.Invoke(node) == false ? node : null;
         if (watched is not null)
         {
             // Answering and dismissing are commands: replaced by why not, and the ask for the grant.
-            lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).RowH(18f));
+            lines.Add(Layout.Builder.Text(SessionsView<TSurface>.SteerHint(watched), 11f, Dim).Selectable().RowH(18f));
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Button("Connect", $"card:{card.Id}:connect", () => OnConnect?.Invoke(watched)));
+            // A grant asks the node like any other press: working at once, and a refusal on the card.
+            var connectHit = $"card:{card.Id}:connect";
+            buttons.Add(NodeButton("Connect", connectHit, () =>
+            {
+                if (OnConnect is { } connect)
+                {
+                    _ = Presses.PressAsync(card.Id, connectHit, _ => connect(watched));
+                }
+            }));
         }
         for (var i = 0; watched is null && i < card.Choices.Length; i++)
         {
@@ -768,11 +819,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
+            var label = StatusLabel(choice, card.Detail);
             buttons.Add(closed
-                ? Dead(StatusLabel(choice, card.Detail))
-                : working is not null && !IsChip(choice.Status)
-                    ? Dead(action == working ? $"{StatusLabel(choice, card.Detail)} …" : StatusLabel(choice, card.Detail))
-                    : ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)));
+                ? Dead(label)
+                : IsChip(choice.Status)
+                    ? ChoiceControl(choice, card.Detail, action, () => { })
+                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)), pressed => Dead(pressed ? $"{label} …" : label)));
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
@@ -797,7 +849,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(Button("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            buttons.Add(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -830,22 +882,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             return null;
         }
-        var title = Whole(Layout.Builder.Text(Titled(card), 14f, Link)
-                .BgHover(CardHover)
-                .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => route(card, pr))
-                .WStar().HStar(), card.Title, card.Title.Length > TitleFits);
-        if (card.Title.Length <= TitleFits)
-        {
-            title = title.WithTooltip($"Show {pr} on the Pull requests page");
-        }
-        // The browser's own, small: a mark, not a word, so it reads as the way out and the title as the way in.
-        var away = _links.OnLink(Layout.Builder.Text("↗", 11f, Link, TextAlign.Center, TextAlign.Center)
-            .Pad(6f, 0f)
-            .WAuto().HStar()
-            .BgHover(CardHover)
-            .Follows(new HitResult.ButtonHit($"card:{card.Id}:browser"), _ => OnOpen?.Invoke(PullRequestLinks.Url(pr)))
-            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left), PullRequestLinks.Url(pr));
-        return Layout.Builder.HStack(title, away).RowH(22f);
+        return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left, tall: true,
+                browserAction: $"card:{card.Id}:browser")
+            .HFixed(22f);
     }
 
     // A closed card's button as it was, the same size, answering nothing.
@@ -858,6 +898,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         HeaderPill(label, action, _ => onClick(), tint, textColor);
+
+    /// <summary>A header pill with no hit: the working word of a header button whose press is with the node.</summary>
+    internal static Layout.Node DeadHeaderPill(string label, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null) =>
+        Layout.Builder.Text(label, 12f, Dim, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
+            .WAuto()
+            .HFixed(AboutCard.HeaderButton)
+            .Bg(tint?.Bg ?? Button);
 
     /// <summary>A header button whose click is told which modifier keys were held: the node pills' Shift adds to the pick.</summary>
     internal static Layout.Node HeaderPill(string label, string action, Action<InputModifier> onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>

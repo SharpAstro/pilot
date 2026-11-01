@@ -100,6 +100,21 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public void ALegsCheckReadsAsTheLegsCheckAndWakesNobody()
+    {
+        var check = Job("j20", JobState.Running, Live.At.AddMinutes(-2), owner: null) with { Kind = JobKind.Check, Flight = "ORB204", Leg = "parser" };
+        var line = JobLine.From(check, Live.At);
+
+        line.For.ShouldBe("ORB204/parser's check");
+
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        var cells = Cells(jobs, new JobsScreen(JobLine.Build([check], Live.At), "live", Live.At));
+        cells.ShouldContain("the node's check of ORB204/parser");
+        cells.ShouldNotContain("a terminal");
+    }
+
+    [Fact]
     public void TheRailOpensTheBackgroundTasksPage()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
@@ -119,7 +134,7 @@ public sealed class JobsTests
         var (_, jobs) = Chrome(vessel);
         jobs.CanCommand = true;
         var cancelled = new List<string>();
-        jobs.OnCancel = job => cancelled.Add(job.Id);
+        jobs.OnCancel = job => { cancelled.Add(job.Id); return Task.FromResult<string?>(null); };
         jobs.OnOpen = _ => { };
 
         var arranged = Layout.Engine.Arrange(jobs.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
@@ -153,7 +168,9 @@ public sealed class JobsTests
         var failed = arranged.First(a => a.Node.Hit is HitResult.ListItemHit { ListId: JobsView<RgbaImage>.ListId, Index: 2 });
         CellLayout.HitTest(arranged, failed.Bounds.X + 1, failed.Bounds.Y);
         jobs.Selected.ShouldBe(2);
-        Cells(jobs, Screen()).ShouldNotContain("Cancel");
+        // (The pressed job's row still says "cancelling…" until a read shows it changed.)
+        Cells(jobs, Screen()).ShouldNotContain("Cancel…");
+        Cells(jobs, Screen()).ShouldNotContain("Cancel job");
     }
 
     private static readonly JobProcessInfo[] Tree =
@@ -234,8 +251,8 @@ public sealed class JobsTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var screen = ScreenWithPid();
         var jobs = await Following(vessel, LogWith(stuck: "process exited, output still held by 5120", tree: [new("dotnet", 5120, 1)]), screen);
-        jobs.OnCancel = _ => { };
-        jobs.OnForceCancel = _ => { };
+        jobs.OnCancel = _ => Task.FromResult<string?>(null);
+        jobs.OnForceCancel = _ => Task.FromResult<string?>(null);
 
         var described = Cells(jobs, screen);
 
@@ -256,8 +273,8 @@ public sealed class JobsTests
         jobs.CanCommand = true;
         var plain = new List<string>();
         var forced = new List<string>();
-        jobs.OnCancel = job => plain.Add(job.Id);
-        jobs.OnForceCancel = job => forced.Add(job.Id);
+        jobs.OnCancel = job => { plain.Add(job.Id); return Task.FromResult<string?>(null); };
+        jobs.OnForceCancel = job => { forced.Add(job.Id); return Task.FromResult<string?>(null); };
         var screen = ScreenWithPid();
         JobLine running = screen.Lines[0];
 
@@ -294,8 +311,8 @@ public sealed class JobsTests
         // A job that is only queued has no tree to force.
         var (_, fresh) = Chrome(vessel);
         fresh.CanCommand = true;
-        fresh.OnCancel = _ => { };
-        fresh.OnForceCancel = _ => { };
+        fresh.OnCancel = _ => Task.FromResult<string?>(null);
+        fresh.OnForceCancel = _ => Task.FromResult<string?>(null);
         var queued = new JobsScreen(JobLine.Build([Job("j15", JobState.Queued, Live.At.AddMinutes(-3), queued: Live.At.AddMinutes(-3))], Live.At), "live", Live.At);
         Cells(fresh, queued).ShouldContain("Cancel…");
         Cells(fresh, queued).ShouldNotContain("Force cancel…");
@@ -383,9 +400,9 @@ public sealed class JobsTests
         var (_, jobs) = Chrome(vessel);
         jobs.CanCommand = true;
         var sent = new List<string>();
-        jobs.OnPause = job => sent.Add("pause-job " + job.Id);
-        jobs.OnResume = job => sent.Add("resume-job " + job.Id);
-        jobs.OnCancel = job => sent.Add("cancel-job " + job.Id);
+        jobs.OnPause = job => { sent.Add("pause-job " + job.Id); return Task.FromResult<string?>(null); };
+        jobs.OnResume = job => { sent.Add("resume-job " + job.Id); return Task.FromResult<string?>(null); };
+        jobs.OnCancel = job => { sent.Add("cancel-job " + job.Id); return Task.FromResult<string?>(null); };
         var running = JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At).Single();
         var paused = JobLine.Build([Job("j16", JobState.Running, Live.At.AddMinutes(-11)) with { PausedAt = Live.At.AddMinutes(-2) }], Live.At).Single();
 
@@ -442,7 +459,7 @@ public sealed class JobsTests
         var copied = new List<string>();
         var sessions = new List<string>();
         var cancelled = new List<string>();
-        jobs.OnCancel = job => cancelled.Add(job.Id);
+        jobs.OnCancel = job => { cancelled.Add(job.Id); return Task.FromResult<string?>(null); };
         jobs.OnSession = job => sessions.Add(job.Owner!);
         jobs.OnOpen = _ => { };
         jobs.CopyText = copied.Add;
@@ -496,7 +513,7 @@ public sealed class JobsTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var (chrome, jobs) = Chrome(renderer);
         jobs.CanCommand = true;
-        jobs.OnCancel = _ => { };
+        jobs.OnCancel = _ => Task.FromResult<string?>(null);
         jobs.OnSession = _ => { };
         chrome.Show(PilotPage.Jobs);
 
@@ -530,7 +547,7 @@ public sealed class JobsTests
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var (chrome, jobs) = Chrome(renderer);
                 jobs.CanCommand = true;
-                jobs.OnCancel = _ => { };
+                jobs.OnCancel = _ => Task.FromResult<string?>(null);
                 jobs.OnSession = _ => { };
                 chrome.Show(PilotPage.Jobs);
                 void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, null, Screen(), new RectF32(0, 0, width, height));
@@ -577,8 +594,8 @@ public sealed class JobsTests
                 using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                 var (chrome, jobs) = Chrome(renderer);
                 jobs.CanCommand = true;
-                jobs.OnCancel = _ => { };
-                jobs.OnForceCancel = _ => { };
+                jobs.OnCancel = _ => Task.FromResult<string?>(null);
+                jobs.OnForceCancel = _ => Task.FromResult<string?>(null);
                 jobs.OnSession = _ => { };
                 var screen = ScreenWithPid();
                 var log = state == "stuck" ? LogWith(stuck: "process exited, output still held by 5120", tree: [new("dotnet", 5120, 1)]) : LogWith(tree: many);
@@ -638,5 +655,60 @@ public sealed class JobsTests
         var noQueue = new JobsScreen(JobLine.Build([Job("j14", JobState.Running, Live.At.AddMinutes(-11))], Live.At), "live", Live.At);
         noQueue.Holder.ShouldBeNull();
         Cells(jobs, noQueue).ShouldNotContain("holds the queue");
+    }
+
+    private static void ClickTitle(JobsView<RgbaImage> jobs, JobsScreen screen, string title)
+    {
+        var bounds = new RectF32(0f, 0f, 1280f, 800f);
+        jobs.Render(screen, bounds);
+        var regions = new List<ClickableRegion>();
+        jobs.CollectPaintedRegions(regions);
+        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == "jobs:table:" + title).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        jobs.Render(screen, bounds);
+    }
+
+    [Fact]
+    public void AClickOnATitleSortsTheJobsByItsValueAndASecondFlipsIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+        ClickTitle(jobs, screen, "Job");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+
+        // Started by time, newest first at the first click: the queued job is the newest handed over.
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j15", "j14", "j13", "j12"]);
+        ClickTitle(jobs, screen, "Started");
+        jobs.Shown.ShouldBe(["j12", "j13", "j14", "j15"]);
+
+        // Took by how long: the running job has run longest, the queued one not at all.
+        ClickTitle(jobs, screen, "Took");
+        jobs.Shown.ShouldBe(["j14", "j13", "j12", "j15"]);
+        jobs.Table.Sort.ShouldBe(new ListTable.SortState("Took", Descending: true));
+
+        ClickTitle(jobs, screen, "State");
+        jobs.Shown.Take(2).ShouldBe(["j14", "j15"]);
+    }
+
+    [Fact]
+    public void TheSelectedJobStaysSelectedThroughASort()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var (_, jobs) = Chrome(renderer);
+        jobs.FontPath = SessionsCapture.FontPath;
+        var screen = Screen();
+        jobs.Render(screen, new RectF32(0f, 0f, 1280f, 800f));
+        jobs.Select(screen, screen.Lines.Single(l => l.Id == "j14"));
+        var before = jobs.Selected;
+
+        ClickTitle(jobs, screen, "Started");
+
+        jobs.Shown[jobs.Selected].ShouldBe("j14");
+        jobs.Selected.ShouldNotBe(before, "the sort moved the row, and the selection went with it");
     }
 }

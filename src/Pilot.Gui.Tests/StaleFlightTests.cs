@@ -114,7 +114,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
             .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
 
     private static FlightsView<RgbaImage> View(RgbaImageRenderer renderer, FlightsViewMode mode) =>
-        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode, CanCommand = true, OnAction = _ => { }, OnChat = _ => { } };
+        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode, CanCommand = true, OnAction = _ => Task.FromResult<string?>(null), OnChat = _ => Task.FromResult<string?>(null) };
 
     [Fact]
     public async Task ADownNodesFlightsAreMarkedStaleWithItsNameAndTheReachableNodesAreNot()
@@ -198,6 +198,14 @@ public sealed class StaleFlightTests : IAsyncDisposable
         var view = View(renderer, Enum.Parse<FlightsViewMode>(modeName));
 
         var texts = Texts(view.Tree(pages.Flights), renderer);
+        if (view.CanvasShown)
+        {
+            // The map draws its words on one leaf; what each plane says to the pointer is the same brief as the Home chip's.
+            view.Render(pages.Flights, new RectF32(0, 0, 1900, 900));
+            var regions = new List<ClickableRegion>();
+            view.CollectPaintedRegions(regions);
+            texts = [.. regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.EndsWith(":plane", StringComparison.Ordinal)).Select(r => r.Tooltip!)];
+        }
 
         // Two stale flights: each says it, in words; TIA1's own says nothing of the kind.
         texts.Count(t => t.Contains(Mark, StringComparison.Ordinal)).ShouldBe(2);
@@ -208,7 +216,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
-        chrome.Flights.OnAction = _ => { };
+        chrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Flights);
         return chrome;
     }

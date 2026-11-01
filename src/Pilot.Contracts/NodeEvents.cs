@@ -28,12 +28,22 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(CardChangedEvent), "cardChanged")]
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
 [JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
+[JsonDerivedType(typeof(AdmissionChangedEvent), "admissionChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
+[JsonDerivedType(typeof(MergeAddedEvent), "mergeAdded")]
+[JsonDerivedType(typeof(MergeChangedEvent), "mergeChanged")]
+[JsonDerivedType(typeof(MergeRemovedEvent), "mergeRemoved")]
 [JsonDerivedType(typeof(PrReviewAddedEvent), "prReviewAdded")]
 [JsonDerivedType(typeof(PrReviewChangedEvent), "prReviewChanged")]
+[JsonDerivedType(typeof(IdeasChangedEvent), "ideasChanged")]
+[JsonDerivedType(typeof(IdeaMovedEvent), "ideaMoved")]
+[JsonDerivedType(typeof(MilestonesChangedEvent), "milestonesChanged")]
+[JsonDerivedType(typeof(IssuesChangedEvent), "issuesChanged")]
 [JsonDerivedType(typeof(SummaryChangedEvent), "summaryChanged")]
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
+[JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
+[JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -101,6 +111,9 @@ public sealed record SnapshotEvent : NodeEvent
     /// <summary>The machine as last sampled; null before the node has sampled it, and from an older node, whose stream has none.</summary>
     public MachineRow? Machine { get; init; }
 
+    /// <summary>The Opus count, cap and priority flights as last said; null before the node has said, and from an older node.</summary>
+    public AdmissionRow? Admission { get; init; }
+
     /// <summary>Every job, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public JobRow[] Jobs
     {
@@ -110,6 +123,15 @@ public sealed record SnapshotEvent : NodeEvent
 
     private readonly JobRow[]? _jobs;
 
+    /// <summary>Every merge queue entry, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MergeRow[] Merges
+    {
+        get => _merges ?? [];
+        init => _merges = value;
+    }
+
+    private readonly MergeRow[]? _merges;
+
     /// <summary>Every PR review, closed ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public PrReviewRow[] PrReviews
     {
@@ -118,6 +140,48 @@ public sealed record SnapshotEvent : NodeEvent
     }
 
     private readonly PrReviewRow[]? _prReviews;
+
+    /// <summary>Every idea of every repo the node reads, as it last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IdeaRow[] Ideas
+    {
+        get => _ideas ?? [];
+        init => _ideas = value;
+    }
+
+    private readonly IdeaRow[]? _ideas;
+
+    /// <summary>Every idea moved to another repo, so an old id still finds it. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IdeaMoveRow[] IdeaMoves
+    {
+        get => _ideaMoves ?? [];
+        init => _ideaMoves = value;
+    }
+
+    private readonly IdeaMoveRow[]? _ideaMoves;
+
+    /// <summary>The open milestones of every repo the node reads ideas for, as it last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public MilestoneRow[] Milestones
+    {
+        get => _milestones ?? [];
+        init => _milestones = value;
+    }
+
+    private readonly MilestoneRow[]? _milestones;
+
+    /// <summary>The open issues of those repos, in a milestone or in none, as the node last read them. Not required, for the same reason as <see cref="Flights"/>.</summary>
+    public IssueRow[] Issues
+    {
+        get => _issues ?? [];
+        init => _issues = value;
+    }
+
+    private readonly IssueRow[]? _issues;
+
+    /// <summary>
+    /// Spend as a file holds it (the contract's sample, a capture): what the Spend page and a flight's page draw without a node.
+    /// A live node leaves it null, and the window reads the spend routes instead.
+    /// </summary>
+    public SpendSnapshot? Spend { get; init; }
 
     /// <summary>The summary of each scope the node has made one of (<see cref="SummaryRow"/>). Not required, for the same reason as <see cref="Flights"/>.</summary>
     public SummaryRow[] Summaries
@@ -130,6 +194,36 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before it has read any.</summary>
     public PullRequestsRow? PullRequests { get; init; }
+
+    /// <summary>Where every repo the node knows stands, as last read (or marked not read yet); null from an older node.</summary>
+    public ReposRow? Repos { get; init; }
+
+    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before it has said, and from an older node.</summary>
+    public NodeRow? Node { get; init; }
+}
+
+/// <summary>An idea was moved to another repo: its old id now points to the new one.</summary>
+public sealed record IdeaMovedEvent : NodeEvent
+{
+    public required IdeaMoveRow Move { get; init; }
+}
+
+/// <summary>The ideas the node reads changed (one noted, planned, dropped, or seen changed on GitHub): all of them, as they are now.</summary>
+public sealed record IdeasChangedEvent : NodeEvent
+{
+    public required IdeaRow[] Ideas { get; init; }
+}
+
+/// <summary>The milestones the node reads changed (one made, due, counted again, or closed on GitHub): all of them, as they are now.</summary>
+public sealed record MilestonesChangedEvent : NodeEvent
+{
+    public required MilestoneRow[] Milestones { get; init; }
+}
+
+/// <summary>The open issues the node reads changed (one opened, closed, moved to a milestone, or seen changed on GitHub): all of them, as they are now.</summary>
+public sealed record IssuesChangedEvent : NodeEvent
+{
+    public required IssueRow[] Issues { get; init; }
 }
 
 /// <summary>A session the node had not seen.</summary>

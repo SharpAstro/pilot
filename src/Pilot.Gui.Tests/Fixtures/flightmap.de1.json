@@ -1,0 +1,65 @@
+{
+  "kind": "snapshot",
+  "stream": "aa11bb22cc33dd44ee55ff6600778899",
+  "sessions": [],
+  "notes": [],
+  "flights": [
+    {
+      "code": "ORB10", "repo": "orbit", "repoPath": "/r/orbit", "issue": 10, "title": "Parser rewrite (domestic, flying)",
+      "branch": "flight/orb10", "worktree": "/r/orbit/.claude/worktrees/orb10", "base": "origin/main",
+      "state": "flying", "createdAt": "2026-10-28T06:00:00+00:00"
+    },
+    {
+      "code": "ORB11", "repo": "orbit", "repoPath": "/r/orbit", "issue": 11, "title": "Docs for the parser (held behind ORB10)",
+      "branch": "flight/orb11", "worktree": "/r/orbit/.claude/worktrees/orb11", "base": "origin/main",
+      "state": "held", "connections": ["ORB10"], "createdAt": "2026-10-28T06:10:00+00:00"
+    },
+    {
+      "code": "ORB12", "repo": "orbit", "repoPath": "/r/orbit", "issue": 12, "title": "Lexer tidy (PR under review)",
+      "branch": "flight/orb12", "worktree": "/r/orbit/.claude/worktrees/orb12", "base": "origin/main",
+      "state": "flying", "createdAt": "2026-10-28T05:00:00+00:00",
+      "pullRequest": 112, "pullRequestUrl": "https://github.com/example-org/orbit/pull/112",
+      "review": { "state": "reviewing", "reviewer": "de1-orb12-review", "startedAt": "2026-10-28T08:30:00+00:00" }
+    },
+    {
+      "code": "ORB13", "repo": "orbit", "repoPath": "/r/orbit", "issue": 13, "title": "Config loader (PR review passed)",
+      "branch": "flight/orb13", "worktree": "/r/orbit/.claude/worktrees/orb13", "base": "origin/main",
+      "state": "flying", "createdAt": "2026-10-28T04:00:00+00:00",
+      "pullRequest": 113, "pullRequestUrl": "https://github.com/example-org/orbit/pull/113",
+      "review": { "state": "passed", "reviewer": "de1-orb13-review", "startedAt": "2026-10-28T07:30:00+00:00", "finishedAt": "2026-10-28T08:00:00+00:00" }
+    },
+    {
+      "code": "ORB14", "repo": "orbit", "repoPath": "/r/orbit", "issue": 14, "title": "Cache keys (PR in the merge queue)",
+      "branch": "flight/orb14", "worktree": "/r/orbit/.claude/worktrees/orb14", "base": "origin/main",
+      "state": "flying", "createdAt": "2026-10-28T03:00:00+00:00",
+      "pullRequest": 114, "pullRequestUrl": "https://github.com/example-org/orbit/pull/114",
+      "mergeQueue": "in the merge queue, position 2",
+      "review": { "state": "passed", "reviewer": "de1-orb14-review", "startedAt": "2026-10-28T06:30:00+00:00", "finishedAt": "2026-10-28T07:00:00+00:00" }
+    },
+    {
+      "code": "ORB15", "repo": "orbit", "repoPath": "/r/orbit", "issue": 15, "title": "Logging (PR merged, landed)",
+      "branch": "flight/orb15", "worktree": "/r/orbit/.claude/worktrees/orb15", "base": "origin/main",
+      "state": "landed", "createdAt": "2026-10-27T20:00:00+00:00", "landedAt": "2026-10-28T02:00:00+00:00",
+      "pullRequest": 115, "pullRequestUrl": "https://github.com/example-org/orbit/pull/115",
+      "review": { "state": "passed", "reviewer": "de1-orb15-review", "startedAt": "2026-10-28T01:00:00+00:00", "finishedAt": "2026-10-28T01:30:00+00:00" }
+    }
+  ],
+  "legs": [
+    { "flight": "ORB10", "name": "lexer", "order": 1, "goal": "g", "doneWhen": "d", "state": "done" },
+    { "flight": "ORB10", "name": "parser", "order": 2, "goal": "g", "doneWhen": "d", "state": "flying" },
+    { "flight": "ORB10", "name": "errors", "order": 3, "goal": "g", "doneWhen": "d", "state": "planned" },
+    { "flight": "ORB11", "name": "guide", "order": 1, "goal": "g", "doneWhen": "d", "state": "planned" },
+    { "flight": "ORB11", "name": "reference", "order": 2, "goal": "g", "doneWhen": "d", "state": "planned" },
+    { "flight": "ORB12", "name": "tidy", "order": 1, "goal": "g", "doneWhen": "d", "state": "done" },
+    { "flight": "ORB13", "name": "loader", "order": 1, "goal": "g", "doneWhen": "d", "state": "done" },
+    { "flight": "ORB13", "name": "tests", "order": 2, "goal": "g", "doneWhen": "d", "state": "done" },
+    { "flight": "ORB14", "name": "keys", "order": 1, "goal": "g", "doneWhen": "d", "state": "done" },
+    { "flight": "ORB15", "name": "logging", "order": 1, "goal": "g", "doneWhen": "d", "state": "done" }
+  ],
+  "cards": [],
+  "usage": null,
+  "machine": null,
+  "jobs": [],
+  "seq": 1,
+  "at": "2026-10-28T09:00:00+00:00"
+}

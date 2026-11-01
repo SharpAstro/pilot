@@ -145,17 +145,16 @@ public sealed partial class InPlayTests
     }
 
     [Fact]
-    public void ALandedFlightAShownOneWaitsForStandsAsItsGhostOnTheCanvas()
+    public void ALandedFlightThatIsHiddenHasNoRouteOnTheMap()
     {
         using var renderer = NewRenderer();
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, Play = new PlayFilter() };
 
         view.Render(Flights(), new RectF32(0, 0, 1280, 800));
 
-        view.Canvas.Cards.Where(c => !c.IsGhost).Select(c => c.Code).ShouldBe(["FLY1", "FLY2", "HELD1"], ignoreOrder: true);
-        var ghost = view.Canvas.Cards.Single(c => c.IsGhost);
-        ghost.Code.ShouldBe("LAND1");
-        view.Canvas.Edges.Select(e => (e.From, e.To)).ShouldContain(("LAND1", "HELD1"));
+        view.Map.Routes.Select(r => r.Flight).ShouldBe(["FLY1", "FLY2", "HELD1"], ignoreOrder: true);
+        // The landed flight HELD1 waited for is not on the page, so no route stands for it and no connection runs from it.
+        view.Map.Connections.ShouldBeEmpty();
     }
 
     [Fact]

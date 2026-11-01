@@ -90,6 +90,45 @@ if (options.SayTo is { } sayTo)
     return await GuiSay.RunAsync(oneShot, sayTo, options.SayText ?? "", Console.Out, LogLine, CancellationToken.None);
 }
 
+string? capturedNodeCode = null;
+
+// A capture of several nodes: this node's flights marked with its name, then each --peer's, as the window's page merges them.
+async Task<FlightsScreen> WithPeersAsync(FlightsScreen here, SessionsScreen shown)
+{
+    var hereName = options.HereName ?? (capturedNodeCode is { Length: > 0 } code ? code : "DE1");
+    var lines = here.Lines.Select(l => l with { Node = new NodeMark(hereName.ToLowerInvariant(), hereName, hereName, Here: true) }).ToList();
+    foreach (var spec in options.Peers)
+    {
+        FlightLine[] peerLines;
+        string name;
+        if (spec.IndexOf('=') is > 0 and var eq && File.Exists(spec[(eq + 1)..]))
+        {
+            name = spec[..eq];
+            var snap = SessionsCapture.LoadSnapshot(Path.GetFullPath(spec[(eq + 1)..]));
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, snap.At, snap.Legs)];
+        }
+        else
+        {
+            var (resolved, _, unknown) = await Pilot.Commands.NodeTargets.ResolveAsync(spec, CancellationToken.None);
+            if (unknown is not null || resolved is null || !NodeClient.IsEndpoint(resolved, out var peerEndpoint))
+            {
+                throw new InvalidDataException($"--peer {spec}: {unknown ?? "not a node on the LAN"}");
+            }
+            using var client = Pilot.Commands.NodeTargets.Connect(peerEndpoint, null);
+            name = (await client.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : peerEndpoint;
+            await using var events = await client.OpenEventsAsync(since: null, stream: null, CancellationToken.None);
+            if (await events.ReadAsync(CancellationToken.None) is not SnapshotEvent snap)
+            {
+                throw new InvalidDataException($"--peer {spec}: no snapshot");
+            }
+            peerLines = [.. FlightLine.Build(snap.Flights, snap.Sessions, here.AsOf, snap.Legs)];
+        }
+        var mark = new NodeMark(name.ToLowerInvariant(), name, name, Here: false);
+        lines.AddRange(peerLines.Select(l => l with { Node = mark }));
+    }
+    return here with { Lines = FlightLine.Order(lines), Source = $"{shown.Source} · {options.Peers.Length + 1} nodes" };
+}
+
 SessionsScreen screen;
 SnapshotEvent? snapshot = null;
 FlightsScreen? capturedFlights = null;
@@ -123,13 +162,14 @@ else if (options.Capture is not null)
         var rows = await oneShot.GetSessionsAsync(CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         var code = (await oneShot.GetNodeAsync(CancellationToken.None)).MachinePrefix is { Length: > 0 } prefix ? prefix : null;
+        capturedNodeCode = code;
         screen = new SessionsScreen([.. SessionLine.Build(rows, now).Select(l => l with { NodeCode = code })], $"live from the node on {nodeWhere}", now);
         // The flights and the cards are on the stream's snapshot, which a capture reads once.
         await using (var events = await oneShot.OpenEventsAsync(since: null, stream: null, CancellationToken.None))
         {
             if (await events.ReadAsync(CancellationToken.None) is SnapshotEvent live)
             {
-                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs), screen.Source, now);
+                capturedFlights = new FlightsScreen(FlightLine.Build(live.Flights, live.Sessions, now, live.Legs, live.Admission), screen.Source, now) { Admission = live.Admission };
                 capturedCards = CardsScreen.From(live.Cards);
                 capturedMachine = live.Machine;
                 capturedJobs = new JobsScreen(JobLine.Build(live.Jobs, now), screen.Source, now);
@@ -154,7 +194,7 @@ else
 
 if (options.Capture is { } capturePath)
 {
-    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
+    capturedFlights ??= snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs, snapshot.Admission), screen.Source, snapshot.At) { Admission = snapshot.Admission };
     capturedCards ??= snapshot is null ? null : CardsScreen.From(snapshot.Cards);
     capturedMachine ??= snapshot?.Machine;
     capturedJobs ??= snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
@@ -163,9 +203,13 @@ if (options.Capture is { } capturePath)
     {
         capturedRepos = SessionsCapture.ReposScreenFor(snapshot, SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), screen.Source);
     }
+    if (options.Peers.Length > 0 && capturedFlights is not null)
+    {
+        capturedFlights = await WithPeersAsync(capturedFlights, screen);
+    }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, fold: options.Fold);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend);
     Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;
@@ -213,7 +257,6 @@ var logger = loggerFactory.CreateLogger("Pilot.Gui");
 SdlVulkanLog.Logger = loggerFactory.CreateLogger("SdlVulkan.Renderer");
 var tracker = new BackgroundTaskTracker();
 LogLine($"pilot-gui: start, version {NodeFeed.ClientVersion}, args [{string.Join(' ', args)}], node {nodeWhere}");
-var frameTimer = new FrameTimer(LogLine);
 string WhatRendered()
 {
     var what = chrome.Page.ToString();
@@ -232,6 +275,8 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();
 chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
+// The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
+chrome.Flights.Changed = loop.RequestRedraw;
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
@@ -264,6 +309,7 @@ using var client = snapshot is null ? NewClient() : null;
 // the SDL window's teardown included, on a thread-pool thread, where closing the window hung. The feed is drained
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
+SpendReads? spendReads = null;
 if (feed is not null)
 {
     feed.Log = LogLine;
@@ -294,35 +340,61 @@ void OpenAway(string location, Action? failed = null) => tracker.Run(async () =>
         loop.RequestRedraw();
     }
 }, $"open {location}");
+// A press of a button that asks the node: the work runs through the tracker (drained at shutdown, a fault logged), and its answer, the
+// node's refusal in its words or null when it took it, goes back to the view, which says it where the button was pressed. A fault the
+// work did not expect is the refusal too, in its message, and still reaches the tracker.
+Task<string?> Tracked(Func<Task<string?>> work, string what)
+{
+    var answer = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+    tracker.Run(async () =>
+    {
+        try
+        {
+            answer.TrySetResult(await work());
+        }
+        catch (Exception ex)
+        {
+            answer.TrySetResult(ex.Message);
+            throw;
+        }
+    }, what);
+    return answer.Task;
+}
+// A say's description ("refused: ...") without its prefix: the view puts its own before a refusal.
+static string? Plain(string said) => said.StartsWith("refused: ", StringComparison.Ordinal) ? said["refused: ".Length..] : said;
+// The release the update light shows, as the render thread last drew the header (null while none shows): the page builder
+// asks a frame each second while it is lit and unlit in turn, and none while there is no light.
+string? lightShown = null;
 if (feed is not null && client is not null && clients is not null)
 {
     view.CanSay = true;
-    view.OnSay = async (line, text) =>
+    view.OnSay = (line, text) => Tracked(async () =>
     {
         if (clients.For(line.Node) is not { } to)
         {
-            view.SayStatus = FleetClients.WatchOnly(line.Node);
-            return;
-        }
-        view.SayStatus = $"saying to {line.Name}…";
-        loop.RequestRedraw();
-        var result = await GuiSay.SendAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
-        view.SayStatus = result;
-        Note($"pilot-gui: say to {line.Name}: {result}");
-        loop.RequestRedraw();
-    };
-    // "Say to all shown": each picked row through its own node's say, one line per session in the console.
-    view.OnSayAll = async (line, text) =>
-    {
-        if (clients.For(line.Node) is not { } to)
-        {
-            return false;
+            return FleetClients.WatchOnly(line.Node);
         }
         var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
         Note($"pilot-gui: say to {line.Name}: {result}");
-        loop.RequestRedraw();
-        return delivered;
-    };
+        if (delivered)
+        {
+            // How it went in; the view says "said to" only when the host has not said more.
+            view.SayStatus = result;
+            return null;
+        }
+        return Plain(result);
+    }, $"say to {line.Name}");
+    // "Say to all shown": each picked row through its own node's say, one line per session in the console.
+    view.OnSayAll = (line, text) => Tracked(async () =>
+    {
+        if (clients.For(line.Node) is not { } to)
+        {
+            return FleetClients.WatchOnly(line.Node);
+        }
+        var (delivered, result) = await GuiSay.SayAsync(to, line.Row.Id, text, cts.Token, envelope => clients.NoteRefusal(line.Node, envelope));
+        Note($"pilot-gui: say to {line.Name}: {result}");
+        return delivered ? null : Plain(result);
+    }, $"say to {line.Name}");
     // The Sessions page's transcript pane reads the node's transcript route, and follows it while open.
     view.Transcript.Load = async (rowId, agent, after, ct) =>
     {
@@ -344,7 +416,6 @@ if (feed is not null && client is not null && clients is not null)
     // The session menu's folder and copy entries.
     view.OnOpen = folder => OpenAway(folder);
     chrome.Flights.CopyText = text => SetClipboardText(text);
-    chrome.Flights.Changed = loop.RequestRedraw;
     // The ? card: this window and the node it talks to, asked again each time it opens.
     NodeInfo? nodeInfo = null;
     chrome.About.Facts = () => AboutFacts.For("pilot-gui", nodeInfo, nodeWhere);
@@ -379,7 +450,9 @@ if (feed is not null && client is not null && clients is not null)
                     ? $"pilot-gui: update light on: the node (pid {node.ProcessId}) runs pilot {newer}, this window {NodeFeed.ClientVersion} from {AppContext.BaseDirectory}"
                     : $"pilot-gui: no update light: the node (pid {node.ProcessId}) runs pilot {newer}, but this window ({NodeFeed.ClientVersion}) runs from {AppContext.BaseDirectory}, not the node's folder, so a restart would not pick it up");
             }
-            return nodeFolder.Beside ? newer : null;
+            var shown = nodeFolder.Beside ? newer : null;
+            Volatile.Write(ref lightShown, shown);
+            return shown;
         };
         chrome.About.Restart = () =>
         {
@@ -397,11 +470,11 @@ if (feed is not null && client is not null && clients is not null)
     view.CopyText = text => SetClipboardText(text);
     view.Changed = loop.RequestRedraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
-    view.OnAction = action => tracker.Run(async () =>
+    view.OnAction = action => Tracked(async () =>
     {
-        view.SayStatus = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-        Note($"pilot-gui: {view.SayStatus}");
-        loop.RequestRedraw();
+        var refused = clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
+        Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
+        return refused;
     }, "a Sessions action");
     // A card's button is a command on the node, as a click anywhere else is; the stream closes the card.
     async Task CardCommandAsync(string verb, CardRow card, string[] args, string action)
@@ -462,6 +535,11 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Cards.CanTell = true;
     chrome.Cards.OnOpen = url => OpenAway(url);
     chrome.Cards.CopyText = text => SetClipboardText(text);
+    // The pages with no menu of their own copy a text selection all the same.
+    chrome.Home.CopyText = text => SetClipboardText(text);
+    chrome.Ideas.CopyText = text => SetClipboardText(text);
+    chrome.Fleet.CopyText = text => SetClipboardText(text);
+    chrome.PullRequests.CopyText = text => SetClipboardText(text);
     chrome.Cards.Changed = loop.RequestRedraw;
     chrome.Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { chrome.Show(PilotPage.Fleet); } };
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
@@ -480,6 +558,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }
         ? chat
         : throw new InvalidOperationException($"{node.Name} did not send its watchtower's chat");
+    chrome.Chat.CanRead = node => clients.For(node, command: false) is not null;
     chrome.Chat.OnSendOn = async (node, text) =>
     {
         if (clients.For(node) is not { } to)
@@ -508,6 +587,32 @@ if (feed is not null && client is not null && clients is not null)
         return refused;
     };
     chrome.Chat.Track = (run, what) => tracker.Run(run, what);
+    // The Ideas page: every button is an idea verb on this window's node; a question about an idea (which repo, which version) is
+    // answered through the card's own answer, as the panel's buttons are.
+    chrome.Ideas.Send = async (verb, target, args, ct) =>
+    {
+        var reply = await IdeaCommands.SendAsync(client, verb, target, args, GuiSay.Who, ct);
+        Console.WriteLine($"pilot-gui: {verb} {target}: {(reply.Ok ? reply.Way ?? "done" : reply.Error)}");
+        return reply;
+    };
+    chrome.Ideas.OnAnswer = chrome.Cards.OnAnswer;
+    chrome.Ideas.OnOpen = url => OpenAway(url);
+    chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
+    chrome.Ideas.Changed = loop.RequestRedraw;
+    // An idea's images: Ctrl+V of a screenshot and a dropped image file go to this window's node, the box keeps the marker.
+    chrome.Ideas.GetClipboardImage = ClipboardImage.Read;
+    chrome.Ideas.Upload = async (bytes, ext, ct) =>
+    {
+        var envelope = await client.UploadAttachmentAsync(bytes, ext, ct);
+        return envelope is { Success: true, Response: { Length: > 0 } id } ? (id, null) : (null, envelope.Error);
+    };
+    loop.OnDropFile = path =>
+    {
+        if (chrome.Page == PilotPage.Ideas)
+        {
+            chrome.Ideas.DropFile(path);
+        }
+    };
     chrome.Chat.Changed = loop.RequestRedraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
@@ -548,10 +653,9 @@ if (feed is not null && client is not null && clients is not null)
     // The Repos page's Sync runs on this window's node; its New flight opens the wizard at that repo's issues.
     chrome.Repos.SyncRepos = async ct =>
     {
-        var outcomes = await RepoActions.SyncAsync(client, GuiSay.Who, ct);
-        feed?.RefreshRepos();
-        return outcomes;
+        return await RepoActions.SyncAsync(client, GuiSay.Who, ct);
     };
+    chrome.Repos.Tracker = tracker;
     chrome.Repos.Changed = loop.RequestRedraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
     // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
@@ -575,17 +679,27 @@ if (feed is not null && client is not null && clients is not null)
             throw new InvalidOperationException(refused);
         }
     };
+    // Address review on a PR no flight owns is `pilot review fix` (fix-pr); a flight's presses its card's go-around (chrome wires it).
+    chrome.PullRequests.OnFixReview = async (pr, ct) =>
+    {
+        var envelope = await client.SendAsync(DashboardCommands.FixPrRequest(pr, GuiSay.Who), ct);
+        var refused = !envelope.Success ? envelope.Error : envelope.Response is { Ok: false } answer ? answer.Error : null;
+        Note($"pilot-gui: review fix {pr.Repo}#{pr.Number}: {refused ?? "started"}");
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(refused);
+        }
+    };
     chrome.Repos.OnNewFlight = line =>
     {
         chrome.Show(PilotPage.Flights);
         wizard.Open(line.Status.Path, atIssues: true);
     };
-    chrome.Flights.OnAction = action => tracker.Run(async () =>
+    chrome.Flights.OnAction = action => Tracked(async () =>
     {
-        var said = clients.For(action.Node) is { } to ? await DashboardCommands.ActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
-        chrome.Flights.Say(said);
-        Note($"pilot-gui: {said}");
-        loop.RequestRedraw();
+        var refused = clients.For(action.Node) is { } to ? await DashboardCommands.TryActAsync(to, action, GuiSay.Who, cts.Token, envelope => clients.NoteRefusal(action.Node, envelope)) : FleetClients.WatchOnly(action.Node);
+        Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
+        return refused;
     }, "a Flights action");
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
     // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
@@ -617,42 +731,34 @@ if (feed is not null && client is not null && clients is not null)
             return "the node did not answer in time, and a summary it made late still shows here";
         }
     };
+    // The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
+    spendReads = new SpendReads(client, loop.RequestRedraw);
+    chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
+    chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
         ? log
         : throw new InvalidOperationException($"the node did not send {id}'s log");
     chrome.Jobs.Changed = loop.RequestRedraw;
-    // Cancel is the selected job's, whose log is followed: its node's.
-    Action<JobRow> CancelJob(bool force) => job => tracker.Run(async () =>
+    // Cancel is the selected job's, whose log is followed: its node's. The answer is the node's refusal, or null when it took it.
+    Task<string?> JobVerb(JobRow job, string verb, string word, string[] args) => Tracked(async () =>
     {
-        var what = force ? "force cancel" : "cancel";
-        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
+        var node = chrome.Jobs.FollowingNode;
+        if (clients.For(node) is not { } to)
         {
-            Note($"pilot-gui: {what} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
-            return;
+            var watchOnly = FleetClients.WatchOnly(node);
+            Note($"pilot-gui: {word} {job.Id}: {watchOnly}");
+            return watchOnly;
         }
-        var result = await to.SendAsync(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(job.Id), Args = force ? [Verbs.ForceArg] : [], Who = GuiSay.Who }, cts.Token);
-        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Note($"pilot-gui: {what} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
-        loop.RequestRedraw();
-    }, $"{(force ? "force cancel" : "cancel")} {job.Id}");
-    chrome.Jobs.OnCancel = CancelJob(force: false);
-    chrome.Jobs.OnForceCancel = CancelJob(force: true);
-    chrome.Jobs.OnPause = job => SendJobVerb(job, Verbs.PauseJob, "pause");
-    chrome.Jobs.OnResume = job => SendJobVerb(job, Verbs.ResumeJob, "resume");
-    void SendJobVerb(JobRow job, string verb, string word) => tracker.Run(async () =>
-    {
-        if (clients.For(chrome.Jobs.FollowingNode) is not { } to)
-        {
-            Note($"pilot-gui: {word} {job.Id}: {FleetClients.WatchOnly(chrome.Jobs.FollowingNode)}");
-            return;
-        }
-        var result = await to.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = [], Who = GuiSay.Who }, cts.Token);
-        clients.NoteRefusal(chrome.Jobs.FollowingNode, result);
-        Note($"pilot-gui: {word} {job.Id}: {(result.Success && result.Response is { Ok: true } ? "done" : result.Response?.Error ?? result.Error)}");
-        loop.RequestRedraw();
+        var refused = await DashboardCommands.AskAsync(to, new CommandRequest { Verb = verb, Target = Verbs.JobTarget(job.Id), Args = args, Who = GuiSay.Who }, cts.Token, envelope => clients.NoteRefusal(node, envelope));
+        Note($"pilot-gui: {word} {job.Id}: {refused ?? "done"}");
+        return refused;
     }, $"{word} {job.Id}");
+    chrome.Jobs.OnCancel = job => JobVerb(job, Verbs.CancelJob, "cancel", []);
+    chrome.Jobs.OnForceCancel = job => JobVerb(job, Verbs.CancelJob, "force cancel", [Verbs.ForceArg]);
+    chrome.Jobs.OnPause = job => JobVerb(job, Verbs.PauseJob, "pause", []);
+    chrome.Jobs.OnResume = job => JobVerb(job, Verbs.ResumeJob, "resume", []);
     chrome.Jobs.OnOpen = location => OpenAway(location);
     chrome.Jobs.CopyText = text => SetClipboardText(text);
     // Rows on a node this user cannot steer are watch-only: their actions say "Connect to <node> to steer", and a Connect
@@ -661,13 +767,14 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Jobs.CanSteer = CanSteer;
     chrome.Flights.CanSteer = CanSteer;
     chrome.Cards.CanSteer = CanSteer;
-    void Connect(string where, string machine) => tracker.Run(async () =>
+    // Asks a node for a grant: the answer is null once it is given, and what it said when it was not.
+    Task<string?> Connect(string where, string machine) => Tracked(async () =>
     {
         chrome.Fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
         view.SayStatus = chrome.Fleet.Said;
         chrome.Flights.Lan?.Asking(where, DateTimeOffset.UtcNow);
         loop.RequestRedraw();
-        var said = await DashboardCommands.RunAsync($"connect {where}", NodeArgs(), GuiSay.Who, cts.Token);
+        var (granted, said) = await DashboardCommands.TryRunAsync($"connect {where}", NodeArgs(), GuiSay.Who, cts.Token);
         // The token just saved is read now, so the rows steer at once rather than at the next 5 s look.
         clients.Refresh();
         chrome.Flights.Lan?.Answered(where);
@@ -675,6 +782,7 @@ if (feed is not null && client is not null && clients is not null)
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: connect {where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
+        return granted ? null : chrome.Fleet.Said;
     }, $"connect {where}");
     chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
     view.OnConnect = node => Connect(node.Where, node.Name);
@@ -684,7 +792,7 @@ if (feed is not null && client is not null && clients is not null)
     // Forget, from the Settings page's held grant or an unreached Fleet row alike: the token is dropped and the fleet stops
     // watching that endpoint (a node still heard on the LAN is known again at the next look). Its rows turn watch-only on
     // the next draw: the steerable set is read again at once, not at the 5 s look.
-    void Forget(string endpoint) => tracker.Run(() => Task.Run(() =>
+    Task<string?> ForgetAsync(string endpoint) => Tracked(() => Task.Run<string?>(() =>
     {
         // A file read, a write and a move: off the render thread.
         Pilot.Commands.NodeTargets.Forget(endpoint);
@@ -694,27 +802,33 @@ if (feed is not null && client is not null && clients is not null)
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: forgot {endpoint}");
         loop.RequestRedraw();
+        return (string?)null;
     }), $"forget {endpoint}");
-    chrome.Fleet.OnForget = line => Forget(line.Where);
+    chrome.Fleet.OnForget = line => ForgetAsync(line.Where);
     // Maintenance on / off on a row's node: this window's, or a granted one, through the client its grant gives.
-    chrome.Fleet.OnMaintenance = (line, on) => tracker.Run(async () =>
+    chrome.Fleet.OnMaintenance = (line, on) => Tracked(async () =>
     {
-        chrome.Fleet.Said = (await FleetCommands.SetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token)).ReplaceLineEndings(" ").Trim();
+        var (refused, said) = await FleetCommands.TrySetMaintenanceAsync(clients, line, on, GuiSay.Who, cts.Token);
+        chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
         loop.RequestRedraw();
+        return refused;
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
     // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
     // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.
     if (remoteEndpoint is null)
     {
-        chrome.Autopilot.OnToggle = on => tracker.Run(async () =>
+        chrome.Autopilot.OnToggle = on => Tracked(async () =>
         {
-            view.SayStatus = await AutopilotCommands.SetAsync(client, on, GuiSay.Who, cts.Token);
-            Note($"pilot-gui: {view.SayStatus}");
+            var (refused, said) = await AutopilotCommands.TrySetAsync(client, on, GuiSay.Who, cts.Token);
+            view.SayStatus = said;
+            Note($"pilot-gui: {said}");
             loop.RequestRedraw();
+            return refused;
         }, $"autopilot {(on ? "on" : "off")}");
+        chrome.Autopilot.Changed = loop.RequestRedraw;
     }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
@@ -733,7 +847,7 @@ if (feed is not null && client is not null && clients is not null)
             ? given
             : throw new InvalidOperationException("the node did not send its grants");
         chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Granted();
-        chrome.Settings.Forget = Forget;
+        chrome.Settings.Forget = endpoint => _ = ForgetAsync(endpoint);
         chrome.Settings.Changed = loop.RequestRedraw;
     }
     feed.Start();
@@ -757,9 +871,14 @@ if (feed is not null && client is not null && clients is not null)
 }
 
 var announced = (string?)null;
-// The pages as the builder last made them, and as the render thread last drew them; what the render thread wants built.
+var frameWatch = new FrameWatch(logger);
+// The pages as the builder last made them worth a frame (built), and its newest build either way (latest), which any frame
+// picks up, so a frame a hover asks reads a chip's brief as it is now; what the render thread last drew, and the last
+// built it saw; what the render thread wants built.
 Tuple<FleetPages, FleetScreen>? built = null;
+Tuple<FleetPages, FleetScreen>? latest = null;
 Tuple<FleetPages, FleetScreen>? drawnBuilt = null;
+Tuple<FleetPages, FleetScreen>? seenBuilt = null;
 (PilotPage, int) drawnWanted = default;
 var pagesWanted = (int)chrome.Page;
 var pagesAsked = 0;
@@ -780,9 +899,17 @@ CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
+IdeasScreen? ideas = snapshot is null ? null : new IdeasScreen(snapshot.Ideas, [.. snapshot.Cards.Where(IdeasScreen.IsAsk)], [], screen.Source, snapshot.At) { Milestones = snapshot.Milestones, Issues = snapshot.Issues };
 IReadOnlyList<MachineLine>? machines = null;
 PullRequestsScreen? pullRequests = null;
-FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs), screen.Source, snapshot.At);
+// A snapshot file's spend, if it holds any: what the page shows without a node.
+SpendScreen? fileSpend = snapshot?.Spend is { } fileData ? SpendScreen.From(fileData, "today", screen.Source, snapshot.At) : null;
+if (fileSpend is not null)
+{
+    chrome.Spend.OnWindow = window => fileSpend = SpendScreen.From(snapshot!.Spend!, window, screen.Source, snapshot.At);
+    chrome.Flights.Spend = snapshot!.Spend!.Flights;
+}
+FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs, snapshot.Admission), screen.Source, snapshot.At) { Admission = snapshot.Admission };
 // A card about a leg opens its worker's transcript from the moment the card was raised.
 chrome.LinkCardTranscripts(() => screen, () => flights ?? new FlightsScreen([], screen.Source, screen.AsOf), jobs: () => jobs ?? new JobsScreen([], screen.Source, screen.AsOf));
 chrome.LinkRepos();
@@ -795,7 +922,8 @@ chrome.PullRequests.OnOpen = location => OpenAway(location);
 // the five-second look at who is in the fleet (a file read and the LAN). Each frame built them all, under each feed's lock,
 // so a burst of events (181 archived on DE1, 2026-10-24) kept frames at full cost back to back and the window stalled. Built
 // again when a node's version moves (at most every 100 ms through a burst), when the render thread asks (a page switch, a
-// node pick: at once), or every second (the "ago" column); the render thread only picks up the last one made.
+// node pick: at once), or every second (the "ago" column; on Home only when a clock word it shows turns over); the render
+// thread only picks up the last one made.
 if (feed is not null)
 {
     var building = cts.Token;
@@ -829,15 +957,42 @@ if (feed is not null)
                     granted = new HashSet<string>(Pilot.Commands.NodeTargets.Granted(), StringComparer.OrdinalIgnoreCase);
                     fleetWatch.Know(granted.Select(e => (e, (string?)null)).Concat((chrome.Flights.Lan?.Nodes ?? []).Select(n => (n.Endpoint, (string?)n.Name))));
                 }
+                // The once-a-second look at Home, with no node event and nothing asked: nothing Home draws is counted from the
+                // clock when the pages are built but what its fingerprint counts itself (the summaries' "made ago", the tasks
+                // glyph's "failed just now"), so the last pages are fingerprinted at this moment and built again only when that
+                // shows a turn-over. A merge's card lingers by the clock, so while one does, Home builds. Building every page each
+                // second, some 6 MB a build on a node of 491 sessions, was two thirds of an idle Home's builds and a quarter of
+                // what it allocated (DE1, 2026-10-30).
+                var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
+                if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
+                    && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))))))
+                {
+                    continue;
+                }
+                var buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 // Every node's rows on every page, each marked with its node, as the header's node selection picks them.
-                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now, reposWanted: (PilotPage)Volatile.Read(ref pagesWanted) == PilotPage.Repos);
+                var pages = fleetWatch.Pages(nodeWhere, feed, chrome.Nodes, now);
                 var hereSummary = feed.Summary(now);
                 var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
                 chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
                 // And its autopilot, in every header's switch.
                 chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
-                Volatile.Write(ref built, Tuple.Create(pages, fleetScreen));
+                // The once-a-second look finds nothing new on an idle page, and a node event often changes nothing on the shown
+                // one: what was built reads as what is drawn, so no frame is asked. A row's own "ago" turning over shows as
+                // different text.
+                var made = Tuple.Create(pages, fleetScreen);
+                Volatile.Write(ref latest, made);
+                var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown)));
+                var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header,
+                    FrameWatch.LanLine(chrome.Flights.Lan, now)));
+                frameWatch.Built(System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted));
+                if (!worth)
+                {
+                    continue;
+                }
+                Volatile.Write(ref built, made);
                 loop.RequestRedraw();
             }
             catch (OperationCanceledException) when (building.IsCancellationRequested)
@@ -847,6 +1002,7 @@ if (feed is not null)
             catch (Exception ex)
             {
                 // A build that failed is said and tried again; the window keeps the last pages it had.
+                frameWatch.Forget();
                 Say($"pilot-gui: the pages could not be built: {ex.Message}");
                 await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
             }
@@ -859,7 +1015,19 @@ loop.OnResize = (w, h) =>
     height = (int)h;
     chrome.DpiScale = window.DisplayScale;
 };
-loop.OnRender = () => frameTimer.Time(RenderFrame, WhatRendered);
+loop.OnRender = () =>
+{
+    // The one slow-frame reporter: the whole of the frame is timed, the build pickup included.
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    try
+    {
+        RenderFrame();
+    }
+    finally
+    {
+        frameWatch.Frame(System.Diagnostics.Stopwatch.GetElapsedTime(started), chrome.Page, () => $"{WhatRendered()}: {screen.Lines.Count} sessions, {flights?.Lines.Count ?? 0} flights, {cards?.Open.Count ?? 0} open cards");
+    }
+};
 void RenderFrame()
 {
     // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
@@ -878,7 +1046,9 @@ void RenderFrame()
             Volatile.Write(ref pagesWanted, (int)wanted.Page);
             Interlocked.Increment(ref pagesAsked);
         }
-        if (Volatile.Read(ref built) is { } made && !ReferenceEquals(made, drawnBuilt))
+        // The newest build, worth a frame or not: the one that asked for this frame, or a newer one.
+        seenBuilt = Volatile.Read(ref built);
+        if (Volatile.Read(ref latest) is { } made && !ReferenceEquals(made, drawnBuilt))
         {
             drawnBuilt = made;
             var pages = made.Item1;
@@ -890,6 +1060,7 @@ void RenderFrame()
             repos = pages.Repos;
             chrome.Summaries.Shelf = pages.Summaries ?? SummaryShelf.Empty;
             machines = pages.Machines;
+            ideas = pages.Ideas;
             pullRequests = pages.PullRequests;
             fleet = made.Item2;
         }
@@ -897,7 +1068,20 @@ void RenderFrame()
 
     view.Ui.FrameId++;
     // With the pull requests: without them the page said "not read yet" whatever the node had read, Refresh included (SE1, 2026-10-28).
-    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines);
+    if (spendReads is not null)
+    {
+        // The pages ask again once their read is 30 s old, only while they are the ones shown.
+        if (chrome.Page == PilotPage.Spend)
+        {
+            spendReads.Ask(chrome.Spend.Window, screen.Source);
+        }
+        if (chrome.Page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
+        {
+            spendReads.AskFlight(openCode);
+        }
+        chrome.Flights.Spend = spendReads.Flights;
+    }
+    chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend);
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
@@ -918,8 +1102,8 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    // New pages from the builder (it also asks for the frame itself).
-    if (feed is not null && !ReferenceEquals(Volatile.Read(ref built), drawnBuilt))
+    // New pages from the builder worth a frame (it also asks for the frame itself).
+    if (feed is not null && !ReferenceEquals(Volatile.Read(ref built), seenBuilt))
     {
         return true;
     }
@@ -995,7 +1179,8 @@ if (restarting && Environment.ProcessPath is { } self)
     Note($"pilot-gui: window closed; started again on {self}.");
     return 0;
 }
-Note(cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.");
+Note((cts.IsCancellationRequested ? "pilot-gui: --exit-after reached; window closed." : "pilot-gui: window closed.") + $" {frameWatch.Frames} frames drawn; {frameWatch.Builds.Count} page builds, {frameWatch.Builds.Took.TotalSeconds:0.##} s building;"
+    + $" GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} (gen 0/1/2), {GC.GetTotalAllocatedBytes() >> 20} MB allocated, {GC.GetTotalPauseDuration().TotalSeconds:0.##} s paused.");
 return 0;
 
 // Shutdown, with the loop pumping (ShutdownDrain): the tracked work first, so nothing is still starting what is about to

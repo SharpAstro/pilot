@@ -121,6 +121,18 @@ public sealed class NodeClient : IDisposable
         return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, bytes);
     }
 
+    /// <summary>
+    /// <c>POST /api/v1/attachments?ext=</c>: keeps <paramref name="bytes"/> as an idea's image; the id it is served by
+    /// (<see cref="NodeWire.AttachmentRoute"/>) and written as <see cref="IdeaImages.Marker"/> is the envelope's response.
+    /// </summary>
+    public async Task<ResponseEnvelope<string>> UploadAttachmentAsync(byte[] bytes, string ext, CancellationToken cancellationToken)
+    {
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await _http.PostAsync($"{NodeWire.AttachmentsRoute}?ext={Uri.EscapeDataString(ext)}", content, cancellationToken).ConfigureAwait(false);
+        return await ReadEnvelopeAsync(response, PilotJsonContext.Default.ResponseEnvelopeString, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary><c>GET /api/v1/node</c>: which node this is.</summary>
     public async Task<NodeInfo> GetNodeAsync(CancellationToken cancellationToken)
     {
@@ -139,6 +151,18 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<ChatPage>> GetChatAsync(int after, CancellationToken cancellationToken) =>
         GetEnvelopeAsync($"{NodeWire.ChatRoute}?after={after.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             PilotJsonContext.Default.ResponseEnvelopeChatPage, cancellationToken);
+
+    /// <summary>What the token ledger says was spent over <paramref name="window"/> (<c>5h</c>, <c>today</c> or <c>week</c>).</summary>
+    public Task<ResponseEnvelope<SpendReport>> GetSpendAsync(string window, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.SpendRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendReport, cancellationToken);
+
+    /// <summary>What the token ledger says bought nothing kept over <paramref name="window"/>, worst first.</summary>
+    public Task<ResponseEnvelope<SpendWasteReport>> GetSpendWasteAsync(string window, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.SpendWasteRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, cancellationToken);
+
+    /// <summary>One flight's spend so far, per leg and round.</summary>
+    public Task<ResponseEnvelope<SpendFlightReport>> GetSpendFlightAsync(string code, CancellationToken cancellationToken) =>
+        GetEnvelopeAsync($"{NodeWire.SpendFlightRoute}?code={Uri.EscapeDataString(code)}", PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, cancellationToken);
 
     /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
