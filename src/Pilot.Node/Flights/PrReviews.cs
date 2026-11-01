@@ -1429,9 +1429,7 @@ public sealed class PrReviews(
         if (asksDesign && words.Length > 0)
         {
             // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
-            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):
-
-{words}", cancellationToken);
+            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
         }
         return started;
     }
