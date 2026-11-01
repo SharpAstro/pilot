@@ -208,7 +208,7 @@ public sealed class DesignAnswerCardChoiceTests : PrFixTestsBase
     {
         var services = new ServiceCollection();
         services.AddSingleton(_reviews);
-        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => Task.FromResult(new CommandResult()), _options, TimeProvider.System));
+        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => Task.FromResult(new CommandResult { Verb = "", Target = "", Who = "", Ok = true }), _options, TimeProvider.System));
         services.AddSingleton(new RoleModels(null));
         return new NodeCommands(services.BuildServiceProvider(), _state);
     }
