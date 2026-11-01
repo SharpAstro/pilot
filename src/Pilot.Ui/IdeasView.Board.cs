@@ -356,10 +356,11 @@ internal sealed partial class IdeasView<TSurface>
             yield return ActionPill("Edit", idea, Mode.Edit);
             yield return ActionPill("Tidy", idea, Mode.Tidy);
         }
-        else if (ready && OnChatAbout is { } planning)
+        else if (!flown && Send is not null)
         {
-            // An issue is no idea, so there is no verb that plans it: the chat starts with the request, for Claude to carry out.
-            yield return CardsView<TSurface>.Pill("Plan flight", $"ideas:plan-flight:{item.Key}", () => planning(ChatAboutText(item, "Plan a flight for")), Lit, P.Bright);
+            yield return IsBusy("flight:" + item.Key)
+                ? CardsView<TSurface>.Dead("Making flight…")
+                : CardsView<TSurface>.Pill(MakeFlightLabel, $"ideas:make-flight:{item.Key}", () => Run(() => MakeFlightAsync(item), $"make a flight of {Label(item)}"), ready ? Lit : Tint, P.Bright);
         }
         if (Send is not null)
         {
@@ -465,6 +466,62 @@ internal sealed partial class IdeasView<TSurface>
             {
                 Say(reply.Readiness?.Note ?? $"{Label(item)} was not checked", refusal: true);
             }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    internal const string MakeFlightLabel = "Make flight";
+
+    /// <summary>
+    /// Makes a flight of an open issue that has none (<c>create-flight</c> on the issue, then <c>plan-flight</c> on the flight made, as
+    /// the New flight wizard does) and says what the node answered. The issue stays open: the flight links it (create-flight records it
+    /// as the flight's work item) and the flight's PR closes it on merge, so nothing here closes it.
+    /// </summary>
+    internal async Task MakeFlightAsync(BoardItem item)
+    {
+        var busy = "flight:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            string? path = null;
+            if (LoadRepos is { } load)
+            {
+                try
+                {
+                    path = (await load(CancellationToken.None)).FirstOrDefault(r => string.Equals(r.Name, item.Repo, StringComparison.OrdinalIgnoreCase))?.Path;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+                {
+                    Say($"no flight made of {Label(item)}: {ex.Message}", refusal: true);
+                    return;
+                }
+            }
+            if (path is null)
+            {
+                Say($"no flight made of {Label(item)}: the node has no checkout of {item.Repo}", refusal: true);
+                return;
+            }
+            var made = await RunAsync(Verbs.CreateFlight, Verbs.RepoTarget(path), ["#" + item.Number.ToString(CultureInfo.InvariantCulture), item.Title]);
+            if (made is not { Ok: true, Made: { Length: > 0 } code })
+            {
+                Say($"no flight made of {Label(item)}: {made?.Error ?? "the node did not answer"}", refusal: true);
+                return;
+            }
+            if (made.Way is { Length: > 0 } way)
+            {
+                // Made on another node of the fleet: this node has no flight of that code to plan.
+                Say($"{Label(item)}: {way}", refusal: false);
+                return;
+            }
+            var planning = await RunAsync(Verbs.PlanFlight, Verbs.FlightTarget(code), []);
+            Say(planning is { Ok: true } ? $"made {code} of {Label(item)}; its planner is planning the legs" : $"made {code} of {Label(item)}, but it has no planner: {planning?.Error ?? "the node did not answer"}", planning is not { Ok: true });
         }
         finally
         {

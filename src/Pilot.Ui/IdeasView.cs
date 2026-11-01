@@ -101,6 +101,9 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     /// </summary>
     public Func<string, string, string[], CancellationToken, Task<IdeaReply>>? Send { get; set; }
 
+    /// <summary>The node's repos with their checkout paths: Make flight needs the path of an issue's repo, which the page's rows know only by name.</summary>
+    public Func<CancellationToken, Task<RepoInfo[]>>? LoadRepos { get; set; }
+
     /// <summary>Answers an idea card's choice (its number, from 1): the node's answer verb.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 

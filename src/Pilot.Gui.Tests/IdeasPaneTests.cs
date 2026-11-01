@@ -1150,13 +1150,11 @@ public sealed class IdeasPaneTests
         await Task.WhenAll(tasks);
         (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "issue/pilot/#20"));
 
-        // A ready issue offers Plan flight, which starts the chat.
+        // A ready issue offers Make flight.
         tasks.Clear();
         Click(Regions(chrome, screen), "ideas:ready:pilot#12");
         await Task.WhenAll(tasks);
-        Actions(Regions(chrome, screen)).ShouldContain("ideas:plan-flight:pilot#12");
-        Click(Regions(chrome, screen), "ideas:plan-flight:pilot#12");
-        chats.Last().ShouldStartWith("Plan a flight for pilot #12");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:make-flight:pilot#12");
 
         // An idea has them too, beside its own, on the same rows: its issue is the target.
         chrome.Ideas.SplitExtent = 900f;
@@ -1168,6 +1166,29 @@ public sealed class IdeasPaneTests
         {
             Actions(Regions(chrome, screen)).ShouldContain(kept);
         }
+    }
+
+    [Fact]
+    public async Task MakeFlightOnAnIssueWithNoFlightSendsCreateFlightThenPlanFlightAndAFlownRowHasNone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Made: "PIL12"));
+        chrome.Ideas.LoadRepos = _ => Task.FromResult<RepoInfo[]>([new RepoInfo { Name = "pilot", Path = @"C:\src\pilot" }]);
+        var screen = BoardScreen();
+        chrome.Ideas.SplitExtent = 200f;
+
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:make-flight:pilot#12");
+        Actions(regions).ShouldContain("ideas:make-flight:pilot#14");
+        Actions(regions).ShouldNotContain("ideas:make-flight:pilot#13");
+
+        Click(regions, "ideas:make-flight:pilot#12");
+        await Task.WhenAll(tasks);
+        sent.Count.ShouldBe(2);
+        (sent[0].Verb, sent[0].Target).ShouldBe((Verbs.CreateFlight, Verbs.RepoTarget(@"C:\src\pilot")));
+        sent[0].Args.ShouldBe(["#12", "Resize the split " + LongTitle]);
+        (sent[1].Verb, sent[1].Target).ShouldBe((Verbs.PlanFlight, Verbs.FlightTarget("PIL12")));
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("made PIL12");
     }
 
     [Fact]
