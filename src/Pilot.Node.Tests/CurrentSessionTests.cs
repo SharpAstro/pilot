@@ -228,6 +228,23 @@ public sealed class CurrentSessionTests : IDisposable
         (delivery.Runs, waits.Count).ShouldBe((3, 2));
     }
 
+    [Theory]
+    [InlineData("Claude configuration file at C:\\Users\\x\\.claude.json is corrupted: JSON Parse error: Unexpected EOF", true)]
+    [InlineData("JSON Parse error: Unexpected EOF", true)]
+    [InlineData("Claude configuration file at x is corrupted", true)]
+    [InlineData("session transcript is corrupted", false)]
+    [InlineData("corrupted", false)]
+    public void OnlyClaudeCodesConfigWordingIsATransientConfigRead(string output, bool expected) =>
+        ClaudeCliDelivery.IsTransientConfigRead(output).ShouldBe(expected);
+
+    [Fact]
+    public async Task AResumeRefusedWithAnUnrelatedCorruptedIsNotRetried()
+    {
+        var delivery = new ConfigFlakyDelivery(new FakeClaudeAgents(), failures: 9, "session transcript is corrupted") { ConfigRetryDelay = (_, _) => Task.CompletedTask };
+        await Should.ThrowAsync<SessionDeliveryException>(() => delivery.ResumeAsync(new ResumeRequest(AgentRows.SessionB, null, Path.GetTempPath(), "hi"), Ct));
+        delivery.Runs.ShouldBe(1);
+    }
+
     [Fact]
     public async Task AResumeRefusedForAnythingElseIsNotRetriedAndTheRetriesAreBounded()
     {
