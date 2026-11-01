@@ -48,8 +48,7 @@ public sealed class SessionMcpConfigTests : IDisposable
     [Fact]
     public void TheLauncherWritesTheConfigForAStartAndNamesItInTheStart()
     {
-        var repo = Repo("# PILOT.md
-", null);
+        var repo = Repo("# PILOT.md\n", null);
         var launcher = new ClaudeWorkerLauncher(new ClaudeTrust(Path.Combine(_root, "claude.json")), options: new NodeOptions("/run/node.sock", Path.Combine(_root, "data")));
 
         var start = launcher.WithMcp(new WorkerStart("de1-pil1-worker", repo, "pil1", "b", "sonnet", "low"));
