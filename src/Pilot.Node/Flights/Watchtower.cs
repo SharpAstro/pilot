@@ -543,6 +543,8 @@ public sealed class Watchtower(
     private static string Fold(string? text) =>
         string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
 
+    private DateTimeOffset? _wokeAt;
+
     private static bool Live(SessionRow row) => row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
     /// <summary>
@@ -647,9 +649,15 @@ public sealed class Watchtower(
                     // Past the check above, something keeps it (a flight in the air, or a connected UI), so one that is not live is
                     // started with no card to wait for: chatting never waits for a cold start (PIL584). With cards untold and its cache
                     // warm, the say resumes it in place; otherwise a fresh one is started below.
+                    if (_wokeAt is { } woke && row.Id == _job && now - woke < ShowUpGrace)
+                    {
+                        // Resumed in place a moment ago: the listing may still show it ended, which is no reason to start a second.
+                        return;
+                    }
                     if (Untold().Count > 0 && Warm(row, now))
                     {
                         _job = row.Id;
+                        _wokeAt = now;
                         if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)
                         {
                             // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
