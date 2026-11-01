@@ -338,6 +338,45 @@ public sealed class IdeaTests : IDisposable
         mirror.NotedIdeas.ShouldBe(1);
     }
 
+    [Fact]
+    public async Task ANotedIdeaIsInTheNodesRowsAndOnTheStreamBeforeTheAnswerEvenWhenGitHubsListLagsIt()
+    {
+        _github.HideCreatedFromLists = true;
+        var events = new List<NodeEvent>();
+        using var subscription = _state.Subscribe(null, null, new RecordingSink(events));
+        events.Clear();
+
+        var result = await Note("Lagging idea");
+
+        result.Ok.ShouldBeTrue(result.Error);
+        var idea = result.Idea.ShouldNotBeNull();
+        idea.Title.ShouldBe("Lagging idea");
+        idea.Repo.ShouldBe(IdeaIds.DefaultRepo);
+        idea.State.ShouldBe(IdeaState.Noted);
+        var held = _state.Snapshot().Ideas.Single();
+        (held.Id, held.Title, held.Repo, held.State).ShouldBe((idea.Id, "Lagging idea", IdeaIds.DefaultRepo, IdeaState.Noted));
+        var changed = events.FindIndex(e => e is IdeasChangedEvent c && c.Ideas.Any(i => i.Id == idea.Id));
+        var answered = events.FindIndex(e => e is CommandResultEvent);
+        changed.ShouldBeGreaterThanOrEqualTo(0);
+        answered.ShouldBeGreaterThan(changed);
+    }
+
+    /// <summary>A sink that keeps what the node sends, in order.</summary>
+    private sealed class RecordingSink(List<NodeEvent> events) : INodeEventSink
+    {
+        public int Capacity => 1024;
+
+        public bool TryWrite(byte[] message)
+        {
+            events.Add(System.Text.Json.JsonSerializer.Deserialize(message, PilotJsonContext.Default.NodeEvent)!);
+            return true;
+        }
+
+        public void Overflowed()
+        {
+        }
+    }
+
     /// <summary>A sink that applies what the node sends to a mirror.</summary>
     private sealed class CollectingSink(NodeMirror mirror) : INodeEventSink
     {

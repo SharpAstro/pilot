@@ -199,11 +199,17 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     }
 
     /// <summary>Reads the repo's Ideas milestone afresh into the node's rows; a repo gh cannot be asked leaves its rows as they were.</summary>
-    private async Task RefreshAsync(string name, string path, CancellationToken cancellationToken)
+    private async Task RefreshAsync(string name, string path, CancellationToken cancellationToken, MilestoneIssue? made = null)
     {
         try
         {
-            state.PutIdeas(name, IdeaRows.Of(name, await github.MilestoneIssuesAsync(path, IdeaIds.Milestone, cancellationToken), state.Flights(), time.GetUtcNow()));
+            var read = await github.MilestoneIssuesAsync(path, IdeaIds.Milestone, cancellationToken);
+            // A list read right after an issue is made can lag it: the issue just made is put in when the read lacks it.
+            if (made is not null && !read.Any(i => i.Number == made.Number))
+            {
+                read = [.. read, made];
+            }
+            state.PutIdeas(name, IdeaRows.Of(name, read, state.Flights(), time.GetUtcNow()));
         }
         catch (FlightException)
         {
@@ -257,10 +263,11 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var issue = await github.CreateIssueInMilestoneAsync(path, title, body.Length > 0 ? body : null, milestone.Title, cancellationToken);
         Step("issue made");
         state.CloseCardsAbout(RepoCardSubject(text), "filed", CardKinds.IdeaRepo);
-        await RefreshAsync(name, path, cancellationToken);
+        await RefreshAsync(name, path, cancellationToken, issue);
         Step("ideas read again");
         await Error.WriteLineAsync($"idea: noted {name} {IdeaIds.Id(issue.Number)}: {string.Join(", ", steps)}");
-        return state.Complete(command, null, made: $"{name} {IdeaIds.Id(issue.Number)}");
+        var row = IdeaRows.Of(name, [issue], state.Flights(), time.GetUtcNow()).FirstOrDefault();
+        return state.Complete(command, null, made: $"{name} {IdeaIds.Id(issue.Number)}", idea: row);
     }
 
     /// <summary>
