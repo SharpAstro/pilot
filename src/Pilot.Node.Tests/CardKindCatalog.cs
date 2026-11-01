@@ -127,6 +127,8 @@ internal static class CardKindCatalog
         new("pr-fix-capped", "Ring", [Reviews], "PrFixTests.ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer"),
         new("pr-fix-ended", "ForYou", [Reviews], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
         new("pr-fix-left", "ForYou", [Reviews], SourcePinned),
+        new("pr-fix-follow-up", "Handled", [Reviews], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),
+        new("pr-fix-follow-up-failed", "ForYou", [Reviews], "FixFollowUpTests.APushGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch"),
         new("pr-recheck", "Handled", [Recheck], SourcePinned),
         new("pr-recheck-failed", "ForYou", [Recheck], "PrRecheckTests.AReviewThatCannotStartKeepsTheLabelAndRaisesAForYouCard"),
         new("pr-recheck-conflicts", "ForYou", [Recheck], "PrRecheckTests.AReviewedPrThatConflictsGetsAForYouCardAndTheConflictsLabel"),

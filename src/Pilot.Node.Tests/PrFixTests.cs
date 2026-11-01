@@ -144,6 +144,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
         PrOrigins.Git(worktree, "symbolic-ref", "--short", "HEAD").ShouldBe("feature/seven");
         start.Brief.ShouldContain("README.md:1 hello is not a greeting");
         start.Brief.ShouldContain("Two things are wrong.");
+        start.Brief.ShouldContain("the node follows up a merged PR's commits");
         start.Brief.ShouldContain("never rebase");
         start.Brief.ShouldContain("never with force");
         start.Brief.ShouldContain("gh pr comment 7 -R acme/widget");

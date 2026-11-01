@@ -2397,6 +2397,12 @@ public sealed partial class LegCommander(
                 ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
                 : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
         }
+        // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
+        if (PrRef.Parse(flight.PullRequestUrl) is { } own
+            && state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReviews.DesignKind && c.Subject == Verbs.PrTarget(own.Repo, own.Number)) is { } design)
+        {
+            throw new FlightException($"{flight.Code}'s PR {own} has an open design question (card {design.Id}): answer it or dismiss it first");
+        }
         return (flight, head, method);
     }
 
