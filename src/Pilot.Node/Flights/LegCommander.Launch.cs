@@ -256,9 +256,18 @@ public sealed partial class LegCommander
     /// The leg row as it is now when it and its flight are still as the reservation saw them (the flight flying, the leg in the
     /// same state with the same sessions), else null: a leg removed, flown, or sent round meanwhile.
     /// </summary>
-    private LegRow? Unchanged(string code, LegRow seen)
+    private LegRow? Unchanged(string code, LegRow seen) => Unchanged(code, seen, held: false);
+
+    /// <summary>
+    /// <see cref="Unchanged(string, LegRow)"/> for the finish paths: a flight that is held (a connect while the check reruns) still
+    /// lets its leg be recorded done. A landed, missing or folded flight still counts as changed.
+    /// </summary>
+    private LegRow? UnchangedFinishing(string code, LegRow seen) => Unchanged(code, seen, held: true);
+
+    private LegRow? Unchanged(string code, LegRow seen, bool held)
     {
-        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying }
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight
+            || !(flight.State == FlightState.Flying || (held && flight.State == FlightState.Held))
             || state.Legs(code).FirstOrDefault(l => l.Name == seen.Name) is not { } now)
         {
             return null;

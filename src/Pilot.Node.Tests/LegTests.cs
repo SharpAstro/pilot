@@ -1732,6 +1732,64 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         L("parser").Recheck.ShouldBeNull();
     }
 
+    private void HoldFlight() => _state.PutFlight(_state.Flights().Single() with { State = FlightState.Held });
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AConnectWhileALegsCheckRerunsStillLetsItFinishDone()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        var gate = new TaskCompletionSource();
+        var runs = _checks.Runs.Count;
+        _checks.OnRun = () => gate.Task;
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && _checks.Runs.Count == runs; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        HoldFlight();
+        gate.SetResult();
+
+        var result = await finishing;
+        result.Error.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALegOfAnAlreadyHeldFlightIsRecordedDone()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        HoldFlight();
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        result.Error.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheNextLegOfAHeldFlightWaitsUntilItFliesAgain()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        HoldFlight();
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldBeNull();
+
+        var next = _state.Legs("TIA1").Single(l => l.Name != "parser").Name;
+        (await Leg(Verbs.StartLeg, $"flight/TIA1/{next}")).Error.ShouldNotBeNull();
+        _state.Legs("TIA1").Single(l => l.Name == next).State.ShouldBe(LegState.Planned);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ALegsRecheckIsClearedWhenItsCheckFailsTheLegChangesOrTheCheckThrows()
