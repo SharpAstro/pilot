@@ -88,6 +88,14 @@ internal sealed partial class IdeasView<TSurface>
 
     internal const string PinMark = "★";
 
+    /// <summary>The label of the choice that clears the Priority field.</summary>
+    internal const string NoPriorityLabel = "No priority";
+
+    /// <summary>What a chip for the level says on a row.</summary>
+    internal static string PriorityChip(IssuePriority level) => "[" + IssuePriorities.Name(level) + "]";
+
+    private RGBAColor32 PriorityColour(IssuePriority level) => level is IssuePriority.Urgent or IssuePriority.High ? P.Failed : level == IssuePriority.Medium ? P.Body : P.Dim;
+
     internal const string PinLabel = "Pin";
 
     internal const string UnpinLabel = "Unpin";
@@ -316,6 +324,10 @@ internal sealed partial class IdeasView<TSurface>
             parts.Add(grip);
         }
         parts.Add(Layout.Builder.Text(Marked(item), 13f, Link).Selectable().WAuto());
+        if (item.Priority is { } level)
+        {
+            parts.Add(Layout.Builder.Text(PriorityChip(level), 12f, PriorityColour(level)).Selectable().WAuto().WithTooltip("The issue's Priority field on GitHub"));
+        }
         if (!compact)
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
@@ -374,6 +386,13 @@ internal sealed partial class IdeasView<TSurface>
             yield return IsBusy("pin:" + item.Key)
                 ? CardsView<TSurface>.Dead(item.Pinned ? "Unpinning…" : "Pinning…")
                 : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
+            yield return IsBusy("priority:" + item.Key)
+                ? CardsView<TSurface>.Dead("Setting priority…")
+                : CardsView<TSurface>.Pill(item.Priority is { } now ? "Priority: " + IssuePriorities.Name(now) : "Priority…", $"ideas:priority:{item.Key}", () => Run(() => PriorityAsync(item, NextPriority(item.Priority)), $"set the priority of {Label(item)}"), Tint, P.Bright);
+            if (item.Priority is not null)
+            {
+                yield return CardsView<TSurface>.Pill(NoPriorityLabel, $"ideas:no-priority:{item.Key}", () => Run(() => PriorityAsync(item, null), $"clear the priority of {Label(item)}"), Tint, P.Body);
+            }
             if (!flown)
             {
                 yield return IsBusy("ready:" + item.Key)
@@ -544,6 +563,37 @@ internal sealed partial class IdeasView<TSurface>
             if (reply is { Ok: false })
             {
                 Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: {reply.Error}", refusal: true);
+            }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    /// <summary>The level a press of the priority pill moves to: Urgent, High, Medium, Low, then none, then Urgent again.</summary>
+    internal static IssuePriority? NextPriority(IssuePriority? current) => current switch
+    {
+        null => IssuePriority.Urgent,
+        IssuePriority.Low => null,
+        { } level => level + 1,
+    };
+
+    /// <summary>Sets the item's Priority field through the node (null clears it); a press again while it runs sends nothing.</summary>
+    internal async Task PriorityAsync(BoardItem item, IssuePriority? level)
+    {
+        var busy = "priority:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            var reply = await RunAsync(Verbs.SetPriority, item.Target, [level is { } set ? set.ToString().ToLowerInvariant() : "none"]);
+            if (reply is { Ok: false })
+            {
+                Say($"{Label(item)} priority not set: {reply.Error}", refusal: true);
             }
         }
         finally

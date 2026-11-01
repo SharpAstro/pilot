@@ -71,7 +71,7 @@ public sealed partial class GhCli
                 : throw new FlightException($"gh could not list the {milestone} milestone's issues: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         using var doc = JsonDocument.Parse(output);
-        return [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)];
+        return await WithPrioritiesAsync(repoPath, [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)], cancellationToken);
     }
 
     public async Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken)
@@ -82,7 +82,7 @@ public sealed partial class GhCli
             throw new FlightException($"gh could not list the open issues: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
         using var doc = JsonDocument.Parse(output);
-        return [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)];
+        return await WithPrioritiesAsync(repoPath, [.. doc.RootElement.EnumerateArray().Select(ParseIssue).OrderByDescending(i => i.Number)], cancellationToken);
     }
 
     public async Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)

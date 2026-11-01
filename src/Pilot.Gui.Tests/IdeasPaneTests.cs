@@ -1757,6 +1757,66 @@ public sealed class IdeasPaneTests
         chrome.Ideas.Sort.ShouldBe((0, true));
     }
 
+    [Fact]
+    public void WithinAMilestoneItemsOrderPinnedThenUrgentHighMediumUnsetLowThenTheNodesOrder()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        var screen = BoardScreen();
+        // The node's order in v2.3 is 12, 14, 13: 13 is Urgent, 12 is Low, 14 is unset; a pinned Low one still leads.
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number switch { 13 => i with { Priority = IssuePriority.Urgent }, 12 => i with { Priority = IssuePriority.Low }, _ => i })] };
+
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([13, 14, 12]);
+
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 12 ? i with { Pinned = true } : i)] };
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([12, 13, 14]);
+    }
+
+    [Fact]
+    public async Task APriorityChipShowsAndTheRowSetsTheNextLevelOrClearsItWhileAnUnsetRowHasNoChip()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 13 ? i with { Priority = IssuePriority.High } : i)] };
+
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.High));
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.Urgent));
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:no-priority:pilot#13");
+        Actions(regions).ShouldNotContain("ideas:no-priority:pilot#14");
+
+        Click(regions, "ideas:priority:pilot#14");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#14"));
+        sent.Last().Args.ShouldBe(["urgent"]);
+
+        Click(Regions(chrome, screen), "ideas:no-priority:pilot#13");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#13"));
+        sent.Last().Args.ShouldBe(["none"]);
+    }
+
+    [Fact]
+    public void ThePriorityColumnOfTheTreeGridSortsMostUrgentFirstAndPinnedRowsStayOnTop()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number switch { 12 => i with { Priority = IssuePriority.Medium }, 13 => i with { Priority = IssuePriority.High }, _ => i })] };
+        Draw(chrome, screen);
+
+        var section = chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3");
+        Click(Regions(chrome, screen), "ideas:table:Priority");
+        chrome.Ideas.SortedItems(section).Select(i => i.Number).ShouldBe([13, 12, 14]);
+        Click(Regions(chrome, screen), "ideas:table:Priority");
+        chrome.Ideas.SortedItems(section).Select(i => i.Number).ShouldBe([12, 13, 14]);
+    }
+
     private const string SplitDetail = IdeasView<RgbaImage>.DetailSplitHit;
 
     [Fact]

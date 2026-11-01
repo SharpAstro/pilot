@@ -56,6 +56,10 @@ public sealed record IdeaRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Pinned { get; init; }
 
+    /// <summary>The issue's GitHub Priority field; null when unset or when the repo has no such field.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IssuePriority? Priority { get; init; }
+
     /// <summary>The images in <see cref="Body"/> (<see cref="IdeaImages.In"/>), as the node read them; empty when it has none.</summary>
     public IdeaImage[] Images { get; init => field = value ?? []; } = [];
 

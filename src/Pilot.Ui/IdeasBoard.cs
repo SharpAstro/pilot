@@ -20,7 +20,7 @@ internal enum BoardSectionKind
 /// One open idea or issue as the board lists it, whichever row it came from: an idea (<see cref="Idea"/> is set) has its Markdown body shown, an
 /// issue is a compact row. <see cref="Readiness"/> and <see cref="Flight"/> are the node's, read from the issue's row either way.
 /// </summary>
-internal sealed record BoardItem(string Repo, int Number, string Title, string Body, string Url, string Age, string Who, string? Flight, IssueReadiness? Readiness, DateTimeOffset UpdatedAt, IdeaRow? Idea, bool Pinned = false)
+internal sealed record BoardItem(string Repo, int Number, string Title, string Body, string Url, string Age, string Who, string? Flight, IssueReadiness? Readiness, DateTimeOffset UpdatedAt, IdeaRow? Idea, bool Pinned = false, IssuePriority? Priority = null)
 {
     /// <summary>What names the item in the view's own state: <c>pilot#381</c>.</summary>
     public string Key => KeyOf(Repo, Number);
@@ -89,24 +89,33 @@ internal sealed record IdeasBoard(IReadOnlyList<BoardSection> Sections)
         bool PinnedIssue(string repo, int number) =>
             screen.Issues.Any(i => i.Number == number && i.Pinned && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase));
 
+        IssuePriority? PriorityIssue(string repo, int number) =>
+            screen.Issues.FirstOrDefault(i => i.Number == number && string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase))?.Priority;
+
+        // Within a section: pinned first, then by Priority (Urgent, High, Medium, unset, Low), then the node's order (the sort is stable).
+        static List<BoardItem> Ordered(IEnumerable<BoardItem> items) =>
+            [.. items.OrderByDescending(b => b.Pinned).ThenBy(b => IssuePriorities.Rank(b.Priority))];
+
         var unsorted = IdeaIds.Order(screen.Ideas).Where(i => i.State == IdeaState.Noted && i.Number > 0)
-            .Select(i => new BoardItem(i.Repo, i.Number, i.Title, i.Body, i.Url, i.Age, i.Origin, null, ReadinessOf(i.Repo, i.Number), i.UpdatedAt, i, i.Pinned || PinnedIssue(i.Repo, i.Number)))
-            .OrderByDescending(b => b.Pinned)
+            .Select(i => new BoardItem(i.Repo, i.Number, i.Title, i.Body, i.Url, i.Age, i.Origin, null, ReadinessOf(i.Repo, i.Number), i.UpdatedAt, i, i.Pinned || PinnedIssue(i.Repo, i.Number), i.Priority ?? PriorityIssue(i.Repo, i.Number)))
             .ToList();
+        unsorted = Ordered(unsorted);
         var sections = new List<BoardSection> { new(BoardSectionKind.Unsorted, "Unsorted (Ideas)", "", null, unsorted) };
 
-        BoardItem Of(IssueRow i) => new(i.Repo, i.Number, i.Title, i.Body, i.Url, i.Age, i.Author, i.Flight, i.Readiness, i.UpdatedAt, null, i.Pinned);
+        BoardItem Of(IssueRow i) => new(i.Repo, i.Number, i.Title, i.Body, i.Url, i.Age, i.Author, i.Flight, i.Readiness, i.UpdatedAt, null, i.Pinned, i.Priority);
         var inIdeas = (IssueRow i) => string.Equals(i.Milestone, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase);
 
         // Issues in no milestone, by repo then newest first: the node's own order.
-        var none = IssueIds.OrderIssues(screen.Issues.Where(i => i.Milestone is null)).Select(Of).OrderByDescending(b => b.Pinned).ToList();
+        var none = IssueIds.OrderIssues(screen.Issues.Where(i => i.Milestone is null)).Select(Of).ToList();
+        none = Ordered(none);
         sections.Add(new BoardSection(BoardSectionKind.NoMilestone, "No milestone", "", null, none));
 
         foreach (var milestone in IssueIds.OrderMilestones(screen.Milestones.Where(m => !string.Equals(m.Title, IdeaIds.Milestone, StringComparison.OrdinalIgnoreCase))))
         {
             var items = IssueIds.OrderIssues(screen.Issues.Where(i => !inIdeas(i) && string.Equals(i.Repo, milestone.Repo, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(i.Milestone, milestone.Title, StringComparison.OrdinalIgnoreCase)))
-                .Select(Of).OrderByDescending(b => b.Pinned).ToList();
+                .Select(Of).ToList();
+            items = Ordered(items);
             sections.Add(new BoardSection(BoardSectionKind.Milestone, milestone.Title, milestone.Repo, milestone, items));
         }
         return new IdeasBoard(sections);

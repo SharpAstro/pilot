@@ -554,6 +554,12 @@ public static class Verbs
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";
 
+    /// <summary>
+    /// <c>set-priority issue/&lt;repo&gt;/#&lt;n&gt; &lt;urgent|high|medium|low|none&gt;</c> (an idea target works too): writes the Priority issue field of the
+    /// open issue (<c>none</c> clears it) and reads the rows again (<see cref="IssueRow.Priority"/>). The field is never made; refused where the repo has none.
+    /// </summary>
+    public const string SetPriority = "set-priority";
+
     /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
     public const string IssueTargetPrefix = "issue/";
 

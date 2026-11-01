@@ -327,8 +327,14 @@ internal sealed class FakeGitHub : IGitHub
         Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.Where(i => i.Number == number).Select(Labelled).FirstOrDefault() : null);
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
-    private MilestoneIssue Labelled(MilestoneIssue issue) =>
-        IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
+    private MilestoneIssue Labelled(MilestoneIssue issue)
+    {
+        if (HasPriorityField && IssuePriorities.TryGetValue(issue.Number, out var level))
+        {
+            issue = issue with { Priority = level };
+        }
+        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
+    }
 
     /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
     public Action? BeforeNextWrite { get; set; }

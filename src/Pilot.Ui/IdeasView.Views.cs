@@ -24,6 +24,7 @@ internal sealed partial class IdeasView<TSurface>
     private const int ReadinessColumn = 2;
     private const int FlightColumn = 3;
     private const int AgeColumn = 4;
+    private const int PriorityColumn = 5;
 
     private readonly ListTable _table = new("ideas");
     private readonly ListScrollController _treeScroll = new() { Mode = ScrollBarMode.Interactive };
@@ -62,6 +63,7 @@ internal sealed partial class IdeasView<TSurface>
         ListColumn.Fixed("Readiness", 104f) with { Sortable = true },
         ListColumn.Fixed("Flight", 84f) with { Sortable = true },
         ListColumn.Fixed("Age", 56f) with { Sortable = true },
+        ListColumn.Fixed("Priority", 80f) with { Sortable = true },
     ];
 
     /// <summary>Picks the row whose detail the tree grid shows below it; null picks none.</summary>
@@ -199,6 +201,9 @@ internal sealed partial class IdeasView<TSurface>
                     .Follows(new HitResult.ButtonHit($"ideas:tree-flight:{item.Key}"), _ => OnFlight?.Invoke(flight)).WAuto().WithTooltip($"Open the flight {flight}")
                 : Layout.Builder.Text("", 1f, P.Dim)),
             ListTable.Top(Layout.Builder.Text(item.Age, 13f, P.Dim).Selectable()),
+            ListTable.Top(item.Priority is { } level
+                ? Layout.Builder.Text(IssuePriorities.Name(level), 13f, PriorityColour(level)).Selectable()
+                : Layout.Builder.Text("", 1f, P.Dim)),
         };
         // The stripe marks the pick, and nothing else: what the node found of readiness is in words in its column, and a stripe in the colour of
         // it would be the only thing to say it where a narrow page has dropped that column.
@@ -238,6 +243,8 @@ internal sealed partial class IdeasView<TSurface>
             FlightColumn => By(items, i => i.Flight is not null, i => i.Flight!, StringComparer.OrdinalIgnoreCase, sort.Descending),
             // Ascending is the youngest first, as an age reads: the last updated is the least old.
             AgeColumn => By(items, _ => true, i => i.UpdatedAt, Comparer<DateTimeOffset>.Default, !sort.Descending),
+            // Ascending is the most urgent first; the rows with no priority come after them, in the node's order.
+            PriorityColumn => By(items, i => i.Priority is not null, i => IssuePriorities.Rank(i.Priority), Comparer<int>.Default, sort.Descending),
             _ => items,
         };
 

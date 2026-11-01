@@ -67,6 +67,10 @@ public sealed record IssueRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Pinned { get; init; }
 
+    /// <summary>The issue's GitHub Priority field; null when unset or when the repo has no such field.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IssuePriority? Priority { get; init; }
+
     /// <summary>What the last <see cref="Verbs.CheckReady"/> found: whether the issue is ready to fly as a flight, and why not; null when it was never checked.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IssueReadiness? Readiness { get; init; }
