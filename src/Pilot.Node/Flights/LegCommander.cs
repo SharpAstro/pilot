@@ -559,6 +559,8 @@ public sealed partial class LegCommander(
                 _plannersWaiting[code] = true;
             }
         }
+        // A planner whose plan is done is ended, so it frees its slot before the starts below ask for one.
+        await EndPlannedPlannersAsync(cancellationToken);
         // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
         var flying = state.Flights().Where(f => f.State == FlightState.Flying).ToList();
         var queuedFirst = Slots.Order(flying.Where(f => f.Queued is not null || state.Legs(f.Code).Any(l => l.Queued is not null)).Select(f => f.Code));
@@ -2754,7 +2756,7 @@ public sealed partial class LegCommander(
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
         // still being started: its start is out and not recorded yet (PIL338).
         if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
-                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone)
+                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone && !_plannersEnded.ContainsKey(s.Id))
             || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin
                 && !state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)))
             || IsStarting(PlanKey(flight.Code))))

@@ -17,6 +17,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
 
     public List<string> Stopped { get; } = [];
 
+    /// <summary>Run with the job id once a start is made, as the session showing up in the listing.</summary>
+    public Action<string>? OnStart { get; set; }
+
     /// <summary>What the next start throws, as the claude CLI refusing it; null to start it.</summary>
     public Exception? Fail { get; set; }
 
@@ -35,7 +38,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
             await hold;
         }
         Started.Add(start);
-        return $"job{++_next:D5}";
+        var job = $"job{++_next:D5}";
+        OnStart?.Invoke(job);
+        return job;
     }
 
     public Task StopAsync(string job, CancellationToken cancellationToken)
@@ -43,6 +48,19 @@ internal sealed class FakeWorkers : IWorkerLauncher
         Stopped.Add(job);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// A command runner for a watchtower under test whose <c>end-session</c> (the node's end path) lands the session's row id in
+    /// <see cref="Stopped"/>, as the stop that path performs; every command completes ok.
+    /// </summary>
+    public Func<CommandRequest, CancellationToken, Task<CommandResult>> EndingRun(NodeState state) => (command, _) =>
+    {
+        if (command.Verb == Verbs.EndSession)
+        {
+            Stopped.Add(command.Target[Verbs.SessionTargetPrefix.Length..]);
+        }
+        return Task.FromResult(state.Complete(command, null));
+    };
 }
 
 internal sealed class FakeChecks : ICheckRunner
