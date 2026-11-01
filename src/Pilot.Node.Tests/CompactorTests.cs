@@ -145,6 +145,22 @@ public sealed class CompactorTests
     }
 
     [Fact]
+    public async Task ATranscriptAlreadyPastTheChatCountAtFirstSightIsNotCompactedForItsHistory()
+    {
+        // A node restart sees a watchtower whose transcript already holds 45 person messages: that history owes no compaction.
+        Row("t0000001", "du1-watchtower", context: 90_000);
+        _persons = 45;
+        await _compactor.LookAsync(Ct);
+        _persons = 84;
+        await _compactor.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+
+        _persons = 85;
+        await _compactor.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task ACompactionIsLoggedAndTheSessionRowCarriesWhenAndWhy()
     {
         var log = new StringWriter();
