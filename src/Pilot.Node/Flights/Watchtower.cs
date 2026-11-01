@@ -883,9 +883,10 @@ public sealed class Watchtower(
     /// <summary>How long after an end that did not take the same session is ended again.</summary>
     public TimeSpan EndRetryAfter { get; init; } = TimeSpan.FromMinutes(1);
 
-    // Rows the node replaced (never current again), when each mid-turn one was told, and when each end was last tried.
+    // Rows the node replaced (never current again), the mid-turn ones told so, when each one's grace began, and when each end was last tried.
     private readonly HashSet<string> _replaced = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, DateTimeOffset> _toldReplaced = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _toldReplaced = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _graceFrom = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _endTried = new(StringComparer.Ordinal);
 
     /// <summary>
@@ -912,6 +913,7 @@ public sealed class Watchtower(
         }
         if (!result.Ok)
         {
+            await Error.WriteLineAsync($"watchtower: ending {row.Id} was not confirmed, tried again after {EndRetryAfter.TotalSeconds:0} s: {result.Error}");
             return false;
         }
         _stopped.Add(row.Id);
@@ -958,16 +960,41 @@ public sealed class Watchtower(
         }
     }
 
-    /// <summary>Tells a session mid-turn it is replaced, once; true when it has had <see cref="ReplacedGrace"/> since.</summary>
+    /// <summary>
+    /// Tells a session mid-turn it is replaced, until the say is delivered once; true when <see cref="ReplacedGrace"/> has passed
+    /// since the first try, told or not, so a session the tell never reaches is still ended.
+    /// </summary>
     private async Task<bool> GraceOverAsync(SessionRow row, string? by, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (_toldReplaced.TryGetValue(row.Id, out var told))
+        if (!_graceFrom.TryGetValue(row.Id, out var from))
         {
-            return now - told >= ReplacedGrace;
+            _graceFrom[row.Id] = from = now;
         }
-        _toldReplaced[row.Id] = now;
+        if (now - from >= ReplacedGrace)
+        {
+            return true;
+        }
+        if (_toldReplaced.Contains(row.Id))
+        {
+            return false;
+        }
         var line = $"You are replaced by session {by ?? "a fresh one"}. Finish what you are on and keep nothing only you hold; the node ends this session when you are idle.";
-        await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [line], Who = LegWatch.Who }, cancellationToken);
+        try
+        {
+            var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [line], Who = LegWatch.Who }, cancellationToken);
+            if (result.Ok)
+            {
+                _toldReplaced.Add(row.Id);
+            }
+            else
+            {
+                await Error.WriteLineAsync($"watchtower: telling {row.Id} it is replaced failed, tried again on the next look: {result.Error}");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            await Error.WriteLineAsync($"watchtower: telling {row.Id} it is replaced failed, tried again on the next look: {ex.Message}");
+        }
         return false;
     }
 

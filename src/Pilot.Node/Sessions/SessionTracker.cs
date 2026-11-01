@@ -722,6 +722,7 @@ public sealed class SessionTracker : BackgroundService
         Attachments?.Remove(id);
         _resumedAs.Remove(id);
         _endedAt.Remove(id);
+        _stopped.Remove(id);
         _given.Remove(id);
         _listedNames.Remove(id);
         _transcripts.Remove(sessionId);

@@ -17,6 +17,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
 
     public List<string> Stopped { get; } = [];
 
+    /// <summary>Run with the job id once a start is made, as the session showing up in the listing.</summary>
+    public Action<string>? OnStart { get; set; }
+
     /// <summary>What the next start throws, as the claude CLI refusing it; null to start it.</summary>
     public Exception? Fail { get; set; }
 
@@ -35,7 +38,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
             await hold;
         }
         Started.Add(start);
-        return $"job{++_next:D5}";
+        var job = $"job{++_next:D5}";
+        OnStart?.Invoke(job);
+        return job;
     }
 
     public Task StopAsync(string job, CancellationToken cancellationToken)

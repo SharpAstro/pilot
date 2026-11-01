@@ -97,7 +97,8 @@ public sealed class SessionEndTests : IDisposable
     public async Task AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed()
     {
         await StartBackgroundAsync();
-        _delivery.StopFailure = new SessionDeliveryException("a1b2c3d4 was told to stop but its process 1 still runs after 20 s");
+        // The failure names no process: the one the card names comes from the tracker.
+        _delivery.StopFailure = new SessionDeliveryException("a1b2c3d4 was told to stop but still runs after 20 s");
 
         var result = await _messenger.EndAsync(End("a1b2c3d4", "cli", "not wanted"), Ct);
         await _messenger.EndAsync(End("a1b2c3d4", "cli", "not wanted"), Ct);
@@ -108,9 +109,11 @@ public sealed class SessionEndTests : IDisposable
         card.Bin.ShouldBe(CardBin.Ring);
         card.Kind.ShouldBe(SessionMessenger.StopUnconfirmedKind);
         card.Detail.ShouldNotBeNull().ShouldContain("a1b2c3d4");
-        card.Detail.ShouldContain("process 1");
+        card.Detail.ShouldContain("(a1b2c3d4, process 1)");
         var choice = card.Choices.ShouldHaveSingleItem();
         choice.Verb.ShouldBe(Verbs.EndSession);
+        // The bare why: ending it again from the card prefixes who asked once, not twice.
+        choice.Args.ShouldBe(["not wanted"]);
         choice.Target.ShouldBe(Verbs.SessionTarget("a1b2c3d4"));
         _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldNotBe(SessionState.Ended);
 
