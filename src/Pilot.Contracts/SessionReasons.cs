@@ -26,4 +26,6 @@ public static class SessionEndReasons
     public const string Watchtower = "stopped by the watchtower";
     public const string Person = "stopped by a person";
     public const string Crashed = "crashed";
+    /// <summary>A flight's planner the node ended once its first leg's worker started: its plan is done, and it holds no Opus slot (#568).</summary>
+    public const string Planned = "stopped once planned";
 }
