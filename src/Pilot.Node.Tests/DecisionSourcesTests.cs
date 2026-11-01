@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -45,6 +47,26 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         decision.Choice.ShouldBe("Arm the merge");
         decision.Reason.ShouldContain("armed to merge when they pass");
     }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OneDecisionBringingTheBranchUpToDateWhenTheAutopilotsMergeFindsItBehindItsBase()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var (flight, _) = await Passed("33");
+        MainMoves();
+        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        _legs.Models = new RoleModels(on);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        var decision = _state.Decisions(flight.Code).ShouldHaveSingleItem();
+        decision.Kind.ShouldBe(DecisionKinds.Merge);
+        decision.Choice.ShouldBe("Bring the branch up to date");
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Autopilot));
+        decision.Reason.ShouldContain("behind its base");
+    }
 }
 
 /// <summary>A person's go-around of a done leg, answered from a PR-ready card, is one decision (not two), with the card's options.</summary>
@@ -64,6 +86,10 @@ public sealed class DecisionGoAroundTests : IDisposable
     {
         try
         {
+            if (!Directory.Exists(Repo))
+            {
+                return;
+            }
             Git(Repo, "worktree", "prune");
             foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
             {
@@ -133,19 +159,84 @@ public sealed class DecisionGoAroundTests : IDisposable
     }
 
     [Fact]
-    public async Task DecisionRecordedForAFixItChoiceOnACardThatIsNotTheDesignCard()
+    public async Task DecisionLabelledNodeForTheNodesOwnMergeWithAutopilotOff()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node,
-            new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = Subject, Args = [] });
-
-        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(ready.Id), Args = ["Fix it"], Who = "gui" }, Ct)).Response.ShouldNotBeNull();
-
-        // Whether the fixer could start is not the point: a press that ran records its decision once.
-        if (result.Error is null)
+        node.State.PutFlight(new FlightRow
         {
-            node.State.Decisions().ShouldHaveSingleItem().Kind.ShouldBe(DecisionKinds.Card);
+            Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),
+            Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+        });
+        node.GitHub.Pr = new PullRequest(63, "OPEN", PrHead, PrUrl);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Merge, Target = Subject, Args = [PrHead], Who = "node" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Error.ShouldBeNull();
+        var decision = node.State.Decisions().ShouldHaveSingleItem();
+        decision.Kind.ShouldBe(DecisionKinds.Merge);
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
+    }
+}
+
+/// <summary>An assistant on autopilot answering a ring card is one decision, the card's own, read as the autopilot's (no second row from its Handled line).</summary>
+public sealed class DecisionAssistantAnswerTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private const string Assistant = "pilot-33";
+
+    [Fact]
+    public async Task DecisionRecordedOnceWhenAnAssistantOnAutopilotAnswersARingCard()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, Assistant));
+        for (var i = 0; i < 100 && (await node.Client.GetSessionsAsync(Ct)).Length < 1; i++)
+        {
+            await Task.Delay(50, Ct);
         }
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["autopilot", "on"], Who = "gui" }, Ct))
+            .Response.ShouldNotBeNull().Error.ShouldBeNull();
+        var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 stalled", null,
+            [new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] }]);
+
+        var result = (await node.Client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.Answer, Target = Verbs.CardTarget(ring.Id), Args = ["Retry"], Who = Assistant, Agent = true, Why = "Seb said: retry it",
+        }, Ct)).Response.ShouldNotBeNull();
+
+        result.Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
+        var decision = node.State.Decisions().ShouldHaveSingleItem();
+        decision.Choice.ShouldBe("Retry");
+        (decision.By, decision.ByKind).ShouldBe((Assistant, DecisionByKinds.Autopilot));
+    }
+}
+
+/// <summary>A Fix it pressed on a card that is not the design card (the fix offer on another author's PR) is one decision of kind card.</summary>
+[Trait("Category", "Slow")]
+public sealed class DecisionFixItTests : PrFixTestsBase
+{
+    [Fact]
+    public async Task DecisionRecordedForAFixItChoiceOnACardThatIsNotTheDesignCard()
+    {
+        _github.Login = "controller";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var offer = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixOfferKind).ShouldHaveSingleItem();
+        var services = new ServiceCollection();
+        services.AddSingleton(_reviews);
+        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => throw new InvalidOperationException("the watchtower runs nothing here"), _options, TimeProvider.System));
+        services.AddSingleton(new RoleModels(null));
+        var commands = new NodeCommands(services.BuildServiceProvider(), _state);
+
+        var result = await commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(offer.Id), Args = ["Fix it"], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        var decision = _state.Decisions().ShouldHaveSingleItem();
+        decision.Kind.ShouldBe(DecisionKinds.Card);
+        decision.Subject.ShouldBe("pr/acme/widget#7");
+        decision.Choice.ShouldBe("Fix it");
+        (decision.By, decision.ByKind).ShouldBe(("controller", DecisionByKinds.Person));
     }
 }
 

@@ -213,14 +213,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (onAutopilot && result.Ok)
         {
             // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
+            // A card's answer, an Answer or a Dismiss is recorded as the card's own row, which reads (autopilot).
+            var record = !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss);
             if (result.Later is { } later)
             {
-                _ = HandledWhenDoneAsync(command, later);
+                _ = HandledWhenDoneAsync(command, later, record);
             }
             else
             {
-                // A card's answer, an Answer or a Dismiss is recorded as the card's own row, which reads (autopilot).
-                Get<Autopilot>().Handled(command, record: !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss));
+                Get<Autopilot>().Handled(command, record);
             }
         }
         return result;
@@ -268,13 +269,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase)))?.Label ?? which;
     }
 
-    private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later)
+    private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later, bool record)
     {
         try
         {
             if ((await later).Ok)
             {
-                Get<Autopilot>().Handled(command);
+                Get<Autopilot>().Handled(command, record);
             }
         }
         catch (Exception)
@@ -592,7 +593,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
         if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind)
         {
-            RecordCardDecision(command, card, DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card, choice.Label, given ?? "");
+            // A Fix it off the design card (a fix offer, a fixer to start again) answers no question of design: it is the card's own choice.
+            var kind = choice.Verb == Verbs.FixPr ? DecisionKinds.Card : DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card;
+            RecordCardDecision(command, card, kind, choice.Label, given ?? "");
         }
         if (inProgress)
         {
