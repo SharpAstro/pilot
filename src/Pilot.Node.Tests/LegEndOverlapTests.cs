@@ -154,6 +154,46 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Flights().Single(f => f.Code == "TIA1").State.ShouldNotBe(FlightState.Held);
     }
 
+    /// <summary>TIA2 holds an answered row about TIA1 (the card was TIA2's), and TIA1 has none about TIA2.</summary>
+    private void AnswerOnTheOthersCard(OverlapAnswer answer, params string[] files)
+    {
+        var tia2 = _state.Flights().Single(f => f.Code == "TIA2");
+        _state.PutFlight(tia2 with { Overlaps = [new OverlapRow { Other = "TIA1", Files = files, Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = answer, At = DateTimeOffset.UtcNow }] });
+    }
+
+    [Theory]
+    [InlineData(OverlapAnswer.Separate)]
+    [InlineData(OverlapAnswer.Connect)]
+    public async Task AnAnswerOnTheOthersCardCoversThePairSoNoCardRingsAndTheFilesAreRecordedHere(OverlapAnswer answer)
+    {
+        await FlyingAsync("parser.cs", "shared.cs", "fresh.cs");
+        OtherFlight("TIA2", "shared.cs", "fresh.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        AnswerOnTheOthersCard(answer, "shared.cs");
+
+        await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        var flight = _state.Flights().Single(f => f.Code == "TIA1");
+        flight.State.ShouldNotBe(FlightState.Held);
+        var row = flight.Overlaps.Single();
+        (row.Other, row.Answer, row.AfterLeg).ShouldBe(("TIA2", OverlapAnswer.Separate, "parser"));
+        row.Files.ShouldBe(["fresh.cs"]);
+    }
+
+    [Fact]
+    public async Task AnUnansweredReversePairStillRings()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        AnswerOnTheOthersCard(OverlapAnswer.Pending, "shared.cs");
+
+        await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
+
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+    }
+
     [Fact]
     public async Task AnUnansweredPairStillRingsForANewSharedFile()
     {
