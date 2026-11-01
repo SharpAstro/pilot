@@ -37,7 +37,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
         notice.Bin.ShouldBe(CardBin.Handled);
         notice.Title.ShouldContain(cause);
         _state.Cards().Single(c => c.Kind == PrReviews.DesignKind).Outcome.ShouldNotBeNull().ShouldContain(cause);
-        _tower.Untold().ShouldNotContain(c => c.Kind is PrReviews.DesignKind or PrReviews.DesignSettledKind);
+        _tower.Untold().ShouldNotContain(c => c.Kind == PrReviews.DesignKind || c.Kind == PrReviews.DesignSettledKind);
     }
 
     [Fact]
