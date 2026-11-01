@@ -115,7 +115,12 @@ public sealed class ClaudeProfile(string root)
         {
             return false;
         }
-        foreach (var option in (string[])["-n", "--model"])
+        // Flags on file from before the lean config carry no MCP config: such a session is resumed with the full options.
+        if (arguments.Contains("--strict-mcp-config") && !flags.Contains("--strict-mcp-config"))
+        {
+            return false;
+        }
+        foreach (var option in (string[])["-n", "--model", "--mcp-config"])
         {
             var at = arguments.ToList().IndexOf(option);
             if (at < 0 || at + 1 >= arguments.Count)

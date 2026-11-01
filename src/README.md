@@ -795,6 +795,15 @@ branch before any worker goes in, and lands one that is already gone.
 
 ### The MCP server
 
+**Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,
+fix) passes `--strict-mcp-config --mcp-config <data folder>/mcp.json`, so it loads pilot's own server (`pilot --node-socket
+<socket> mcp`) and nothing else, plus `--autocompact auto` so Claude Code's auto-compaction is explicitly on. All of these
+are start options: the node records them, and a resume with nothing on file (or flags on file that lack the strict config
+or the config file, see `RespawnFlagsCover`) passes them again. The file is rewritten only when its contents change. A repo
+that wants an extra server for its legs lists it in its `PILOT.md` under a heading `MCP servers for legs`, one bullet per
+server name (`- inspector: why`), and defines it in its `.mcp.json`; the node adds just those to that repo's config, written
+as `mcp-<repo>.json`. None listed means pilot's server only. The one-shot `claude -p` summary and relay calls keep no MCP.
+
 `pilot mcp` serves the same commands to any MCP client (Claude Code, the desktop app) over stdio, from the same binary.
 To add it to Claude Code, for every project:
 
