@@ -620,7 +620,12 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         var ends = text.Split("..", 2);
         var def = ends[0].Trim();
         var max = ends.Length > 1 ? ends[1].Trim() : def;
-        return next.Default != now.Default ? $"{setting.Choices[pick]}..{max}" : $"{def}..{setting.Choices[pick]}";
+        if (next.Default != now.Default)
+        {
+            // a bare max has no effort, so a default on its own pair or above it would send "opus-low..opus", which TryParse refuses
+            return !max.Contains('-') && next.Default >= now.Max ? null : $"{setting.Choices[pick]}..{max}";
+        }
+        return $"{def}..{setting.Choices[pick]}";
     }
 
     private static (int Default, int Max) HandlesOf(SettingRow setting, string text)
@@ -682,7 +687,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var at = i;
             var end = i == def || i == max;
             var inside = i > def && i < max;
-            var allowed = Moved((def, max), i, handle) is not null;
+            var allowed = PressedRange(setting, EditedText(setting, fleet), i, handle) is not null;
             var action = $"settings:{key}:pair:{pair}";
             var cell = Layout.Builder.Text(ShortPair(pair), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
                 .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);

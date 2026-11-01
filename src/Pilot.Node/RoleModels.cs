@@ -238,7 +238,8 @@ public sealed partial class RoleModels
     /// The model and effort a leg's fresh worker of <paramref name="attempt"/> (go-arounds + 1) starts on: attempts 1 and 2 on the
     /// leg's own (<paramref name="plannedModel"/>, <paramref name="plannedEffort"/>) or the worker role's default, attempt 3 on the
     /// range's max model at the same effort, attempt 4 and on at xhigh. Never past the worker range's max (model or effort), never to
-    /// effort max by a step, and never below what the leg's plan names. A resumed or nudged session does not come here.
+    /// effort max by a step, and never below what the leg's plan names. A step that lands on the max's model is held to the max's
+    /// effort only when the plan names neither model nor effort; a plan that names the model keeps the default's effort (the plan wins). A resumed or nudged session does not come here.
     /// </summary>
     public (string? Model, string? Effort) WorkerFor(string? plannedModel, string? plannedEffort, int attempt)
     {
@@ -262,7 +263,7 @@ public sealed partial class RoleModels
                 effort = efforts[target];
             }
         }
-        if (plannedEffort is null && max.Effort is { } top && effort is not null && ModelRank(model) >= 0 && ModelRank(model) >= ModelRank(max.Model))
+        if (plannedEffort is null && plannedModel is null && max.Effort is { } top && effort is not null && ModelRank(model) >= 0 && ModelRank(model) >= ModelRank(max.Model))
         {
             // a step that lands on the max's model never runs above the max's effort, whatever the default's was
             var efforts = RoleRange.Efforts;
