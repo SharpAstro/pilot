@@ -48,11 +48,12 @@ pilot-gui --snapshot <file.json> [--capture out.png]         # a snapshot file i
   default), **Tree grid** and **Canvas**. All three are one board the node's read builds: *Unsorted (Ideas)* first (the noted
   ideas, newest first, bodies as Markdown), then *No milestone*, then every open milestone with its open and closed counts, due
   date and progress. The List pins Unsorted above a handle that resizes the split; the Tree grid has sortable Title, Kind,
-  Readiness, Flight and Age columns with the sections as foldable rows (a sort orders the rows inside each section, never the
+  Readiness, Flight, Priority and Age columns with the sections as foldable rows (a sort orders the rows inside each section, never the
   sections) and the picked row's detail with its buttons below; the Canvas has a column for each section, wrapping into lines on a
-  narrow window, with a card for each item. Every item has Chat about this, Suggest milestone, Ready? and Open on GitHub, an idea
-  also Plan, Drop, Edit, Tidy and Move to repo…; a ready issue offers Plan flight, and a flown one shows its flight's code as a
-  link. **Ready?** asks the node whether the item can fly as a flight and shows its answer (✓ ready or ✗ not ready, with the
+  narrow window, with a card for each item. Every item has Chat about this, Pin or Unpin (a label on GitHub; pinned items stay first in their section), Priority… (opens Urgent, High, Medium, Low and None; the
+  GitHub Priority field, sorted Urgent, High, Medium, unset, Low), Ready? and Open on GitHub, and Suggest milestone unless it already sits in a milestone; an idea
+  also has Plan, Drop, Edit, Tidy and Move to repo…; an issue with no flight offers Make flight (create-flight then plan-flight), and a flown one shows its flight's code as a
+  link. Collapse all / Expand all fold every group. **Ready?** asks the node whether the item can fly as a flight and shows its answer (✓ ready or ✗ not ready, with the
   reasons); **Suggest milestone**, and Suggest milestones on a section, ask the node for an existing milestone or a new one
   (title and a one-line goal) for each item, and nothing moves until it is accepted, per item or with Accept all. An item dragged
   by its ≡ handle onto a milestone (or onto No milestone) in any view is moved by the node (`set-milestone`); the row stays where

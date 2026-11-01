@@ -1786,18 +1786,37 @@ public sealed class IdeasPaneTests
         Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.High));
         Spoken(renderer, chrome, screen, 1280).ShouldNotContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.Urgent));
         var regions = Regions(chrome, screen);
-        Actions(regions).ShouldContain("ideas:no-priority:pilot#13");
-        Actions(regions).ShouldNotContain("ideas:no-priority:pilot#14");
+        Actions(regions).ShouldNotContain("ideas:priority-none:pilot#13");
 
-        Click(regions, "ideas:priority:pilot#14");
-        await Task.WhenAll(tasks);
-        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#14"));
-        sent.Last().Args.ShouldBe(["urgent"]);
+        // The pill opens the five levels; choosing one writes exactly that level.
+        Click(regions, "ideas:priority:pilot#13");
+        regions = Regions(chrome, screen);
+        foreach (var level in new[] { "urgent", "high", "medium", "low", "none" })
+        {
+            Actions(regions).ShouldContain($"ideas:priority-{level}:pilot#13");
+        }
+        foreach (var level in new[] { "urgent", "medium", "low", "none" })
+        {
+            Click(Regions(chrome, screen), $"ideas:priority-{level}:pilot#13");
+            await Task.WhenAll(tasks);
+            (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#13"));
+            sent.Last().Args.ShouldBe([level]);
+        }
+        sent.Count.ShouldBe(4);
+    }
 
-        Click(Regions(chrome, screen), "ideas:no-priority:pilot#13");
-        await Task.WhenAll(tasks);
-        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#13"));
-        sent.Last().Args.ShouldBe(["none"]);
+    [Fact]
+    public async Task AFlightMadeFromARowShowsAtOnceAndTheRowOffersNoSecondMakeFlight()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:make-flight:pilot#12");
+        var flight = new FlightRow { Code = "PIL12", Repo = "pilot", RepoPath = "/r/pilot", Issue = 12, Title = "Resize", Branch = "flight/pil12", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Updated };
+        screen = screen with { Flights = [.. screen.Flights, flight] };
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:make-flight:pilot#12");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("PIL12");
+        await Task.CompletedTask;
     }
 
     [Fact]

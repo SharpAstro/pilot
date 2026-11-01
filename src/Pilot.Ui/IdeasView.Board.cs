@@ -100,7 +100,7 @@ internal sealed partial class IdeasView<TSurface>
 
     internal const string UnpinLabel = "Unpin";
 
-    internal static string ChatAboutText(BoardItem item, string lead = "About") => $"{lead} {item.Repo} #{item.Number.ToString(CultureInfo.InvariantCulture)}: {item.Title}\n{item.Url}\n";
+    internal static string ChatAboutText(BoardItem item) => $"About {item.Repo} #{item.Number.ToString(CultureInfo.InvariantCulture)}: {item.Title}\n{item.Url}\n";
 
     // A suggestion belongs to the issue as it was read: one the board no longer holds, or that GitHub changed since, is gone.
     private void Prune(IdeasBoard board)
@@ -284,7 +284,6 @@ internal sealed partial class IdeasView<TSurface>
 
     private Layout.Node ItemRow(BoardItem item, BoardSection section, bool compact = false)
     {
-        _ = section;
         var idea = item.Idea;
         var parts = new List<Layout.Node> { ItemHead(item, compact) };
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
@@ -302,7 +301,7 @@ internal sealed partial class IdeasView<TSurface>
         }
         parts.AddRange(ReadinessRows(item));
         parts.AddRange(SuggestionOf(item));
-        parts.Add(Layout.Builder.WrapH([.. Buttons(item)]).WithGap(8f).WithLineGap(4f).WStar());
+        parts.Add(Layout.Builder.WrapH([.. Buttons(item, section)]).WithGap(8f).WithLineGap(4f).WStar());
         if (idea is not null && PressLine(idea) is { } pressed)
         {
             parts.Add(pressed);
@@ -332,7 +331,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
         }
-        if (item.Flight is { } flight)
+        if (FlightCodeOf(item) is { } flight)
         {
             parts.Add(Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
                 .Follows(new HitResult.ButtonHit($"ideas:flight:{item.Key}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto().WithTooltip($"Open the flight {flight}"));
@@ -349,10 +348,10 @@ internal sealed partial class IdeasView<TSurface>
                 .Pressable(new HitResult.ButtonHit(hit + item.Key), press => BeginDrag(item, press), CursorKind.Move)
             : null;
 
-    private IEnumerable<Layout.Node> Buttons(BoardItem item)
+    private IEnumerable<Layout.Node> Buttons(BoardItem item, BoardSection? section = null)
     {
         var idea = item.Idea;
-        var flown = item.Flight is not null;
+        var flown = FlightCodeOf(item) is not null;
         var ready = !flown && ReadinessOf(item) is { Ready: true };
         if (OnChatAbout is { } chat)
         {
@@ -377,7 +376,7 @@ internal sealed partial class IdeasView<TSurface>
         if (Send is not null)
         {
             // An item already in a real milestone has its place; only an idea or an issue with no milestone is asked about.
-            if (_board.SectionOf(item.Key) is not { Kind: BoardSectionKind.Milestone })
+            if ((section ?? _board.SectionOf(item.Key)) is not { Kind: BoardSectionKind.Milestone })
             {
                 yield return IsBusy("suggest:" + item.Key)
                     ? CardsView<TSurface>.Dead("Suggesting…")
@@ -386,12 +385,22 @@ internal sealed partial class IdeasView<TSurface>
             yield return IsBusy("pin:" + item.Key)
                 ? CardsView<TSurface>.Dead(item.Pinned ? "Unpinning…" : "Pinning…")
                 : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
-            yield return IsBusy("priority:" + item.Key)
-                ? CardsView<TSurface>.Dead("Setting priority…")
-                : CardsView<TSurface>.Pill(item.Priority is { } now ? "Priority: " + IssuePriorities.Name(now) : "Priority…", $"ideas:priority:{item.Key}", () => Run(() => PriorityAsync(item, NextPriority(item.Priority)), $"set the priority of {Label(item)}"), Tint, P.Bright);
-            if (item.Priority is not null)
+            if (IsBusy("priority:" + item.Key))
             {
-                yield return CardsView<TSurface>.Pill(NoPriorityLabel, $"ideas:no-priority:{item.Key}", () => Run(() => PriorityAsync(item, null), $"clear the priority of {Label(item)}"), Tint, P.Body);
+                yield return CardsView<TSurface>.Dead("Setting priority…");
+            }
+            else
+            {
+                var open = _priorityOpen.Contains(item.Key);
+                yield return CardsView<TSurface>.Pill(item.Priority is { } now ? "Priority: " + IssuePriorities.Name(now) + (open ? " ▴" : " ▾") : "Priority…", $"ideas:priority:{item.Key}", () => { TogglePriority(item.Key); }, open ? Lit : Tint, P.Bright);
+                if (open)
+                {
+                    foreach (var level in new IssuePriority?[] { IssuePriority.Urgent, IssuePriority.High, IssuePriority.Medium, IssuePriority.Low, null })
+                    {
+                        var chosen = level;
+                        yield return CardsView<TSurface>.Pill(chosen is { } l ? IssuePriorities.Name(l) : NoPriorityLabel, $"ideas:priority-{(chosen is { } c ? c.ToString().ToLowerInvariant() : "none")}:{item.Key}", () => Run(() => PriorityAsync(item, chosen), $"set the priority of {Label(item)}"), item.Priority == chosen ? Lit : Tint, P.Bright);
+                    }
+                }
             }
             if (!flown)
             {
@@ -527,7 +536,7 @@ internal sealed partial class IdeasView<TSurface>
                 Say($"no flight made of {Label(item)}: the node has no checkout of {item.Repo}", refusal: true);
                 return;
             }
-            var made = await RunAsync(Verbs.CreateFlight, Verbs.RepoTarget(path), ["#" + item.Number.ToString(CultureInfo.InvariantCulture), item.Title]);
+            var made = await RunAsync("making:" + item.Key, "ideas:board:" + Verbs.CreateFlight + ":" + item.Key, "making a flight", Verbs.CreateFlight, Verbs.RepoTarget(path), ["#" + item.Number.ToString(CultureInfo.InvariantCulture), item.Title]);
             if (made is not { Ok: true, Made: { Length: > 0 } code })
             {
                 Say($"no flight made of {Label(item)}: {made?.Error ?? "the node did not answer"}", refusal: true);
@@ -539,7 +548,7 @@ internal sealed partial class IdeasView<TSurface>
                 Say($"{Label(item)}: {way}", refusal: false);
                 return;
             }
-            var planning = await RunAsync(Verbs.PlanFlight, Verbs.FlightTarget(code), []);
+            var planning = await RunAsync("planning:" + item.Key, "ideas:board:" + Verbs.PlanFlight + ":" + code, "planning", Verbs.PlanFlight, Verbs.FlightTarget(code), []);
             Say(planning is { Ok: true } ? $"made {code} of {Label(item)}; its planner is planning the legs" : $"made {code} of {Label(item)}, but it has no planner: {planning?.Error ?? "the node did not answer"}", planning is not { Ok: true });
         }
         finally
@@ -559,8 +568,12 @@ internal sealed partial class IdeasView<TSurface>
         Changed?.Invoke();
         try
         {
-            var reply = await RunAsync(Verbs.PinIssue, item.Target, item.Pinned ? [Verbs.PinOff] : []);
-            if (reply is { Ok: false })
+            var reply = await RunAsync("pinning:" + item.Key, "ideas:board:" + Verbs.PinIssue + ":" + item.Target, "pinning", Verbs.PinIssue, item.Target, item.Pinned ? [Verbs.PinOff] : []);
+            if (reply is null)
+            {
+                Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: the node did not answer", refusal: true);
+            }
+            else if (reply is { Ok: false })
             {
                 Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: {reply.Error}", refusal: true);
             }
@@ -571,13 +584,21 @@ internal sealed partial class IdeasView<TSurface>
         }
     }
 
-    /// <summary>The level a press of the priority pill moves to: Urgent, High, Medium, Low, then none, then Urgent again.</summary>
-    internal static IssuePriority? NextPriority(IssuePriority? current) => current switch
+    private readonly HashSet<string> _priorityOpen = [];
+
+    private void TogglePriority(string key)
     {
-        null => IssuePriority.Urgent,
-        IssuePriority.Low => null,
-        { } level => level + 1,
-    };
+        if (!_priorityOpen.Remove(key))
+        {
+            _priorityOpen.Add(key);
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>The code of the flight that flies the item: the node's own row, or a live flight on this screen that holds its issue (a flight just made shows at once).</summary>
+    private string? FlightCodeOf(BoardItem item) =>
+        item.Flight ?? _screen.Flights.FirstOrDefault(f => f.Tracker == TrackerKind.GitHub && f.Issue == item.Number && f.State != FlightState.Landed
+            && string.Equals(f.Repo, item.Repo, StringComparison.OrdinalIgnoreCase))?.Code;
 
     /// <summary>Sets the item's Priority field through the node (null clears it); a press again while it runs sends nothing.</summary>
     internal async Task PriorityAsync(BoardItem item, IssuePriority? level)
@@ -590,8 +611,12 @@ internal sealed partial class IdeasView<TSurface>
         Changed?.Invoke();
         try
         {
-            var reply = await RunAsync(Verbs.SetPriority, item.Target, [level is { } set ? set.ToString().ToLowerInvariant() : "none"]);
-            if (reply is { Ok: false })
+            var reply = await RunAsync("prioritising:" + item.Key, "ideas:board:" + Verbs.SetPriority + ":" + item.Target, "setting the priority", Verbs.SetPriority, item.Target, [level is { } set ? set.ToString().ToLowerInvariant() : "none"]);
+            if (reply is null)
+            {
+                Say($"{Label(item)} priority not set: the node did not answer", refusal: true);
+            }
+            else if (reply is { Ok: false })
             {
                 Say($"{Label(item)} priority not set: {reply.Error}", refusal: true);
             }
