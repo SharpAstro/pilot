@@ -6,12 +6,21 @@ namespace Pilot.Ui;
 internal static class ChatCommands
 {
     /// <summary>
+    /// The id the chat page gave the send it is making (its pending echo's), read by the tell below as the command's request id,
+    /// so the echo, the node's record of the send and the transcript's entry all carry one id (PIL595). Set by the page just
+    /// before it calls a send, which reads it before its first await; empty for a send that is not the chat's.
+    /// </summary>
+    internal static readonly AsyncLocal<string?> SendId = new();
+
+    private static string RequestId() => SendId.Value is { Length: > 0 } id ? id : Guid.NewGuid().ToString("N");
+
+    /// <summary>
     /// Says <paramref name="text"/> to the node's watchtower (the node's <c>tell</c>: it starts one when none runs, and
     /// queues what it cannot say yet). Null when the node took it, else what it said in refusing it.
     /// </summary>
     public static async Task<string?> TellAsync(NodeClient client, string text, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = who, RequestId = RequestId() }, cancellationToken);
         return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     }
 
@@ -21,7 +30,7 @@ internal static class ChatCommands
     /// </summary>
     public static async Task<string?> TellAboutCardAsync(NodeClient client, string cardId, string words, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.CardTarget(cardId), Args = [words], Who = who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.CardTarget(cardId), Args = [words], Who = who, RequestId = RequestId() }, cancellationToken);
         return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     }
 
