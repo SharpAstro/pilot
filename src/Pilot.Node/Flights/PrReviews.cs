@@ -1423,15 +1423,15 @@ public sealed class PrReviews(
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
         if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
         {
-            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+            throw new FlightException($"not fixerStart on the autopilot: {why}; that is the person's to choose");
         }
-        var started = await StartFixerAsync(pr, review, cancellationToken);
+        var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
         if (asksDesign && words.Length > 0)
         {
             // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
             await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
         }
-        return started;
+        return fixerStart;
     }
 
     /// <summary>
