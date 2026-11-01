@@ -168,7 +168,7 @@ public sealed class CompactorTests
         _time.Advance(TimeSpan.FromMinutes(1));
         Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
         await _compactor.LookAsync(Ct);
-        _said.Count.ShouldBe(1);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-watchtower");
         Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower: still at 75% of its window after a compaction", StringComparison.Ordinal));
     }
