@@ -166,7 +166,7 @@ public static class NodeApp
         builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
+            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
@@ -261,6 +261,7 @@ public static class NodeApp
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),
+                UiConnected = () => services.GetRequiredService<PageViews>().Any,
                 Error = logWriter,
                 JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
@@ -268,6 +269,7 @@ public static class NodeApp
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
         builder.Services.AddSingleton<SendLog>();
+        builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
@@ -276,6 +278,7 @@ public static class NodeApp
             Gate = services.GetRequiredService<StartGate>(),
             Ledger = services.GetRequiredService<SessionLedger>(),
             Error = logWriter,
+            PersonMessages = row => services.GetRequiredService<TranscriptBook>().PersonMessages(row.SessionId),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
         // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.
@@ -432,6 +435,7 @@ public static class NodeApp
             // Ending a session cancels the jobs it owns.
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
+            Timings = services.GetRequiredService<SendTimings>(),
         });
         configure?.Invoke(builder);
 
@@ -522,7 +526,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -544,6 +548,7 @@ public static class NodeApp
                 CountedSessions = slots.Publish().Counted,
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
+                SendTimings = timings.Rows(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

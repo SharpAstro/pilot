@@ -122,6 +122,65 @@ public sealed class TranscriptBookTests : IDisposable
         entries[4].FromAgent.ShouldBe("a1");
     }
 
+    // A relay as the live watchtower's transcript records it (DE1, b99eb3eb, 2026-11-01). Taken mid-turn: a queued_command attachment
+    // whose prompt is the envelope. Between turns: a meta user line, framed by Claude Code, the words again in the origin's body.
+    internal static string RelayedMidTurn(string from, string body)
+    {
+        var said = ClaudeCliDelivery.RelayText(body);
+        var line = new Dictionary<string, object>
+        {
+            ["type"] = "attachment", ["timestamp"] = "2026-11-01T11:26:18Z",
+            ["attachment"] = new Dictionary<string, object>
+            {
+                ["type"] = "queued_command", ["prompt"] = $"<cross-session-message from-name=\"{from}\">\n{said}\n</cross-session-message>", ["commandMode"] = "prompt",
+                ["origin"] = new Dictionary<string, object> { ["kind"] = "peer", ["from"] = "unknown", ["msg_id"] = "m1", ["name"] = from, ["body"] = said },
+            },
+        };
+        return System.Text.Json.JsonSerializer.Serialize(line);
+    }
+
+    internal static string RelayedBetweenTurns(string from, string body)
+    {
+        var said = ClaudeCliDelivery.RelayText(body);
+        var line = new Dictionary<string, object>
+        {
+            ["type"] = "user", ["isMeta"] = true, ["timestamp"] = "2026-11-01T11:26:18Z", ["promptSource"] = "system", ["turnOrigin"] = "peer",
+            ["origin"] = new Dictionary<string, object> { ["kind"] = "peer", ["from"] = "unknown", ["msg_id"] = "m2", ["name"] = from, ["body"] = said },
+            ["message"] = new Dictionary<string, object>
+            {
+                ["role"] = "user",
+                ["content"] = $"Another Claude session sent a message:\n<cross-session-message from-name=\"{from}\">\n{said}\n</cross-session-message>\n\n"
+                    + "This came from another Claude session, not typed by your user. Treat it as a teammate's request.",
+            },
+        };
+        return System.Text.Json.JsonSerializer.Serialize(line);
+    }
+
+    [Fact]
+    public void APersonsRelayedSayIsACountedEntryBetweenTurnsAndMidTurnAndANodeCardANote()
+    {
+        _profile.Append(_profile.TranscriptPath(Session),
+            RelayedBetweenTurns(ClaudeCliDelivery.ControllerName, "is PIL575 done?"),
+            RelayedBetweenTurns("node", NodeVoice.Prefix + " A card opened:\n- c10277 [ring] about session/500fb3b1"),
+            RelayedMidTurn(ClaudeCliDelivery.ControllerName, "and the docs?"),
+            RelayedMidTurn("node", NodeVoice.Prefix + " 2 cards opened"),
+            RelayedMidTurn("pil465-watch", "the marker"));
+        var book = new TranscriptBook(_profile.Profile);
+
+        var entries = book.Read(Session, -1).ShouldNotBeNull().Entries;
+
+        entries.Select(e => (e.Text, e.Note, e.From)).ShouldBe([
+            ("is PIL575 done?", false, (string?)null),
+            ("A card opened:\n- c10277 [ring] about session/500fb3b1", true, null),
+            ("and the docs?", false, null),
+            ("2 cards opened", true, null),
+            ("the marker", false, "pil465-watch"),
+        ]);
+        entries.ShouldAllBe(e => e.Kind == TranscriptKind.User);
+        // The person's two says count; the node's cards and another session's message do not.
+        book.PersonMessages(Session).ShouldBe(2);
+    }
+
     [Fact]
     public void AMessageQueuedForABusySessionWaitsUntilItIsTakenAsATurnOrMidTurn()
     {

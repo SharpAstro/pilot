@@ -741,7 +741,7 @@ and the source for rich.
 
 ### Say to all
 
-`pilot say-all <text…>` says the text to every session its filters pick, one `say` each (resumed when idle, relayed when
+`pilot say-all <text…>` says the text to every session its filters pick, one `say` each (resumed when idle, except a live idle watchtower, which is relayed to; relayed when
 mid-turn), and prints a line per session: `ok session/7734b775 (relayed)  <name>  <role>  <state>`, or `refused
 session/<id> …` and why. It exits 1 if any say failed, else 0; no session picked says so. By default it picks the
 active sessions, working or waiting; `--all` adds idle ones; ended, failed and archived sessions are never picked.
@@ -798,6 +798,15 @@ its `-w` session entered when that job ends by itself, keeping the branch; the n
 branch before any worker goes in, and lands one that is already gone.
 
 ### The MCP server
+
+**Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,
+fix) passes `--strict-mcp-config --mcp-config <data folder>/mcp.json`, so it loads pilot's own server (`pilot --node-socket
+<socket> mcp`) and nothing else, plus `--autocompact auto`, which pins the auto-compact window to Claude Code's default (it does not switch compaction on; that is the `autoCompactEnabled` setting, on by default). All of these
+are start options: the node records them, and a resume with nothing on file (or flags on file that lack the strict config
+or the config file, see `RespawnFlagsCover`) passes them again. The file is rewritten only when its contents change. A repo
+that wants an extra server for its legs lists it in its `PILOT.md` under a heading `MCP servers for legs`, one bullet per
+server name (`- inspector: why`), and defines it in its `.mcp.json`; the node adds just those to that repo's config, written
+as `mcp-<repo>.json`. None listed means pilot's server only. The one-shot `claude -p` summary and relay calls keep no MCP.
 
 `pilot mcp` serves the same commands to any MCP client (Claude Code, the desktop app) over stdio, from the same binary.
 To add it to Claude Code, for every project:
@@ -1015,9 +1024,10 @@ never from an earlier watchtower's conversation, and the node says every Ring an
 | When | The node |
 | --- | --- |
 | there is something to watch (a flight not landed, a job running or waiting, a ring open) and none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
-| nothing to watch | starts none; one already running is stopped once it has been idle 15 min with nothing to watch (a Handled line). With nothing in the air a watchtower costs nothing; the next flight, job or ring starts a fresh one, briefed from the state |
+| nothing to watch and no UI connected | starts none; one already running is stopped once it has been idle 15 min with no flight, job or ring and no UI (GUI or TUI, local or over the LAN; a CLI or MCP call is no UI) connected, counted from when the last UI left or the last flight landed (a Handled line, and a `stopped by the watchtower: quiet: ...` reason in the session ledger). |
+| a flight is in the air, or on a node with no flight a UI is connected | keeps it live, never stopped for quiet, so a message to it is relayed into the live process, not resumed; a UI connecting or a flight in the air starts one when none runs, with no card to wait for (resumed in place only when cards are untold and it is warm); a live idle watchtower is relayed to directly over its intercom, falling back to the resume when there is no live endpoint, and a flight taking off or a job or ring starts one briefed from the state |
 | it is running on a brief that has since changed (a node restarted after an update, or the node's own brief settings changed) | stops it and starts a fresh one before saying it anything, with a Handled line (`its brief changed since the node started it`). A say resumes the same session, which keeps the brief it had, so only a fresh start carries the new one. The node records a fingerprint of the brief's fixed part (its template and rules, not the flights and cards it lists) in `watchtower-brief` in its data folder when it starts a watchtower, so a restarted node still compares; one with no record is taken as started by an older node |
-| idle 50 min with more than 100k of context, or past 70% of its window | compacts it (see Compaction): it keeps its conversation as a summary, never replaced by a fresh one for its size |
+| idle 50 min with more than 100k of context, or past its share of the window (`watchtower-compact-share`, 60 by default), or after a long chat (`watchtower-chat-messages`, 40 by default) | compacts it (see Compaction), and replaces it by a fresh one when it is still past its share after the compaction; the last compaction shows on its session row |
 | stopped by the usage limit | a For-you card until the reset, then resumes it |
 | it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
 
@@ -1092,7 +1102,7 @@ Claude Code's prompt cache lives an hour, and a session woken after that reads i
 The node's compactor is a heartbeat over the background sessions it will wake again: the watchtower while it has
 something to watch, and any session waiting on a job of its own (a worker that handed a suite over with `pilot run`,
 idle until the job wakes it). Each one idle 50 min with more than 100k of context is compacted while its cache is
-still warm, and one past 70% of its window as soon as it is idle: `compact session/<id>`, which resumes it with Claude
+still warm, and one past its share of the window (`watchtower-compact-share`, 60 by default) as soon as it is idle: `compact session/<id>`, which resumes it with Claude
 Code's `/compact` as its next turn, its focus what the summary keeps (for a worker, its task and the job it waits on).
 Below 100k a cold read costs little more than the summary, and a fresh session starts near 50k anyway. A session is
 compacted once per stretch of idleness, not again until it has answered something; one mid-turn is refused, never sent

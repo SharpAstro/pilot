@@ -35,26 +35,28 @@ public sealed class ResumeOptionsTests : IDisposable
 
     public void Dispose() => _profile.Dispose();
 
+    private const string McpFile = "/d/mcp.json";
+
     private string Cwd => _profile.Folder.Replace("\\", "\\\\", StringComparison.Ordinal);
 
     public static TheoryData<string, WorkerStart, string> Roles => new()
     {
-        { "watchtower", new WorkerStart("de1-watchtower", "/data/watchtower", null, "b", "sonnet", "low", RemoteControl: true, DisallowedTools: ["AskUserQuestion"]),
-            "--remote-control -n de1-watchtower --permission-mode auto --strict-mcp-config --model sonnet --effort low --disallowedTools AskUserQuestion" },
-        { "worker, attempt 1", new WorkerStart("de1-pil1-worker", "/r/pilot", "pil1", "b", "sonnet", "medium"),
-            "-n de1-pil1-worker --permission-mode auto --strict-mcp-config --model sonnet --effort medium" },
-        { "worker, ladder step", new WorkerStart("de1-pil1-worker", "/r/pilot", "pil1", "b", "opus", "high"),
-            "-n de1-pil1-worker --permission-mode auto --strict-mcp-config --model opus --effort high" },
-        { "planner", new WorkerStart("de1-pil1-planner", "/r/pilot", "pil1", "b", "opus", "high"),
-            "-n de1-pil1-planner --permission-mode auto --strict-mcp-config --model opus --effort high" },
-        { "reviewer, standard", new WorkerStart("de1-pil1-review", "/r/pilot", "pil1", "b", "sonnet", "medium"),
-            "-n de1-pil1-review --permission-mode auto --strict-mcp-config --model sonnet --effort medium" },
-        { "reviewer, deep", new WorkerStart("de1-pil1-review", "/r/pilot", "pil1", "b", "opus", "xhigh"),
-            "-n de1-pil1-review --permission-mode auto --strict-mcp-config --model opus --effort xhigh" },
-        { "validator", new WorkerStart("de1-pil1-validator", "/r/pilot", "pil1", "b", "sonnet", "low"),
-            "-n de1-pil1-validator --permission-mode auto --strict-mcp-config --model sonnet --effort low" },
-        { "fixer", new WorkerStart("de1-pr7-fix-1", "/r/pilot", "pr7", "b", "sonnet", "high"),
-            "-n de1-pr7-fix-1 --permission-mode auto --strict-mcp-config --model sonnet --effort high" },
+        { "watchtower", new WorkerStart("de1-watchtower", "/data/watchtower", null, "b", "sonnet", "low", RemoteControl: true, DisallowedTools: ["AskUserQuestion"], McpConfig: McpFile),
+            "--remote-control -n de1-watchtower --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model sonnet --effort low --disallowedTools AskUserQuestion" },
+        { "worker, attempt 1", new WorkerStart("de1-pil1-worker", "/r/pilot", "pil1", "b", "sonnet", "medium", McpConfig: McpFile),
+            "-n de1-pil1-worker --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model sonnet --effort medium" },
+        { "worker, ladder step", new WorkerStart("de1-pil1-worker", "/r/pilot", "pil1", "b", "opus", "high", McpConfig: McpFile),
+            "-n de1-pil1-worker --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model opus --effort high" },
+        { "planner", new WorkerStart("de1-pil1-planner", "/r/pilot", "pil1", "b", "opus", "high", McpConfig: McpFile),
+            "-n de1-pil1-planner --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model opus --effort high" },
+        { "reviewer, standard", new WorkerStart("de1-pil1-review", "/r/pilot", "pil1", "b", "sonnet", "medium", McpConfig: McpFile),
+            "-n de1-pil1-review --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model sonnet --effort medium" },
+        { "reviewer, deep", new WorkerStart("de1-pil1-review", "/r/pilot", "pil1", "b", "opus", "xhigh", McpConfig: McpFile),
+            "-n de1-pil1-review --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model opus --effort xhigh" },
+        { "validator", new WorkerStart("de1-pil1-validator", "/r/pilot", "pil1", "b", "sonnet", "low", McpConfig: McpFile),
+            "-n de1-pil1-validator --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model sonnet --effort low" },
+        { "fixer", new WorkerStart("de1-pr7-fix-1", "/r/pilot", "pr7", "b", "sonnet", "high", McpConfig: McpFile),
+            "-n de1-pr7-fix-1 --permission-mode auto --strict-mcp-config --mcp-config /d/mcp.json --autocompact auto --model sonnet --effort high" },
     };
 
     private async Task<ResumeRequest> ResumeAsync(string sessionId, string name)
@@ -121,10 +123,28 @@ public sealed class ResumeOptionsTests : IDisposable
         ClaudeCliDelivery.ResumeArguments(request).ShouldBe(["--bg", "--resume", AgentRows.SessionB, .. flags.Split(' ')]);
     }
 
+    /// <summary>Flags on file from before the lean MCP config (no strict config, or no config file) are not the options: it is resumed with the full ones.</summary>
+    [Theory]
+    [InlineData("""{"respawnFlags":["-n","de1-pil1-worker","--model","sonnet","--permission-mode","auto"]}""")]
+    [InlineData("""{"respawnFlags":["-n","de1-pil1-worker","--model","sonnet","--strict-mcp-config"]}""")]
+    public async Task ASessionWhoseFlagsOnFilePredateTheMcpConfigIsResumedWithTheFullOptions(string state)
+    {
+        var start = new WorkerStart("de1-pil1-worker", "/r/pilot", "pil1", "b", "sonnet", "medium", McpConfig: McpFile);
+        Started(start, AgentRows.SessionB);
+        RespawnFlags(AgentRows.SessionB, state);
+
+        var request = await ResumeAsync(AgentRows.SessionB, start.Name);
+
+        var args = ClaudeCliDelivery.ResumeArguments(request);
+        args.ShouldContain("--strict-mcp-config");
+        args.SkipWhile(a => a != "--mcp-config").Skip(1).First().ShouldBe(McpFile);
+        args.SkipWhile(a => a != "--autocompact").Skip(1).First().ShouldBe("auto");
+    }
+
     [Fact]
     public async Task ACompactionsContinuationFindsTheOptionsOfTheSessionItContinues()
     {
-        var start = new WorkerStart("de1-watchtower", "/data/watchtower", null, "b", "sonnet", "low", RemoteControl: true);
+        var start = new WorkerStart("de1-watchtower", "/data/watchtower", null, "b", "sonnet", "low", RemoteControl: true, McpConfig: McpFile);
         Started(start, AgentRows.SessionA);
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", cwd: Cwd, startedAt: Recent));
         await _tracker.PollAsync(Ct);
@@ -136,7 +156,7 @@ public sealed class ResumeOptionsTests : IDisposable
         var request = _delivery.Resumes.ShouldHaveSingleItem();
         request.SessionId.ShouldBe(AgentRows.SessionB);
         ClaudeCliDelivery.ResumeArguments(request).ShouldBe(
-            ["--bg", "--resume", AgentRows.SessionB, "--remote-control", "-n", "de1-watchtower", "--permission-mode", "auto", "--strict-mcp-config", "--model", "sonnet", "--effort", "low"]);
+            ["--bg", "--resume", AgentRows.SessionB, "--remote-control", "-n", "de1-watchtower", "--permission-mode", "auto", "--strict-mcp-config", "--mcp-config", "/d/mcp.json", "--autocompact", "auto", "--model", "sonnet", "--effort", "low"]);
     }
 
     [Fact]

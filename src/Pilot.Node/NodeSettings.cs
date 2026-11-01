@@ -32,6 +32,8 @@ public sealed record NodeSettings
     public const string WeekLimitKey = "week-limit";
     public const string WeekPaceKey = "week-pace";
     public const string SpendAlertKey = "spend-alert";
+    public const string WatchtowerCompactShareKey = "watchtower-compact-share";
+    public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
@@ -61,7 +63,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
@@ -126,6 +128,12 @@ public sealed record NodeSettings
 
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next round rings; 3 when unset.</summary>
     public double? SpendAlert { get; init; }
+
+    /// <summary>The share of its window, in percent, past which an idle live watchtower is compacted (<see cref="WatchtowerCompactShareKey"/>); 60 when unset.</summary>
+    public double? WatchtowerCompactShare { get; init; }
+
+    /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
+    public int? WatchtowerChatMessages { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -237,6 +245,8 @@ public sealed record NodeSettings
         PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
         WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
         SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -439,6 +449,22 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && share is > 0 and <= 100
                     ? (settings with { SpendAlert = share }, null)
                     : (null, "spend-alert takes the 7-day window's share in percent, above 0 and up to 100");
+            case WatchtowerCompactShareKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactShare = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var compactShare) && compactShare is > 0 and <= 100
+                    ? (settings with { WatchtowerCompactShare = compactShare }, null)
+                    : (null, "watchtower-compact-share takes the share of its window in percent, above 0 and up to 100");
+            case WatchtowerChatMessagesKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerChatMessages = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
+                    ? (settings with { WatchtowerChatMessages = chatMessages }, null)
+                    : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
             case PriorityReposKey:
             {
                 if (clear)

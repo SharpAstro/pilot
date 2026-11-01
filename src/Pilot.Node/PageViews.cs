@@ -22,6 +22,21 @@ public sealed class PageViews
         }
     }
 
+    /// <summary>
+    /// True while any client shows any page: a GUI or TUI window, local or over the LAN. A CLI command or an MCP call says no page,
+    /// so it never counts.
+    /// </summary>
+    public bool Any
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _pages.Count > 0;
+            }
+        }
+    }
+
     /// <summary>Sets what <paramref name="client"/> shows; null says none.</summary>
     public void Say(object client, string? page)
     {

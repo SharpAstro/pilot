@@ -900,7 +900,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Cell(Layout.Builder.Text(line.Role, 15f, text), NameLine(line)),
             Cell(Layout.Builder.Text(line.Model, 14f, body)),
             Metered(line.Context, line.ContextFraction, body),
-            Cell(Layout.Builder.Text(line.LastResponse, 14f, body)),
+            Cell(Layout.Builder.Text(line.LastResponse, 14f, body), line.Compacted is { } compacted ? Layout.Builder.Text(compacted, 11f, Dim) : null),
             Cell(Layout.Builder.Text(line.State, 14f, stateColor),
                 (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),

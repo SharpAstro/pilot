@@ -1,5 +1,6 @@
 using DIR.Lib;
 using Pilot.Contracts;
+using Pilot.Ui;
 using Shouldly;
 using Xunit;
 
@@ -58,6 +59,25 @@ public sealed class SessionsViewTests
         SessionsCapture.RowsText(screen).ShouldContain("ended (its process went (no longer listed))");
         screen.Lines.Single(l => l.Row.Id == ended.Id).EndedBecause.ShouldBe("its process went (no longer listed)");
         screen.Lines.Where(l => l.Row.Id != ended.Id).ShouldAllBe(l => l.EndedBecause == null || l.Row.Id == ended.Id);
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        SessionsCapture.Render(renderer, screen);
+    }
+
+    [Fact]
+    public void TheWatchtowerRowShowsWhenAndWhyItWasLastCompacted()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var tower = snapshot.Sessions.First(s => s.Role == SessionRole.Watchtower) with
+        {
+            LastCompactedAt = snapshot.At - TimeSpan.FromMinutes(12), CompactedBecause = "its context reached 70% of its window",
+        };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = [.. snapshot.Sessions.Select(s => s.Id == tower.Id ? tower : s)] }, "sample");
+
+        var line = screen.Lines.Single(l => l.Row.Id == tower.Id);
+        line.Compacted.ShouldBe("compacted 12 m ago");
+        SessionsCapture.RowsText(screen).ShouldContain("| compacted 12 m ago");
+        ChipBrief.Session(line).ShouldContain("compacted 12 m ago: its context reached 70% of its window");
+        screen.Lines.Where(l => l.Row.Id != tower.Id).ShouldAllBe(l => l.Compacted == null);
         using var renderer = new RgbaImageRenderer(1280, 800);
         SessionsCapture.Render(renderer, screen);
     }
