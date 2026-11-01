@@ -145,7 +145,7 @@ public sealed class SessionModelCheckTests : IDisposable
             var time = new ManualTime(_now);
             var options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
             State = new NodeState(new InMemoryJournal(), time);
-            Watchtower = new Watchtower(State, Workers, (c, _) => Task.FromResult(State.Complete(c, null)), options, time) { Pilot = "pilot", Models = new RoleModels(null) };
+            Watchtower = new Watchtower(State, Workers, Workers.EndingRun(State), options, time) { Pilot = "pilot", Models = new RoleModels(null) };
             State.PutFlight(new FlightRow
             {
                 Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",
@@ -246,7 +246,8 @@ public sealed class SessionModelCheckTests : IDisposable
         Started(start, AgentRows.SessionB);
         var folder = Path.Combine(_profile.Profile.Root, "jobs", AgentRows.SessionB[..8]);
         Directory.CreateDirectory(folder);
-        File.WriteAllText(Path.Combine(folder, "state.json"), """{"respawnFlags":["--model","sonnet"]}""");
+        // Its own start flags, name and model with them: flags that lost either are not its options (ResumeOptionsTests).
+        File.WriteAllText(Path.Combine(folder, "state.json"), """{"respawnFlags":["-n","de1-pil1-worker","--permission-mode","auto","--strict-mcp-config","--model","sonnet","--effort","medium"]}""");
         await LiveAsync(AgentRows.SessionB, start.Name, "claude-sonnet-5-5", "medium");
         var row = _state.Sessions().Single();
 

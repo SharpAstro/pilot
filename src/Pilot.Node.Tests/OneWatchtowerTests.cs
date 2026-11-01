@@ -26,7 +26,7 @@ public sealed class OneWatchtowerTests : IDisposable
     {
         _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
-        _tower = new Watchtower(_state, _workers, (c, _) => Task.FromResult(_state.Complete(c, null)), _options, _time) { Pilot = "pilot" };
+        _tower = new Watchtower(_state, _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",
@@ -102,10 +102,13 @@ public sealed class OneWatchtowerTests : IDisposable
         _workers.Started.Count.ShouldBe(1);
         var oldId = _tower.Generations().ShouldHaveSingleItem().Job;
 
-        // The node's own watchtower turns up renamed, its role gone, and is live.
+        // The node's own watchtower turns up renamed, its role gone, and is live: still the current one, until it is replaced.
         _time.Advance(TimeSpan.FromMinutes(3));
         Row(oldId, SessionState.Idle, Start, name: "de1-pil455-pr498-merge-ready", role: SessionRole.AdHoc);
         await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        _tower.Current()!.Id.ShouldBe(oldId);
+        await _tower.RestartAsync("test", Ct);
         _workers.Started.Count.ShouldBe(2);
         var freshId = _tower.Generations().Last().Job;
         freshId.ShouldNotBe(oldId);
@@ -119,7 +122,6 @@ public sealed class OneWatchtowerTests : IDisposable
         _workers.Stopped.ShouldNotContain(freshId);
         _tower.Current()!.Id.ShouldBe(freshId);
         _tower.TellTarget().Target.ShouldBe(Verbs.SessionTarget(freshId));
-        _state.Cards().Count(c => c.Kind == "watchtower-duplicate").ShouldBe(1);
     }
 
     [Fact]
@@ -133,9 +135,11 @@ public sealed class OneWatchtowerTests : IDisposable
         RecordCurrentBrief();
         _tower.Generations();
 
-        // The new one is the node's by name; the old by id.
-        await _tower.LookAsync(Ct);
-        await _tower.LookAsync(Ct);
+        // The node restarts: the new one is its watchtower by name, the old by id (the generations it kept), and the newest live
+        // one is adopted.
+        var restarted = new Watchtower(_state, _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
+        await restarted.LookAsync(Ct);
+        await restarted.LookAsync(Ct);
 
         _workers.Stopped.ShouldBe([oldId]);
         _state.Cards().Single(c => c.Kind == "watchtower-duplicate").Title.ShouldContain($"my-own-name ({oldId})");

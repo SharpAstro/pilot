@@ -36,6 +36,7 @@ internal static class CardKindCatalog
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain"),
         new("worker-failed", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing"),
         new("worker-missing", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing"),
+        new("worker-never-turned", "Ring|Handled", [Watch], "LegWatchTests.AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing"),
         new("worker-nudged", "Handled", [Watch], "LegWaitTests.AnIdleWorkerWhoseLongWaitEndsIsWokenOnceAndNotNudgedOnTopOfIt"),
         new("worker-resumed", "Handled", [Watch], "LegWatchTests.AWorkerTheUsageLimitStoppedIsResumedOnlyOnceItsLimitHasReset"),
         new("over-budget", "Ring", [Watch], "SignalTests.AWorkerPastItsBudgetRingsUntilTheBudgetIsRaised"),
@@ -58,7 +59,7 @@ internal static class CardKindCatalog
         new("sibling-pulled", "Handled", [Leg], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
         new("planner-started", "Handled", [Leg], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
         new("planned", "ForYou", [Leg], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
-        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal"),
+        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal"),
         new("flown-elsewhere", "Ring", [Leg], "OneNodePerFlightTests.APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer"),
         new("pilot-md-too-long", "Ring", [Leg], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount"),
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough"),
@@ -97,6 +98,7 @@ internal static class CardKindCatalog
         new("disconnected", "Handled", [Flight], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
         new("received", "Handled", [Flight], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
         new("move-failed", "Ring", [Move], "FlightMoveTests.APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain"),
+        new("planner-ended", "Handled", ["Flights/LegCommander.Planners.cs"], "PlannerWindDownTests.AnIdlePlannerOfAFlightWhoseLegFliesIsEndedAsPlannedAndItsSlotGoesToTheNextFlightOnTheSweep"),
         new("moved-away", "Handled", [Move], "FlightMoveTests.AHandMoveOutsideMaintenanceMovesTheFlightAsWell"),
 
         // PRs of the person's own, reviewed and rechecked.
@@ -141,6 +143,7 @@ internal static class CardKindCatalog
         new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce"),
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),
         new("store", "ForYou", ["NodeState.cs"], SourcePinned),
+        new("stop-unconfirmed", "Ring", ["Sessions/SessionMessenger.cs"], "SessionEndTests.AStopThatDoesNotTakeRaisesOneRingCardAndIsNotConfirmed"),
         new("usage-high", "Handled", ["Sessions/UsageReader.cs"], "UsageTests.NearlySpentTheFiveHourWindowRaisesOneCardPerWindow"),
         new("usage-week", "Ring", ["Flights/StartGate.cs"], "StartGateTests.TheWeekRingsOncePerWindowAndHoldsNothing"),
         new("removal-held", "ForYou", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased"),
@@ -160,6 +163,7 @@ internal static class CardKindCatalog
     public static readonly HashSet<string> VariableKinds =
     [
         "Flights/LegWatch.cs|kind",
+        "Flights/LegWatch.cs|cardKind",
         "Flights/StartGate.cs|kind",
         "Flights/FlightCommander.cs|card.Kind",
         "Flights/PrReviews.cs|kind",

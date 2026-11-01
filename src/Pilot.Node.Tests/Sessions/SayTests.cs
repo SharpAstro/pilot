@@ -39,6 +39,9 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
     /// <summary>The listing once the stopped session's process has gone.</summary>
     public string? ListingAfterStop { get; set; }
 
+    /// <summary>A stop that does not take: what the delivery throws (the process still runs after the wait).</summary>
+    public SessionDeliveryException? StopFailure { get; set; }
+
     /// <summary>The listing once the copy runs.</summary>
     public string? ListingAfterResume { get; set; }
 
@@ -51,6 +54,10 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
     public Task StopAsync(string sessionId, CancellationToken cancellationToken)
     {
         Record($"stop {sessionId}");
+        if (StopFailure is { } failure)
+        {
+            return Task.FromException(failure);
+        }
         if (ListingAfterStop is { } listing)
         {
             agents.Json = listing;

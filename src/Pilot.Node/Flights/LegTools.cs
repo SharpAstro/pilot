@@ -459,10 +459,6 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken);
 
-    /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
-    /// <exception cref="FlightException">gh could not list them.</exception>
-    Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
-
     /// <summary>
     /// The open PRs of <paramref name="repos"/> (<c>owner/name</c>), from one paged GraphQL search for all of them, each with its
     /// merge state read (<see cref="PullRequestSearch"/>), and what the read cost; the flights are not known to it. The repos must
@@ -529,6 +525,10 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
 
+    /// <summary>Makes <paramref name="label"/> in the repo when it has none like it (already there counts as made).</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
     /// <summary>Takes <paramref name="label"/> off issue <paramref name="number"/>.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
@@ -536,6 +536,11 @@ public interface IGitHub
     /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
 
     /// <summary>
     /// Opens an issue in the repo and links it as a sub-issue of issue <paramref name="parent"/> (the sub-issues REST API, with the
@@ -653,6 +658,9 @@ public static class PilotMarks
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
 
+    /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
+    public static readonly string[] ReadFromPeople = [Priority, Recheck];
+
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
     /// <see cref="LabelPrefix"/> (<c>pilot: </c>), whose labels are a PR's and are replaced as a set: a node label must
@@ -676,12 +684,16 @@ public static class PilotMarks
         Conflicts => ("b60205", "this PR conflicts with its base"),
         Queued => ("5319e7", "this PR waits in the merge queue"),
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
+        Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
         _ => ("ededed", "set by pilot"),
     };
 }
 
 /// <summary>A review GitHub made: its id, its state (<c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>) and its page.</summary>
 public sealed record PostedReview(long Id, string State, string Url);
+
+/// <summary>A conversation comment on a PR: who wrote it, what it says, when.</summary>
+public sealed record PrComment(string Author, string Body, DateTimeOffset CreatedAt);
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
 public sealed partial class GhCli : IGitHub
@@ -1446,17 +1458,6 @@ public sealed partial class GhCli : IGitHub
         return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
 
-    public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)
-    {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--label", label, "--limit", "100", "--json", "number"], repoPath, cancellationToken);
-        if (exit != 0)
-        {
-            throw new FlightException($"gh could not list the PRs labelled {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
-        using var doc = JsonDocument.Parse(output);
-        return [.. doc.RootElement.EnumerateArray().Select(p => p.GetProperty("number").GetInt32())];
-    }
-
     /// <summary>
     /// Where a PR's <c>statusCheckRollup</c> stands: a check run carries a status and a conclusion, a commit status a
     /// state. <see cref="ChoiceStatus.Failing"/> when any failed, <see cref="ChoiceStatus.Pending"/> while any runs,
@@ -1653,7 +1654,7 @@ public sealed partial class GhCli : IGitHub
         return exit != 0 ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    public async Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    public async Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         var (color, description) = PilotMarks.LabelStyle(label);
         var (made, madeOutput, madeError) = await RunAsync(["label", "create", label, "--color", color, "--description", description], repoPath, cancellationToken);
@@ -1661,6 +1662,11 @@ public sealed partial class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the label {label} on the repo: {(madeError.Trim().Length > 0 ? madeError : madeOutput).Trim()}");
         }
+    }
+
+    public async Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        await EnsureLabelAsync(repoPath, label, cancellationToken);
         await EditIssueAsync(repoPath, number, ["--add-label", label], label, cancellationToken);
     }
 
@@ -1683,6 +1689,30 @@ public sealed partial class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the comment on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+    }
+
+    public async Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "comments"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read the comments of #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var found = new List<PrComment>();
+        using var doc = System.Text.Json.JsonDocument.Parse(output);
+        if (doc.RootElement.TryGetProperty("comments", out var comments) && comments.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var c in comments.EnumerateArray())
+            {
+                var login = c.TryGetProperty("author", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Object && a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
+                var body = c.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+                if (c.TryGetProperty("createdAt", out var t) && DateTimeOffset.TryParse(t.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at))
+                {
+                    found.Add(new PrComment(login, body, at));
+                }
+            }
+        }
+        return found;
     }
 
     private static string Clip(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";

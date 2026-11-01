@@ -206,13 +206,15 @@ internal sealed class PilotChrome<TSurface>
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
         // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the
-        // chat of the node the card was raised on (its watchtower, not this node's).
+        // chat of the node the card was raised on (its watchtower, not this node's) where this window can read it, so the answer
+        // shows where it was asked; else the fleet chat, whose watchtower passes it on.
         Cards.OnChatAbout = card =>
         {
             var node = Cards.NodeOf(card);
+            var chat = node is { Here: false } && Chat.Readable(node) ? node : null;
             Navigate(() =>
             {
-                Chat.SwitchTo(null);
+                Chat.SwitchTo(chat);
                 Switch(PilotPage.Chat, _show);
             });
             Chat.Attach(card, node);
@@ -381,6 +383,12 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The hover text the router says is due, painted over the window after everything else (<see cref="TooltipLayer{TSurface}"/>).</summary>
     public TooltipLayer<TSurface> Tooltips { get; }
 
+    /// <summary>
+    /// Called with <see cref="ClientPages.PullRequests"/> when the Pull requests page comes to be shown and with null when it stops being,
+    /// by whatever way the page changed: the host says it to each node it streams from (<c>NodeFeed.SayPage</c>), which also says it again after a reconnect.
+    /// </summary>
+    public Action<string?>? OnPageShown { get; set; }
+
     /// <summary>The page shown beside the rail.</summary>
     public PilotPage Page { get; private set; } = PilotPage.Home;
 
@@ -461,7 +469,13 @@ internal sealed class PilotChrome<TSurface>
             // Text selected on the flight's page stays on it: leaving the page lets it go.
             PageViewOf(Page).ClearSelection();
         }
+        var before = Page;
         Page = page;
+        // The node reads the pull requests every minute only while a page shows them, so it is told when this one does and when it stops.
+        if ((before == PilotPage.PullRequests) != (page == PilotPage.PullRequests))
+        {
+            OnPageShown?.Invoke(page == PilotPage.PullRequests ? ClientPages.PullRequests : null);
+        }
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
         {
@@ -570,6 +584,14 @@ internal sealed class PilotChrome<TSurface>
         if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
         {
             Flights.NotePointer(move.X, move.Y);
+        }
+
+        // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
+        // which the map has only while it is shown), ahead of the router and of the page chords.
+        if (Page == PilotPage.Flights
+            && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
+        {
+            return true;
         }
 
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.

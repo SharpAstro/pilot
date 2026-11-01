@@ -288,7 +288,8 @@ public static class PilotCommand
         // prs
         var needsMe = new Option<bool>("--needs-me") { Description = "Only the PRs that wait on you: ready, changes requested or conflicts" };
         var freshPrs = new Option<bool>("--refresh") { Description = "Ask the node to read GitHub now, not wait for its minute" };
-        var prsCommand = Action(new Command("prs", "Every open PR of the repos pilot works in, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs } },
+        var watchPrs = new Option<bool>("--watch") { Description = "Stay on the node's event stream as a client showing the Pull requests page (the node reads every minute meanwhile), and print the PRs again each time they change; stop with Ctrl+C" };
+        var prsCommand = Action(new Command("prs", "Every open PR of the repos pilot works in, grouped by repo, with GitHub's merge state, as the node last read them") { Options = { needsMe, freshPrs, watchPrs } },
             async (p, client, ct) =>
             {
                 if (p.GetValue(freshPrs))
@@ -300,10 +301,40 @@ public static class PilotCommand
                         return 1;
                     }
                 }
-                var row = (await SnapshotAsync(client, ct)).PullRequests;
                 var onlyMine = p.GetValue(needsMe);
-                var now = DateTimeOffset.UtcNow;
-                await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(row, onlyMine, now), () => PullRequestsMarkdown.Build(row, onlyMine, now));
+                async Task PrintAsync(PullRequestsRow? shown)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    await WriteAsync(p.GetValue(outputFormat), () => PullRequestsMarkdown.Plain(shown, onlyMine, now), () => PullRequestsMarkdown.Build(shown, onlyMine, now));
+                }
+                if (!p.GetValue(watchPrs))
+                {
+                    await PrintAsync((await SnapshotAsync(client, ct)).PullRequests);
+                    return 0;
+                }
+                // The stream stays open and says the page shown: the node counts this command as a viewer until it ends or the stream closes.
+                try
+                {
+                    await using var events = await client.OpenEventsAsync(since: null, stream: null, ct);
+                    if (await events.ReadAsync(ct) is not SnapshotEvent snapshot)
+                    {
+                        await error.WriteLineAsync("pilot: the node's stream did not start with a snapshot");
+                        return 1;
+                    }
+                    await events.SayPageAsync(ClientPages.PullRequests, ct);
+                    await PrintAsync(snapshot.PullRequests);
+                    while (await events.ReadAsync(ct) is { } next)
+                    {
+                        if (next is PullRequestsChangedEvent changed)
+                        {
+                            await PrintAsync(changed.Row);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Ctrl+C: the stream closing with this command is how the node forgets the page.
+                }
                 return 0;
             });
 
@@ -688,11 +719,12 @@ public static class PilotCommand
             });
         // review fix: the fixer of a PR whose review asked for changes, as its card's Fix it starts it (#350: tianwen #1857's
         // fixer could not start, its card was gone, and nothing but a script could start it again)
-        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does") { Arguments = { prRef } },
+        var fixAnswer = new Argument<string[]>("answer") { Description = "The answer to the review's question of design, posted on the PR first; without it the PR's author's or the controller's comment after the review is the answer", Arity = ArgumentArity.ZeroOrMore };
+        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does; a review that asked a question of design needs its answer (words after the PR, or a comment on the PR)") { Arguments = { prRef, fixAnswer } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
-                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), p.GetValue(fixAnswer) ?? [], who, ct);
             });
         var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
         {
@@ -720,8 +752,9 @@ public static class PilotCommand
         var choice = Words("choice", "The choice's number or label");
         // --why is the message acted on, as for the person's own commands: the watchtower quotes the person's words in its chat
         // with it, and the node takes such an answer or dismissal as theirs. A dismissal's reason stays its own words.
-        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn } },
-            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct, p.GetValue(actingOn)));
+        var answerWords = new Option<string[]>("--words") { Description = "The words a choice that asks for them needs, such as the design card's Answer", Arity = ArgumentArity.OneOrMore, AllowMultipleArgumentsPerToken = true };
+        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn, answerWords } },
+            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice), .. p.GetValue(answerWords) ?? []], who, ct, p.GetValue(actingOn)));
         var dismissReason = Words("reason", "Why it needs nothing", required: false);
         var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissReason }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissReason) ?? [], who, ct, p.GetValue(actingOn)));

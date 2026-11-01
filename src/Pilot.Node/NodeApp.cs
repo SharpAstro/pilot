@@ -66,6 +66,7 @@ public static class NodeApp
         {
             Error = logWriter,
         });
+        builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
         var relayFolder = Path.Combine(options.DataFolder, "relay");
@@ -123,11 +124,23 @@ public static class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<RepoWatch>());
         builder.Services.AddSingleton(services =>
         {
-            var watch = ActivatorUtilities.CreateInstance<PullRequestWatch>(services);
+            var models = services.GetRequiredService<RoleModels>();
+            var watch = new PullRequestWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>())
+            {
+                Views = services.GetRequiredService<PageViews>(),
+                Idle = () => models.PrWatchIdle,
+            };
             watch.Error = logWriter;
+            // A saved pr-watch-idle counts at once, also for a wait already running.
+            models.Applied += watch.PaceChanged;
             return watch;
         });
-        builder.Services.AddHostedService(services => services.GetRequiredService<PullRequestWatch>());
+        // The recheck listens to the watch's reads: it is built before the watch can make its first.
+        builder.Services.AddHostedService(services =>
+        {
+            services.GetRequiredService<PrRecheck>();
+            return services.GetRequiredService<PullRequestWatch>();
+        });
         builder.Services.AddSingleton(services =>
         {
             var sync = ActivatorUtilities.CreateInstance<RepoSync>(services);
@@ -197,6 +210,7 @@ public static class NodeApp
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
+            reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
@@ -225,6 +239,12 @@ public static class NodeApp
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 Error = logWriter,
+                StartedPlanner = legs.StartedPlanner,
+                RestartPlanner = legs.RestartPlannerAsync,
+                StopPlanner = legs.StopPlannerAsync,
+                RestartWorker = legs.RestartWorkerAsync,
+                RestartValidator = legs.RestartValidatorAsync,
+                StopSession = legs.StopSessionAsync,
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
@@ -347,6 +367,7 @@ public static class NodeApp
         {
             var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
             checks.RerunFirst = true;
+            checks.Recheck = services.GetRequiredService<PrRecheck>();
             checks.Error = logWriter;
             return checks;
         });

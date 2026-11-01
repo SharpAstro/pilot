@@ -14,7 +14,7 @@ public sealed partial class LegCommander
     private const int TouchesNamed = 8;
 
     /// <summary>One other flight or PR the files are compared with: whom it is and what it changes, or why that is not known.</summary>
-    private sealed record Touched(string Label, string[]? Files, string? Unknown, string? FlightCode, bool OnPeer);
+    private sealed record Touched(string Label, string[]? Files, string? Unknown, string? FlightCode, bool OnPeer, string? Node = null, int? PrNumber = null);
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: a line per flight and PR, the matches first (fold, connect), then those not known,
@@ -34,6 +34,52 @@ public sealed partial class LegCommander
             throw new FlightException($"touches needs the files {flight.Code}'s legs will change, as in touches flight/{flight.Code} src/Parser.cs src/Lexer.cs");
         }
 
+        var (others, stale) = await GatherOthersAsync(flight, cancellationToken);
+
+        var judged = others.Select(o => (Other: o, Judgement: o.Files is { } files ? OverlapChoice.Judge(mine, files) : null)).ToList();
+        var lines = judged
+            .OrderBy(j => j.Judgement is null ? 2 : j.Judgement.Pick == OverlapPick.Parallel ? 3 : j.Judgement.Pick == OverlapPick.Fold ? 0 : 1)
+            .ThenBy(j => j.Other.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(j => TouchesLine(flight.Code, mine.Count, j.Other, j.Judgement))
+            .ToList();
+        if (lines.Count == 0)
+        {
+            lines.Add($"no other flight in the air and no open PR in {flight.Repo}: nothing to fold or connect, fly in parallel");
+        }
+        if (stale is not null)
+        {
+            lines.Add(stale);
+        }
+        await RecordPlannedAsync(flight.Code, mine, cancellationToken);
+        return string.Join('\n', lines);
+    }
+
+    /// <summary>
+    /// Keeps the files the planner named on the flight (the union with any named before), for the check at a leg's end. The state is
+    /// written under the lock, as the other verbs do, though the read above took none.
+    /// </summary>
+    private async Task RecordPlannedAsync(string code, IReadOnlyList<string> files, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { } now)
+            {
+                state.PutFlight(now with { PlannedFiles = [.. OverlapChoice.Normalise([.. now.PlannedFiles ?? [], .. files])] });
+            }
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
+    /// <summary>
+    /// What every other flight not landed (this node's and the peers') and every open PR that is no flight's change, each as a
+    /// <see cref="Touched"/>, after a fetch; <c>Stale</c> says so when the fetch failed. Shared by the planner's <c>touches</c> and the check at a leg's end.
+    /// </summary>
+    private async Task<(List<Touched> Others, string? Stale)> GatherOthersAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
         // Fetched first, so a branch pushed a moment ago is seen. A fetch that fails leaves what was fetched last, and the answer says so.
         string? stale = null;
         var fetch = await git.RunAsync(["fetch", "--prune", "--quiet", "origin"], flight.RepoPath, cancellationToken);
@@ -55,7 +101,7 @@ public sealed partial class LegCommander
         foreach (var (node, other) in peerFlights)
         {
             listed.Add(other.Branch);
-            others.Add(await ChangedByAsync($"{other.Code} ({node})", other, local: false, onPeer: true, flight.RepoPath, cancellationToken));
+            others.Add((await ChangedByAsync($"{other.Code} ({node})", other, local: false, onPeer: true, flight.RepoPath, cancellationToken)) with { Node = node });
         }
         others.AddRange(peerNotes.Select(n => new Touched(n.Label, null, n.Why, null, OnPeer: true)));
 
@@ -69,22 +115,7 @@ public sealed partial class LegCommander
         {
             others.Add(new Touched("open PRs", null, ex.Message, null, OnPeer: false));
         }
-
-        var judged = others.Select(o => (Other: o, Judgement: o.Files is { } files ? OverlapChoice.Judge(mine, files) : null)).ToList();
-        var lines = judged
-            .OrderBy(j => j.Judgement is null ? 2 : j.Judgement.Pick == OverlapPick.Parallel ? 3 : j.Judgement.Pick == OverlapPick.Fold ? 0 : 1)
-            .ThenBy(j => j.Other.Label, StringComparer.OrdinalIgnoreCase)
-            .Select(j => TouchesLine(flight.Code, mine.Count, j.Other, j.Judgement))
-            .ToList();
-        if (lines.Count == 0)
-        {
-            lines.Add($"no other flight in the air and no open PR in {flight.Repo}: nothing to fold or connect, fly in parallel");
-        }
-        if (stale is not null)
-        {
-            lines.Add(stale);
-        }
-        return string.Join('\n', lines);
+        return (others, stale);
     }
 
     /// <summary>
@@ -132,11 +163,11 @@ public sealed partial class LegCommander
         var label = $"PR #{pr.Number} \"{pr.Title}\"";
         try
         {
-            return new Touched(label, await github.PullRequestFilesAsync(repoPath, pr.Number, cancellationToken), null, null, OnPeer: false);
+            return new Touched(label, await github.PullRequestFilesAsync(repoPath, pr.Number, cancellationToken), null, null, OnPeer: false, PrNumber: pr.Number);
         }
         catch (FlightException ex)
         {
-            return new Touched(label, null, ex.Message, null, OnPeer: false);
+            return new Touched(label, null, ex.Message, null, OnPeer: false, PrNumber: pr.Number);
         }
     }
 

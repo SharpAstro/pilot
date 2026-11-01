@@ -147,7 +147,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Whether another node's chat can be read from here; null asks <see cref="LoadOn"/>. A node that cannot says so on its pill.</summary>
     public Func<NodeMark, bool>? CanRead { get; set; }
 
-    private bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
+    /// <summary>Whether <paramref name="node"/>'s chat can be shown here: this node's always, another's as <see cref="CanRead"/> says.</summary>
+    public bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
 
     // The top bar's node pills on this page: one choice of watchtower, the current one lit; none while there is one node.
     private List<Layout.Node> NodePills()
@@ -377,9 +378,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         // A message about a card goes through the card's tell.
         if (quoted is not null && OnSendAboutCard is { } aboutCard)
         {
-            // Another node's card goes to this node's watchtower as plain words naming the card and its node: it passes the work
-            // on with tell --node. Only this node's card has a tell card/<id> here.
-            if (quoted.Node is { Here: false } other && CurrentSend() is { } toWatchtower)
+            // Another node's card, asked about in a chat that is not that node's (the fleet chat, when its chat cannot be read
+            // here), goes to the shown watchtower as plain words naming the card and its node: it passes the work on with tell
+            // --node. In the card's own node's chat it is that node's tell card/<id>, as this node's card is here.
+            if (quoted.Node is { Here: false } other && Node?.Where != other.Where && CurrentSend() is { } toWatchtower)
             {
                 send = words => toWatchtower(AboutOtherNodesCard(quoted.Card, other, words));
             }

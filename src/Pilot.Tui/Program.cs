@@ -55,6 +55,12 @@ var nodeWhere = remote ?? client.SocketPath;
 using var vessel = new RgbaImageRenderer(1, 1);
 var sessions = new SessionsView<RgbaImage>(vessel) { CanSay = true };
 var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
+// Each node streamed from is told when the Pull requests page is shown and when it is left, so its watch reads every minute only meanwhile.
+chrome.OnPageShown = page =>
+{
+    feed.SayPage(page);
+    fleetWatch.SayPage(page);
+};
 var flights = chrome.Flights;
 flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
 var jobs = chrome.Jobs;
@@ -196,12 +202,13 @@ chat.OnSendOn = async (node, text) =>
     Redraw();
     return refused;
 };
-// A card's Chat about this opens the fleet chat, this node's watchtower's, with the card quoted with its node.
+// A card's Chat about this opens the chat of the node the card was raised on where it can be read here, else the fleet chat
+// (this node's watchtower's), with the card quoted with its node.
 cards.OnChatAbout = card =>
 {
     var node = cards.NodeOf(card);
     chrome.Show(PilotPage.Chat);
-    chat.SwitchTo(null);
+    chat.SwitchTo(node is { Here: false } && chat.Readable(node) ? node : null);
     chat.Attach(card, node);
 };
 flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
