@@ -200,7 +200,7 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
 /// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
 /// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
 /// </summary>
-public sealed class DesignAnswerCardChoiceTests : PrFixTestsBase
+public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
 
