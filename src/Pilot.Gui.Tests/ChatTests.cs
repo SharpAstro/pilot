@@ -641,7 +641,7 @@ public sealed class ChatTests
     }
 
     [Fact]
-    public async Task ARefusalIsSaidInTheChatAndTheNextSendClearsIt()
+    public async Task ARefusalStaysInTheChatAsAFailedLineAndIsNotRepeatedAsANotice()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var refuse = true;
@@ -650,19 +650,20 @@ public sealed class ChatTests
 
         await chat.SendAsync("hello?");
 
-        chat.Notices.ShouldBe(["refused: the node is in maintenance · hello?"]);
+        chat.Notices.ShouldBeEmpty();
+        chat.Failures.ShouldBe(["refused: the node is in maintenance"]);
         var text = Described(chat);
-        text.ShouldContain("refused:");
-        text.ShouldContain("the node is in maintenance");
+        text.ShouldContain("you · failed");
+        text.Split("the node is in maintenance").Length.ShouldBe(2, "the node's words show once");
         text.ShouldContain("hello?");
 
         refuse = false;
         await chat.SendAsync("hello again");
-        chat.Notices.ShouldBeEmpty();
+        chat.Failures.Count.ShouldBe(1, "a later success does not hide the failed one");
     }
 
     [Fact]
-    public async Task OnlyTheLastFewRefusalsAreKept()
+    public async Task EveryRefusedMessageStaysFailedAndNothingTypedIsLost()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chat = NewChat(renderer, send: text => Task.FromResult<string?>($"refused: no · {text}"));
@@ -672,8 +673,12 @@ public sealed class ChatTests
             await chat.SendAsync($"m{i}");
         }
 
-        chat.Notices.Count.ShouldBe(ChatView<RgbaImage>.NoticesKept);
-        chat.Notices[^1].ShouldContain("m4");
+        chat.Failures.Count.ShouldBe(5);
+        chat.Notices.ShouldBeEmpty();
+        for (var i = 0; i < 5; i++)
+        {
+            Described(chat).ShouldContain($"m{i}");
+        }
     }
 
     [Fact]
@@ -684,7 +689,8 @@ public sealed class ChatTests
 
         await chat.SendAsync("anyone there?");
 
-        chat.Notices.ShouldHaveSingleItem().ShouldContain("no route to the node");
+        chat.Failures.ShouldHaveSingleItem().ShouldContain("no route to the node");
+        chat.Notices.ShouldBeEmpty();
     }
 
     [Fact]
@@ -1019,7 +1025,7 @@ public sealed class ChatTests
     }
 
     [Fact]
-    public async Task ARefusedMessageLosesItsEntryAndIsSaidAsTheRefusalNotice()
+    public async Task ARefusedMessageStaysAsAFailedLineWithTheReasonAndItsWordsShowOnce()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var held = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1034,7 +1040,8 @@ public sealed class ChatTests
 
         Described(chat).ShouldNotContain("sending…");
         Described(chat).ShouldContain("refused: no watchtower");
-        Described(chat).Split("launch it now").Length.ShouldBe(2, "the words show once, in the notice");
+        Described(chat).ShouldContain("you · failed");
+        Described(chat).Split("launch it now").Length.ShouldBe(2, "the words show once, in the failed line");
     }
 
     [Fact]

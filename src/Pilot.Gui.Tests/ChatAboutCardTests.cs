@@ -482,7 +482,7 @@ public sealed class ChatAboutCardTests
     }
 
     [Fact]
-    public async Task ANodeThatRefusesIsSaidInTheChatsNotices()
+    public async Task ANodeThatRefusesIsSaidOnTheFailedLine()
     {
         var chrome = NewChrome(out var renderer);
         using var _ = renderer;
@@ -494,9 +494,9 @@ public sealed class ChatAboutCardTests
         chrome.Chat.Render(new RectF32(0, 0, 1280, 900));
 
         await Typed(chrome, "anyone there?");
-        await WaitForAsync(() => chrome.Chat.Notices.Count > 0);
+        await WaitForAsync(() => chrome.Chat.Failures.Count > 0);
 
-        chrome.Chat.Notices.Single().ShouldContain("Connect to SE1 to steer");
+        chrome.Chat.Failures.Single().ShouldContain("Connect to SE1 to steer");
         fleet.ToNode.ShouldBeEmpty();
         fleet.ToHere.ShouldBeEmpty();
         chrome.Chat.Close();

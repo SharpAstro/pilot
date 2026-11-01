@@ -209,4 +209,144 @@ public sealed class ChatQueueTests
         await first;
         called.ShouldBe(["alpha"]);
     }
+
+    [Fact]
+    public async Task ARefusedAndAThrownDeliveryStayFailedWithRetryAndEditAndTheNextOneStillGoes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var called = new List<string>();
+        var chat = NewChat(renderer, text =>
+        {
+            called.Add(text);
+            return text switch
+            {
+                "alpha" => Task.FromResult<string?>("the watchtower is down"),
+                "bravo" => throw new HttpRequestException("no route"),
+                _ => Task.FromResult<string?>(null),
+            };
+        });
+
+        chat.Input.InsertText("alpha");
+        var first = chat.SendAsync();
+        chat.Input.InsertText("bravo");
+        var second = chat.SendAsync();
+        chat.Input.InsertText("charlie");
+        var third = chat.SendAsync();
+        await first;
+        await second;
+        await third;
+
+        called.ShouldBe(["alpha", "bravo", "charlie"]);
+        var text = Described(chat);
+        text.ShouldContain("you · failed");
+        text.ShouldContain("the watchtower is down");
+        text.ShouldContain("no route");
+        chat.Failures.Count.ShouldBe(2);
+        var actions = Actions(chat);
+        actions.Count(a => a.StartsWith("chat:retry:", StringComparison.Ordinal)).ShouldBe(2);
+        actions.Count(a => a.StartsWith("chat:edit:", StringComparison.Ordinal)).ShouldBe(2);
+        chat.Notices.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RetrySendsTheSameTextToTheSameTargetAtTheEndOfTheQueue()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var told = new List<(string Card, string Words)>();
+        var fail = true;
+        var hold = Held();
+        var plain = new List<string>();
+        var chat = NewChat(renderer, text =>
+        {
+            plain.Add(text);
+            return plain.Count == 1 ? hold.Task : Task.FromResult<string?>(null);
+        });
+        chat.OnSendAboutCard = (card, _, words) =>
+        {
+            told.Add((card.Id, words));
+            return Task.FromResult<string?>(fail ? "no" : null);
+        };
+
+        chat.Attach(Card("c1"), null);
+        chat.Input.InsertText("why c1?");
+        await chat.SendAsync();
+        chat.Failures.ShouldBe(["no"]);
+
+        chat.Input.InsertText("plain");
+        var second = chat.SendAsync();
+        chat.Input.InsertText("later");
+        var third = chat.SendAsync();
+        fail = false;
+        Click(chat, Actions(chat).Single(a => a.StartsWith("chat:retry:", StringComparison.Ordinal)));
+        Described(chat).ShouldNotContain("you · failed");
+        var text = Described(chat);
+        text.IndexOf("later", StringComparison.Ordinal).ShouldBeLessThan(text.IndexOf("why c1?", StringComparison.Ordinal));
+
+        hold.SetResult(null);
+        await second;
+        await third;
+        for (var i = 0; i < 100 && told.Count < 2; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        told.ShouldBe([("c1", "why c1?"), ("c1", "why c1?")]);
+        plain.ShouldBe(["plain", "later"]);
+    }
+
+    [Fact]
+    public async Task EditPutsTheTextBackInTheBoxAndTheCardInTheQuoteAndTheFailedLineGoes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, _ => Task.FromResult<string?>("down"));
+        chat.OnSendAboutCard = (_, _, _) => Task.FromResult<string?>("no");
+
+        chat.Attach(Card("c1"), null);
+        chat.Input.InsertText("why c1?");
+        await chat.SendAsync();
+        chat.Input.Text.ShouldBe("");
+        chat.QuotedCard.ShouldBeNull();
+
+        Click(chat, Actions(chat).Single(a => a.StartsWith("chat:edit:", StringComparison.Ordinal)));
+        chat.Input.Text.ShouldBe("why c1?");
+        chat.QuotedCard?.Id.ShouldBe("c1");
+        chat.Failures.ShouldBeEmpty();
+        Described(chat).ShouldNotContain("you · failed");
+
+        // A box with text keeps it: the edited words follow on a new line.
+        chat.Detach();
+        await chat.SendAsync();
+        chat.Input.Text.ShouldBe("");
+        chat.Input.InsertText("draft");
+        Click(chat, Actions(chat).Single(a => a.StartsWith("chat:edit:", StringComparison.Ordinal)));
+        chat.Input.Text.ShouldBe("draft\nwhy c1?");
+    }
+
+    [Fact]
+    public async Task SwitchingNodeDropsAFailedLineToo()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, _ => Task.FromResult<string?>("down"));
+        chat.Input.InsertText("alpha");
+        await chat.SendAsync();
+        chat.Failures.Count.ShouldBe(1);
+
+        chat.SwitchTo(new NodeMark("se1", "http://se1", "SE1", Here: false));
+        chat.Failures.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFailedLineOverlapsNoOtherText()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, _ => Task.FromResult<string?>("refused: the watchtower is not running and a long reason follows so that it wraps onto more lines than one"));
+        chat.Input.InsertText("a message that did not go, long enough to need some room on the page " + new string('x', 40));
+        await chat.SendAsync();
+        chat.Input.InsertText("second");
+        await chat.SendAsync();
+
+        var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        var arranged = Layout.Engine.Arrange(chat.Tree(), new Rect<float>(0, 0, 1100, 900), ctx);
+        arranged.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: "you · failed" } }).ShouldBe(2);
+        TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > 70f).Select(f => f.Line).ShouldBeEmpty();
+    }
 }

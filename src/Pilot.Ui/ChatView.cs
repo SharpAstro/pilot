@@ -77,9 +77,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private ImmutableList<Out> _outbox = [];
     private int _draining;
 
-    private enum OutState { Queued, Sending, Sent }
+    private enum OutState { Queued, Sending, Sent, Failed }
 
-    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done);
+    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null);
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -402,7 +402,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             quoted = null;
         }
-        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey);
+        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted);
         _composer.Clear();
         if (quoted is not null)
         {
@@ -423,22 +423,27 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public Task SendAsync(string message) => CurrentSend() is { } send ? Enqueue(message, send, SendKey, SendKey) : Task.CompletedTask;
 
     // Puts a message at the back of the outbox and starts the drain when it is not running; ends when this message is done with.
-    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send")
+    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
             return Task.CompletedTask;
         }
-        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about);
         ImmutableInterlocked.Update(ref _outbox, o => o.Add(entry));
         _scroll.ScrollToEnd();
+        StartDrain(label);
+        Changed?.Invoke();
+        return entry.Done.Task;
+    }
+
+    private void StartDrain(string label)
+    {
         if (Interlocked.CompareExchange(ref _draining, 1, 0) == 0)
         {
             var run = DrainAsync();
             Track?.Invoke(() => run, label);
         }
-        Changed?.Invoke();
-        return entry.Done.Task;
     }
 
     // Delivers the queued messages one after another, each to its own send, until none is left.
@@ -477,10 +482,17 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             {
                 refused = ex.Message;
             }
-            ImmutableInterlocked.Update(ref _outbox, o => refused is null ? Mark(o, next.Id, OutState.Sent) : o.RemoveAll(m => m.Id == next.Id));
-            ImmutableInterlocked.Update(ref _notices, notices => refused is null
-                ? []
-                : notices.Add($"{refused} · {Clip(next.Text)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+            // A typed message that did not go stays in the conversation, failed, with its reason; a choice's refusal is a notice.
+            var kept = refused is not null && next.Key == SendKey;
+            ImmutableInterlocked.Update(ref _outbox, o => refused is null ? Mark(o, next.Id, OutState.Sent)
+                : kept ? ImmutableList.CreateRange(o.Select(m => m.Id == next.Id ? m with { State = OutState.Failed, Reason = refused } : m))
+                : o.RemoveAll(m => m.Id == next.Id));
+            if (!kept)
+            {
+                ImmutableInterlocked.Update(ref _notices, notices => refused is null
+                    ? []
+                    : notices.Add($"{refused} · {Clip(next.Text)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+            }
             Refresh();
             Changed?.Invoke();
             next.Done.TrySetResult();
@@ -503,6 +515,55 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             m.Done.TrySetResult();
         }
+    }
+
+    /// <summary>The reasons of the typed messages that did not go and are still shown as failed, oldest first.</summary>
+    internal IReadOnlyList<string> Failures => [.. Volatile.Read(ref _outbox).Where(m => m.State == OutState.Failed).Select(m => m.Reason ?? "")];
+
+    /// <summary>Sends a failed message again, to the same target, at the end of the queue.</summary>
+    internal void Retry(Guid id)
+    {
+        var found = false;
+        ImmutableInterlocked.Update(ref _outbox, o =>
+        {
+            var failed = o.FirstOrDefault(m => m.Id == id && m.State == OutState.Failed);
+            found = failed is not null;
+            return failed is null ? o : o.RemoveAll(m => m.Id == id).Add(failed with { State = OutState.Queued, Reason = null });
+        });
+        if (!found)
+        {
+            return;
+        }
+        _scroll.ScrollToEnd();
+        StartDrain("chat retry");
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Takes a failed message back into the box (after what is typed there, on a new line) and its card back into the quote, and
+    /// removes the failed line.
+    /// </summary>
+    internal void Edit(Guid id)
+    {
+        Out? failed = null;
+        ImmutableInterlocked.Update(ref _outbox, o =>
+        {
+            failed = o.FirstOrDefault(m => m.Id == id && m.State == OutState.Failed);
+            return failed is null ? o : o.RemoveAll(m => m.Id == id);
+        });
+        if (failed is null)
+        {
+            return;
+        }
+        var typed = _composer.IsEmpty ? "" : _composer.Input.Text;
+        _composer.Clear();
+        Input.InsertText(typed.Length == 0 ? failed.Text : typed + "\n" + failed.Text);
+        if (failed.About is not null)
+        {
+            Volatile.Write(ref _about, failed.About);
+        }
+        Ui.Focus.Focus(Input);
+        Changed?.Invoke();
     }
 
     /// <summary>Drops a message still queued, never sent; one the node has or has had stays.</summary>
@@ -621,6 +682,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             {
                 OutState.Sending => Sent(mine.Text, "you · sending…", null),
                 OutState.Queued => Sent(mine.Text, $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
+                OutState.Failed => FailedLine(mine.Text, mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
                 _ => Sent(mine.Text, "you", null),
             };
             rows.Add(row.WStar());
@@ -648,7 +710,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
             asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
-        var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.State != OutState.Sent);
+        var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.State is OutState.Queued or OutState.Sending);
         if (held.Working || sending)
         {
             rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Selectable().Pad(0f, 4f).WStar());
@@ -697,6 +759,19 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             parts.Add(aside);
         }
         return Layout.Builder.HStack([.. parts]).WithGap(10f);
+    }
+
+    // A typed message the node did not take: its words, the node's reason under them, and the ways to go on.
+    private static Layout.Node FailedLine(string text, string reason, Layout.Node retry, Layout.Node edit)
+    {
+        var body = Layout.Builder.VStack(
+            [.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
+                WrappedProse.Of(reason, 12f, Failed, 3)]).WStar();
+        return Layout.Builder.HStack(
+                Layout.Builder.Text("you · failed", 12f, Failed).Selectable().WFixed(96f),
+                body,
+                Layout.Builder.HStack(retry, edit).WithGap(6f))
+            .WithGap(10f);
     }
 
     private static Layout.Node Notice(string text) =>
