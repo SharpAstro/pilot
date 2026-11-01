@@ -212,9 +212,14 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     protected virtual Task<ClaudeRun> RunResumeAsync(IReadOnlyList<string> args, ResumeRequest request, CancellationToken cancellationToken) =>
         ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
 
-    /// <summary>Whether claude's output says it read its config file (~/.claude.json) mid-write: corrupted, a JSON parse error, an unexpected end.</summary>
+    /// <summary>
+    /// Whether claude's output says it read its config file (~/.claude.json) mid-write: Claude Code's own wording
+    /// ("Claude configuration file at ... is corrupted"), a JSON parse error, an unexpected end. A bare "corrupted"
+    /// (a session transcript, say) does not count.
+    /// </summary>
     public static bool IsTransientConfigRead(string output) =>
-        output.Contains("corrupted", StringComparison.OrdinalIgnoreCase)
+        (output.Contains("corrupted", StringComparison.OrdinalIgnoreCase)
+            && output.Contains("Claude configuration file", StringComparison.OrdinalIgnoreCase))
         || output.Contains("JSON Parse error", StringComparison.OrdinalIgnoreCase)
         || output.Contains("Unexpected EOF", StringComparison.OrdinalIgnoreCase);
 
