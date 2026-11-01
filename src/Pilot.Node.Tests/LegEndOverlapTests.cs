@@ -288,4 +288,22 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         (await finishing).Ok.ShouldBeTrue();
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
     }
+
+    [Fact]
+    public async Task AFinishWhoseCheckThrowsLeavesNoMarkSoTheNextLegStartsAtOnce()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        _checks.OnRun = () => Task.FromException(new InvalidOperationException("no shell"));
+        await Should.ThrowAsync<InvalidOperationException>(Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed"));
+
+        _checks.OnRun = null;
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
+
+        // Nothing rang and no holder leaked: the next leg is started straight away, with no wait for the mark's life.
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+    }
 }

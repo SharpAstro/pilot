@@ -137,6 +137,16 @@ public sealed partial class LegCommander(
         SubTask? removedSubTask = null;
         // Set when this command marked its flight's leg-end check, so it clears only its own mark (a refused finish set none).
         var markedLegEnd = false;
+        // Any other exception leaves the command with its mark held: the filter drops it and never catches.
+        bool DropLegEndMarkOnThrow()
+        {
+            if (markedLegEnd)
+            {
+                ClearLegEndChecking(CodeOf(command.Target));
+                markedLegEnd = false;
+            }
+            return false;
+        }
         try
         {
             if (peerRefusal is not null)
@@ -180,6 +190,8 @@ public sealed partial class LegCommander(
                     MarkLegEndChecking(CodeOf(command.Target));
                     markedLegEnd = true;
                     await FinishAsync(command, cancellationToken);
+                    // Whichever way the finish recorded the leg done (a push-blocked one puts it directly), the mark's life counts from now.
+                    RefreshLegEndChecking(CodeOf(command.Target));
                     break;
                 case Verbs.WaitLeg:
                     made = Wait(command);
@@ -241,6 +253,10 @@ public sealed partial class LegCommander(
         catch (FlightException ex)
         {
             error = ex.Message;
+        }
+        catch (Exception) when (DropLegEndMarkOnThrow())
+        {
+            throw;
         }
         finally
         {
