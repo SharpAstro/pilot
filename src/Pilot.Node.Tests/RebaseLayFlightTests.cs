@@ -179,6 +179,53 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         _github.Merged.ShouldBeEmpty();
     }
 
+    private async Task<(FlightRow Flight, string Head)> DroppedUnexplained()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        var (flight, _) = await Passed("1");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        // The PR GitHub shows is at the head the queue dropped.
+        _github.Pr = _github.Pr! with { Head = head };
+        Drop(flight, head);
+        await Checks().LookAsync(Ct);
+        _legs.DroppedForConflict(flight.Code, head).ShouldBeTrue();
+        return (flight, head);
+    }
+
+    [Fact]
+    public async Task ADroppedHeadThatIsQueuedNowIsNotReportedAsDroppedForAConflict()
+    {
+        var (flight, head) = await DroppedUnexplained();
+        _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
+
+        (merge.Error ?? "").ShouldNotContain("for a conflict");
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ADroppedHeadWhoseChecksArePendingIsNotReportedAsDroppedForAConflict()
+    {
+        var (flight, head) = await DroppedUnexplained();
+        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 0, 0);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
+
+        (merge.Error ?? "").ShouldNotContain("for a conflict");
+    }
+
+    [Fact]
+    public async Task ADroppedHeadWithNothingQueuedOrPendingIsStillRefusedAsDroppedForAConflict()
+    {
+        var (flight, head) = await DroppedUnexplained();
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
+
+        merge.Ok.ShouldBeFalse();
+        merge.Error.ShouldNotBeNull().ShouldContain("for a conflict");
+    }
+
     [Fact]
     public async Task ALaidHeadTheQueueRefusesIsNotMarkedDroppedAndAMergeIsOfferedAtIt()
     {

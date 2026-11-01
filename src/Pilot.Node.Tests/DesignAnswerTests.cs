@@ -128,7 +128,7 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private async Task<FlightRow> AskedDesign()
+    private async Task<FlightRow> AskedDesign(string? question = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -151,7 +151,7 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
             State = PrReviewState.Reviewing,
             StartedAt = DateTimeOffset.UtcNow,
         });
-        (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", Question)).Error.ShouldBeNull();
+        (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", question ?? Question)).Error.ShouldBeNull();
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();
         return flight;
@@ -218,6 +218,125 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         LastLeg(flight.Code).State.ShouldBe(LegState.Done);
         Fixers.ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task OptionsOnAFlightsDesignCardAreChoicesAndPressingOneSendsTheLastLegRoundWithItsText()
+    {
+        var flight = await AskedDesign(DesignAnswerQuestions.WithOptions);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        var option = card.Choices[0];
+
+        (await RunPr(option.Verb, "controller", option.Args)).Error.ShouldBeNull();
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep a library (no new process)");
+        Fixers.ShouldBeEmpty();
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep a library (no new process)");
+    }
+}
+
+/// <summary>
+/// The design card built from a finding's options: one choice per option with the recommended first, then the free-text Answer;
+/// pressing an option posts it as the answer and starts the fixer; a question with no options shows its text and only the Answer.
+/// </summary>
+public sealed class DesignOptionsCardTests : PrFixTestsBase
+{
+    private readonly NodeCommands _commands;
+
+    public DesignOptionsCardTests()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_reviews);
+        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => throw new InvalidOperationException("the watchtower runs nothing here"), _options, TimeProvider.System));
+        services.AddSingleton(new RoleModels(null));
+        _commands = new NodeCommands(services.BuildServiceProvider(), _state);
+    }
+
+    private CardRow OpenDesign() => _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+
+    [Fact]
+    public async Task TheCardHoldsTheQuestionWithItsPathAndOneChoicePerOptionRecommendedFirstThenAnswerInYourOwnWords()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
+
+        var card = OpenDesign();
+        card.Title.ShouldContain("should this be a service at all?");
+        card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
+        card.Detail.ShouldContain("Make it a service: more to run");
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Take(2).ShouldAllBe(c => c.Verb == Verbs.FixPr && c.Target == "pr/acme/widget#7" && c.AsksFor == null);
+        card.Choices[2].AsksFor.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task PressingAnOptionPostsItsTextAsTheAnswerAndStartsTheFixer()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
+        var card = OpenDesign();
+
+        var result = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["1"], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep a library (no new process)");
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("Keep a library (no new process)");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    public async Task AQuestionWithNoOptionsShowsItsFullTextAndOnlyTheFreeTextChoice()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all, given how little it does?");
+
+        var card = OpenDesign();
+        card.Detail.ShouldNotBeNull().ShouldContain("should this be a service at all, given how little it does?");
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+    }
+
+    [Fact]
+    public async Task SeveralQuestionsOfferNoOptionsOnlyTheFreeTextChoice()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, "README.md:9 design: and the name? Option: Keep => none Option: Rename => churn");
+
+        OpenDesign().Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+    }
+}
+
+internal static class DesignAnswerQuestions
+{
+    public const string WithOptions = "README.md:1 design: should this be a service at all? Option: Make it a service => more to run Option*: Keep a library => no new process";
+}
+
+/// <summary>The design finding read apart: question, options with consequences, the recommended mark, and the fallback.</summary>
+public sealed class DesignQuestionTests
+{
+    private static PrFinding F(string body) => new() { Path = "a.cs", Line = 3, Body = body };
+
+    [Fact]
+    public void ParsesTheQuestionAndEachOptionWithItsConsequenceAndTheRecommendedMark()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly. Option: Maybe"))!;
+
+        q.Question.ShouldBe("Keep it?");
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended)).ShouldBe([("Yes", "cheap", false), ("No", "costly.", true), ("Maybe", "", false)]);
+        q.RecommendedFirst.Select(o => o.Text).ShouldBe(["No", "Yes", "Maybe"]);
+        q.Options[0].Answer.ShouldBe("Yes (cheap)");
+        q.Options[2].Answer.ShouldBe("Maybe");
+    }
+
+    [Fact]
+    public void WithNoOptionTheWholeTextIsTheQuestion()
+    {
+        var q = DesignQuestion.Parse(F("Design: should it be a service? Or not."))!;
+
+        q.Question.ShouldBe("should it be a service? Or not.");
+        q.Options.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AFindingThatIsNotADesignQuestionIsNull() => DesignQuestion.Parse(F("a bug here")).ShouldBeNull();
 }
 
 /// <summary>
@@ -250,7 +369,7 @@ public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", Question);
 
         var choice = OpenDesign().Choices.ShouldHaveSingleItem();
-        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Answer", Verbs.FixPr, "pr/acme/widget#7"));
+        (choice.Label, choice.Verb, choice.Target).ShouldBe((PrReviews.AnswerLabel, Verbs.FixPr, "pr/acme/widget#7"));
         choice.AsksFor.ShouldNotBeNull();
     }
 
@@ -274,7 +393,7 @@ public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", Question);
         var card = OpenDesign();
 
-        (await Answer(card, "Answer")).Error.ShouldNotBeNull().ShouldContain("needs words");
+        (await Answer(card, PrReviews.AnswerLabel)).Error.ShouldNotBeNull().ShouldContain("needs words");
         (await Answer(card, "1")).Error.ShouldNotBeNull().ShouldContain("needs words");
 
         Fixers.ShouldBeEmpty();

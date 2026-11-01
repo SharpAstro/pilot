@@ -443,6 +443,21 @@ public sealed class SettingsTests : IDisposable
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
     }
 
+    /// <summary>A repo list keeps every entry through the file: priority-repos was written as its first entry alone, so a second repo was lost on save.</summary>
+    [Theory]
+    [InlineData("priority-repos")]
+    [InlineData("no-auto-merge-repos")]
+    [InlineData("sub-task-repos")]
+    [InlineData("repo-trackers")]
+    public void ARepoListKeepsEveryEntryThroughTheFile(string key)
+    {
+        var file = Path.Combine(_root, $"{key}.json");
+        string[] entries = key == "repo-trackers" ? ["tianwen=github", "pilot=shortcut"] : ["tianwen", "pilot"];
+        NodeSettings.With(new NodeSettings(), key, entries).Settings.ShouldNotBeNull().Write(file);
+
+        NodeSettings.Read(file).Get(key).ShouldBe(entries);
+    }
+
     /// <summary>A list entry that names a folder by path must be one, and stands for the folder's name; a repo-trackers entry must be repo=tracker.</summary>
     [Fact]
     public async Task SetRefusesAListEntryThatIsNotAFolderAndTakesAFolderByItsName()

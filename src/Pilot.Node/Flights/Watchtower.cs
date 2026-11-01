@@ -1063,7 +1063,7 @@ public sealed class Watchtower(
     /// The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself; and once, a Ring
     /// card it was told <see cref="RetellAfter"/> ago that is still open.
     /// </summary>
-    private List<CardRow> Untold()
+    internal List<CardRow> Untold()
     {
         var now = time.GetUtcNow();
         return state.Cards(openOnly: true)

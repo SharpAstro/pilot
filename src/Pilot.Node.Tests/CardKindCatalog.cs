@@ -118,6 +118,7 @@ internal static class CardKindCatalog
         new("pr-review-merge", "ForYou", [Reviews], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
         new("pr-review-queue-refused", "ForYou", [Reviews], SourcePinned),
         new("pr-review-design", "Ring", [Reviews], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer"),
+        new("pr-review-design-settled", "Handled", [Reviews], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
         new("pr-review-no-fixer", "Ring", [Reviews], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves"),
         new("pr-fix-started", "Handled", [Reviews], "PrFixTests.AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch"),
         new("pr-fix-offer", "ForYou", [Reviews], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),

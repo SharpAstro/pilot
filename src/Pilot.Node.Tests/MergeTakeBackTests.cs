@@ -131,6 +131,33 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    public async Task AMergeAnsweredAgainOnTheCardWhileItRunsLeavesTheCardOpen()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Ready(node);
+        var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        node.GitHub.OnCall = call =>
+        {
+            if (call != nameof(IGitHub.MergeAsync))
+            {
+                return Task.CompletedTask;
+            }
+            reached.TrySetResult();
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        };
+        var first = Answer(node, ready, "Merge");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the merge was not reached");
+
+        var again = await Answer(node, ready, "Merge");
+
+        again.Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldNotBe(CardState.Closed);
+        open.SetResult();
+        await first;
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task PlanLegOnANodeArmedMergeClearsItAndSaysSo()
     {

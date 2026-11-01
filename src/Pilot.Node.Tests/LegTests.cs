@@ -2246,7 +2246,10 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
 
         // The last leg done: its PR is opened by itself. This repo has no origin to push to, so the step fails: it rings once,
         // offering the step by hand, and the next sweep does not ring again. (ReviewTests opens one for real, on a bare origin.)
+        // One refused attempt rings nothing (PIL575): the next sweep retries, and a second miss rings.
         (await Leg(Verbs.FinishLeg, "flight/TIA1/render", "done")).Ok.ShouldBeTrue();
+        _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
+        await _legs.AdvanceAllAsync(Ct);
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
         rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
         rung.Bin.ShouldBe(CardBin.Ring);

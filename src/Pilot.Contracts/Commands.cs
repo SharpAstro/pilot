@@ -779,6 +779,12 @@ public static class MergeWays
     /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
     /// </summary>
     public const string Updated = "updated";
+
+    /// <summary>
+    /// A merge of this flight is already running and this ask was a repeat of it: answered ok and left alone. Not merged, and no
+    /// news about where the first one stands, so a caller leaves its card open and looks again later.
+    /// </summary>
+    public const string InProgress = "in-progress";
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>
