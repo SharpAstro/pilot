@@ -268,6 +268,7 @@ public static class NodeApp
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
         builder.Services.AddSingleton<SendLog>();
+        builder.Services.AddSingleton(services => new SendTimings(services.GetRequiredService<TimeProvider>(), logWriter));
         builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
@@ -432,6 +433,7 @@ public static class NodeApp
             // Ending a session cancels the jobs it owns.
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
+            Timings = services.GetRequiredService<SendTimings>(),
         });
         configure?.Invoke(builder);
 
@@ -522,7 +524,7 @@ public static class NodeApp
         var startedAt = DateTimeOffset.UtcNow;
         var version = typeof(NodeApp).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic) => Results.Json(
+        app.MapGet(NodeWire.NodeRoute, (NodeOptions options, NodeState state, RoleModels models, Watchtower watchtower, AdmissionGate slots, NodeTraffic traffic, SendTimings timings) => Results.Json(
             ResponseEnvelope<NodeInfo>.Ok(new NodeInfo
             {
                 WireVersion = NodeWire.Version,
@@ -544,6 +546,7 @@ public static class NodeApp
                 CountedSessions = slots.Publish().Counted,
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
+                SendTimings = timings.Rows(),
             }),
             PilotJsonContext.Default.ResponseEnvelopeNodeInfo));
 

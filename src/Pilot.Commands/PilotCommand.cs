@@ -223,9 +223,11 @@ public static class PilotCommand
             var maintenance = false;
             bool? autopilot = null;
             string? dataFolder = null;
+            SendTimingRow[]? timings = null;
             try
             {
                 var info = await client.GetNodeAsync(ct);
+                timings = info.SendTimings ?? [];
                 maintenance = info.Maintenance;
                 autopilot = info.Autopilot;
                 dataFolder = info.DataFolder;
@@ -237,8 +239,8 @@ public static class PilotCommand
             var everyFlight = parseResult.GetValue(allFlights);
             var format = parseResult.GetValue(outputFormat);
             var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-            await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight),
-                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies));
+            await WriteAsync(format, () => Status(snapshot, maintenance: maintenance, autopilot: autopilot, all: everyFlight, sendTimings: timings),
+                () => StatusMarkdown.Build(snapshot, maintenance, autopilot, everyFlight, copies, timings));
             return 0;
         });
         var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };
@@ -1867,7 +1869,7 @@ public static class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && maintenance)
@@ -1879,6 +1881,10 @@ public static class PilotCommand
             text.AppendLine(piloting
                 ? "autopilot  on (only the person changes it: pilot settings set autopilot off)"
                 : "autopilot  off (only the person changes it: pilot settings set autopilot on)");
+        }
+        if (!newestOnly && code is null && sendTimings is not null)
+        {
+            text.AppendLine($"sends  {SendTimingRow.Summary(sendTimings)}");
         }
         if (!newestOnly && code is null && snapshot.Usage?.Account is { } account)
         {

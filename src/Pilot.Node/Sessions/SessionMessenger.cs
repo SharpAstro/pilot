@@ -156,6 +156,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
     public SendLog? Sends { get; init; }
 
+    /// <summary>How long each resume and relay took, for <c>pilot status</c> (PIL584). Null keeps none.</summary>
+    public SendTimings? Timings { get; init; }
+
     private void Remember(string? key, string way, string? sessionId, string? route, CommandRequest command, string text, DateTimeOffset began)
     {
         Sends?.Record(command.RequestId, text, began);
@@ -241,7 +244,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             switch (Choose(row))
             {
                 case SayWays.Resumed:
+                    var resumeClock = Stopwatch.StartNew();
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    Timings?.Record(SendTimings.Resume, resumeClock.Elapsed, $"target={command.Target}");
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
                     Remember(deliveredKey, SayWays.Resumed, resumedAs, null, command, text, began);
                     return (SayWays.Resumed, resumedAs, null, false);
@@ -253,7 +258,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     {
                         RefuseAmbiguous(row, rows);
                     }
+                    var relayClock = Stopwatch.StartNew();
                     var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: direct), cancellationToken);
+                    Timings?.Record(SendTimings.Relay, relayClock.Elapsed, $"target={command.Target}");
                     Remember(deliveredKey, SayWays.Relayed, null, route, command, text, began);
                     return (SayWays.Relayed, null, route, false);
             }

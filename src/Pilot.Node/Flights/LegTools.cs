@@ -40,7 +40,7 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null) : IWorkerLauncher
 {
     /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
     public WorkerStart WithMcp(WorkerStart start) =>
@@ -113,6 +113,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         trust.Ensure(start.RepoPath);
         start = WithMcp(start);
         ClaudeRun run;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
@@ -127,6 +128,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        timings?.Record(SendTimings.Start, clock.Elapsed, $"name={start.Name} job={job.Groups[1].Value}");
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
