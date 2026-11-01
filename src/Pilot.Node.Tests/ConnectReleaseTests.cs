@@ -6,6 +6,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A flight that waits on flights of this node drops each one when it lands, and a sweep frees rows stuck on a landed flight (pilot #590).</summary>
+[Trait("Category", "Slow")]
 public sealed class ConnectReleaseTests : OverlapTestsBase
 {
     private Task<CommandResult> Run(FlightCommander flights, string verb, string target, params string[] args) =>

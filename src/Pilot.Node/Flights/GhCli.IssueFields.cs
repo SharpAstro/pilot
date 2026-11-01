@@ -69,6 +69,83 @@ public sealed partial class GhCli
         }
     }
 
+    internal const string OpenPrioritiesQuery = """
+        query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {
+          issues(states: OPEN, first: 100, after: $after) { pageInfo { hasNextPage endCursor }
+            nodes { number issueFieldValues(first: 30) { nodes { __typename ... on IssueFieldSingleSelectValue { name field { __typename ... on IssueFieldSingleSelect { name } } } } } } }
+        } }
+        """;
+
+    /// <summary>
+    /// The Priority of every open issue that has one, read a hundred issues to a call (not one call per issue). A repo or org without the
+    /// field, or a token that cannot read it, gives nothing and no error: the rows simply show no priority.
+    /// </summary>
+    internal async Task<Dictionary<int, IssuePriority>> OpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var found = new Dictionary<int, IssuePriority>();
+        string? after = null;
+        for (var page = 0; page < 10; page++)
+        {
+            List<string> args = ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", $"query={OpenPrioritiesQuery}"];
+            if (after is not null)
+            {
+                args.AddRange(["-f", $"after={after}"]);
+            }
+            var (exit, output, _) = await RunAsync([.. args], repoPath, cancellationToken);
+            if (exit != 0)
+            {
+                return found;
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(output);
+                if (!doc.RootElement.TryGetProperty("data", out var data) || !data.TryGetProperty("repository", out var repo) || repo.ValueKind != JsonValueKind.Object
+                    || !repo.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Object)
+                {
+                    return found;
+                }
+                foreach (var issue in issues.GetProperty("nodes").EnumerateArray().Where(n => n.ValueKind == JsonValueKind.Object))
+                {
+                    if (!issue.TryGetProperty("number", out var number) || !number.TryGetInt32(out var n)
+                        || !issue.TryGetProperty("issueFieldValues", out var values) || values.ValueKind != JsonValueKind.Object || !values.TryGetProperty("nodes", out var valueNodes))
+                    {
+                        continue;
+                    }
+                    foreach (var node in valueNodes.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.Object))
+                    {
+                        if (node.TryGetProperty("field", out var field) && field.ValueKind == JsonValueKind.Object && TextOf(field, "name") == PriorityFieldName
+                            && IssuePriorities.TryParse(TextOf(node, "name"), out var level))
+                        {
+                            found[n] = level;
+                        }
+                    }
+                }
+                var info = issues.GetProperty("pageInfo");
+                if (!info.TryGetProperty("hasNextPage", out var more) || more.ValueKind != JsonValueKind.True || TextOf(info, "endCursor") is not { } cursor)
+                {
+                    return found;
+                }
+                after = cursor;
+            }
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+            {
+                return found;
+            }
+        }
+        return found;
+    }
+
+    /// <summary><paramref name="issues"/> with the Priority each open one has on GitHub.</summary>
+    private async Task<MilestoneIssue[]> WithPrioritiesAsync(string repoPath, MilestoneIssue[] issues, CancellationToken cancellationToken)
+    {
+        if (!issues.Any(i => i.Open))
+        {
+            return issues;
+        }
+        var levels = await OpenPrioritiesAsync(repoPath, cancellationToken);
+        return levels.Count == 0 ? issues : [.. issues.Select(i => levels.TryGetValue(i.Number, out var level) && i.Open ? i with { Priority = level } : i)];
+    }
+
     public async Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         // A repo without the field, or a token that cannot read it, is "no field": the label stays the source there.

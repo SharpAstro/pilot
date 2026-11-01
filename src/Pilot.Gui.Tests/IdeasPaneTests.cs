@@ -1146,17 +1146,15 @@ public sealed class IdeasPaneTests
         await Task.WhenAll(tasks);
         (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.CheckReady, "issue/pilot/#12"));
         tasks.Clear();
-        Click(Regions(chrome, screen), "ideas:suggest:pilot#12");
+        Click(Regions(chrome, screen), "ideas:suggest:pilot#20");
         await Task.WhenAll(tasks);
-        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "issue/pilot/#12"));
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "issue/pilot/#20"));
 
-        // A ready issue offers Plan flight, which starts the chat.
+        // A ready issue offers Make flight.
         tasks.Clear();
         Click(Regions(chrome, screen), "ideas:ready:pilot#12");
         await Task.WhenAll(tasks);
-        Actions(Regions(chrome, screen)).ShouldContain("ideas:plan-flight:pilot#12");
-        Click(Regions(chrome, screen), "ideas:plan-flight:pilot#12");
-        chats.Last().ShouldStartWith("Plan a flight for pilot #12");
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:make-flight:pilot#12");
 
         // An idea has them too, beside its own, on the same rows: its issue is the target.
         chrome.Ideas.SplitExtent = 900f;
@@ -1168,6 +1166,29 @@ public sealed class IdeasPaneTests
         {
             Actions(Regions(chrome, screen)).ShouldContain(kept);
         }
+    }
+
+    [Fact]
+    public async Task MakeFlightOnAnIssueWithNoFlightSendsCreateFlightThenPlanFlightAndAFlownRowHasNone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Made: "PIL12"));
+        chrome.Ideas.LoadRepos = _ => Task.FromResult<RepoInfo[]>([new RepoInfo { Name = "pilot", Path = @"C:\src\pilot" }]);
+        var screen = BoardScreen();
+        chrome.Ideas.SplitExtent = 200f;
+
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:make-flight:pilot#12");
+        Actions(regions).ShouldContain("ideas:make-flight:pilot#14");
+        Actions(regions).ShouldNotContain("ideas:make-flight:pilot#13");
+
+        Click(regions, "ideas:make-flight:pilot#12");
+        await Task.WhenAll(tasks);
+        sent.Count.ShouldBe(2);
+        (sent[0].Verb, sent[0].Target).ShouldBe((Verbs.CreateFlight, Verbs.RepoTarget(@"C:\src\pilot")));
+        sent[0].Args.ShouldBe(["#12", "Resize the split " + LongTitle]);
+        (sent[1].Verb, sent[1].Target).ShouldBe((Verbs.PlanFlight, Verbs.FlightTarget("PIL12")));
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("made PIL12");
     }
 
     [Fact]
@@ -1456,7 +1477,7 @@ public sealed class IdeasPaneTests
         var chat = new List<string>();
         chrome.Ideas.OnChatAbout = chat.Add;
         regions = Regions(chrome, screen);
-        foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
+        foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#20", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
         {
             Actions(regions).ShouldContain(action);
         }
@@ -1660,10 +1681,12 @@ public sealed class IdeasPaneTests
         Click(regions, "ideas:row:pilot#12");
         chrome.Ideas.Selected.ShouldBe("pilot#12");
         regions = Regions(chrome, screen);
-        foreach (var action in new[] { "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:open:pilot#12" })
+        foreach (var action in new[] { "ideas:ready:pilot#12", "ideas:open:pilot#12" })
         {
             Actions(regions).ShouldContain(action);
         }
+        // Its milestone is its place: no Suggest milestone.
+        Actions(regions).ShouldNotContain("ideas:suggest:pilot#12");
         // The detail is below the grid's rows, under the handle, and says the whole title the row may have cut.
         Region(regions, "ideas:ready:pilot#12").Y.ShouldBeGreaterThan(Region(regions, SplitDetail).Y);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("Resize the split");
@@ -1686,6 +1709,131 @@ public sealed class IdeasPaneTests
         {
             Actions(Regions(chrome, screen)).ShouldContain(kept);
         }
+    }
+
+    [Fact]
+    public async Task APinnedIssueIsFirstInItsMilestoneSectionAndOffersUnpinWhileTheOthersOfferPin()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 12 ? i with { Pinned = true } : i)] };
+
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([12, 14, 13]);
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:pin:pilot#12");
+        Actions(regions).ShouldContain("ideas:pin:pilot#14");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("Unpin");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.PinMark);
+
+        Click(regions, "ideas:pin:pilot#12");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.PinIssue, "issue/pilot/#12"));
+        sent.Last().Args.ShouldBe([Verbs.PinOff]);
+
+        Click(Regions(chrome, screen), "ideas:pin:pilot#14");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.PinIssue, "issue/pilot/#14"));
+        (sent.Last().Args ?? []).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ThePinnedRowsOfTheTreeGridStayFirstWhateverColumnIsSorted()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 13 ? i with { Pinned = true } : i)] };
+        Draw(chrome, screen);
+
+        var section = chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3");
+        foreach (var _ in new[] { false, true })
+        {
+            Click(Regions(chrome, screen), "ideas:table:Title");
+            chrome.Ideas.SortedItems(section)[0].Number.ShouldBe(13);
+        }
+        chrome.Ideas.Sort.ShouldBe((0, true));
+    }
+
+    [Fact]
+    public void WithinAMilestoneItemsOrderPinnedThenUrgentHighMediumUnsetLowThenTheNodesOrder()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        var screen = BoardScreen();
+        // The node's order in v2.3 is 12, 14, 13: 13 is Urgent, 12 is Low, 14 is unset; a pinned Low one still leads.
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number switch { 13 => i with { Priority = IssuePriority.Urgent }, 12 => i with { Priority = IssuePriority.Low }, _ => i })] };
+
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([13, 14, 12]);
+
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 12 ? i with { Pinned = true } : i)] };
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([12, 13, 14]);
+    }
+
+    [Fact]
+    public async Task APriorityChipShowsAndTheRowSetsTheNextLevelOrClearsItWhileAnUnsetRowHasNoChip()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 13 ? i with { Priority = IssuePriority.High } : i)] };
+
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.High));
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain(IdeasView<RgbaImage>.PriorityChip(IssuePriority.Urgent));
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldNotContain("ideas:priority-none:pilot#13");
+
+        // The pill opens the five levels; choosing one writes exactly that level.
+        Click(regions, "ideas:priority:pilot#13");
+        regions = Regions(chrome, screen);
+        foreach (var level in new[] { "urgent", "high", "medium", "low", "none" })
+        {
+            Actions(regions).ShouldContain($"ideas:priority-{level}:pilot#13");
+        }
+        foreach (var level in new[] { "urgent", "medium", "low", "none" })
+        {
+            Click(Regions(chrome, screen), $"ideas:priority-{level}:pilot#13");
+            await Task.WhenAll(tasks);
+            (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SetPriority, "issue/pilot/#13"));
+            sent.Last().Args.ShouldBe([level]);
+        }
+        sent.Count.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task AFlightMadeFromARowShowsAtOnceAndTheRowOffersNoSecondMakeFlight()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        Actions(Regions(chrome, screen)).ShouldContain("ideas:make-flight:pilot#12");
+        var flight = new FlightRow { Code = "PIL12", Repo = "pilot", RepoPath = "/r/pilot", Issue = 12, Title = "Resize", Branch = "flight/pil12", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Updated };
+        screen = screen with { Flights = [.. screen.Flights, flight] };
+        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:make-flight:pilot#12");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("PIL12");
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public void ThePriorityColumnOfTheTreeGridSortsMostUrgentFirstAndPinnedRowsStayOnTop()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number switch { 12 => i with { Priority = IssuePriority.Medium }, 13 => i with { Priority = IssuePriority.High }, _ => i })] };
+        Draw(chrome, screen);
+
+        var section = chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3");
+        Click(Regions(chrome, screen), "ideas:table:Priority");
+        chrome.Ideas.SortedItems(section).Select(i => i.Number).ShouldBe([13, 12, 14]);
+        Click(Regions(chrome, screen), "ideas:table:Priority");
+        chrome.Ideas.SortedItems(section).Select(i => i.Number).ShouldBe([12, 13, 14]);
     }
 
     private const string SplitDetail = IdeasView<RgbaImage>.DetailSplitHit;
@@ -1849,5 +1997,57 @@ public sealed class IdeasPaneTests
                 }
             }
         }
+    }
+    [Fact]
+    public void SuggestMilestoneShowsOnlyOnIdeasAndIssuesWithNoMilestone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2400);
+        var (chrome, _, _) = Chrome(renderer);
+        var screen = BoardScreen();
+        var actions = Actions(Regions(chrome, screen)).ToList();
+        string Key(int n, string repo = "pilot") => chrome.Ideas.Board.Sections.SelectMany(x => x.Items).First(i => i.Number == n && i.Repo == repo).Key;
+
+        // An idea (Unsorted) and an issue with no milestone are asked about; issues in a milestone are not.
+        actions.ShouldContain("ideas:suggest:" + Key(380));
+        actions.ShouldContain("ideas:suggest:" + Key(20));
+        actions.ShouldNotContain("ideas:suggest:" + Key(12));
+        actions.ShouldNotContain("ideas:suggest:" + Key(13));
+        actions.ShouldNotContain("ideas:suggest:" + Key(14));
+    }
+
+    [Fact]
+    public void CollapseAllFoldsEveryMilestoneSectionAndExpandAllUnfoldsThemInTheListAndTheTree()
+    {
+        foreach (var mode in new[] { IdeasViewMode.List, IdeasViewMode.Tree })
+        {
+            using var renderer = new RgbaImageRenderer(1280, 2400);
+            var (chrome, _, _) = Chrome(renderer);
+            chrome.Ideas.ViewMode = mode;
+            var screen = BoardScreen();
+            var open = "Resize the split";
+
+            var regions = Regions(chrome, screen);
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(open, customMessage: mode.ToString());
+            Click(regions, "ideas:fold-all");
+
+            Spoken(renderer, chrome, screen, 1280).ShouldNotContain(open, customMessage: mode.ToString());
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.ExpandAllLabel);
+            Spoken(renderer, chrome, screen, 1280).ShouldNotContain(IdeasView<RgbaImage>.CollapseAllLabel);
+            var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, 1280, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > TopBar.Height).Select(f => f.Line).ShouldBeEmpty();
+
+            Click(Regions(chrome, screen), "ideas:fold-all");
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(open, customMessage: mode.ToString());
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.CollapseAllLabel);
+        }
+    }
+
+    [Fact]
+    public void TheCanvasHasNoCollapseAll()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        Actions(Regions(chrome, BoardScreen())).ShouldNotContain("ideas:fold-all");
     }
 }
