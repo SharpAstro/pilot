@@ -15,11 +15,25 @@ public sealed class PeerConnectionWatch(FlightCommander flights, TimeProvider ti
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        try
+        {
+            // Once at start: a row stuck on a landed flight (a restart between a land and its release) is released without a disconnect.
+            await flights.ReleaseLandedConnectionsAsync(stopping);
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            await Error.WriteLineAsync($"peer connection watch: releasing landed connections failed: {ex.Message}");
+        }
         while (!stopping.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(Interval, time, stopping);
+                await flights.ReleaseLandedConnectionsAsync(stopping);
                 await flights.LookAtPeerConnectionsAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
