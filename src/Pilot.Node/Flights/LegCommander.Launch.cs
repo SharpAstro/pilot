@@ -81,10 +81,15 @@ public sealed partial class LegCommander
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
     internal bool Starting(string code) => IsStarting(LegsKey(code)) || IsStarting(ReviewKey(code));
 
-    private void RefuseIfStarting(string key, string what)
+    private void RefuseIfStarting(string key, string what, bool coalesce = false)
     {
         if (IsStarting(key))
         {
+            // A start asked again while it is live (PIL575): in progress, not refused. One out past StuckAfter is refused as before.
+            if (coalesce && _starting.TryGetValue(key, out var held) && time.GetUtcNow() - held.At < StuckAfter)
+            {
+                throw new InProgressException($"{what} is being started");
+            }
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
     }

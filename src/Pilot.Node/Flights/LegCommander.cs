@@ -251,6 +251,11 @@ public sealed partial class LegCommander(
                     break;
             }
         }
+        catch (InProgressException ex)
+        {
+            // A repeat of a step already running is no refusal: ok, saying so.
+            made = ex.Message;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
@@ -2114,6 +2119,11 @@ public sealed partial class LegCommander(
         }
         if (underWay)
         {
+            // The entry is the job row: live while it is open and moved within StuckAfter. Asked again, the merge answers ok and the entry is left as it is.
+            if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is { Open: true } live && time.GetUtcNow() - live.ChangedAt < StuckAfter)
+            {
+                return (false, AlreadyInProgress, null);
+            }
             throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
         }
         // The turn is the command's before its entry is put: a journal that cannot write the entry (a full disk) throws out of Enqueue
@@ -2575,7 +2585,7 @@ public sealed partial class LegCommander(
         var title = string.Join(' ', command.Args ?? []).Trim();
         // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
         // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
-        using var call = Calling(flight.Code, "having its PR opened");
+        using var call = Calling(flight.Code, "having its PR opened", coalesce: true);
         (FlightRow repaired, PullRequest pr, bool mergedBase) opened;
         try
         {
@@ -2937,7 +2947,7 @@ public sealed partial class LegCommander(
             }
             throw new FlightException(RoundRefusal(flight));
         }
-        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
+        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer", coalesce: true);
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {
