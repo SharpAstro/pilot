@@ -203,10 +203,10 @@ public sealed class MapViewportTests
         view.HandleInput(new InputEvent.Scroll(1f, 640f, 400f, InputModifier.Shift)).ShouldBeTrue();
         vp.PanX.ShouldBeGreaterThan(x1);
 
-        // Ctrl+wheel is the zoom's, not the pan's.
-        var before = (vp.PanX, vp.PanY);
-        view.HandleInput(new InputEvent.Scroll(-1f, 640f, 400f, InputModifier.Ctrl)).ShouldBeFalse();
-        (vp.PanX, vp.PanY).ShouldBe(before);
+        // Ctrl+wheel is the zoom's, not the pan's: the scale changes (see MapZoomTests for where it is anchored).
+        var scale = vp.Scale;
+        view.HandleInput(new InputEvent.Scroll(1f, 640f, 400f, InputModifier.Ctrl)).ShouldBeTrue();
+        vp.Scale.ShouldBeGreaterThan(scale);
     }
 
     [Fact]

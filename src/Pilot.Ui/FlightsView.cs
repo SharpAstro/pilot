@@ -842,6 +842,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             return evt is InputEvent.KeyDown { Key: var scrollKey } && ScrollDetail(scrollKey);
         }
+        // On the map the arrows and the zoom chords move the view; in List and Grid the arrows move the selection.
+        if (evt is InputEvent.KeyDown mapKey && HandleMapKey(mapKey))
+        {
+            return true;
+        }
         return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
     }
 

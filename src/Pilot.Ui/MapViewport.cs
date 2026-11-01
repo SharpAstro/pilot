@@ -135,6 +135,32 @@ internal sealed class MapViewport
         return true;
     }
 
+    /// <summary>Zooms by <paramref name="factor"/> about the view's centre. Whether the scale changed.</summary>
+    public bool ZoomCentre(float factor) => ZoomAt(factor, _viewWidth / 2f, _viewHeight / 2f);
+
+    /// <summary>Sets the scale (kept within the floor and the ceiling) about the view's centre; the view counts as moved.</summary>
+    public void SetScale(float scale) => ZoomCentre(Math.Clamp(scale, MinScale, MaxScale) / Scale);
+
+    /// <summary>Whether a drag that moves the map is in flight.</summary>
+    public bool IsPanning => _pan.IsPanning;
+
+    /// <summary>Starts a drag that moves the map, from a view point.</summary>
+    public void BeginPan(float viewX, float viewY) => _pan.BeginPan(viewX, viewY);
+
+    /// <summary>Moves the map by the pointer's motion since the last call. False when no drag is in flight.</summary>
+    public bool UpdatePan(float viewX, float viewY)
+    {
+        if (!_pan.UpdatePan(viewX, viewY))
+        {
+            return false;
+        }
+        Moved = true;
+        Clamp();
+        return true;
+    }
+
+    public void EndPan() => _pan.EndPan();
+
     /// <summary>One wheel step: up and down, or left and right with <paramref name="sideways"/>. A positive delta (wheel up, or left) shows more of the top (or left).</summary>
     public void Wheel(float delta, bool sideways, float step = 60f)
     {

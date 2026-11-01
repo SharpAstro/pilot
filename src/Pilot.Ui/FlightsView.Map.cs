@@ -22,6 +22,9 @@ internal sealed partial class FlightsView<TSurface>
     // Whether the last render arranged the layer menu, so the pointer is held against where it is.
     private bool _layersOnShow;
 
+    /// <summary>The map body's rect as the last frame drew it, surface units; for tests to aim a pointer.</summary>
+    internal RectF32? MapBody => _mapBody;
+
     // The map's pan and zoom, and the clip that holds the map to its body (a scroll that never scrolls: only its viewport is used).
     private readonly MapViewport _vp = new();
     private readonly ListScrollController _mapClip = new() { Mode = ScrollBarMode.None };
@@ -61,16 +64,204 @@ internal sealed partial class FlightsView<TSurface>
         return true;
     }
 
+    // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
+    private bool MapLive => MapShown && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
+
+    // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
+    private bool _space;
+
+    // The button that began the drag in flight, so only its release ends it.
+    private MouseButton _panButton;
+
+    // A view unit is a design unit of the map's body; the surface's coordinates are scaled and offset by the body's rect.
+    private (float X, float Y) ToView(RectF32 body, float x, float y) => ((x - body.X) / Scale.X, (y - body.Y) / Scale.Y);
+
+    // One zoom step of the keys and the wheel: the factor PanZoomController steps by.
+    private const float ZoomStepFactor = 1.15f;
+    private const float ArrowStep = 40f;
+    private const float ArrowStepBig = 160f;
+
     private bool HandleMapScroll(InputEvent.Scroll scroll)
     {
-        if (!MapShown || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y) || (scroll.Modifiers & InputModifier.Ctrl) != 0)
+        if (!MapShown || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
         {
             return false;
+        }
+        if ((scroll.Modifiers & InputModifier.Ctrl) != 0)
+        {
+            // Ctrl+wheel zooms about the pointer, as Figma does; the pointer's map point stays under it.
+            var (vx, vy) = ToView(body, scroll.X, scroll.Y);
+            if (_vp.ZoomAt(scroll.Delta > 0f ? ZoomStepFactor : 1f / ZoomStepFactor, vx, vy))
+            {
+                Changed?.Invoke();
+            }
+            return true;
         }
         _vp.Wheel(scroll.Delta, (scroll.Modifiers & InputModifier.Shift) != 0);
         Changed?.Invoke();
         return true;
     }
+
+    /// <summary>
+    /// The map's pointer input, which the window gives the page ahead of the router (a middle press over a target would be its
+    /// click's otherwise): a pinch zooms about its point, a middle-button drag or a left drag with Space held moves the map, and
+    /// Space's release is noted. A plain left press is left alone, so a click still picks what is under it. True for what it took.
+    /// </summary>
+    internal bool HandleMapPointer(InputEvent evt)
+    {
+        switch (evt)
+        {
+            case InputEvent.KeyUp { Key: InputKey.Space }:
+                _space = false;
+                Changed?.Invoke();
+                return false;
+            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y):
+                var (px, py) = ToView(pinchBody, pinch.X, pinch.Y);
+                if (_vp.ZoomAt(pinch.Scale, px, py))
+                {
+                    Changed?.Invoke();
+                }
+                return true;
+            case InputEvent.MouseDown down when MapLive && _mapBody is { } body && body.Contains(down.X, down.Y)
+                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && _space)):
+                _panButton = down.Button;
+                var (vx, vy) = ToView(body, down.X, down.Y);
+                _vp.BeginPan(vx, vy);
+                Changed?.Invoke();
+                return true;
+            case InputEvent.MouseMove move when _vp.IsPanning && _mapBody is { } moving:
+                var (mx, my) = ToView(moving, move.X, move.Y);
+                if (_vp.UpdatePan(mx, my))
+                {
+                    Changed?.Invoke();
+                }
+                return true;
+            case InputEvent.MouseUp up when _vp.IsPanning && up.Button == _panButton:
+                _vp.EndPan();
+                Changed?.Invoke();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // The keys the map takes while it is shown. Ctrl+0 and Ctrl+1 are also the Ideas and Home pages' chords: the chrome offers them
+    // here first (see PilotChrome.HandleInput), and they are the map's only while it is shown. Ctrl+= arrives as Plus (the
+    // layout's Equals key).
+    internal bool HandleMapKey(InputEvent.KeyDown key)
+    {
+        if (!MapLive)
+        {
+            return false;
+        }
+        var ctrl = (key.Modifiers & InputModifier.Ctrl) != 0;
+        if (ctrl && (key.Modifiers & InputModifier.Alt) == 0)
+        {
+            switch (key.Key)
+            {
+                case InputKey.Plus:
+                    _vp.ZoomCentre(ZoomStepFactor);
+                    break;
+                case InputKey.Minus:
+                    _vp.ZoomCentre(1f / ZoomStepFactor);
+                    break;
+                case InputKey.D0:
+                    _vp.Fit();
+                    break;
+                case InputKey.D1:
+                    _vp.SetScale(1f);
+                    break;
+                default:
+                    return false;
+            }
+            Changed?.Invoke();
+            return true;
+        }
+        if (ctrl || (key.Modifiers & InputModifier.Alt) != 0)
+        {
+            return false;
+        }
+        var step = (key.Modifiers & InputModifier.Shift) != 0 ? ArrowStepBig : ArrowStep;
+        switch (key.Key)
+        {
+            // As the wheel: Up shows more of the top, Left more of the left.
+            case InputKey.Up:
+                _vp.PanBy(0f, step);
+                break;
+            case InputKey.Down:
+                _vp.PanBy(0f, -step);
+                break;
+            case InputKey.Left:
+                _vp.PanBy(step, 0f);
+                break;
+            case InputKey.Right:
+                _vp.PanBy(-step, 0f);
+                break;
+            case InputKey.Space:
+                _space = true;
+                break;
+            default:
+                return false;
+        }
+        Changed?.Invoke();
+        return true;
+    }
+
+    private const float PillWidth = 56f;
+    private const float PillHeight = 26f;
+    private const float PillGap = 12f;
+
+    /// <summary>The zoom as the pill shows it: a whole percentage.</summary>
+    internal string ZoomText => $"{(int)MathF.Round(_vp.Scale * 100f)}%";
+
+    // The zoom pill, at the map's bottom-right and over the map: outside its transform, so it neither pans nor scales. A click opens
+    // a small menu (Fit, 50%, 100%, 200%) under it.
+    private Layout.Node ZoomPill()
+    {
+        // The layer menu is docked to the right edge and may run to the foot, so the pill sits beside it, never under it.
+        var x = _vp.ViewWidth - PillWidth - PillGap - (MapLayers.Palette.Side == Layout.DockSide.Right ? FlightMapLayerPalette.PanelWidth + PillGap : 0f);
+        var y = _vp.ViewHeight - PillHeight - PillGap;
+        var pill = Layout.Builder.Text(ZoomText, 12f, Bright, TextAlign.Center)
+            .Pad(0f, 5f)
+            .WFixed(PillWidth)
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .WithTooltip("Zoom: click to fit or set it. Ctrl+wheel zooms, Ctrl+0 fits, Ctrl+1 is 100%")
+            .Follows(new HitResult.ButtonHit("map:zoom"), _ => OpenZoomMenu(x, y));
+        return Layout.Builder.Anchored(pill, null, x, y, 0f, true);
+    }
+
+    private void OpenZoomMenu(float x, float y)
+    {
+        _menu.Items =
+        [
+            new DropdownItem<string>("Fit", "zoom-fit") { OnChoose = () => SetZoom(null) },
+            new DropdownItem<string>("50%", "zoom-50") { OnChoose = () => SetZoom(0.5f) },
+            new DropdownItem<string>("100%", "zoom-100") { OnChoose = () => SetZoom(1f) },
+            new DropdownItem<string>("200%", "zoom-200") { OnChoose = () => SetZoom(2f) },
+        ];
+        var body = _mapBody ?? default;
+        _menuAt = new RectF32(body.X + x * Scale.X, body.Y + y * Scale.Y, PillWidth * Scale.X, PillHeight * Scale.Y);
+        _menu.IsOpen = true;
+        Changed?.Invoke();
+    }
+
+    // A zoom the menu chose: a scale about the view's centre, or null to fit again.
+    private void SetZoom(float? scale)
+    {
+        if (scale is { } s)
+        {
+            _vp.SetScale(s);
+        }
+        else
+        {
+            _vp.Fit();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>The zoom menu's entries, for tests to choose from: the same menu as a row's, opened by the pill.</summary>
+    internal void ChooseZoom(string label) => _menu.Items.First(i => i.Label == label).OnChoose?.Invoke();
 
     private Layout.Node CanvasBody(FlightsScreen screen)
     {
@@ -85,11 +276,13 @@ internal sealed partial class FlightsView<TSurface>
             var note = Layout.Builder.VStack(line).Pad(Gutter, 8f).Stretch();
             return Layout.Builder.Overlay(note, layers).Stretch();
         }
-        List<Layout.Node> stack = [Layout.Builder.Fill(key: CanvasKey).Stretch(), .. MapTargets(screen)];
+        // The grab hand under the pointer while Space is held or a drag moves the map (the move cursor: DIR.Lib has no grab one).
+        var canvas = Layout.Builder.Fill(key: CanvasKey).Stretch();
+        List<Layout.Node> stack = [_space || _vp.IsPanning ? canvas.WithCursor(CursorKind.Move) : canvas, .. MapTargets(screen)];
         // Clipped to the body, the map slides under it by the viewport's one transform, for the painting and the targets alike.
         var map = Stacked(stack, 0, stack.Count).WithScroll(_mapClip).Stretch();
-        // The layer menu floats over the map, outside its pan, as the sky map's does over the sky.
-        return Layout.Builder.Overlay(map, layers).Stretch();
+        // The layer menu and the zoom pill float over the map, outside its pan, as the sky map's do over the sky.
+        return Layout.Builder.Overlay(Layout.Builder.Overlay(map, layers), ZoomPill()).Stretch();
     }
 
     // The map's leaf and its targets, overlaid in list order, as a tree as deep as the log of their number. An Overlay holds two

@@ -1132,6 +1132,9 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
 // The window's own Back and Forward (Alt+Left, Alt+Right, the mouse's back and forward buttons) come ahead of the router, so
 // they work whatever is painted under the pointer or has the keyboard. SDL's X1 and X2 buttons arrive as MouseButton.Back and Forward.
 loop.OnKeyDown = key => chrome.HandleInput(key) || router.Handle(key);
+// A key's release and a pinch go to the chrome too: Space held moves the Flights map, and a pinch zooms it.
+loop.OnKeyUp = key => chrome.HandleInput(key);
+loop.OnPinch = (scale, x, y, source) => chrome.HandleInput(new InputEvent.Pinch(scale, x, y) { Source = source });
 loop.OnTextInput = text => router.Handle(new InputEvent.TextInput(text));
 // The cursor is the regions' (a button or a link says the hand), asked on every move rather than after a paint: a move
 // over inert chrome draws no frame. Cached so a move within one region costs no SDL call. As FC.SDK.Viewer does.
