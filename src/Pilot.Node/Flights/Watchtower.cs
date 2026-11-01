@@ -1094,7 +1094,9 @@ public sealed class Watchtower(
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
-        var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
+            // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
+            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{_retold.Count}" }, cancellationToken);
         _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {

@@ -44,10 +44,11 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         string? way = null;
         string? sessionId = null;
         string? route = null;
+        var duplicate = false;
         string? error;
         try
         {
-            (way, sessionId, route) = await DeliverAsync(command, compact, cancellationToken);
+            (way, sessionId, route, duplicate) = await DeliverAsync(command, compact, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -58,9 +59,19 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             error = $"The delivery failed: {ex.Message}";
         }
+        catch (Exception ex)
+        {
+            // A cancelled say (the client's connection went) or an unexpected failure used to leave no line at all, so a say
+            // that was lost, or went on in the background, was invisible in node.log (PIL595).
+            var kind = ex is OperationCanceledException ? "cancelled" : $"failed: {ex.GetType().Name}: {ex.Message}";
+            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {kind} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+            await log.FlushAsync(CancellationToken.None);
+            throw;
+        }
 
         var result = state.Complete(command, error, way, sessionId);
-        var outcome = error is null ? "delivered" + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
+        var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
+            : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
         await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
@@ -134,12 +145,42 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         return state.Complete(command, null);
     }
 
-    private async Task<(string? Way, string? SessionId, string? Route)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
+    private sealed record Delivered(string? Way, string? SessionId, string? Route, DateTime At);
+
+    // Request ids already delivered, per session row: a row keeps its id across a resume, so the key outlives the session id.
+    private readonly ConcurrentDictionary<string, Delivered> _delivered = new ConcurrentDictionary<string, Delivered>(StringComparer.Ordinal);
+
+    /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
+    internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
+    public SendLog? Sends { get; init; }
+
+    private void Remember(string? key, string way, string? sessionId, string? route, CommandRequest command, string text, DateTimeOffset began)
+    {
+        Sends?.Record(command.RequestId, text, began);
+        if (key is not null)
+        {
+            _delivered[key] = new Delivered(way, sessionId, route, DateTime.UtcNow);
+        }
+    }
+
+    private void ForgetDelivered()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var p in _delivered.Where(p => now - p.Value.At > DeliveredRetention).ToList())
+        {
+            _delivered.TryRemove(p.Key, out _);
+        }
+    }
+
+    private async Task<(string? Way, string? SessionId, string? Route, bool Duplicate)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
             throw new SessionDeliveryException($"{command.Verb} takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}");
         }
+        var began = DateTimeOffset.UtcNow;
         var id = command.Target[Verbs.SessionTargetPrefix.Length..];
         var text = string.Join(' ', command.Args).Trim();
         if (compact)
@@ -172,6 +213,16 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             await tracker.PollAsync(cancellationToken);
             var rows = state.Sessions();
             var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
+            var deliveredKey = command.RequestId is { Length: > 0 } rid ? $"{row.Id}\n{rid}" : null;
+            if (deliveredKey is not null)
+            {
+                ForgetDelivered();
+                if (_delivered.TryGetValue(deliveredKey, out var first))
+                {
+                    return (first.Way, first.SessionId, first.Route, true);
+                }
+            }
             var replacedBy = command.Who == Flights.LegWatch.Who ? ReplacedBy(row, rows) : null;
             if (replacedBy is { } newer && Choose(row) == SayWays.Resumed)
             {
@@ -192,7 +243,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 case SayWays.Resumed:
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
-                    return (SayWays.Resumed, resumedAs, null);
+                    Remember(deliveredKey, SayWays.Resumed, resumedAs, null, command, text, began);
+                    return (SayWays.Resumed, resumedAs, null, false);
                 default:
                     // A replaced session shares its name with its successor: it is reached by its session id only, never by the
                     // name, which would carry the words to the successor.
@@ -202,7 +254,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                         RefuseAmbiguous(row, rows);
                     }
                     var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: direct), cancellationToken);
-                    return (SayWays.Relayed, null, route);
+                    Remember(deliveredKey, SayWays.Relayed, null, route, command, text, began);
+                    return (SayWays.Relayed, null, route, false);
             }
         }
         finally

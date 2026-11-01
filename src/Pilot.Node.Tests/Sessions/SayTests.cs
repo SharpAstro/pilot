@@ -242,6 +242,61 @@ public sealed class SayTests : IDisposable
         _delivery.Relays.Single().ShouldBe(new RelayRequest("pil5-say-bg", SessionKind.Background, "mid-turn", "tests", SessionId: AgentRows.SessionB));
     }
 
+    private async Task EndedSessionAsync()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", cwd: Cwd, startedAt: Recent));
+        await _tracker.PollAsync(Ct);
+    }
+
+    [Fact]
+    public async Task ASlowResumeSaidAgainWithTheSameIdIsDeliveredOnce()
+    {
+        await EndedSessionAsync();
+        var release = new TaskCompletionSource();
+        _delivery.DuringResume = () => release.Task;
+
+        var first = _messenger.SayAsync(Say("b2c3d4e5", "hello") with { RequestId = "r1" }, Ct);
+        while (_delivery.Resumes.Count == 0)
+        {
+            await Task.Delay(10, Ct);
+        }
+        // The same send again while the resume is slow, and the row reads working by then: it would go by relay.
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        var second = _messenger.SayAsync(Say("b2c3d4e5", "hello") with { RequestId = "r1" }, Ct);
+        release.SetResult();
+
+        (await first).Way.ShouldBe(SayWays.Resumed);
+        (await second).Ok.ShouldBeTrue();
+        _delivery.Resumes.Count.ShouldBe(1);
+        _delivery.Relays.ShouldBeEmpty();
+        var log = _log.ToString();
+        log.Split("delivered as").Length.ShouldBe(2);
+        log.ShouldContain("skipped: request id r1 was already sent");
+    }
+
+    [Fact]
+    public async Task TwoSendsWithTheSameTextAndDifferentIdsAreBothDelivered()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        (await _messenger.SayAsync(Say("b2c3d4e5", "again") with { RequestId = "r1" }, Ct)).Ok.ShouldBeTrue();
+        (await _messenger.SayAsync(Say("b2c3d4e5", "again") with { RequestId = "r2" }, Ct)).Ok.ShouldBeTrue();
+
+        _delivery.Relays.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ASayCancelledMidDeliveryStillLogsItsLine()
+    {
+        await EndedSessionAsync();
+        _delivery.DuringResume = () => throw new OperationCanceledException();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => _messenger.SayAsync(Say("b2c3d4e5", "lost") with { RequestId = "r1" }, Ct));
+
+        _log.ToString().ShouldContain("say: who=tests target=session/b2c3d4e5 way=none cancelled");
+    }
+
     [Fact]
     public async Task ASessionIsFoundByItsNameAsWellAsItsRowId()
     {
