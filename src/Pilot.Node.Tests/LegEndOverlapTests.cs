@@ -23,6 +23,9 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
     {
         Git(_root, "init", "-q", "--bare", "-b", "main", "origin.git");
         Git(Repo, "remote", "add", "origin", Origin);
+        // The planes are worktrees of this repo and share its config: the node's own merges need an identity, which CI runners lack.
+        Git(Repo, "config", "user.email", "t@example.com");
+        Git(Repo, "config", "user.name", "t");
         Git(Repo, "push", "-q", "origin", "main");
         await FlightWithTwoLegs();
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
@@ -181,5 +184,36 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Flights().Single(f => f.Code == "TIA1").Overlaps.ShouldBeEmpty();
         // The flight went on: its next leg is being validated.
         _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+    }
+
+    [Fact]
+    public async Task ASweepWhileTheLegEndCheckIsParkedStartsNothingOfTheFlight()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.OnOpenPrs = async () =>
+        {
+            reached.TrySetResult();
+            await release.Task;
+        };
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+
+        // The leg is done and the check is parked on GitHub: the sweep must not start the next leg's validator.
+        L("parser").State.ShouldBe(LegState.Done);
+        await _legs.AdvanceFlightAsync("TIA1", Ct);
+        L("render").State.ShouldBe(LegState.Planned);
+        _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
+
+        release.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+        _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
     }
 }

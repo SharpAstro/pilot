@@ -15,6 +15,16 @@ public sealed partial class LegCommander
     /// files with, recording a pending <see cref="OverlapRow"/> marked with the leg, so <see cref="Due"/> holds the next leg until it is answered.
     /// Run off the lock, before the flight goes on. A fetch or a diff that fails is logged and rings nothing; it never fails the finish.
     /// </summary>
+    // Flights whose last finished leg has its overlap check still to run or in progress, by code, with when it was marked (a mark never outlives LegEndMarkLife).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _legEndChecking = new(StringComparer.Ordinal);
+    private static readonly TimeSpan LegEndMarkLife = TimeSpan.FromMinutes(10);
+
+    private void MarkLegEndChecking(string code) => _legEndChecking[code] = time.GetUtcNow();
+
+    private void ClearLegEndChecking(string code) => _legEndChecking.TryRemove(code, out _);
+
+    private bool LegEndChecking(string code) => _legEndChecking.TryGetValue(code, out var at) && time.GetUtcNow() - at < LegEndMarkLife;
+
     private async Task CheckLegEndOverlapAsync(string legTarget, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(legTarget);

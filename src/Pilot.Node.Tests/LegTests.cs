@@ -95,12 +95,19 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many PR listings were asked for.</summary>
     public int OpenPrCalls;
 
-    public Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
+    /// <summary>Awaited by each PR listing as it begins: a gh that takes as long as the test says. Null answers at once.</summary>
+    public Func<Task>? OnOpenPrs { get; set; }
+
+    public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref OpenPrCalls);
+        if (OnOpenPrs is { } gate)
+        {
+            await gate();
+        }
         return OpenPrsFail.Contains(repoPath)
-            ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
+            ? throw new FlightException("gh could not list the PRs: offline")
+            : OpenPrs.TryGetValue(repoPath, out var prs) ? prs : [];
     }
 
     /// <summary>The files each open PR changes, by number; a PR with none listed changes none.</summary>

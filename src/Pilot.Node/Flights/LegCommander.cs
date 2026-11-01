@@ -174,6 +174,8 @@ public sealed partial class LegCommander(
                     Tick(command);
                     break;
                 case Verbs.FinishLeg:
+                    // From before the leg is recorded done until its overlap check has rung or decided not to, the sweep starts nothing of this flight.
+                    MarkLegEndChecking(CodeOf(command.Target));
                     await FinishAsync(command, cancellationToken);
                     break;
                 case Verbs.WaitLeg:
@@ -277,8 +279,19 @@ public sealed partial class LegCommander(
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
             // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().
-            await CheckLegEndOverlapAsync(command.Target, cancellationToken);
+            try
+            {
+                await CheckLegEndOverlapAsync(command.Target, cancellationToken);
+            }
+            finally
+            {
+                ClearLegEndChecking(CodeOf(command.Target));
+            }
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
+        }
+        else if (command.Verb == Verbs.FinishLeg)
+        {
+            ClearLegEndChecking(CodeOf(command.Target));
         }
 
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
@@ -470,8 +483,6 @@ public sealed partial class LegCommander(
                 return (null, null);
             }
             flight = Record(code, f => f with { Base = repaired.Base })!;
-            // The merged base's push went up: what it brought may share a file with another flight (rings, never fails the update).
-            await CheckAfterPushAsync(flight, cancellationToken);
             if (kept is { Length: > 0 })
             {
                 // Its review read this branch before the base was merged in: the merge alone moved it, so the pass goes with it to the
@@ -483,10 +494,13 @@ public sealed partial class LegCommander(
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
                 }
+                // The merged base's push went up: what it brought may share a file with another flight (rings, never fails the update). Last, as it lets the lock go.
+                await CheckAfterPushAsync(flight, cancellationToken);
                 return (null, kept);
             }
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
+            await CheckAfterPushAsync(flight, cancellationToken);
             return (null, null);
         }
         catch (FlightException ex)
@@ -667,6 +681,11 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // The overlap check of a leg just finished has not rung or decided yet: nothing starts until it has, so a card cannot arrive after the next leg flies.
+        if (LegEndChecking(current.Code))
+        {
+            return null;
+        }
         // A session of it is being started: its next step waits for it to be up, as a step asked now would be refused.
         if (Starting(current.Code))
         {
@@ -772,9 +791,13 @@ public sealed partial class LegCommander(
             {
                 await OffLockAsync(null, () => PushAsync(flight, cancellationToken, brought));
             }
-            await CheckAfterPushAsync(flight, cancellationToken);
         }
         await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
+        if (needsPush)
+        {
+            // What the push added may share a file with another flight; last, as it lets the lock go and the review is already started.
+            await CheckAfterPushAsync(flight, cancellationToken);
+        }
     }
 
     private async Task PlanAsync(CommandRequest command, CancellationToken cancellationToken)

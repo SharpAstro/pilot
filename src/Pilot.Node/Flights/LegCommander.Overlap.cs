@@ -258,10 +258,19 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string> GoOnAfterLegEndAnswerAsync(FlightRow flight, string told, CancellationToken cancellationToken)
     {
+        // Marked from here, under the lock, so a sweep in the gap starts nothing before the re-check has rung or decided not to.
+        MarkLegEndChecking(flight.Code);
         await OffLockAsync(null, async () =>
         {
             var last = state.Legs(flight.Code).Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name ?? "the last leg";
-            await CheckOverlapAsync(flight.Code, last, cancellationToken);
+            try
+            {
+                await CheckOverlapAsync(flight.Code, last, cancellationToken);
+            }
+            finally
+            {
+                ClearLegEndChecking(flight.Code);
+            }
             await AdvanceAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
         });
         return told;
