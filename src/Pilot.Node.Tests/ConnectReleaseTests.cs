@@ -46,11 +46,14 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
         card.Bin.ShouldBe(CardBin.Handled);
         card.Title.ShouldContain("TIA1 landed");
         card.Title.ShouldContain("no longer waits");
+        card.Detail.ShouldNotBeNull().ShouldContain("still waits for TIA2");
 
         (await Run(_flights, Verbs.Land, "flight/TIA2")).Ok.ShouldBeTrue();
 
         F("TIA3").Connections.ShouldBeEmpty();
         F("TIA3").State.ShouldBe(FlightState.Flying);
+        Released("TIA3").Length.ShouldBe(2);
+        Released("TIA3").Any(c => c.Detail != null && c.Detail.Contains("flies now")).ShouldBeTrue();
     }
 
     [Fact]

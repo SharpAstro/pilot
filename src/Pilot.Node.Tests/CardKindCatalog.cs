@@ -99,6 +99,7 @@ internal static class CardKindCatalog
         new("plane-left", "ForYou|Handled", [Flight, Move], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("folded", "Handled", [Flight], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),
         new("routed", "Handled", [Flight], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
+        new("connection-released", "Handled", [Flight], "ConnectReleaseTests.ALandWithoutAPrReleasesTheWaiterFromThatFlightOnly"),
         new("disconnected", "Handled", [Flight], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
         new("received", "Handled", [Flight], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
         new("move-failed", "Ring", [Move], "FlightMoveTests.APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain"),

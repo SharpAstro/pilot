@@ -197,7 +197,8 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         (await land).Ok.ShouldBeTrue();
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         // The flight that connected to it while it was out flies once it has landed.
-        F(other).Connections.ShouldBe([flight.Code]);
+        F(other).Connections.ShouldBeEmpty();
+        F(other).State.ShouldBe(FlightState.Flying);
     }
 
     [Fact]
