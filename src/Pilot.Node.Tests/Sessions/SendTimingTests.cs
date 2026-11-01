@@ -70,12 +70,12 @@ public sealed class SendTimingTests : IDisposable
         resume.SlowestMs.ShouldBeGreaterThanOrEqualTo(30);
 
         // A session mid-turn is relayed to.
-        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "working", pid: 4343, status: "busy", cwd: Cwd));
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "pil5-relay-bg", "working", pid: 4344, status: "busy", cwd: Cwd));
         await _tracker.PollAsync(Ct);
-        (await messenger.SayAsync(Say("b2c3d4e5", "note"), Ct)).Way.ShouldBe(SayWays.Relayed);
+        (await messenger.SayAsync(Say("a1b2c3d4", "note"), Ct)).Way.ShouldBe(SayWays.Relayed);
 
         timings.Rows().ShouldNotBeNull().Select(r => (r.Kind, r.Count)).ShouldBe([("resume", 1), ("relay", 1)]);
-        _log.ToString().ShouldContain("timing: relay target=session/b2c3d4e5");
+        _log.ToString().ShouldContain("timing: relay target=session/a1b2c3d4");
     }
 
     [Fact]
