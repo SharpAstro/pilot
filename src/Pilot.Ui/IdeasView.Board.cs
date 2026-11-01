@@ -83,6 +83,15 @@ internal sealed partial class IdeasView<TSurface>
         item.Idea is { } idea ? Name(idea)
         : string.Equals(item.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? $"#{item.Number}" : $"{item.Repo}#{item.Number}";
 
+    // The label of a row as it is drawn: a pinned item is marked, in every view.
+    private string Marked(BoardItem item) => item.Pinned ? PinMark + " " + Label(item) : Label(item);
+
+    internal const string PinMark = "★";
+
+    internal const string PinLabel = "Pin";
+
+    internal const string UnpinLabel = "Unpin";
+
     internal static string ChatAboutText(BoardItem item, string lead = "About") => $"{lead} {item.Repo} #{item.Number.ToString(CultureInfo.InvariantCulture)}: {item.Title}\n{item.Url}\n";
 
     // A suggestion belongs to the issue as it was read: one the board no longer holds, or that GitHub changed since, is gone.
@@ -306,7 +315,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(grip);
         }
-        parts.Add(Layout.Builder.Text(Label(item), 13f, Link).Selectable().WAuto());
+        parts.Add(Layout.Builder.Text(Marked(item), 13f, Link).Selectable().WAuto());
         if (!compact)
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
@@ -361,6 +370,9 @@ internal sealed partial class IdeasView<TSurface>
                     ? CardsView<TSurface>.Dead("Suggesting…")
                     : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
             }
+            yield return IsBusy("pin:" + item.Key)
+                ? CardsView<TSurface>.Dead(item.Pinned ? "Unpinning…" : "Pinning…")
+                : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
             if (!flown)
             {
                 yield return IsBusy("ready:" + item.Key)
@@ -452,6 +464,29 @@ internal sealed partial class IdeasView<TSurface>
             else
             {
                 Say(reply.Readiness?.Note ?? $"{Label(item)} was not checked", refusal: true);
+            }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    /// <summary>Pins the item (the node puts the pin label on its issue on GitHub), or unpins it when it is pinned; a press again while it runs sends nothing.</summary>
+    internal async Task PinAsync(BoardItem item)
+    {
+        var busy = "pin:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            var reply = await RunAsync(Verbs.PinIssue, item.Target, item.Pinned ? [Verbs.PinOff] : []);
+            if (reply is { Ok: false })
+            {
+                Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: {reply.Error}", refusal: true);
             }
         }
         finally

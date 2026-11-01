@@ -184,7 +184,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             title.Add(grip);
         }
-        title.Add(Layout.Builder.Text(Label(item), 12f, Link).Selectable().WAuto());
+        title.Add(Layout.Builder.Text(Marked(item), 12f, Link).Selectable().WAuto());
         title.Add(Layout.Builder.Text(item.Title, 14f, P.Bright).Selectable().WStar().Whole(item.Title));
 
         var cells = new List<Layout.Node>
@@ -220,7 +220,17 @@ internal sealed partial class IdeasView<TSurface>
             return section.Items;
         }
         var items = section.Items;
-        return sort.Column switch
+        // Pinned rows stay first whatever column is sorted: each group is sorted on its own.
+        var pinned = items.Where(i => i.Pinned).ToList();
+        if (pinned.Count > 0 && pinned.Count < items.Count)
+        {
+            return [.. SortBy(pinned, sort), .. SortBy([.. items.Where(i => !i.Pinned)], sort)];
+        }
+        return SortBy(items, sort);
+    }
+
+    private IReadOnlyList<BoardItem> SortBy(IReadOnlyList<BoardItem> items, Layout.TableSort sort) =>
+        sort.Column switch
         {
             TitleColumn => By(items, _ => true, i => i.Title, StringComparer.OrdinalIgnoreCase, sort.Descending),
             KindColumn => By(items, _ => true, i => i.Idea is null ? 1 : 0, Comparer<int>.Default, sort.Descending),
@@ -230,7 +240,6 @@ internal sealed partial class IdeasView<TSurface>
             AgeColumn => By(items, _ => true, i => i.UpdatedAt, Comparer<DateTimeOffset>.Default, !sort.Descending),
             _ => items,
         };
-    }
 
     // The rows with a value in the order of that value; the rows with none after them, in the node's order, whichever way it sorts.
     private static List<BoardItem> By<T>(IReadOnlyList<BoardItem> items, Func<BoardItem, bool> has, Func<BoardItem, T> key, IComparer<T> comparer, bool descending)

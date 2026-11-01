@@ -63,6 +63,10 @@ public sealed record IssueRow
     /// <summary>The code of the flight that flies the issue (the flight's Issue is its number, in this repo); null when none does.</summary>
     public string? Flight { get; init; }
 
+    /// <summary>Whether the issue carries the pin label on GitHub: a pinned issue stays at the top of its section.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Pinned { get; init; }
+
     /// <summary>What the last <see cref="Verbs.CheckReady"/> found: whether the issue is ready to fly as a flight, and why not; null when it was never checked.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IssueReadiness? Readiness { get; init; }

@@ -279,7 +279,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
         Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
-            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number)]
+            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
@@ -289,7 +289,11 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.FirstOrDefault(i => i.Number == number) : null);
+        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.Where(i => i.Number == number).Select(Labelled).FirstOrDefault() : null);
+
+    /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
+    private MilestoneIssue Labelled(MilestoneIssue issue) =>
+        IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
 
     /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
     public Action? BeforeNextWrite { get; set; }
@@ -317,7 +321,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number)] : []);
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
 
     public Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
     {

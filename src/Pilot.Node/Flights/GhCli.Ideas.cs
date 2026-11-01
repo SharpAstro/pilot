@@ -10,7 +10,7 @@ public sealed partial class GhCli
 {
     private static string Text(int number) => number.ToString(CultureInfo.InvariantCulture);
 
-    private const string IssueFields = "number,title,body,state,milestone,createdAt,updatedAt,author,url";
+    private const string IssueFields = "number,title,body,state,milestone,createdAt,updatedAt,author,url,labels";
 
     public async Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken)
     {
@@ -127,7 +127,10 @@ public sealed partial class GhCli
             Stamp("createdAt"),
             Stamp("updatedAt"),
             i.TryGetProperty("author", out var author) ? TextOf(author, "login") ?? "" : "",
-            TextOf(i, "url") ?? "");
+            TextOf(i, "url") ?? "",
+            i.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Array
+                ? [.. labels.EnumerateArray().Select(l => TextOf(l, "name")).OfType<string>()]
+                : null);
     }
 
     // gh has no conditional write: the guard is a read of updated_at right before it, which leaves only the instant between the two.

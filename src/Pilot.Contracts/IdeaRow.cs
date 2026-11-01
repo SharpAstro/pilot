@@ -52,6 +52,10 @@ public sealed record IdeaRow
     /// <summary>The issue's page.</summary>
     public string Url { get; init => field = value ?? ""; } = "";
 
+    /// <summary>Whether the issue carries the pin label on GitHub: a pinned idea stays at the top of its section.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Pinned { get; init; }
+
     /// <summary>The images in <see cref="Body"/> (<see cref="IdeaImages.In"/>), as the node read them; empty when it has none.</summary>
     public IdeaImage[] Images { get; init => field = value ?? []; } = [];
 

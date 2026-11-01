@@ -656,6 +656,16 @@ public static class PilotMarks
     /// </summary>
     public const string NodeLabelPrefix = "pilot node: ";
 
+    /// <summary>
+    /// Put on an issue (or idea) from the Ideas pane to keep it at the top of its section. It is a GitHub label, not node state, so every
+    /// node and machine sees it. Deliberately plain, not starting with <see cref="LabelPrefix"/> (<c>pilot: </c>), whose labels are a
+    /// PR's and are replaced as a set by a review's label change: a pin must survive that.
+    /// </summary>
+    public const string Pinned = "pinned";
+
+    /// <summary>Whether <paramref name="labels"/> hold <see cref="Pinned"/> (any case).</summary>
+    public static bool IsPinned(IEnumerable<string>? labels) => labels is not null && labels.Contains(Pinned, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The label for the node with machine prefix <paramref name="code"/>.</summary>
     public static string NodeLabel(string code) => NodeLabelPrefix + code;
 
@@ -672,6 +682,7 @@ public static class PilotMarks
         Conflicts => ("b60205", "this PR conflicts with its base"),
         Queued => ("5319e7", "this PR waits in the merge queue"),
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
+        Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         _ => ("ededed", "set by pilot"),
     };
 }

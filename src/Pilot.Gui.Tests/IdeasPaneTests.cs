@@ -1690,6 +1690,52 @@ public sealed class IdeasPaneTests
         }
     }
 
+    [Fact]
+    public async Task APinnedIssueIsFirstInItsMilestoneSectionAndOffersUnpinWhileTheOthersOfferPin()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true));
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 12 ? i with { Pinned = true } : i)] };
+
+        Draw(chrome, screen);
+        chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3").Items.Select(i => i.Number).ShouldBe([12, 14, 13]);
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:pin:pilot#12");
+        Actions(regions).ShouldContain("ideas:pin:pilot#14");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain("Unpin");
+        Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.PinMark);
+
+        Click(regions, "ideas:pin:pilot#12");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.PinIssue, "issue/pilot/#12"));
+        sent.Last().Args.ShouldBe([Verbs.PinOff]);
+
+        Click(Regions(chrome, screen), "ideas:pin:pilot#14");
+        await Task.WhenAll(tasks);
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.PinIssue, "issue/pilot/#14"));
+        (sent.Last().Args ?? []).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ThePinnedRowsOfTheTreeGridStayFirstWhateverColumnIsSorted()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Tree;
+        var screen = BoardScreen();
+        screen = screen with { Issues = [.. screen.Issues.Select(i => i.Number == 13 ? i with { Pinned = true } : i)] };
+        Draw(chrome, screen);
+
+        var section = chrome.Ideas.Board.Sections.Single(s => s.Key == "m:pilot/v2.3");
+        foreach (var _ in new[] { false, true })
+        {
+            Click(Regions(chrome, screen), "ideas:table:Title");
+            chrome.Ideas.SortedItems(section)[0].Number.ShouldBe(13);
+        }
+        chrome.Ideas.Sort.ShouldBe((0, true));
+    }
+
     private const string SplitDetail = IdeasView<RgbaImage>.DetailSplitHit;
 
     [Fact]
