@@ -353,6 +353,59 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task ARefusedCompactionSendsTheLegRoundOnTheNextLook()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        _refuse = "no such session";
+        await _watch.LookAsync(Ct);
+        _said.Single().Verb.ShouldBe(Verbs.Compact);
+        _refuse = null;
+
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        _said[1].Verb.ShouldBe(Verbs.GoAround);
+        _said[1].Args[0].ShouldContain("context was full");
+        _said.Any(c => c.Verb == Verbs.Say).ShouldBeFalse();
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACompactionThatNeverAnswersIsSpentAfterTheWaitAndTheLegGoesRound()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        _time.Advance(LegWatch.CompactWait);
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        _said[1].Verb.ShouldBe(Verbs.GoAround);
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWaitingOnAJobOfItsLegAloneRaisesNoRing()
+    {
+        Worker(SessionState.Idle, context: 1_000);
+        _state.PutJob(new JobRow
+        {
+            Id = "j4", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Queued, Owner = "zzzz", OwnerName = "someone-else",
+            Flight = "TIA1", Leg = "parser", LogPath = "/tmp/j4.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-waiting-job");
+    }
+
+    [Fact]
     public async Task AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged()
     {
         Worker(SessionState.Idle, context: 190_000);

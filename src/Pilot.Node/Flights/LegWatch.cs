@@ -387,7 +387,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             if (_ownJobNoted.Add(leg.WorkerJob!))
             {
-                state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is idle because it waits on a job of its own; the job wakes it");
+                state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is idle because it waits on a job of its own or of its leg; the job wakes it");
             }
             return;
         }
@@ -456,7 +456,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
     private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
         ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"idle with room in its context ({100.0 * worker.ContextTokens / worker.ContextWindow:0}% of its window used) and no job of its own running; ")
-        : "idle with room in its context and no job of its own running; ";
+        : "idle (its context size is unknown) and no job of its own running; ";
+
+    private readonly HashSet<string> _compactRefused = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _compactedWhen = new(StringComparer.Ordinal);
+
+    /// <summary>How long an accepted compaction may stay unanswered before it counts as spent (Claude Code may answer /compact with an error and no turn).</summary>
+    public static readonly TimeSpan CompactWait = TimeSpan.FromMinutes(10);
 
     private readonly HashSet<string> _ownJobNoted = new(StringComparer.Ordinal);
 
@@ -469,6 +475,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var job = leg.WorkerJob!;
         var subject = Subject(leg);
         var share = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{100.0 * worker.ContextTokens / worker.ContextWindow:0}%");
+        // A go-around already sent for this worker is still starting: do not send another.
+        if (_replacedFull.TryGetValue(subject, out var sent) && sent == job)
+        {
+            return;
+        }
         if (_replacedFull.TryGetValue(subject, out var older) && older != job)
         {
             // The fresh worker filled and stalled too: another one would do the same, so a person decides.
@@ -478,9 +489,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         var compacted = _compactedFull.TryGetValue(job, out var at);
-        if (compacted && !(worker.LastResponseAt > (at ?? DateTimeOffset.MinValue)))
+        var spent = _compactRefused.Contains(job) || (compacted && _compactedWhen.TryGetValue(job, out var when) && now - when >= CompactWait);
+        if (compacted && !spent && !(worker.LastResponseAt > (at ?? DateTimeOffset.MinValue)))
         {
-            // Compacted and the compaction has not answered yet: nothing to nudge, nothing to replace.
+            // Compacted and the compaction has not answered yet (and is not spent): nothing to nudge, nothing to replace.
             return;
         }
         if (!compacted)
@@ -492,12 +504,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             var result = await run(new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(worker.Id), Args = [FullFocus], Who = Who }, cancellationToken);
             _compactedFull[job] = worker.LastResponseAt;
+            _compactedWhen[job] = now;
             if (result.Ok)
             {
                 state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compacted, not nudged");
                 return;
             }
             // A compaction refused is a compaction spent: the next look sends the leg round instead of trying again.
+            _compactRefused.Add(job);
             state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compaction refused: {result.Error}");
             return;
         }
