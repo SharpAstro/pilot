@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class ReviewModelTests : ReviewTestsBase
 {
-    private static readonly Dictionary<string, string> Roles = new() { ["worker-model"] = "sonnet", ["reviewer-model"] = "sonnet", ["reviewer-deep-model"] = "opus" };
+    private static readonly Dictionary<string, string> Roles = new() { ["worker-range"] = "sonnet", ["reviewer-range"] = "sonnet..opus" };
 
     private async Task<WorkerStart> FirstReview(string issue, bool? deepFirst, int lines)
     {
@@ -27,7 +27,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     {
         Usage(20);
         var flight = await NewFlight(issue, "parser");
-        _legs.Models = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string>(Roles) { ["reviewer-model"] = "opus" } });
+        _legs.Models = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string>(Roles) { ["reviewer-range"] = "opus" } });
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         return flight;

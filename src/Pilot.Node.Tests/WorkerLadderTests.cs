@@ -40,18 +40,31 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
         models.WorkerFor("opus", "max", 4).ShouldBe(("opus", "max"));
         models.WorkerFor("opus", null, 3).ShouldBe(("opus", null));
         models.WorkerFor("claude-opus-5-5[1m]", "low", 3).ShouldBe(("claude-opus-5-5[1m]", "low"));
-        // A model the ladder cannot rank stays as planned; an unrankable max is no cap.
+        // A model the ladder cannot rank stays as planned.
         models.WorkerFor("fable", "high", 3).ShouldBe(("fable", "high"));
-        Models(("worker-model-max", "fable")).WorkerFor(null, null, 3).ShouldBe(("opus", null));
     }
 
     [Fact]
-    public void TheMaxSettingsCapTheLadder()
+    public void TheRangesMaxCapsTheLadder()
     {
-        Models(("worker-model-max", "sonnet")).WorkerFor(null, null, 3).ShouldBe(("sonnet", null));
-        Models(("worker-model-max", "sonnet")).WorkerFor("opus", null, 3).ShouldBe(("opus", null));
-        Models(("worker-effort-max", "high")).WorkerFor(null, null, 4).ShouldBe(("opus", "high"));
-        Models(("worker-effort-max", "high")).WorkerFor(null, "max", 4).ShouldBe(("opus", "max"));
+        Models(("worker-range", "sonnet..sonnet")).WorkerFor(null, null, 3).ShouldBe(("sonnet", null));
+        Models(("worker-range", "sonnet..sonnet")).WorkerFor("opus", null, 3).ShouldBe(("opus", null));
+        Models(("worker-range", "sonnet..opus-high")).WorkerFor(null, null, 4).ShouldBe(("opus", "high"));
+        Models(("worker-range", "sonnet..opus-high")).WorkerFor(null, "max", 4).ShouldBe(("opus", "max"));
+        Models(("worker-range", "sonnet..opus-medium")).WorkerFor(null, null, 7).ShouldBe(("opus", "medium"));
+    }
+
+    [Fact]
+    public void ADefaultEffortAboveTheMaxsIsCappedWhenTheStepLandsOnTheMaxModel()
+    {
+        var a = Models(("worker-range", "sonnet-high..opus-medium"));
+        a.WorkerFor(null, null, 2).ShouldBe(("sonnet", "high"));
+        foreach (var attempt in new[] { 3, 4, 5, 6 })
+        {
+            a.WorkerFor(null, null, attempt).ShouldBe(("opus", "medium"));
+        }
+        Models(("worker-range", "sonnet-xhigh..opus-low")).WorkerFor(null, null, 5).ShouldBe(("opus", "low"));
+        a.WorkerFor("opus", "max", 4).ShouldBe(("opus", "max"));
     }
 
     [Fact]
@@ -99,9 +112,9 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheMaxSettingAndTheSwitchHoldTheLadderOnALiveLeg()
+    public async Task TheRangeAndTheSwitchHoldTheLadderOnALiveLeg()
     {
-        _legs.Models = Models(("worker-model-max", "sonnet"));
+        _legs.Models = Models(("worker-range", "sonnet..sonnet"));
         await FlightWithTwoLegs();
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
         await GoAround(2);

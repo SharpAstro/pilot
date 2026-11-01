@@ -15,12 +15,9 @@ public sealed partial class RoleModels
     public const string Worker = "worker";
     public const string Planner = "planner";
     public const string Reviewer = "reviewer";
-    /// <summary>A deep review's own model and effort (#74), unset by default: it then runs on the reviewer's, a step higher in effort.</summary>
-    public const string ReviewerDeep = "reviewer-deep";
-
     public const string NoneValue = "none";
 
-    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer, ReviewerDeep];
+    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer];
 
     public static IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high", "xhigh", "max"];
 
@@ -37,12 +34,64 @@ public sealed partial class RoleModels
         Apply(settings ?? new NodeSettings());
     }
 
-    public static string ModelKey(string role) => role + "-model";
-
-    public static string EffortKey(string role) => role + "-effort";
+    /// <summary>The setting that holds a role's range (<c>worker-range</c>: <c>sonnet-high..opus-xhigh</c>).</summary>
+    public static string RangeKey(string role) => role + "-range";
 
     /// <summary>A role's model when the settings name none: Opus where judgement decides what follows, Sonnet elsewhere.</summary>
-    public static string DefaultModel(string role) => role is Planner or Reviewer or ReviewerDeep ? "opus" : "sonnet";
+    public static string DefaultModel(string role) => role is Planner or Reviewer ? "opus" : "sonnet";
+
+    /// <summary>A role's built-in range: its default model at Claude Code's own effort, up to the max a ladder or a deep review steps to.</summary>
+    public static RoleRange BuiltIn(string role) => role switch
+    {
+        Worker => new RoleRange(new ModelPair("sonnet", null), new ModelPair("opus", "xhigh")),
+        Watchtower => new RoleRange(new ModelPair("sonnet", null), new ModelPair("sonnet", "high")),
+        _ => new RoleRange(new ModelPair("opus", null), new ModelPair("opus", "high")),
+    };
+
+    /// <summary>Why a role's built-in range is what it is, for the setting's detail.</summary>
+    public static string BuiltInWhy(string role) => role switch
+    {
+        Worker => "sonnet by default as most legs are routine; a redone leg climbs to opus at xhigh",
+        Watchtower => "sonnet by default as it is the longest-lived session and the costliest per turn; it has no ladder",
+        Planner => "opus by default as it decides everything after it; effort is left to Claude Code",
+        _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
+    };
+
+    /// <summary>The role's range: this node's own, else the fleet's, else the built-in.</summary>
+    public RoleRange Range(string role) => RangeWithSource(role).Range;
+
+    /// <summary>The role's range and where it comes from (<see cref="SettingSources.ThisNode"/>, <see cref="SettingSources.Fleet"/> or <see cref="SettingSources.BuiltIn"/>).</summary>
+    public (RoleRange Range, string Source) RangeWithSource(string role)
+    {
+        if (Raw(RangeKey(role)) is { } own && RoleRange.TryParse([own], out var mine, out _))
+        {
+            return (mine!, SettingSources.ThisNode);
+        }
+        if (FleetRaw(RangeKey(role)) is { } fleet && RoleRange.TryParse([fleet], out var shared, out _))
+        {
+            return (shared!, SettingSources.Fleet);
+        }
+        return (BuiltIn(role), SettingSources.BuiltIn);
+    }
+
+    /// <summary>The fleet's range for the role, when one was set; null when none was.</summary>
+    public RoleRange? FleetRange(string role) =>
+        FleetRaw(RangeKey(role)) is { } v && RoleRange.TryParse([v], out var range, out _) ? range : null;
+
+    /// <summary>This node's effective range for every role, with its source: what the node publishes.</summary>
+    public RoleRangeInfo[] Ranges() => [.. Roles.Select(r =>
+    {
+        var (range, source) = RangeWithSource(r);
+        return new RoleRangeInfo(r, range.ToString(), source);
+    })];
+
+    private string? FleetRaw(string key)
+    {
+        lock (_lock)
+        {
+            return _settings.FleetRoles?.GetValueOrDefault(key);
+        }
+    }
 
     /// <summary>Raised after <see cref="Apply"/>, for what runs on a setting it must not wait to be asked again (the pull request watch's pace).</summary>
     public event Action? Applied;
@@ -70,18 +119,12 @@ public sealed partial class RoleModels
     }
 
     /// <summary>The model a session of <paramref name="role"/> starts on, or null for Claude Code's own default.</summary>
-    public string? Model(string role) => Pick(ModelKey(role), _defaults ? DefaultModel(role) : null);
+    public string? Model(string role) => _defaults ? Range(role).Default.Model : null;
 
     /// <summary>The effort a session of <paramref name="role"/> starts at, or null for Claude Code's own default.</summary>
-    public string? Effort(string role) => Pick(EffortKey(role), null);
+    public string? Effort(string role) => _defaults ? Range(role).Default.Effort : null;
 
-    private string? Pick(string key, string? fallback) => Raw(key) switch
-    {
-        null => fallback,
-        var value => Named(value),
-    };
-
-    // The setting as saved, none included: a deep review tells "not set, follow the reviewer" from "set to none, pass no flag".
+    // The setting as saved.
     private string? Raw(string key)
     {
         lock (_lock)
@@ -89,8 +132,6 @@ public sealed partial class RoleModels
             return _settings.Roles?.GetValueOrDefault(key);
         }
     }
-
-    private static string? Named(string value) => value == NoneValue ? null : value;
 
     /// <summary>How a flight's PR is merged when the merge names no method (<see cref="NodeSettings.MergeMethodKey"/>):
     /// rebase unless the settings say otherwise; a test's commander keeps squash, as it always did.</summary>
@@ -130,10 +171,9 @@ public sealed partial class RoleModels
         }
     }
 
-    /// <summary>The model a reviewer of <paramref name="depth"/> starts on: the reviewer's own, and for a deep review the
-    /// stronger <c>reviewer-deep-model</c> when the settings name one (<c>none</c> there passes no flag).</summary>
+    /// <summary>The model a reviewer of <paramref name="depth"/> starts on: the reviewer's default, and for a deep review its max.</summary>
     public string? ReviewerModel(ReviewDepth depth) =>
-        depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
+        !_defaults ? null : depth == ReviewDepth.Deep ? Range(Reviewer).Max.Model : Model(Reviewer);
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
     public bool ReviewDeepFirst
@@ -157,28 +197,22 @@ public sealed partial class RoleModels
         : depth == ReviewDepth.Deep && !ReviewDeepFirst ? Model(Reviewer)
         : ReviewerModel(depth);
 
-    /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
-    /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
-    /// A deep setting of <c>none</c> passes no flag, as it does for any role.</summary>
+    /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's default for standard, a step below it for
+    /// light (low when none is set), and for deep the reviewer's max. Never effort max.</summary>
     public string? ReviewerEffort(ReviewDepth depth)
     {
-        var own = Effort(Reviewer);
+        if (!_defaults)
+        {
+            return null;
+        }
+        var range = Range(Reviewer);
         return depth switch
         {
-            ReviewDepth.Light => Step(own, -1, "low"),
-            ReviewDepth.Deep => Raw(EffortKey(ReviewerDeep)) is { } deep ? Named(deep) : Step(own, 1, "high"),
-            _ => own,
+            ReviewDepth.Light => Step(range.Default.Effort, -1, "low"),
+            ReviewDepth.Deep => range.Max.Effort,
+            _ => range.Default.Effort,
         };
     }
-
-    public const string DefaultWorkerModelMax = "opus";
-    public const string DefaultWorkerEffortMax = "max";
-
-    /// <summary>The strongest model the worker ladder steps up to (<see cref="NodeSettings.WorkerModelMaxKey"/>).</summary>
-    public string WorkerModelMax => Raw(NodeSettings.WorkerModelMaxKey) is { } v && Named(v) is { } model ? model : DefaultWorkerModelMax;
-
-    /// <summary>The highest effort the worker ladder steps up to (<see cref="NodeSettings.WorkerEffortMaxKey"/>).</summary>
-    public string WorkerEffortMax => Raw(NodeSettings.WorkerEffortMaxKey) is { } v && Named(v) is { } effort ? effort : DefaultWorkerEffortMax;
 
     /// <summary>Whether a leg's fresh worker steps up the ladder by attempt (<see cref="NodeSettings.WorkerLadderKey"/>); on unless set off.</summary>
     public bool WorkerLadder
@@ -202,9 +236,9 @@ public sealed partial class RoleModels
 
     /// <summary>
     /// The model and effort a leg's fresh worker of <paramref name="attempt"/> (go-arounds + 1) starts on: attempts 1 and 2 on the
-    /// leg's own (<paramref name="plannedModel"/>, <paramref name="plannedEffort"/>) or the worker role's, attempt 3 on opus at the
-    /// same effort, attempt 4 and on opus at xhigh. Never past <see cref="WorkerModelMax"/> and <see cref="WorkerEffortMax"/>, and
-    /// never below what the leg's plan names. A resumed or nudged session does not come here: it keeps the model it started with.
+    /// leg's own (<paramref name="plannedModel"/>, <paramref name="plannedEffort"/>) or the worker role's default, attempt 3 on the
+    /// range's max model at the same effort, attempt 4 and on at xhigh. Never past the worker range's max (model or effort), never to
+    /// effort max by a step, and never below what the leg's plan names. A resumed or nudged session does not come here.
     /// </summary>
     public (string? Model, string? Effort) WorkerFor(string? plannedModel, string? plannedEffort, int attempt)
     {
@@ -214,20 +248,27 @@ public sealed partial class RoleModels
         {
             return (model, effort);
         }
-        var max = WorkerModelMax;
-        var step = ModelRank(max) < 0 || ModelRank(max) >= 2 ? "opus" : max;
-        if (model is null || (ModelRank(model) >= 0 && ModelRank(step) > ModelRank(model)))
+        var max = Range(Worker).Max;
+        if (model is null || (ModelRank(model) >= 0 && ModelRank(max.Model) > ModelRank(model)))
         {
-            model = step;
+            model = max.Model;
         }
-        if (attempt >= 4)
+        if (attempt >= 4 && max.Effort is { } cap)
         {
-            var efforts = Efforts.ToArray();
-            var maxAt = Array.IndexOf(efforts, WorkerEffortMax);
-            var target = Math.Min(Array.IndexOf(efforts, "xhigh"), maxAt < 0 ? efforts.Length - 1 : maxAt);
-            if (Array.IndexOf(efforts, effort) < target)
+            var efforts = RoleRange.Efforts;
+            var target = Math.Min(Array.IndexOf(efforts, "xhigh"), Array.IndexOf(efforts, cap));
+            if (effort is null || (Array.IndexOf(efforts, effort) is >= 0 and var at && at < target))
             {
                 effort = efforts[target];
+            }
+        }
+        if (plannedEffort is null && max.Effort is { } top && effort is not null && ModelRank(model) >= 0 && ModelRank(model) >= ModelRank(max.Model))
+        {
+            // a step that lands on the max's model never runs above the max's effort, whatever the default's was
+            var efforts = RoleRange.Efforts;
+            if (Array.IndexOf(efforts, effort) > Array.IndexOf(efforts, top))
+            {
+                effort = top;
             }
         }
         return (model, effort);

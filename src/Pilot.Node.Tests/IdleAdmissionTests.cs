@@ -13,7 +13,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
     private void Settings(int cap, string onePerRepo = "off")
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", [cap.ToString()]).Settings!;
-        settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, "worker-range", ["opus"]).Settings!;
         settings = NodeSettings.With(settings, "one-flight-per-repo", [onePerRepo]).Settings!;
         _legs.Models = new RoleModels(settings);
     }

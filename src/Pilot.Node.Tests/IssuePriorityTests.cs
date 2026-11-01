@@ -31,7 +31,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
     private void Settings(int cap, bool oneFlightPerRepo = false)
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", [cap.ToString()]).Settings!;
-        settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, "worker-range", ["opus"]).Settings!;
         settings = NodeSettings.With(settings, "one-flight-per-repo", [oneFlightPerRepo ? "on" : "off"]).Settings!;
         _legs.Models = new RoleModels(settings);
         _tracked.Models = new RoleModels(settings);
