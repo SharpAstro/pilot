@@ -305,13 +305,48 @@ public sealed class ChatAboutCardTests
         }
     }
 
+    /// <summary>
+    /// Another node's card is chatted about in that node's own watchtower chat where it can be read here, and told as its
+    /// tell card/id there: the answer shows in the chat it was asked in, not in another one.
+    /// </summary>
     [Fact]
-    public async Task AnotherNodesCardIsChattedAboutInTheFleetChatAndToldThisNodesWatchtower()
+    public async Task AnotherNodesCardIsChattedAboutInThatNodesChatAndToldItsWatchtower()
     {
         var chrome = NewChrome(out var renderer);
         using var _ = renderer;
         var fleet = new FakeFleet();
         fleet.Wire(chrome, Said("this node's watchtower"), Said("SE1's watchtower"));
+        fleet.Granted.Add(Se1Node.Where);
+        chrome.Cards.CanSteer = _ => true;
+        var screen = CardsScreen.Merge([(Se1Node, CardsScreen.From([Card("c1")], [], Now))], null);
+        Buttons(chrome, screen).ShouldContain("card:c1:chat");
+
+        Press(chrome, "card:c1:chat");
+        await WaitForAsync(() => chrome.Chat.Entries.Count > 0);
+
+        chrome.Page.ShouldBe(PilotPage.Chat);
+        chrome.Chat.Node!.Where.ShouldBe(Se1Node.Where);
+        chrome.Chat.Entries.Single().Text.ShouldBe("SE1's watchtower");
+        fleet.Read.ShouldContain("SE1");
+        Described(chrome.Chat).ShouldContain("about card c1 · SE1: card c1");
+
+        await Typed(chrome, "why did it land?");
+
+        fleet.ToHere.ShouldBeEmpty();
+        var told = fleet.ToNode["SE1"].Single();
+        told.ShouldContain("why did it land?");
+        told.ShouldContain("card c1");
+        chrome.Chat.Close();
+    }
+
+    [Fact]
+    public async Task AnotherNodesCardWhoseChatCannotBeReadHereIsChattedAboutInTheFleetChatAndToldThisNodesWatchtower()
+    {
+        var chrome = NewChrome(out var renderer);
+        using var _ = renderer;
+        var fleet = new FakeFleet();
+        fleet.Wire(chrome, Said("this node's watchtower"), Said("SE1's watchtower"));
+        chrome.Chat.CanRead = _ => false;
         chrome.Cards.CanSteer = _ => true;
         var screen = CardsScreen.Merge([(Se1Node, CardsScreen.From([Card("c1")], [], Now))], null);
         Buttons(chrome, screen).ShouldContain("card:c1:chat");
