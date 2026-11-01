@@ -244,7 +244,7 @@ public sealed partial class RoleModels
     {
         var model = plannedModel ?? Model(Worker);
         var effort = plannedEffort ?? Effort(Worker);
-        if (!WorkerLadder || attempt < 3 || !_defaults)
+        if (!WorkerLadder || attempt < 3)
         {
             return (model, effort);
         }
