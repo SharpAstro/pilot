@@ -69,3 +69,125 @@ public sealed class DesignAnswerTests : PrFixTestsBase
         Fixers.ShouldBeEmpty();
     }
 }
+
+/// <summary>
+/// The same question of design on a flight's PR goes through the flight's go-around: it rings the design card naming the flight, and
+/// review fix with an answer sends the flight's last leg round with the question and the answer, starting no PR fixer.
+/// </summary>
+public sealed class FlightDesignAnswerTests : ReviewTestsBase
+{
+    private const string Head = "cafe0000cafe0000";
+    private const string Question = "README.md:1 design: should this be a service at all?";
+    private const string PrTarget = "pr/x/tianwen#71";
+
+    private readonly PrReviews _reviews;
+
+    public FlightDesignAnswerTests()
+    {
+        var origin = Path.Combine(_root, "origin.git").Replace('\\', '/');
+        Git(Repo, "config", "remote.origin.url", "https://github.com/x/tianwen.git");
+        Git(Repo, "config", $"url.{origin}.insteadOf", "https://github.com/x/tianwen.git");
+        _github.Login = "ada";
+        var git = new GitCli();
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1", RepoRootsGiven: [_root]);
+        _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, options), options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            TakeFlightVerdict = _legs.TakePrVerdictAsync,
+            SendFlightRound = _legs.AnsweredDesignAsync,
+        };
+    }
+
+    private Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
+        _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
+
+    /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
+    private async Task<FlightRow> AskedDesign()
+    {
+        var flight = await NewFlight("1", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        var pr = _github.Pr.ShouldNotBeNull();
+        _github.Pr = pr with { Head = Head, HeadRef = F(flight.Code).Branch, Base = "main", Author = "ada" };
+        _github.Prs[$"x/tianwen#{pr.Number}"] = _github.Pr;
+        flight = F(flight.Code);
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "x/tianwen",
+            Number = flight.PullRequest!.Value,
+            Url = flight.PullRequestUrl!,
+            Base = "main",
+            Head = Head,
+            ClonePath = Repo,
+            Worktree = flight.Worktree,
+            Reviewer = "du1-review-tianwen-71",
+            Author = "ada",
+            State = PrReviewState.Reviewing,
+            StartedAt = DateTimeOffset.UtcNow,
+        });
+        (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", Question)).Error.ShouldBeNull();
+        return flight;
+    }
+
+    private LegRow LastLeg(string code) => _state.Legs(code).OrderBy(l => l.Order).Last();
+
+    private WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
+
+    [Fact]
+    public async Task ADesignQuestionOnAFlightsPrRingsTheDesignCardNamingTheFlight()
+    {
+        var flight = await AskedDesign();
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldContain(flight.Code);
+        card.Detail.ShouldNotBeNull().ShouldContain("should this be a service at all?");
+        Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ReviewFixWithAnswerWordsSendsTheLastLegRoundWithTheQuestionAndTheAnswerAndStartsNoFixer()
+    {
+        var flight = await AskedDesign();
+        LastLeg(flight.Code).State.ShouldBe(LegState.Done);
+        var started = _workers.Started.Count;
+
+        var result = await RunPr(Verbs.FixPr, "controller", "Keep", "it", "a", "library");
+
+        result.Error.ShouldBeNull();
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("should this be a service at all?");
+        leg.Report.ShouldContain("Keep it a library");
+        Fixers.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started + 1);
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep it a library");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.DesignKind);
+    }
+
+    [Fact]
+    public async Task AnAnswerCommentAfterTheReviewSendsTheLastLegRound()
+    {
+        var flight = await AskedDesign();
+        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+        (await RunPr(Verbs.FixPr, "controller")).Error.ShouldBeNull();
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
+        Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task WithNoAnswerReviewFixOnAFlightsPrIsRefusedAsOnAnyOther()
+    {
+        var flight = await AskedDesign();
+
+        var refused = await RunPr(Verbs.FixPr, "controller");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("no answer yet");
+        LastLeg(flight.Code).State.ShouldBe(LegState.Done);
+        Fixers.ShouldBeEmpty();
+    }
+}

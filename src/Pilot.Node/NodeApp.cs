@@ -210,6 +210,7 @@ public static class NodeApp
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
+            reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());

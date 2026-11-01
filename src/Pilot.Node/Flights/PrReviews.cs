@@ -31,6 +31,12 @@ public sealed class PrReviews(
     /// </summary>
     public Func<string, string, string, string, CancellationToken, Task<string?>>? TakeFlightVerdict { get; set; }
 
+    /// <summary>
+    /// Sends a flight's last leg round with a design question's answer: code, why (the question and the answer), who asked, the
+    /// person's word if the ask carried one; null when it went round, else why not. Set where the node is built.
+    /// </summary>
+    public Func<string, string, string?, string?, CancellationToken, Task<string?>>? SendFlightRound { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
@@ -1234,9 +1240,12 @@ public sealed class PrReviews(
         repos.Repos().FirstOrDefault(r => string.Equals(r.GitHub, pr.Repo, StringComparison.OrdinalIgnoreCase))?.Path;
 
     /// <summary>Whether a flight's PR is this one: a flight's own review and fix are the flight's.</summary>
-    private bool FlightOwns(PrRef pr) =>
-        state.Flights().Any(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
-            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) || FlightOwner(pr) is not null;
+    private bool FlightOwns(PrRef pr) => FlightOf(pr) is not null;
+
+    /// <summary>The flight whose PR this is, by its recorded PR or the node's ownership rules; null when none.</summary>
+    private FlightRow? FlightOf(PrRef pr) =>
+        state.Flights().FirstOrDefault(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
+            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) ?? FlightOwner(pr);
 
     /// <summary>
     /// A changes verdict on a PR now posted (#290). On the controller's own PR in a repo the node tracks, with no flight owning
@@ -1246,17 +1255,20 @@ public sealed class PrReviews(
     /// </summary>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
-        if (Of(pr) is not { Fixer: null } review || FlightOwns(pr))
+        if (Of(pr) is not { Fixer: null } review)
         {
             return;
         }
+        // A flight's PR has its own legs to make changes, but a question of design is the person's: it rings here, and the answer
+        // sends the flight's last leg round (review fix).
+        var flight = FlightOf(pr);
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
         var asksDesign = review.Findings.Any(IsDesign);
-        if (review.Verdict != "changes" && !asksDesign)
+        if (flight is not null && !asksDesign || review.Verdict != "changes" && !asksDesign)
         {
             return;
         }
-        if (TrackedClone(pr) is null)
+        if (flight is null && TrackedClone(pr) is null)
         {
             // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
             RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
@@ -1265,6 +1277,12 @@ public sealed class PrReviews(
         if (asksDesign)
         {
             var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            if (flight is not null)
+            {
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
+                    $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer.");
+                return;
+            }
             RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
             return;
         }
@@ -1376,6 +1394,26 @@ public sealed class PrReviews(
                 throw new FlightException($"{pr}'s review asks a question of design and it has no answer yet: answer it on the PR, or give the answer with review fix {pr} <answer>");
             }
             review = review with { DesignAnswer = given };
+        }
+        if (asksDesign && FlightOf(pr) is { } flight)
+        {
+            if (SendFlightRound is not { } send)
+            {
+                throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
+            }
+            if (words.Length > 0)
+            {
+                await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+            }
+            var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {command.Who}):\n{given}\nMake the changes the answer calls for.";
+            if (await send(flight.Code, round, command.Who, command.PersonsWord, cancellationToken) is { } refused)
+            {
+                throw new FlightException(refused);
+            }
+            state.PutPrReview(review);
+            state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"{flight.Code}'s last leg went round with the answer", DesignKind);
+            return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
