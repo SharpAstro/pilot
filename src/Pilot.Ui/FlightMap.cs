@@ -30,7 +30,7 @@ internal enum MapHitKind { Plane, Airport, Destination, Gate }
 internal sealed record MapContinent(string Key, string Name, bool Here, bool Unreachable, float X, float Y, float Width, float Height, IReadOnlyList<string> Flights);
 
 /// <summary>A leg as an airport on its flight's route.</summary>
-internal sealed record MapAirport(string Flight, string Leg, int Order, AirportState State, float X, float Y);
+internal sealed record MapAirport(string Flight, string Leg, int Order, AirportState State, float X, float Y, int StepsDone = 0, int StepsTotal = 0);
 
 /// <summary>The PR as the route's last airport.</summary>
 internal sealed record MapDestination(string Flight, int? PullRequest, DestinationStatus Status, float X, float Y);
@@ -275,7 +275,7 @@ internal sealed class FlightMap
         foreach (var leg in line.LegRows.OrderBy(l => l.Order))
         {
             var state = leg.State switch { LegState.Done => AirportState.Done, LegState.Flying => AirportState.Flying, LegState.Failed => AirportState.Failed, _ => AirportState.Planned };
-            airports.Add(new MapAirport(line.Code, leg.Name, leg.Order, state, at, y));
+            airports.Add(new MapAirport(line.Code, leg.Name, leg.Order, state, at, y, leg.Checklist.Count(i => i.Done), leg.Checklist.Length));
             at += Slot;
         }
         var status = StatusOf(line.Row);

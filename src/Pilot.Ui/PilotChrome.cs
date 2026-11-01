@@ -586,6 +586,14 @@ internal sealed class PilotChrome<TSurface>
             Flights.NotePointer(move.X, move.Y);
         }
 
+        // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
+        // which the map has only while it is shown), ahead of the router and of the page chords.
+        if (Page == PilotPage.Flights
+            && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
+        {
+            return true;
+        }
+
         // Back and Forward are DIR.Lib's one rule: Alt+Left/Right, the mouse buttons, and the release a button's press already answered.
         switch (NavigationInput.Classify(evt))
         {

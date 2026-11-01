@@ -8,42 +8,289 @@ namespace Pilot.Ui;
 // them paints land, routes, arcs and the words by hand, scaled as the leaf's rect says, so all of it scrolls together.
 internal sealed partial class FlightsView<TSurface>
 {
-    private const float MinMapScale = 0.5f;
-    // The scrollbar's lane and the page's gutters, taken off the width the map is fitted to.
-    private const float MapSideRoom = 2f * Gutter + 16f;
     private const float LabelSize = 9f;
     // One line of a stop's label band: the second starts where the first ends.
     private const float StopLine = FlightMap.LabelLineTwo - FlightMap.LabelBandTop;
     private const int LabelChars = 10;
 
-    // The window's width in design units as of the last frame, so a map wider than it is drawn smaller, down to half size.
+    /// <summary>How much the map says at a zoom: the flight codes and states only; names cut to the slot; whole names and steps.</summary>
+    internal enum MapDetail { Codes, Cut, Whole }
+
+    /// <summary>Below this scale only codes and states are drawn; from <see cref="WholeScale"/> up, names are whole.</summary>
+    internal const float CodesBelowScale = 0.75f;
+    internal const float WholeScale = 1.5f;
+    private const float MinLabelSize = 6f;
+    // The average advance of a glyph as a fraction of its size, and how much of the slot a word may take.
+    private const float GlyphAdvance = 0.56f;
+    private const float SlotUse = 0.94f;
+
+    internal static MapDetail DetailOf(float scale) => scale < CodesBelowScale ? MapDetail.Codes : scale < WholeScale ? MapDetail.Cut : MapDetail.Whole;
+
+    // A stop's word at a detail level: cut to ten characters, or whole, shrunk to fit the slot down to MinLabelSize and only then cut.
+    // The character budget comes from the slot's width against a glyph's: both scale alike, so it holds at every zoom.
+    private static (string Text, float Size) StopWord(string text, MapDetail detail)
+    {
+        if (detail != MapDetail.Whole)
+        {
+            return (Fit(text, LabelChars), LabelSize);
+        }
+        var size = MathF.Min(LabelSize, FlightMap.Slot * SlotUse / (MathF.Max(1, text.Length) * GlyphAdvance));
+        if (size >= MinLabelSize)
+        {
+            return (text, size);
+        }
+        return (Fit(text, (int)(FlightMap.Slot * SlotUse / (MinLabelSize * GlyphAdvance))), MinLabelSize);
+    }
+
+    // The window's width in design units as of the last frame (the cards' width on the grid).
     private float _viewWidth;
 
-    // Whether the last tree drew the map: the Canvas view, with a map that fits the page at half size.
+    // Whether the last tree drew the map: the Canvas view.
     private bool _mapFits;
 
     // Whether the last render arranged the layer menu, so the pointer is held against where it is.
     private bool _layersOnShow;
 
-    // How much of its design size the map is drawn at.
-    private float MapScale => _viewWidth <= 0f || _map.Width <= 0f ? 1f : Math.Clamp((_viewWidth - MapSideRoom) / _map.Width, MinMapScale, 1f);
+    /// <summary>The map body's rect as the last frame drew it, surface units; for tests to aim a pointer.</summary>
+    internal RectF32? MapBody => _mapBody;
 
-    /// <summary>
-    /// Whether the page shows the map now: the Canvas view, and a map that fits the page at half size. One that does not is shown
-    /// as the grid, as the canvas of cards was: the map scrolls down only, so its far side would be cut off out of reach.
-    /// </summary>
+    // The map's pan and zoom, and the clip that holds the map to its body (a scroll that never scrolls: only its viewport is used).
+    private readonly MapViewport _vp = new();
+    private readonly ListScrollController _mapClip = new() { Mode = ScrollBarMode.None };
+
+    // The map body's rect as the last arrangement drew it, in surface units, and its size in design units; null until it draws.
+    private RectF32? _mapBody;
+    private (float Width, float Height)? _mapBodySeen;
+
+    /// <summary>The map's viewport, for tests to read where it sits and to move it as a person does.</summary>
+    internal MapViewport Viewport => _vp;
+
+    /// <summary>Whether the page shows the map now: the Canvas view. A map wider than the page is panned, never swapped for the grid.</summary>
     public bool MapShown => CanvasShown && _mapFits;
 
-    // Builds the map for the page and says whether it fits at half size.
+    // Builds the map for the page and fits the view to it where what is shown has changed.
     private bool MapFits(FlightsScreen screen)
     {
         MapLayers.Nodes = [.. screen.Lines.GroupBy(l => l.Node?.Key ?? "").OrderByDescending(g => g.First().Node?.Here ?? true).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => (g.Key, g.First().Node?.Name ?? "this node"))];
         // A node picked and not on the page (its feed has not arrived yet, or its flights landed) keeps the choice: the map shows
         // nothing for it until it appears, and only an explicit pick changes it.
         _map = FlightMap.Build(screen.Lines, MapLayers);
-        _mapFits = _viewWidth <= 0f || _map.Width * MinMapScale <= _viewWidth - MapSideRoom;
-        return _mapFits;
+        // What is shown: not the snapshot, so a new leg or a changed state keeps the view the person set.
+        var shown = (Mode, Play?.InPlay, MapLayers.ShowLanded, MapLayers.ShowHeld, MapLayers.ArcsOnly, MapLayers.OnlyNode, MapLayers.ShowPrStates);
+        _vp.Update(_map.Width, _map.Height, shown);
+        return _mapFits = true;
     }
+
+    // Called after a frame's layout: the body's size the map was drawn in. When it is not the one the tree was built for, the view
+    // is told and the page is drawn again, so the targets and the painting both sit by the right fit.
+    private bool NoteMapBody()
+    {
+        if (_mapBodySeen is not { } seen || (MathF.Abs(seen.Width - _vp.ViewWidth) < 0.5f && MathF.Abs(seen.Height - _vp.ViewHeight) < 0.5f))
+        {
+            return false;
+        }
+        _vp.SetView(seen.Width, seen.Height);
+        return true;
+    }
+
+    // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
+    private bool MapLive => MapShown && _mapBodySeen is not null && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
+
+    // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
+    private bool _space;
+
+    // The button that began the drag in flight, so only its release ends it.
+    private MouseButton _panButton;
+
+    // A view unit is a design unit of the map's body; the surface's coordinates are scaled and offset by the body's rect.
+    private (float X, float Y) ToView(RectF32 body, float x, float y) => ((x - body.X) / Scale.X, (y - body.Y) / Scale.Y);
+
+    // One zoom step of the keys and the wheel: the factor PanZoomController steps by.
+    private const float ZoomStepFactor = 1.15f;
+    private const float ArrowStep = 40f;
+    private const float ArrowStepBig = 160f;
+
+    private bool HandleMapScroll(InputEvent.Scroll scroll)
+    {
+        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
+        {
+            return false;
+        }
+        if ((scroll.Modifiers & InputModifier.Ctrl) != 0)
+        {
+            // Ctrl+wheel zooms about the pointer, as Figma does; the pointer's map point stays under it.
+            var (vx, vy) = ToView(body, scroll.X, scroll.Y);
+            if (_vp.ZoomAt(scroll.Delta > 0f ? ZoomStepFactor : 1f / ZoomStepFactor, vx, vy))
+            {
+                Changed?.Invoke();
+            }
+            return true;
+        }
+        _vp.Wheel(scroll.Delta, (scroll.Modifiers & InputModifier.Shift) != 0);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// The map's pointer input, which the window gives the page ahead of the router (a middle press over a target would be its
+    /// click's otherwise): a pinch zooms about its point, a middle-button drag or a left drag with Space held moves the map, and
+    /// Space's release is noted. A plain left press is left alone, so a click still picks what is under it. True for what it took.
+    /// </summary>
+    internal bool HandleMapPointer(InputEvent evt)
+    {
+        switch (evt)
+        {
+            case InputEvent.KeyUp { Key: InputKey.Space }:
+                _space = false;
+                Changed?.Invoke();
+                return false;
+            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y):
+                var (px, py) = ToView(pinchBody, pinch.X, pinch.Y);
+                if (_vp.ZoomAt(pinch.Scale, px, py))
+                {
+                    Changed?.Invoke();
+                }
+                return true;
+            case InputEvent.MouseDown down when MapLive && _mapBody is { } body && body.Contains(down.X, down.Y)
+                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && _space)):
+                _panButton = down.Button;
+                var (vx, vy) = ToView(body, down.X, down.Y);
+                _vp.BeginPan(vx, vy);
+                Changed?.Invoke();
+                return true;
+            case InputEvent.MouseMove move when _vp.IsPanning && _mapBody is { } moving:
+                var (mx, my) = ToView(moving, move.X, move.Y);
+                if (_vp.UpdatePan(mx, my))
+                {
+                    Changed?.Invoke();
+                }
+                return true;
+            case InputEvent.MouseUp up when _vp.IsPanning && up.Button == _panButton:
+                _vp.EndPan();
+                Changed?.Invoke();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // The keys the map takes while it is shown. Ctrl+0 and Ctrl+1 are also the Ideas and Home pages' chords: the chrome offers them
+    // here first (see PilotChrome.HandleInput), and they are the map's only while it is shown. Ctrl+= arrives as Plus (the
+    // layout's Equals key).
+    internal bool HandleMapKey(InputEvent.KeyDown key)
+    {
+        if (!MapLive)
+        {
+            return false;
+        }
+        var ctrl = (key.Modifiers & InputModifier.Ctrl) != 0;
+        if (ctrl && (key.Modifiers & InputModifier.Alt) == 0)
+        {
+            switch (key.Key)
+            {
+                case InputKey.Plus:
+                    _vp.ZoomCentre(ZoomStepFactor);
+                    break;
+                case InputKey.Minus:
+                    _vp.ZoomCentre(1f / ZoomStepFactor);
+                    break;
+                case InputKey.D0:
+                    _vp.Fit();
+                    break;
+                case InputKey.D1:
+                    _vp.SetScale(1f);
+                    break;
+                default:
+                    return false;
+            }
+            Changed?.Invoke();
+            return true;
+        }
+        if (ctrl || (key.Modifiers & InputModifier.Alt) != 0)
+        {
+            return false;
+        }
+        var step = (key.Modifiers & InputModifier.Shift) != 0 ? ArrowStepBig : ArrowStep;
+        switch (key.Key)
+        {
+            // As the wheel: Up shows more of the top, Left more of the left.
+            case InputKey.Up:
+                _vp.PanBy(0f, step);
+                break;
+            case InputKey.Down:
+                _vp.PanBy(0f, -step);
+                break;
+            case InputKey.Left:
+                _vp.PanBy(step, 0f);
+                break;
+            case InputKey.Right:
+                _vp.PanBy(-step, 0f);
+                break;
+            case InputKey.Space:
+                _space = true;
+                break;
+            default:
+                return false;
+        }
+        Changed?.Invoke();
+        return true;
+    }
+
+    private const float PillWidth = 56f;
+    private const float PillHeight = 26f;
+    private const float PillGap = 12f;
+
+    /// <summary>The zoom as the pill shows it: a whole percentage.</summary>
+    internal string ZoomText => $"{(int)MathF.Round(_vp.Scale * 100f)}%";
+
+    // The zoom pill, at the map's bottom-right and over the map: outside its transform, so it neither pans nor scales. A click opens
+    // a small menu (Fit, 50%, 100%, 200%) under it.
+    private Layout.Node ZoomPill()
+    {
+        // The layer menu is docked to the right edge and may run to the foot, so the pill sits beside it, never under it.
+        var x = _vp.ViewWidth - PillWidth - PillGap - (MapLayers.Palette.Side == Layout.DockSide.Right ? FlightMapLayerPalette.PanelWidth + PillGap : 0f);
+        var y = _vp.ViewHeight - PillHeight - PillGap;
+        var pill = Layout.Builder.Text(ZoomText, 12f, Bright, TextAlign.Center)
+            .Pad(0f, 5f)
+            .WFixed(PillWidth)
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .WithTooltip("Zoom: click to fit or set it. Ctrl+wheel zooms, Ctrl+0 fits, Ctrl+1 is 100%")
+            .Follows(new HitResult.ButtonHit("map:zoom"), _ => OpenZoomMenu(x, y));
+        return Layout.Builder.Anchored(pill, null, x, y, 0f, true);
+    }
+
+    private void OpenZoomMenu(float x, float y)
+    {
+        _menu.Items =
+        [
+            new DropdownItem<string>("Fit", "zoom-fit") { OnChoose = () => SetZoom(null) },
+            new DropdownItem<string>("50%", "zoom-50") { OnChoose = () => SetZoom(0.5f) },
+            new DropdownItem<string>("100%", "zoom-100") { OnChoose = () => SetZoom(1f) },
+            new DropdownItem<string>("200%", "zoom-200") { OnChoose = () => SetZoom(2f) },
+        ];
+        var body = _mapBody ?? default;
+        _menuAt = new RectF32(body.X + x * Scale.X, body.Y + y * Scale.Y, PillWidth * Scale.X, PillHeight * Scale.Y);
+        _menu.IsOpen = true;
+        Changed?.Invoke();
+    }
+
+    // A zoom the menu chose: a scale about the view's centre, or null to fit again.
+    private void SetZoom(float? scale)
+    {
+        if (scale is { } s)
+        {
+            _vp.SetScale(s);
+        }
+        else
+        {
+            _vp.Fit();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>The zoom menu's entries, for tests to choose from: the same menu as a row's, opened by the pill.</summary>
+    internal void ChooseZoom(string label) => _menu.Items.First(i => i.Label == label).OnChoose?.Invoke();
 
     private Layout.Node CanvasBody(FlightsScreen screen)
     {
@@ -58,17 +305,13 @@ internal sealed partial class FlightsView<TSurface>
             var note = Layout.Builder.VStack(line).Pad(Gutter, 8f).Stretch();
             return Layout.Builder.Overlay(note, layers).Stretch();
         }
-        var k = MapScale;
-        var width = MathF.Max(1f, _map.Width * k);
-        var height = MathF.Max(1f, _map.Height * k);
-        List<Layout.Node> stack = [Layout.Builder.Fill(key: CanvasKey).WFixed(width).HFixed(height), .. MapTargets(screen, k)];
-        var surface = Stacked(stack, 0, stack.Count).WFixed(width).HFixed(height);
-        var map = Layout.Builder.VStack(surface)
-            .WithScroll(_scroll)
-            .Pad(Gutter, 8f)
-            .Stretch();
-        // The layer menu floats over the map, outside its scroll, as the sky map's does over the sky.
-        return Layout.Builder.Overlay(map, layers).Stretch();
+        // The grab hand under the pointer while Space is held or a drag moves the map (the move cursor: DIR.Lib has no grab one).
+        var canvas = Layout.Builder.Fill(key: CanvasKey).Stretch();
+        List<Layout.Node> stack = [_space || _vp.IsPanning ? canvas.WithCursor(CursorKind.Move) : canvas, .. MapTargets(screen)];
+        // Clipped to the body, the map slides under it by the viewport's one transform, for the painting and the targets alike.
+        var map = Stacked(stack, 0, stack.Count).WithScroll(_mapClip).Stretch();
+        // The layer menu and the zoom pill float over the map, outside its pan, as the sky map's do over the sky.
+        return Layout.Builder.Overlay(Layout.Builder.Overlay(map, layers), ZoomPill()).Stretch();
     }
 
     // The map's leaf and its targets, overlaid in list order, as a tree as deep as the log of their number. An Overlay holds two
@@ -184,11 +427,11 @@ internal sealed partial class FlightsView<TSurface>
     }
 
     // A click target at a map point: a spacer at its own size, floated at its place in the map (scaled by k).
-    private static Layout.Node Target(float cx, float cy, float r, float k, Func<Layout.Node, Layout.Node> make)
+    private Layout.Node Target(float cx, float cy, float r, Func<Layout.Node, Layout.Node> make)
     {
-        var side = 2f * r * k;
+        var side = 2f * r * _vp.Scale;
         var box = make(Layout.Builder.Spacer().WFixed(side).HFixed(side));
-        return Layout.Builder.Anchored(box, null, (cx - r) * k, (cy - r) * k, 0f, false);
+        return Layout.Builder.Anchored(box, null, _vp.ViewX(cx - r), _vp.ViewY(cy - r), 0f, false);
     }
 
     private int IndexOf(FlightsScreen screen, MapRoute route)
@@ -205,7 +448,7 @@ internal sealed partial class FlightsView<TSurface>
 
     // Planes last, so they are over their airport as they are drawn. A plane parked on its destination has no target of its own:
     // the destination's, as wide as the plane's ring, is the one there, so a click on it opens the PR.
-    private IEnumerable<Layout.Node> MapTargets(FlightsScreen screen, float k)
+    private IEnumerable<Layout.Node> MapTargets(FlightsScreen screen)
     {
         foreach (var c in _map.Continents)
         {
@@ -213,13 +456,13 @@ internal sealed partial class FlightsView<TSurface>
             var first = _map.Routes.FirstOrDefault(r => r.Node == c.Key);
             if (first is not null && IndexOf(screen, first) is >= 0 and var at)
             {
-                var landWidth = c.Width * k;
-                var landHeader = FlightMap.Header * k;
+                var landWidth = c.Width * _vp.Scale;
+                var landHeader = FlightMap.Header * _vp.Scale;
                 yield return Layout.Builder.Anchored(
                     Layout.Builder.Spacer().WFixed(landWidth).HFixed(landHeader)
                         .WithTooltip(c.Unreachable ? $"{c.Name} is unreachable" : c.Here ? $"{c.Name}, this node" : c.Name)
                         .Clickable(new HitResult.ButtonHit($"map:{c.Key}"), _ => ListCursor.MoveTo(at)),
-                    null, c.X * k, c.Y * k, 0f, false);
+                    null, _vp.ViewX(c.X), _vp.ViewY(c.Y), 0f, false);
             }
         }
         foreach (var route in _map.Routes)
@@ -241,17 +484,17 @@ internal sealed partial class FlightsView<TSurface>
                 .WithCursor(CursorKind.Pointer);
             if (route.Gate is { } gate)
             {
-                yield return Target(gate.X, gate.Y, FlightMap.AirportRadius, k, n => Common(n.WithTooltip($"{line.Code} is held at its gate: {gate.WaitsFor}"), "gate"));
+                yield return Target(gate.X, gate.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code} is held at its gate: {gate.WaitsFor}"), "gate"));
             }
             foreach (var a in route.Airports)
             {
                 var leg = a.Leg;
-                yield return Target(a.X, a.Y, FlightMap.AirportRadius, k, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
+                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
             }
             var d = route.Destination;
             var url = line.Row.PullRequestUrl;
             var parked = route.PlaneAtDestination;
-            yield return Target(d.X, d.Y, parked ? FlightMap.PlaneRadius : FlightMap.AirportRadius, k, n =>
+            yield return Target(d.X, d.Y, parked ? FlightMap.PlaneRadius : FlightMap.AirportRadius, n =>
             {
                 var tip = DestinationTip(line, d);
                 var node = n.WithTooltip(parked && line.StaleMark is { } stale ? stale + "\n" + tip : tip)
@@ -286,7 +529,7 @@ internal sealed partial class FlightsView<TSurface>
             {
                 var line = screen.Lines[index];
                 var leg = p.Leg;
-                yield return Target(p.X, p.Y, FlightMap.PlaneRadius, k, n => n
+                yield return Target(p.X, p.Y, FlightMap.PlaneRadius, n => n
                     .WithTooltip(line.StaleMark is { } stale ? stale + "\n" + ChipBrief.Text(ChipBrief.Flight(line)) : ChipBrief.Text(ChipBrief.Flight(line)))
                     .Clickable(new HitResult.ButtonHit($"map:{line.Code}:plane"), _ => ListCursor.MoveTo(index))
                     .WithContextMenu(at => OpenMenu(line, index, at))
@@ -325,7 +568,7 @@ internal sealed partial class FlightsView<TSurface>
         DrawText(text, FontPath, x, y, w, h, size * s, color, align, TextAlign.Center);
     }
 
-    // The map, in the leaf's rect: the leaf is as big as the map in design units times the fit, so its rect says the scale.
+    // The map, in the leaf's rect (the body): placed by the viewport.
     private void DrawCanvas(Layout.Content.Fill fill, RectF32 rect)
     {
         if (fill.Key != CanvasKey || _map.Height <= 0f || _map.Width <= 0f)
@@ -333,9 +576,12 @@ internal sealed partial class FlightsView<TSurface>
             return;
         }
         _words.Clear();
-        var s = rect.Width / _map.Width;
-        float X(float v) => rect.X + v * s;
-        float Y(float v) => rect.Y + v * s;
+        _mapBody = rect;
+        _mapBodySeen = (Scale.ToDesignX(rect.Width), Scale.ToDesignY(rect.Height));
+        // One scale and one offset, the targets' own: a target stays over what is painted under it.
+        var s = _vp.Scale * Scale.X;
+        float X(float v) => rect.X + _vp.ViewX(v) * Scale.X;
+        float Y(float v) => rect.Y + _vp.ViewY(v) * Scale.Y;
         var thin = Math.Max(1, (int)MathF.Round(2f * s));
 
         foreach (var c in _map.Continents)
@@ -371,6 +617,7 @@ internal sealed partial class FlightsView<TSurface>
     {
         var line = _lineOf(route);
         var picked = line is not null && Selected >= 0 && Selected < _screen.Lines.Count && _screen.Lines[Selected].Code == route.Flight && (_screen.Lines[Selected].Node?.Key ?? "") == route.Node;
+        var detail = DetailOf(_vp.Scale);
         var d = route.Destination;
         var c = _map.Continents.First(c => c.Key == route.Node);
         var rowTop = d.Y - FlightMap.RowHeight / 2f + 8f;
@@ -409,7 +656,11 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(g.X) - r, Y(g.Y) - r, 2f * r, 2f * r, Held, 3f * s);
             Label("gate", X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Held, line: StopLine);
-            Label(Fit(g.WaitsFor, LabelChars), X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, Dim, line: StopLine);
+            if (detail != MapDetail.Codes)
+            {
+                var (wait, waitSize) = StopWord(g.WaitsFor, detail);
+                Label(wait, X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, waitSize, Dim, line: StopLine);
+            }
         }
         foreach (var a in route.Airports)
         {
@@ -433,8 +684,13 @@ internal sealed partial class FlightsView<TSurface>
                     Renderer.FillEllipse(new RectInt(new PointInt((int)(cx + inner), (int)(cy + inner)), new PointInt((int)(cx - inner), (int)(cy - inner))), Ground);
                     break;
             }
-            Label(Fit(a.Leg, LabelChars), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
-            Label(StateWord(a.State), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
+            if (detail != MapDetail.Codes)
+            {
+                var (leg, legSize) = StopWord(a.Leg, detail);
+                Label(leg, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, legSize, Body, line: StopLine);
+            }
+            var state = detail == MapDetail.Whole && a.StepsTotal > 0 ? $"{StateWord(a.State)} {a.StepsDone}/{a.StepsTotal}" : StateWord(a.State);
+            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.
@@ -452,7 +708,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(d.X) - r + 2f * s, Y(d.Y) - r + 2f * s, 2f * r - 4f * s, 2f * r - 4f * s, Ground, 1f * s);
         }
-        Label(SignOf(line?.Row.Repo ?? "", d.PullRequest), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+        if (detail != MapDetail.Codes)
+        {
+            Label(SignOf(line?.Row.Repo ?? "", d.PullRequest), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+        }
         if (MapLayers.ShowPrStates)
         {
             Label(StatusWord(d.Status), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, color, line: StopLine);
