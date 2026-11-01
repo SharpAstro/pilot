@@ -1,3 +1,4 @@
+using Pilot.Node.Sessions;
 using Pilot.Node.Flights;
 using Shouldly;
 using System.Text.Json.Nodes;
