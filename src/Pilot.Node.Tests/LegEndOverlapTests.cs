@@ -216,4 +216,76 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
         _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
     }
+
+    [Fact]
+    public async Task ALegCheckThatOutlastsTheMarkLifeStillHoldsTheSweepOffWhileTheRingIsParked()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        // The leg's own check is parked, and the node's time runs past the mark's life while it runs.
+        var checking = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var checkDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _checks.OnRun = async () =>
+        {
+            checking.TrySetResult();
+            await checkDone.Task;
+        };
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.OnOpenPrs = async () =>
+        {
+            reached.TrySetResult();
+            await release.Task;
+        };
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
+        await checking.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        _clock.Advance(LegCommander.LegEndMarkLife + TimeSpan.FromMinutes(1));
+        checkDone.SetResult();
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+
+        // Recorded done after the mark's life had passed since the finish began: the sweep still starts nothing.
+        L("parser").State.ShouldBe(LegState.Done);
+        await _legs.AdvanceFlightAsync("TIA1", Ct);
+        L("render").State.ShouldBe(LegState.Planned);
+        _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
+
+        release.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+        _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
+    }
+
+    [Fact]
+    public async Task ARefusedFinishDoesNotClearTheMarkOfTheFinishWhoseRingIsParked()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.OnOpenPrs = async () =>
+        {
+            reached.TrySetResult();
+            await release.Task;
+        };
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+
+        // A second finish of the done leg is refused; it must not take away the first one's hold.
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "again")).Ok.ShouldBeFalse();
+        await _legs.AdvanceFlightAsync("TIA1", Ct);
+        L("render").State.ShouldBe(LegState.Planned);
+        _workers.Started.Select(w => w.Name).ShouldNotContain(n => n.Contains("render"));
+
+        release.SetResult();
+        (await finishing).Ok.ShouldBeTrue();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+    }
 }

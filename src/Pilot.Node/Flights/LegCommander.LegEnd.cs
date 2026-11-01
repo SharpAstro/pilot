@@ -10,21 +10,65 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
+    // Flights whose leg-end overlap check is still to run or in progress, by code: how many holders (a finish command, an answer's re-check)
+    // and when the mark was last set or refreshed. A holder clears only its own count, so a refused or repeated finish never opens the gap
+    // for another. The time limit is only the leak guard, measured from the last refresh, which RecordDoneAsync gives when it puts the leg
+    // done, so a leg's own long check before that never uses it up.
+    private readonly Dictionary<string, (int Holders, DateTimeOffset At)> _legEndChecking = new(StringComparer.Ordinal);
+    internal static readonly TimeSpan LegEndMarkLife = TimeSpan.FromMinutes(10);
+
+    private void MarkLegEndChecking(string code)
+    {
+        lock (_legEndChecking)
+        {
+            _legEndChecking[code] = (_legEndChecking.TryGetValue(code, out var m) ? m.Holders + 1 : 1, time.GetUtcNow());
+        }
+    }
+
+    /// <summary>Restarts the leak guard's clock of a held mark, leaving its holders as they are; with no mark there is nothing to refresh.</summary>
+    private void RefreshLegEndChecking(string code)
+    {
+        lock (_legEndChecking)
+        {
+            if (_legEndChecking.TryGetValue(code, out var m))
+            {
+                _legEndChecking[code] = (m.Holders, time.GetUtcNow());
+            }
+        }
+    }
+
+    private void ClearLegEndChecking(string code)
+    {
+        lock (_legEndChecking)
+        {
+            if (!_legEndChecking.TryGetValue(code, out var m))
+            {
+                return;
+            }
+            if (m.Holders <= 1)
+            {
+                _legEndChecking.Remove(code);
+            }
+            else
+            {
+                _legEndChecking[code] = (m.Holders - 1, m.At);
+            }
+        }
+    }
+
+    private bool LegEndChecking(string code)
+    {
+        lock (_legEndChecking)
+        {
+            return _legEndChecking.TryGetValue(code, out var m) && time.GetUtcNow() - m.At < LegEndMarkLife;
+        }
+    }
+
     /// <summary>
     /// Compares what the flight has changed so far with the others and rings one overlap card for the other it shares the most unforeseen
     /// files with, recording a pending <see cref="OverlapRow"/> marked with the leg, so <see cref="Due"/> holds the next leg until it is answered.
     /// Run off the lock, before the flight goes on. A fetch or a diff that fails is logged and rings nothing; it never fails the finish.
     /// </summary>
-    // Flights whose last finished leg has its overlap check still to run or in progress, by code, with when it was marked (a mark never outlives LegEndMarkLife).
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _legEndChecking = new(StringComparer.Ordinal);
-    private static readonly TimeSpan LegEndMarkLife = TimeSpan.FromMinutes(10);
-
-    private void MarkLegEndChecking(string code) => _legEndChecking[code] = time.GetUtcNow();
-
-    private void ClearLegEndChecking(string code) => _legEndChecking.TryRemove(code, out _);
-
-    private bool LegEndChecking(string code) => _legEndChecking.TryGetValue(code, out var at) && time.GetUtcNow() - at < LegEndMarkLife;
-
     private async Task CheckLegEndOverlapAsync(string legTarget, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(legTarget);

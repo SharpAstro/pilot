@@ -135,6 +135,8 @@ public sealed partial class LegCommander(
         var merged = false;
         FlightRow? moving = null;
         SubTask? removedSubTask = null;
+        // Set when this command marked its flight's leg-end check, so it clears only its own mark (a refused finish set none).
+        var markedLegEnd = false;
         try
         {
             if (peerRefusal is not null)
@@ -176,6 +178,7 @@ public sealed partial class LegCommander(
                 case Verbs.FinishLeg:
                     // From before the leg is recorded done until its overlap check has rung or decided not to, the sweep starts nothing of this flight.
                     MarkLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = true;
                     await FinishAsync(command, cancellationToken);
                     break;
                 case Verbs.WaitLeg:
@@ -285,11 +288,15 @@ public sealed partial class LegCommander(
             }
             finally
             {
-                ClearLegEndChecking(CodeOf(command.Target));
+                if (markedLegEnd)
+                {
+                    ClearLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = false;
+                }
             }
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
         }
-        else if (command.Verb == Verbs.FinishLeg)
+        else if (markedLegEnd)
         {
             ClearLegEndChecking(CodeOf(command.Target));
         }
@@ -1740,6 +1747,8 @@ public sealed partial class LegCommander(
     private async Task RecordDoneAsync(FlightRow flight, LegRow leg, string? report, bool push, CancellationToken cancellationToken)
     {
         state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report, Wait = null });
+        // The leg-end mark's leak guard counts from here, not from when the finish began: the leg's own check can outlast it (#564).
+        RefreshLegEndChecking(flight.Code);
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
         if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
         {
