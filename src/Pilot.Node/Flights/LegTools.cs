@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
 public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
-    string? Reason = null, int? Pr = null);
+    string? Reason = null, int? Pr = null, string? McpConfig = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
@@ -40,8 +40,18 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, string? briefFolder = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(
+    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null) : IWorkerLauncher
 {
+    /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
+    public WorkerStart WithMcp(WorkerStart start) =>
+        options is null
+            ? start
+            : start with
+            {
+                McpConfig = SessionMcpConfig.Ensure(options.DataFolder, Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"), options.SocketPath, start.RepoPath),
+            };
+
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     [GeneratedRegex(@"(?:backgrounded\s*\S\s*|claude stop\s+)([0-9a-f]{8})", RegexOptions.CultureInvariant)]
@@ -74,7 +84,14 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         }
         // --strict-mcp-config: a repo's own .mcp.json (tianwen's debug inspectors) needs its servers approved, which a
         // background session has no one to ask, so it sat "blocked" before its first turn. Workers need none of them.
+        // (Finding, see SessionMcpConfig: --strict-mcp-config loads only --mcp-config's servers, so the file names pilot's own
+        // and the repo's declared extras. --autocompact auto pins the auto-compact window to Claude Code's default, as a kept start option.)
         args.AddRange(["-n", start.Name, "--permission-mode", "auto", "--strict-mcp-config"]);
+        if (start.McpConfig is { Length: > 0 } mcp)
+        {
+            args.AddRange(["--mcp-config", mcp]);
+        }
+        args.AddRange(["--autocompact", "auto"]);
         if (start.Model is { Length: > 0 } model)
         {
             args.AddRange(["--model", model]);
@@ -95,6 +112,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         // A background session has no one to accept Claude Code's trust prompt: the folder it starts from (the repo's main
         // checkout, or the watchtower's) is trusted first. A trust that cannot be recorded is left for claude to refuse.
         trust.Ensure(start.RepoPath);
+        start = WithMcp(start);
         string prompt;
         try
         {
@@ -105,6 +123,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
             throw new FlightException($"the brief of {start.Name} is {start.Brief.Length:N0} characters, too long to pass on a command line, and its file could not be written: {ex.Message}");
         }
         ClaudeRun run;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             run = await ClaudeCli.RunAsync(Arguments(start), prompt, start.RepoPath, Timeout, cancellationToken);
@@ -119,6 +138,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        timings?.Record(SendTimings.Start, clock.Elapsed, $"name={start.Name} job={job.Groups[1].Value}");
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;

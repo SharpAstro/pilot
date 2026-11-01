@@ -158,6 +158,36 @@ public sealed class SayTests : IDisposable
     }
 
     [Fact]
+    public async Task AnIdleWatchtowerWithALiveProcessIsRelayedToWithNoStopAndNoResume()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", pid: 4343, status: "idle", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+        _state.Sessions().Single().Role.ShouldBe(SessionRole.Watchtower);
+
+        var result = await _messenger.SayAsync(Say("b2c3d4e5", "a chat message"), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Relayed);
+        _delivery.Calls.ShouldBe(["relay de1-watchtower"]);
+        _delivery.Relays.Single().DirectOnly.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AnIdleWatchtowerWithNoLiveEndpointIsResumedWhenTheDirectRelayFails()
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", pid: 4343, status: "idle", cwd: Cwd));
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", cwd: Cwd, startedAt: Recent));
+        _delivery.RelayFailure = new SessionDeliveryException("no live process has its session record");
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.SayAsync(Say("b2c3d4e5", "a chat message"), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Resumed);
+        _delivery.Calls.ShouldBe(["relay de1-watchtower", $"stop {AgentRows.SessionB}", $"resume {AgentRows.SessionB}"]);
+    }
+
+    [Fact]
     public async Task TheNodesOwnSayIsMarkedAsTheNodesWhereAPersonsIsSentAsItIs()
     {
         _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "pil5-say-bg", "done", pid: 4343, status: "idle", cwd: Cwd));

@@ -93,6 +93,10 @@ internal static class ChipBrief
         {
             lines.Add("waiting on you");
         }
+        if (line.Compacted is { } compacted)
+        {
+            lines.Add(line.CompactedBecause is { Length: > 0 } because ? $"{compacted}: {because}" : compacted);
+        }
         if (line.Gone)
         {
             lines.Add("its process is gone: nothing can answer it");

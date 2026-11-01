@@ -206,6 +206,23 @@ public sealed class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public async Task ASayRelayedToALiveWatchtowerIsStampedOnceBetweenTurnsAndMidTurn()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        sends.Record("s1", "is it done?", Start);
+        sends.Record("s2", "and the docs?", Start);
+        _profile.Append(_profile.TranscriptPath(First),
+            TranscriptBookTests.RelayedBetweenTurns(ClaudeCliDelivery.ControllerName, "is it done?"),
+            TranscriptBookTests.RelayedMidTurn("node", NodeVoice.Prefix + " A card opened"),
+            TranscriptBookTests.RelayedMidTurn(ClaudeCliDelivery.ControllerName, "and the docs?"));
+
+        var page = new WatchtowerChat(_tower, _book, sends).Page(-1);
+
+        page.Entries.Select(e => (e.Text, e.SendId)).ShouldBe([("is it done?", "s1"), ("A card opened", (string?)null), ("and the docs?", "s2")]);
+    }
+
+    [Fact]
     public async Task AQueuedLineTakesTheSendNoEntryTookAndAStaleOneSharesItsEntrysId()
     {
         await OneWatchtowerAsync();

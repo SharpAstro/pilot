@@ -174,6 +174,14 @@ public sealed record SessionRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? WallSeconds { get; init; }
 
+    /// <summary>When the node last compacted it (<c>/compact</c> by the Compactor), from the node's ledger; null when it never has, and for a session the node did not launch.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastCompactedAt { get; init; }
+
+    /// <summary>Why it was last compacted, in a line (<c>its context reached 70% of its window</c>), beside <see cref="LastCompactedAt"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CompactedBecause { get; init; }
+
     /// <summary>When it started: the agents row's <c>startedAt</c> (epoch milliseconds there).</summary>
     public required DateTimeOffset StartedAt { get; init; }
 }

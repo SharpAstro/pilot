@@ -215,7 +215,7 @@ public sealed class WatchtowerTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(2));
         await _tower.LookAsync(Ct);
         Ended().ShouldBe(["job00007"]);
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: nothing to watch");
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air and no UI connected");
         _said.ShouldBeEmpty();
 
         // The next thing to watch starts a fresh one, and says why.
@@ -262,20 +262,17 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task OneThatEndedWithNothingToSayIsLeftNotReplacedEveryTurn()
+    public async Task OneThatEndedWithNothingToSayIsStartedAgainWhileAFlightIsInTheAir()
     {
-        await _tower.LookAsync(Ct);
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
 
-        // Its turn over, the session ended (as SE1's did after every turn): a flight in the air alone wakes nothing.
+        // Its turn over, the session ended: something keeps it (a flight in the air), so a fresh one starts with no card to wait for (PIL584).
         _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Ended);
         await _tower.LookAsync(Ct);
-        _time.Advance(TimeSpan.FromHours(2));
-        await _tower.LookAsync(Ct);
 
-        _workers.Started.Count.ShouldBe(1);
+        _workers.Started.Count.ShouldBe(2);
         _said.ShouldBeEmpty();
     }
 
