@@ -1405,10 +1405,6 @@ public sealed class PrReviews(
             {
                 throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
             }
-            if (words.Length > 0)
-            {
-                await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
-            }
             var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
             var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {command.Who}):\n{given}\nMake the changes the answer calls for.";
             if (await send(flight.Code, round, command.Who, command.PersonsWord, cancellationToken) is { } refused)
@@ -1416,7 +1412,7 @@ public sealed class PrReviews(
                 throw new FlightException(refused);
             }
             state.PutPrReview(review);
-            RecordDesign(pr, flight, review, command, given, words);
+            await RecordDesignAsync(pr, flight, review, command, given, words, cancellationToken);
             state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"{flight.Code}'s last leg went round with the answer", DesignKind);
             return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
@@ -1429,19 +1425,15 @@ public sealed class PrReviews(
         var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
         if (asksDesign)
         {
-            RecordDesign(pr, null, review, command, given, words);
-        }
-        if (asksDesign && words.Length > 0)
-        {
-            // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
-            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+            // Recorded and posted once the start was not refused, so a retry does not post the answer twice.
+            await RecordDesignAsync(pr, null, review, command, given, words, cancellationToken);
         }
         return fixerStart;
     }
 
     // A question of design answered, once: the findings asked, the options the design card offered (its choices that are not the free
     // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject.
-    private void RecordDesign(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words)
+    private async Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
         var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
@@ -1450,9 +1442,11 @@ public sealed class PrReviews(
         var byKind = command.Autopilot ? DecisionByKinds.Autopilot
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
             : DecisionByKinds.Node;
-        state.RecordDecision(flight is null ? target : Verbs.FlightTarget(flight.Code), DecisionKinds.Design,
+        var decision = state.RecordDecision(flight is null ? target : Verbs.FlightTarget(flight.Code), DecisionKinds.Design,
             string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString())), options, answer.Length > 0 ? answer : "answered",
             command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR");
+        // Off the state lock; a comment that cannot be posted is a card, never a failed answer.
+        await new DesignDecisionMirror(state, github).PostAsync(decision, pr, flight, TrackedClone(pr) ?? review.ClonePath, cancellationToken);
     }
 
     /// <summary>
