@@ -1191,7 +1191,9 @@ public sealed class PrReviews(
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
-            if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) && review.FixWorktree is not null)
+            // Once per fixer and worktree: a worktree that cannot be removed is tried again, the follow-up is not.
+            if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) && review.FixWorktree is not null
+                && _followedUp.TryAdd($"{review.Repo}#{review.Number}:{review.FixWorktree}", 0))
             {
                 await FollowUpAsync(pr, review, read, cancellationToken);
             }
@@ -1244,12 +1246,25 @@ public sealed class PrReviews(
             await StopQuietly(job, cancellationToken);
         }
         var merged = read.Head.Length > 0 ? read.Head : review.Head;
-        string tip;
-        string localBranch;
+        var baseBranch = read.Base.Length > 0 ? read.Base : "main";
+        // A worktree folder gone (or half removed, with no .git of its own, where git would resolve to the clone around it) holds nothing to follow up.
+        if (!Directory.Exists(worktree) || !(File.Exists(Path.Combine(worktree, ".git")) || Directory.Exists(Path.Combine(worktree, ".git"))))
+        {
+            return;
+        }
+        string tip = "HEAD";
+        string localBranch = read.HeadRef;
         try
         {
             var count = await git.RunAsync(["rev-list", "--count", $"{merged}..HEAD"], worktree, cancellationToken);
-            if (!count.Ok || !int.TryParse(count.Output.Trim(), out var ahead) || ahead == 0)
+            if (!count.Ok)
+            {
+                state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
+                    $"{pr} merged while its fixer worked: its commits could not be counted ({LegCommander.OneLine(count.Why)})",
+                    $"{count.Why}\nThe fixer's worktree {worktree} is removed; anything it committed stays on its local branch in {review.ClonePath}.", link: review.Url);
+                return;
+            }
+            if (!int.TryParse(count.Output.Trim(), out var ahead) || ahead == 0)
             {
                 return;
             }
@@ -1258,15 +1273,17 @@ public sealed class PrReviews(
             var name = await git.RunAsync(["symbolic-ref", "--short", "HEAD"], worktree, cancellationToken);
             localBranch = name.Ok ? name.Output.Trim() : read.HeadRef;
         }
-        catch (FlightException)
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         {
+            state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
+                $"{pr} merged while its fixer worked: its commits could not be looked at ({LegCommander.OneLine(ex.Message)})",
+                $"{ex.Message}\nAnything the fixer committed stays on its local branch in {review.ClonePath}.", link: review.Url);
             return;
         }
-        var baseBranch = read.Base.Length > 0 ? read.Base : "main";
         var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
         void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
-            $"{pr} merged while its fixer worked: commit {Short(tip)} is not pushed ({LegCommander.OneLine(why)})",
-            $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it and open a PR against {baseBranch} by hand.", link: review.Url);
+            $"{pr} merged while its fixer worked: commit {Short(tip)} has no follow-up PR ({LegCommander.OneLine(why)})",
+            $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it if {branch} is not on origin, and open a PR against {baseBranch} by hand.", link: review.Url);
         try
         {
             var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
@@ -1291,11 +1308,14 @@ public sealed class PrReviews(
                     [new CardChoice { Label = $"Start the review of {follow}", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(follow.Repo, follow.Number) }], link: created.Url);
             }
         }
-        catch (FlightException ex)
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         {
             Failed(ex.Message);
         }
     }
+
+    // Fixers whose merged PR was already followed up (or failed to be), keyed by PR and worktree, so a worktree that will not go is retried alone.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _followedUp = new(StringComparer.Ordinal);
 
     /// <summary>Stops a PR's fixer and removes its worktree, then clears the fix fields; false when the worktree is held, said on a card and tried again.</summary>
     private async Task<bool> EndFixerAsync(PrReviewRow review, CancellationToken cancellationToken)

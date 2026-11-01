@@ -152,4 +152,48 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         PrOrigins.Git(WidgetClone, "rev-parse", "refs/heads/feature/seven").ShouldBe(tip);
         Directory.Exists(FixWorktree).ShouldBeFalse();
     }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergedPrWhoseFixerWorktreeFolderIsGoneEndsTheFixerWithoutThrowing()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerCommits();
+        Directory.Delete(FixWorktree, recursive: true);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    /// <summary>git on Windows with a process in the worktree: the remove is refused.</summary>
+    private sealed class RemoveRefusingGit(IGit inner) : IGit
+    {
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+            args is ["worktree", "remove", ..] ? Task.FromResult(new GitRun(1, "", "Permission denied")) : inner.RunAsync(args, cwd, cancellationToken);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorktreeThatWillNotGoIsRetriedAloneAndTheFollowUpIsOpenedOnce()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        CreatingMakesPr71(tip);
+        Merge();
+        var git = new RemoveRefusingGit(new GitCli());
+        var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
+
+        await reviews.SweepAsync(Ct);
+        await reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldHaveSingleItem();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpFailedKind);
+        _state.Cards().Count(c => c.Kind == PrReviews.FixFollowUpKind).ShouldBe(1);
+    }
 }
