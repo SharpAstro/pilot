@@ -359,13 +359,27 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             };
             if (taken is { Length: > 0 })
             {
-                // Compared on the first of the queued text: a long message can come back with more round it.
-                var i = Queued.FindIndex(q => taken.Contains(q[..Math.Min(200, q.Length)], StringComparison.Ordinal));
+                // Compared on the first of the queued words: a long message can come back with more round it, a resume delivers
+                // the words without the relay's footer, and line endings and runs of spaces are not words.
+                var words = Same(taken);
+                var i = Queued.FindIndex(q => words.Contains(Same(q)[..Math.Min(200, Same(q).Length)], StringComparison.Ordinal));
                 if (i >= 0)
                 {
                     Queued.RemoveAt(i);
                 }
             }
+        }
+
+        // A message as it is compared: without the relay's footer or the node's prefix, with its line endings and runs of
+        // whitespace as single spaces.
+        internal static string Same(string text)
+        {
+            text = Unrelayed(text);
+            if (text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+            {
+                text = text[NodeVoice.Prefix.Length..];
+            }
+            return WhiteSpace().Replace(text, " ").Trim();
         }
 
         private static string Clip(string text) => text.Length > TranscriptPage.TextLimit ? text[..TranscriptPage.TextLimit] + "…" : text;
@@ -739,6 +753,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
     // A reply as a person reads it: its ask block is the question, and the choices are the buttons under it.
     private static string Plain(string text) => AskBlock().Replace(text, m => Asked(m.Value) is { } ask ? ask.Question : "");
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhiteSpace();
 
     [GeneratedRegex(@"<ask>(?<body>.*?)</ask>", RegexOptions.Singleline)]
     private static partial Regex AskBlock();
