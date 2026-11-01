@@ -504,6 +504,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was brought up to date and is reviewed afresh", result.Made);
                     continue;
                 }
+                else if (result.Ok && result.Way == MergeWays.InProgress)
+                {
+                    // Another merge of this flight is already running: not merged yet, so the flight stays armed and the
+                    // running merge reports its own result.
+                    continue;
+                }
                 else if (result.Ok)
                 {
                     // Joined the merge queue instead: the flight keeps flying, and its card says so (LegCommander.RunAsync).
@@ -801,7 +807,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
         if (result.Ok && result.Way == MergeWays.InProgress)
         {
-            // Another merge of this flight is running: the card stays, and a later look finds where it ended.
+            // Another merge of this flight is running: the card stays open, and that first merge's own result updates it. This
+            // head is already in _autoMerged, so the autopilot does not ask again for it.
             return;
         }
         if (result.Ok)

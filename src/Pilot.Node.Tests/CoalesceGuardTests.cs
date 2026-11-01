@@ -72,6 +72,27 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task TheAutopilotLookingWhileTheFlightsMergeRunsNeitherClosesTheCardNorSaysMergedNorRings()
+    {
+        var (flight, _) = await Passed("1");
+        _github.Checks = ChoiceStatus.Passing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        var ready = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PrReady);
+        var (open, reached) = HoldGitHub(nameof(IGitHub.MergeAsync));
+        var merge = Ask(_legs, Verbs.Merge, flight.Code, _github.Pr!.Head);
+        await Reaches(reached);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == ready.Id);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan && c.Title.Contains("on autopilot"));
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        open.SetResult();
+        (await merge).Ok.ShouldBeTrue();
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task AMergeThatHasNotMovedForTheStuckLimitIsRefusedAsBefore()
     {
         var (flight, _) = await Passed("1");
