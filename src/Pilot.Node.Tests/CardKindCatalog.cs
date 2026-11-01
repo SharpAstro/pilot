@@ -59,7 +59,7 @@ internal static class CardKindCatalog
         new("sibling-pulled", "Handled", [Leg], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
         new("planner-started", "Handled", [Leg], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
         new("planned", "ForYou", [Leg], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
-        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal"),
+        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal"),
         new("flown-elsewhere", "Ring", [Leg], "OneNodePerFlightTests.APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer"),
         new("pilot-md-too-long", "Ring", [Leg], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount"),
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough"),

@@ -135,6 +135,18 @@ public sealed partial class LegCommander(
         var merged = false;
         FlightRow? moving = null;
         SubTask? removedSubTask = null;
+        // Set when this command marked its flight's leg-end check, so it clears only its own mark (a refused finish set none).
+        var markedLegEnd = false;
+        // Any other exception leaves the command with its mark held: the filter drops it and never catches.
+        bool DropLegEndMarkOnThrow()
+        {
+            if (markedLegEnd)
+            {
+                ClearLegEndChecking(CodeOf(command.Target));
+                markedLegEnd = false;
+            }
+            return false;
+        }
         try
         {
             if (peerRefusal is not null)
@@ -174,7 +186,12 @@ public sealed partial class LegCommander(
                     Tick(command);
                     break;
                 case Verbs.FinishLeg:
+                    // From before the leg is recorded done until its overlap check has rung or decided not to, the sweep starts nothing of this flight.
+                    MarkLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = true;
                     await FinishAsync(command, cancellationToken);
+                    // Whichever way the finish recorded the leg done (a push-blocked one puts it directly), the mark's life counts from now.
+                    RefreshLegEndChecking(CodeOf(command.Target));
                     break;
                 case Verbs.WaitLeg:
                     made = Wait(command);
@@ -237,6 +254,10 @@ public sealed partial class LegCommander(
         {
             error = ex.Message;
         }
+        catch (Exception) when (DropLegEndMarkOnThrow())
+        {
+            throw;
+        }
         finally
         {
             _one.Release();
@@ -276,7 +297,24 @@ public sealed partial class LegCommander(
             && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
+            // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().
+            try
+            {
+                await CheckLegEndOverlapAsync(command.Target, cancellationToken);
+            }
+            finally
+            {
+                if (markedLegEnd)
+                {
+                    ClearLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = false;
+                }
+            }
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
+        }
+        else if (markedLegEnd)
+        {
+            ClearLegEndChecking(CodeOf(command.Target));
         }
 
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
@@ -479,10 +517,13 @@ public sealed partial class LegCommander(
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
                 }
+                // The merged base's push went up: what it brought may share a file with another flight (rings, never fails the update). Last, as it lets the lock go.
+                await CheckAfterPushAsync(flight, cancellationToken);
                 return (null, kept);
             }
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
+            await CheckAfterPushAsync(flight, cancellationToken);
             return (null, null);
         }
         catch (FlightException ex)
@@ -665,6 +706,11 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // The overlap check of a leg just finished has not rung or decided yet: nothing starts until it has, so a card cannot arrive after the next leg flies.
+        if (LegEndChecking(current.Code))
+        {
+            return null;
+        }
         // A session of it is being started: its next step waits for it to be up, as a step asked now would be refused.
         if (Starting(current.Code))
         {
@@ -772,6 +818,11 @@ public sealed partial class LegCommander(
             }
         }
         await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
+        if (needsPush)
+        {
+            // What the push added may share a file with another flight; last, as it lets the lock go and the review is already started.
+            await CheckAfterPushAsync(flight, cancellationToken);
+        }
     }
 
     private async Task PlanAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -1714,6 +1765,8 @@ public sealed partial class LegCommander(
     private async Task RecordDoneAsync(FlightRow flight, LegRow leg, string? report, bool push, CancellationToken cancellationToken)
     {
         state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report, Wait = null });
+        // The leg-end mark's leak guard counts from here, not from when the finish began: the leg's own check can outlast it (#564).
+        RefreshLegEndChecking(flight.Code);
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
         if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
         {

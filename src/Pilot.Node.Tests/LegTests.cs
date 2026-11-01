@@ -63,6 +63,16 @@ internal sealed class FakeWorkers : IWorkerLauncher
     };
 }
 
+/// <summary>The system clock moved on by <see cref="Advance"/>; its timers are the system's.</summary>
+internal sealed class ShiftedClock : TimeProvider
+{
+    private long _shiftTicks;
+
+    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + TimeSpan.FromTicks(Interlocked.Read(ref _shiftTicks));
+
+    public void Advance(TimeSpan span) => Interlocked.Add(ref _shiftTicks, span.Ticks);
+}
+
 internal sealed class FakeChecks : ICheckRunner
 {
     public CheckRun Next { get; set; } = new(0, "all green");
@@ -113,12 +123,19 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many PR listings were asked for.</summary>
     public int OpenPrCalls;
 
-    public Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
+    /// <summary>Awaited by each PR listing as it begins: a gh that takes as long as the test says. Null answers at once.</summary>
+    public Func<Task>? OnOpenPrs { get; set; }
+
+    public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref OpenPrCalls);
+        if (OnOpenPrs is { } gate)
+        {
+            await gate();
+        }
         return OpenPrsFail.Contains(repoPath)
-            ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
+            ? throw new FlightException("gh could not list the PRs: offline")
+            : OpenPrs.TryGetValue(repoPath, out var prs) ? prs : [];
     }
 
     /// <summary>The files each open PR changes, by number; a PR with none listed changes none.</summary>
@@ -910,6 +927,8 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeChecks _checks = new();
     private protected readonly FakeGitHub _github = new();
+    /// <summary>The commander's clock: the system's, moved on by what a test advances it (#564's sweep guard outliving a long check).</summary>
+    private protected readonly ShiftedClock _clock = new();
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
@@ -925,7 +944,7 @@ public abstract class LegCommanderTestsBase : IDisposable
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _clock);
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
