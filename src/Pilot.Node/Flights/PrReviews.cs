@@ -1322,8 +1322,12 @@ public sealed class PrReviews(
     {
         var own = FlightOf(pr);
         var named = new System.Text.RegularExpressions.Regex($@"#{pr.Number}\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        // Only a flight that landed after the review was posted can have followed it up; one that landed before answered nothing.
+        var asked = Of(pr) is { } review ? review.PostingAt ?? review.FinishedAt ?? review.StartedAt : (DateTimeOffset?)null;
         return state.Flights().FirstOrDefault(f => f.State == FlightState.Landed && f.Code != own?.Code
-            && f.Repo.EndsWith(pr.Name, StringComparison.OrdinalIgnoreCase) && named.IsMatch(f.Title ?? ""));
+            && f.LandedAt is { } landedAt && (asked is null || landedAt > asked)
+            && (string.Equals(f.Repo, pr.Name, StringComparison.OrdinalIgnoreCase) || string.Equals(f.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase))
+            && named.IsMatch(f.Title ?? ""));
     }
 
     /// <summary>The prefix that marks a finding as a question of design, not a defect to fix.</summary>
@@ -1374,7 +1378,7 @@ public sealed class PrReviews(
         {
             var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
             var design = DesignDetail(questions);
-            var asked = questions.Count == 1 ? $": {Cut(questions[0].Question, 80)}" : "";
+            var asked = questions.Count == 1 ? $": {Clean(questions[0].Question, 80)}" : "";
             var choices = DesignChoices(subject, questions);
             if (flight is not null)
             {
@@ -1710,7 +1714,7 @@ public sealed class PrReviews(
     /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.Options.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
 
     /// <summary>
     /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
@@ -1722,13 +1726,20 @@ public sealed class PrReviews(
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = o.Text, Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, 60), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;
     }
 
     private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
+
+    /// <summary>Reviewer text for a card's title or a button label: control characters become spaces, whitespace collapses, and it is cut to <paramref name="max"/>.</summary>
+    internal static string Clean(string text, int max)
+    {
+        var plain = string.Concat(text.Select(c => char.IsControl(c) ? ' ' : c));
+        return Cut(System.Text.RegularExpressions.Regex.Replace(plain, @"\s+", " ").Trim(), max);
+    }
 
     /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
     internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };

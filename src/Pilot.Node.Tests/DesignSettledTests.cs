@@ -91,12 +91,47 @@ public sealed class DesignSettledTests : PrFixTestsBase
         _state.PutFlight(new FlightRow
         {
             Code = "WID9", Repo = "widget", RepoPath = WidgetClone, Issue = 9, Title = "Follow-up of widget#7: make it a library", Branch = "flight/wid9",
-            Worktree = Path.Combine(_root, "plane-wid9"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow,
+            Worktree = Path.Combine(_root, "plane-wid9"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow, LandedAt = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5),
         });
 
         await _reviews.SweepAsync(Ct);
 
         Settled("WID9 landed");
+    }
+
+    private void Landed(string code, string repo, DateTimeOffset at) =>
+        _state.PutFlight(new FlightRow
+        {
+            Code = code, Repo = repo, RepoPath = WidgetClone, Issue = 9, Title = "Follow-up of widget#7: make it a library", Branch = $"flight/{code.ToLowerInvariant()}",
+            Worktree = Path.Combine(_root, $"plane-{code}"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow, LandedAt = at,
+        });
+
+    [Fact]
+    public async Task AFollowUpThatLandedBeforeTheReviewOrInARepoOnlyEndingWithTheNameLeavesTheCardRinging()
+    {
+        await Asked();
+        Landed("WID1", "widget", DateTimeOffset.UtcNow - TimeSpan.FromDays(1));
+        Landed("WID2", "mywidget", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5));
+
+        await _reviews.SweepAsync(Ct);
+
+        OpenDesign().ShouldNotBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
+    }
+
+    [Fact]
+    public async Task ADesignCardListsOptionsInTheOrderOfItsButtonsAndBoundsAndCleansReviewerText()
+    {
+        var longQuestion = new string('q', 300);
+        await Review("acme/widget#7", "comment", $"README.md:1 design: {longQuestion}\nmore Option: first\n\t\u001b[31mred\u0007 {new string('x', 200)} => ok Option*: second => best");
+
+        var card = OpenDesign().ShouldNotBeNull();
+        card.Title.Length.ShouldBeLessThan(200);
+        card.Title.ShouldNotContain(c => char.IsControl(c));
+        card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        var detail = card.Detail.ShouldNotBeNull();
+        detail.IndexOf("- second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("- first", StringComparison.Ordinal));
+        card.Choices[0].Label.ShouldBe("second");
     }
 
     [Fact]
