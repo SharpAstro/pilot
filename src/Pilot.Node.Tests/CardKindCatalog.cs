@@ -98,6 +98,7 @@ internal static class CardKindCatalog
         new("disconnected", "Handled", [Flight], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
         new("received", "Handled", [Flight], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
         new("move-failed", "Ring", [Move], "FlightMoveTests.APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain"),
+        new("planner-ended", "Handled", ["Flights/LegCommander.Planners.cs"], "PlannerWindDownTests.AnIdlePlannerOfAFlightWhoseLegFliesIsEndedAsPlannedAndItsSlotGoesToTheNextFlightOnTheSweep"),
         new("moved-away", "Handled", [Move], "FlightMoveTests.AHandMoveOutsideMaintenanceMovesTheFlightAsWell"),
 
         // PRs of the person's own, reviewed and rechecked.
