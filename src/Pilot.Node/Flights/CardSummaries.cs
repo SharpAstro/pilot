@@ -76,6 +76,7 @@ public static partial class CardSummaries
             LegCommander.SelfFinishedKind => $"The node finished {what} itself: its work was pushed and its check passed. Nothing to do.",
             LegCommander.PushDivergedKind => $"{what} was not pushed because the remote branch holds commits the plane lacks. Merge origin's branch into the plane by hand, then push again.",
             LegCommander.MergeTakenBackKind => $"The merge of {what}'s PR was taken back because a new leg was planned. The merge is offered again once the new leg is done and a fresh review passes; nothing to do.",
+            "planner-ended" => $"The planner of {what} was ended once its first leg flew, so it no longer holds an Opus slot. Nothing to do; a later plan starts a fresh one.",
             "planner-started" => $"A planner was started for {what}. Nothing to do; its plan comes as a card.",
             PrMarks.RefusedKind => "GitHub refused a status, label or ready mark on a PR; the review itself stands. The node sets what is missing at its next look, so nothing to do unless it keeps refusing.",
             "node-label-refused" => "GitHub refused the node's label on a flight's PR or issue. Add it by hand if the flight should show which node flies it.",
