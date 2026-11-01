@@ -1063,11 +1063,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
     }
 
-    /// <summary>
-    /// <c>fly-anyway flight/&lt;code&gt;</c>: the way out of a wait for a package that is not coming (its publish failed, or the
-    /// connection never needed it). Every package wait of the flight is dropped, its late card closed, and the flight flies when
-    /// nothing else holds it.
-    /// </summary>
+    /// <summary><c>flight-priority flight/&lt;code&gt; &lt;level&gt;</c>: writes the issue's Priority field (or clears it with <c>none</c>); refused where the repo has no field.</summary>
     private async Task<string> SetPriorityAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = Find(command.Target);

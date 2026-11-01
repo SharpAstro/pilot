@@ -147,3 +147,19 @@ public sealed class RepoSetupTests
         _github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck]);
     }
 }
+
+/// <summary>What <see cref="GhCli"/> sends: gh fills <c>{owner}</c> and <c>{repo}</c> only in the endpoint and in <c>-F</c> values, never inside a <c>-f</c> query.</summary>
+public sealed class IssueFieldQueryTests
+{
+    [Fact]
+    public void QueryTextsCarryNoPlaceholders()
+    {
+        foreach (var query in new[] { GhCli.PriorityQuery, GhCli.OwnerFieldsQuery })
+        {
+            query.ShouldNotContain("{owner}");
+            query.ShouldNotContain("{repo}");
+            query.ShouldContain("$owner: String!");
+            query.ShouldContain("repository(owner: $owner, name: $name)");
+        }
+    }
+}

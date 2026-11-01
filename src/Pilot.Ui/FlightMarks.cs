@@ -58,19 +58,15 @@ internal sealed record FlightMarks(string? Status, string? Label, string? Warnin
     /// <summary>The word a priority flight carries on its row, its page and its card: the flight bypasses the Opus cap and the repo hold.</summary>
     public const string PriorityMark = "priority";
 
-    /// <summary>Whether the flight is a priority one: the node says so (the issue's Priority field, or its label where the repo has no field), else the field or its PR's label does.</summary>
     /// <summary>The level word of the issue's Priority field (urgent, high, medium, low); null when unset or the repo has no field.</summary>
     public static string? LevelMark(FlightRow flight) =>
         flight.HasPriorityField && flight.IssuePriority is { } level ? IssuePriorities.Name(level).ToLowerInvariant() : null;
-
-    /// <summary>Whether the level is a quiet one (Medium or Low): shown, but not a priority flight.</summary>
-    public static bool IsQuiet(FlightRow flight) =>
-        flight.HasPriorityField && flight.IssuePriority is IssuePriority.Medium or IssuePriority.Low;
 
     /// <summary>The place in the queue of a flight's line (<see cref="IssuePriorities.Rank"/>); the label alone ranks as High.</summary>
     public static int Rank(FlightRow flight, AdmissionRow? admission) =>
         IssuePriorities.Rank(flight.HasPriorityField ? flight.IssuePriority : IsPriority(flight, admission) ? IssuePriority.High : null);
 
+    /// <summary>Whether the flight is a priority one: the node says so (the issue's Priority field, or its label where the repo has no field), else the field or its PR's label does.</summary>
     public static bool IsPriority(FlightRow flight, AdmissionRow? admission = null) =>
         admission?.Priority.Contains(flight.Code, StringComparer.Ordinal) == true
         || IssuePriorities.IsPriority(flight.HasPriorityField, flight.IssuePriority, flight.GitHubLabel);

@@ -9,8 +9,8 @@ public sealed partial class GhCli
     /// <summary>The field's name; an org's others (Effort, dates) are not read.</summary>
     public const string PriorityFieldName = "Priority";
 
-    private const string PriorityQuery = """
-        query($number: Int!) { repository(owner: "{owner}", name: "{repo}") {
+    internal const string PriorityQuery = """
+        query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
           issueFields(first: 30) { nodes { __typename ... on IssueFieldSingleSelect { id name options { id name } } } }
           issue(number: $number) { id issueFieldValues(first: 30) { nodes { __typename ... on IssueFieldSingleSelectValue { name field { __typename ... on IssueFieldSingleSelect { id } } } } } }
         } }
@@ -20,7 +20,7 @@ public sealed partial class GhCli
 
     private async Task<PriorityShape?> ReadPriorityShapeAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(["api", "graphql", "-f", $"query={PriorityQuery}", "-F", $"number={Text(number)}"], repoPath, cancellationToken);
+        var (exit, output, _) = await RunAsync(["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", $"number={Text(number)}", "-f", $"query={PriorityQuery}"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return null;
@@ -104,8 +104,8 @@ public sealed partial class GhCli
         }
     }
 
-    private const string OwnerFieldsQuery = """
-        query { repository(owner: "{owner}", name: "{repo}") {
+    internal const string OwnerFieldsQuery = """
+        query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
           owner { __typename id }
           issueFields(first: 30) { nodes { __typename ... on IssueFieldSingleSelect { name } } }
         } }
@@ -113,7 +113,7 @@ public sealed partial class GhCli
 
     public async Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"query={OwnerFieldsQuery}"], repoPath, cancellationToken);
+        var (exit, output, error) = await RunAsync(["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", $"query={OwnerFieldsQuery}"], repoPath, cancellationToken);
         if (exit != 0)
         {
             throw new FlightException($"gh could not read the issue fields of the repo: {(error.Trim().Length > 0 ? error : output).Trim()}");
