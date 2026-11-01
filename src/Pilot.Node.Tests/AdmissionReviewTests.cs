@@ -62,6 +62,7 @@ public sealed class AdmissionFlightReviewTests : ReviewTestsBase
 public sealed class AdmissionPrReviewTests : PrReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce()
     {
         _reviews.Models = AdmissionHeld.CapOfOne();

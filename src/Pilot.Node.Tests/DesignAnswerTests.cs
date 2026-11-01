@@ -10,6 +10,8 @@ namespace Pilot.Node.Tests;
 /// A review that asks a question of design (a finding starting <c>design:</c>) is fixed once the question has an answer: the words
 /// given on <c>review fix</c> (posted on the PR first), or the PR's author's comment after the review. Without one it is refused.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (5.3 to 11.1 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class DesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -222,6 +224,8 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
 /// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
 /// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (all three measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";

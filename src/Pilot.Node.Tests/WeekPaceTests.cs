@@ -171,6 +171,7 @@ public sealed class WeekPaceLegTests : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WithWeekPaceUnsetTheSweepStartsTheNextLegHoweverFastTheWeekIsSpent()
     {
         await ParserDone();

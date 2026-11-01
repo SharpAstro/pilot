@@ -7,6 +7,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A leg whose work is done and whose check passes, but whose rebased branch cannot go up plain, gets its own card with two ways up (PIL474).</summary>
+/// <remarks>Slow: every test rebases and pushes a real plane to a bare origin (5 to 16 s each under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class PushBlockedTests : IDisposable
 {
     private const string Branch = "flight/tia9";
@@ -147,7 +149,6 @@ public sealed class PushBlockedTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AMergeThatConflictsSendsTheLegRoundAgainNamingTheConflict()
     {
         var card = await Blocked();

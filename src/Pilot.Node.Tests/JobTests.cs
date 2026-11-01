@@ -362,6 +362,7 @@ public abstract class JobTestsBase : IDisposable
 public sealed class JobTests1 : JobTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobRunsOnTheNodeAndItsOwnerIsToldHowItEndedWithItsLastLines()
     {
         var started = Run(Echo("all 12 tests passed"));
@@ -1019,6 +1020,7 @@ public sealed class JobTests2 : JobTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACheckThatFailsByItsOwnExitIsNotStoppedByItsBudgetWhateverTheMachineDid()
     {
         var (jobs, _, _, _) = Idle(() => 99);

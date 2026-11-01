@@ -1623,6 +1623,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACheckStoppedByItsBudgetOnASaturatedMachineIsRunOnceMoreAndAPassFinishesTheLeg()
     {
         await TickedLegs();
@@ -1636,6 +1637,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondBudgetStopFailsTheLegAndSaysItWasRetriedOnceOnASaturatedMachine()
     {
         await TickedLegs();

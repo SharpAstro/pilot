@@ -11,6 +11,8 @@ namespace Pilot.Node.Tests;
 /// claude session leaves every other command answering, and the start's own command answers "started" and reports the start
 /// later, on its card.
 /// </summary>
+/// <remarks>Slow: every test starts legs of real flights in worktrees (eight of the nine measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class LockFreeStartTests : LegCommanderTestsBase
 {
     // A backstop, not the claim: each test proves its order (answered while the launcher is still held). One second failed on a
@@ -75,7 +77,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALegStartHeldInTheLauncherLeavesAnotherFlightsCommandsAnsweringAtOnce()
     {
         await FlightWithTwoLegs();
@@ -113,7 +114,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     private LegRow L2(string name) => _state.Legs("TIA2").Single(l => l.Name == name);
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -140,7 +140,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -161,7 +160,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AStartThatFailsWithinTheAnswerIsTheCommandsErrorAndNoCard()
     {
         await FlightWithTwoLegs();
@@ -176,7 +174,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ALegTakenOutWhileItsStartIsOutIsNotFlownAndItsSessionIsStopped()
     {
         await FlightWithTwoLegs();
@@ -192,7 +189,6 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task ARedoLegThatFailsToStartRingsWithARedoLegButton()
     {
         await FlightWithTwoLegs();
