@@ -110,13 +110,23 @@ public sealed class FlightMapFixtureTests
         && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > tolerance;
 
     [Theory]
-    [InlineData(900, 800)]
-    [InlineData(1800, 1000)]
-    public void NoWordOnTheMapIsDrawnOverAnotherOrUnderAPlane(int width, int height)
+    [InlineData(900, 800, 0.5f)]
+    [InlineData(900, 800, 1f)]
+    [InlineData(900, 800, 1.5f)]
+    [InlineData(900, 800, 3f)]
+    [InlineData(1800, 1000, 0.5f)]
+    [InlineData(1800, 1000, 1f)]
+    [InlineData(1800, 1000, 1.5f)]
+    [InlineData(1800, 1000, 3f)]
+    public void NoWordOnTheMapIsDrawnOverAnotherOrUnderAPlane(int width, int height, float zoom)
     {
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas };
-        view.Render(new FlightsScreen(Lines(), "fixture", Live.At), new RectF32(0, 0, width, height));
+        var screen = new FlightsScreen(Lines(), "fixture", Live.At);
+        view.Render(screen, new RectF32(0, 0, width, height));
+        view.Viewport.SetScale(zoom);
+        view.Render(screen, new RectF32(0, 0, width, height));
+        view.Viewport.Scale.ShouldBe(zoom, 0.001f);
 
         view.MapShown.ShouldBeTrue();
         var words = view.MapWords;
@@ -140,7 +150,15 @@ public sealed class FlightMapFixtureTests
         var parked = view.Map.Routes.Where(r => r.PlaneAtDestination).Select(r => $"map:{r.Flight}:destination").ToHashSet();
         parked.ShouldNotBeEmpty();
         var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && (a.StartsWith("map:") && a.EndsWith(":plane") || parked.Contains(a))).ToList();
-        planes.Count.ShouldBe(view.Map.Routes.Count(r => r.Plane is not null));
+        // Zoomed in far, the planes panned out of the body have no region; the ones in view are checked.
+        if (zoom > 1.5f)
+        {
+            planes.Count.ShouldBeLessThanOrEqualTo(view.Map.Routes.Count(r => r.Plane is not null));
+        }
+        else
+        {
+            planes.Count.ShouldBe(view.Map.Routes.Count(r => r.Plane is not null));
+        }
         foreach (var plane in planes)
         {
             var ring = new RectF32(plane.X, plane.Y, plane.Width, plane.Height);

@@ -13,6 +13,35 @@ internal sealed partial class FlightsView<TSurface>
     private const float StopLine = FlightMap.LabelLineTwo - FlightMap.LabelBandTop;
     private const int LabelChars = 10;
 
+    /// <summary>How much the map says at a zoom: the flight codes and states only; names cut to the slot; whole names and steps.</summary>
+    internal enum MapDetail { Codes, Cut, Whole }
+
+    /// <summary>Below this scale only codes and states are drawn; from <see cref="WholeScale"/> up, names are whole.</summary>
+    internal const float CodesBelowScale = 0.75f;
+    internal const float WholeScale = 1.5f;
+    private const float MinLabelSize = 6f;
+    // The average advance of a glyph as a fraction of its size, and how much of the slot a word may take.
+    private const float GlyphAdvance = 0.56f;
+    private const float SlotUse = 0.94f;
+
+    internal static MapDetail DetailOf(float scale) => scale < CodesBelowScale ? MapDetail.Codes : scale < WholeScale ? MapDetail.Cut : MapDetail.Whole;
+
+    // A stop's word at a detail level: cut to ten characters, or whole, shrunk to fit the slot down to MinLabelSize and only then cut.
+    // The character budget comes from the slot's width against a glyph's: both scale alike, so it holds at every zoom.
+    private static (string Text, float Size) StopWord(string text, MapDetail detail)
+    {
+        if (detail != MapDetail.Whole)
+        {
+            return (Fit(text, LabelChars), LabelSize);
+        }
+        var size = MathF.Min(LabelSize, FlightMap.Slot * SlotUse / (MathF.Max(1, text.Length) * GlyphAdvance));
+        if (size >= MinLabelSize)
+        {
+            return (text, size);
+        }
+        return (Fit(text, (int)(FlightMap.Slot * SlotUse / (MinLabelSize * GlyphAdvance))), MinLabelSize);
+    }
+
     // The window's width in design units as of the last frame (the cards' width on the grid).
     private float _viewWidth;
 
@@ -460,7 +489,7 @@ internal sealed partial class FlightsView<TSurface>
             foreach (var a in route.Airports)
             {
                 var leg = a.Leg;
-                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
+                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
             }
             var d = route.Destination;
             var url = line.Row.PullRequestUrl;
@@ -588,6 +617,7 @@ internal sealed partial class FlightsView<TSurface>
     {
         var line = _lineOf(route);
         var picked = line is not null && Selected >= 0 && Selected < _screen.Lines.Count && _screen.Lines[Selected].Code == route.Flight && (_screen.Lines[Selected].Node?.Key ?? "") == route.Node;
+        var detail = DetailOf(_vp.Scale);
         var d = route.Destination;
         var c = _map.Continents.First(c => c.Key == route.Node);
         var rowTop = d.Y - FlightMap.RowHeight / 2f + 8f;
@@ -626,7 +656,11 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(g.X) - r, Y(g.Y) - r, 2f * r, 2f * r, Held, 3f * s);
             Label("gate", X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Held, line: StopLine);
-            Label(Fit(g.WaitsFor, LabelChars), X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, Dim, line: StopLine);
+            if (detail != MapDetail.Codes)
+            {
+                var (wait, waitSize) = StopWord(g.WaitsFor, detail);
+                Label(wait, X(g.X - FlightMap.Slot / 2f), Y(g.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, waitSize, Dim, line: StopLine);
+            }
         }
         foreach (var a in route.Airports)
         {
@@ -650,8 +684,13 @@ internal sealed partial class FlightsView<TSurface>
                     Renderer.FillEllipse(new RectInt(new PointInt((int)(cx + inner), (int)(cy + inner)), new PointInt((int)(cx - inner), (int)(cy - inner))), Ground);
                     break;
             }
-            Label(Fit(a.Leg, LabelChars), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
-            Label(StateWord(a.State), X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
+            if (detail != MapDetail.Codes)
+            {
+                var (leg, legSize) = StopWord(a.Leg, detail);
+                Label(leg, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, legSize, Body, line: StopLine);
+            }
+            var state = detail == MapDetail.Whole && a.StepsTotal > 0 ? $"{StateWord(a.State)} {a.StepsDone}/{a.StepsTotal}" : StateWord(a.State);
+            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.
@@ -669,7 +708,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             FillRect(X(d.X) - r + 2f * s, Y(d.Y) - r + 2f * s, 2f * r - 4f * s, 2f * r - 4f * s, Ground, 1f * s);
         }
-        Label(SignOf(line?.Row.Repo ?? "", d.PullRequest), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+        if (detail != MapDetail.Codes)
+        {
+            Label(SignOf(line?.Row.Repo ?? "", d.PullRequest), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, LabelSize, Body, line: StopLine);
+        }
         if (MapLayers.ShowPrStates)
         {
             Label(StatusWord(d.Status), X(d.X - FlightMap.Slot / 2f), Y(d.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, color, line: StopLine);
