@@ -131,6 +131,22 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    public async Task AskingAboutAPairAnsweredParallelOnTheOthersCardGetsTheKnownAnswerAndNoCard()
+    {
+        await TwoFlights();
+        _state.PutFlight(F("TIA1") with { Overlaps = [new OverlapRow { Other = "TIA2", Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = OverlapAnswer.Separate, At = DateTimeOffset.UtcNow }] });
+
+        var asked = await Ask();
+
+        asked.Ok.ShouldBeTrue();
+        asked.Made.ShouldNotBeNull().ShouldContain("no card rings again");
+        Cards().ShouldBeEmpty();
+        var mirrored = F("TIA2").Overlaps.ShouldHaveSingleItem();
+        (mirrored.Other, mirrored.Answer).ShouldBe(("TIA1", OverlapAnswer.Separate));
+        (await Ask()).Made.ShouldNotBeNull().ShouldContain("answered before");
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task TheSharedFilesAreNamedOnTheCardWithBothFlightsAndWhatEachChoiceDoes()
     {

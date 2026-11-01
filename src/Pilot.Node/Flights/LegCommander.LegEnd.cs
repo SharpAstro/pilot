@@ -118,7 +118,8 @@ public sealed partial class LegCommander
                     continue;
                 }
                 var otherCode = OtherCode(other);
-                if (flight.Overlaps.Any(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, otherCode, StringComparison.OrdinalIgnoreCase)))
+                var answered = AnswerOnPair(flight, otherCode, other.Node);
+                if (answered is { Answer: OverlapAnswer.Separate } || answered is { Reverse: true, Answer: OverlapAnswer.Connect })
                 {
                     quiet.Add((other, unforeseen));
                 }
@@ -163,18 +164,40 @@ public sealed partial class LegCommander
     private static string OtherCode(Touched other) => other.FlightCode ?? $"#{other.PrNumber}";
 
     /// <summary>
+    /// The answer on a pair from either side (PIL589): the flight's own non-pending row for the other, else, when the other is a flight of
+    /// this node, the other's non-pending row naming this flight. <c>Reverse</c> says it was found on the other's side.
+    /// </summary>
+    private (OverlapAnswer Answer, IReadOnlyList<string> Files, bool Reverse, OverlapRow Row)? AnswerOnPair(FlightRow flight, string otherCode, string? otherNode)
+    {
+        if (flight.Overlaps.FirstOrDefault(o => o.Answer != OverlapAnswer.Pending && string.Equals(o.Other, otherCode, StringComparison.OrdinalIgnoreCase)) is { } own)
+        {
+            return (own.Answer, own.Files ?? [], false, own);
+        }
+        if (otherNode is not null)
+        {
+            return null;
+        }
+        var theirs = state.Flights().FirstOrDefault(f => string.Equals(f.Code, otherCode, StringComparison.OrdinalIgnoreCase))
+            ?.Overlaps.FirstOrDefault(o => o.Node is null && o.Answer != OverlapAnswer.Pending && string.Equals(o.Other, flight.Code, StringComparison.OrdinalIgnoreCase));
+        return theirs is null ? null : (theirs.Answer, theirs.Files ?? [], true, theirs);
+    }
+
+    /// <summary>
     /// The files both change that the planner did not foresee and no answer on this pair has covered: the shared files, less the planned
     /// ones (a flight whose planner never asked has no planned files, and every shared file counts), less the files of an answered row.
     /// </summary>
-    private static string[] Unforeseen(FlightRow flight, IReadOnlyList<string> own, Touched other)
+    private string[] Unforeseen(FlightRow flight, IReadOnlyList<string> own, Touched other)
     {
         if (other.Files is not { } theirs)
         {
             return [];
         }
         var code = OtherCode(other);
+        // Files already answered from the other flight's card are covered too.
+        IReadOnlyList<string> reverseFiles = AnswerOnPair(flight, code, other.Node) is { Reverse: true } rev ? rev.Files : [];
         var covered = OverlapChoice.Normalise(flight.PlannedFiles ?? [])
             .Concat(OverlapChoice.Normalise(flight.Overlaps.Where(o => o.Answer != OverlapAnswer.Pending && string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)).SelectMany(o => o.Files ?? [])))
+            .Concat(OverlapChoice.Normalise(reverseFiles))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return [.. OverlapChoice.Judge(own, theirs).Shared.Where(f => !covered.Contains(f))];
     }
@@ -189,7 +212,17 @@ public sealed partial class LegCommander
         var existing = flight.Overlaps.FirstOrDefault(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase));
         if (existing is null)
         {
-            return flight;
+            // Answered from the other's card (PIL589): the pair gets its own row, so the next check finds it on this side.
+            var mirrored = new OverlapRow
+            {
+                Other = code, Node = null, Files = OverlapChoice.Normalise(files).Order(StringComparer.OrdinalIgnoreCase).ToArray(), Pick = Verbs.OverlapPickConnect,
+                Why = $"after {leg} the plane also changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too; answered from {code}'s card, so no card rang",
+                Answer = OverlapAnswer.Separate, AfterLeg = leg, At = time.GetUtcNow(),
+            };
+            var added = flight with { Overlaps = [.. flight.Overlaps.Where(o => !string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)), mirrored] };
+            state.PutFlight(added);
+            Error.WriteLine($"leg-end overlap: {flight.Code} and {code} were answered on {code}'s card; after {leg} {string.Join(", ", files)} is recorded on this side, no card rung");
+            return added;
         }
         var union = OverlapChoice.Normalise([.. existing.Files ?? [], .. files]).Order(StringComparer.OrdinalIgnoreCase).ToArray();
         var row = existing with { Files = union, AfterLeg = leg, Why = $"after {leg} the plane also changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too; answered parallel before, so no card rang" };
