@@ -44,6 +44,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(PullRequestsChangedEvent), "pullRequestsChanged")]
 [JsonDerivedType(typeof(ReposChangedEvent), "reposChanged")]
 [JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
+[JsonDerivedType(typeof(DecisionEvent), "decision")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -255,6 +256,12 @@ public sealed record NoteAddedEvent : NodeEvent
 public sealed record CommandResultEvent : NodeEvent
 {
     public required CommandResult Result { get; init; }
+}
+
+/// <summary>A decision made: on the stream, and kept whole in the black box. It changes no state.</summary>
+public sealed record DecisionEvent : NodeEvent
+{
+    public required DecisionRow Decision { get; init; }
 }
 
 /// <summary>A note on the node: the state the demo verb <c>note node</c> changes.</summary>

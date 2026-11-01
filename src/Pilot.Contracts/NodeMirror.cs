@@ -259,6 +259,9 @@ public sealed class NodeMirror
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.
                 break;
+            case DecisionEvent:
+                // A decision is a record, kept by the journal's decisions file; it changes no state.
+                break;
         }
         Seq = nodeEvent.Seq;
     }

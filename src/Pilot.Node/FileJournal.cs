@@ -58,6 +58,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public const string SnapshotFile = "snapshot.json";
     public const string JournalFile = "journal.jsonl";
     public const string BlackBoxFile = "blackbox.jsonl";
+    public const string DecisionsFile = "decisions.jsonl";
     public const string RecordFile = "store.json";
 
     /// <summary>
@@ -67,7 +68,11 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// node's compaction only by it never touching them. A change an older reader reads whole (a field it ignores and
     /// loses nothing by) needs no bump.
     /// </summary>
-    public const int StoreContract = 1;
+    /// <remarks>
+    /// 2: <c>decisions.jsonl</c> and the <c>decision</c> event in the journal (#583). An older node would fail on that kind
+    /// in <c>journal.jsonl</c> and would not know the file, so it must leave the store alone.
+    /// </remarks>
+    public const int StoreContract = 2;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 
@@ -78,6 +83,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     private readonly NodeMirror _mirror = new();
     private FileStream? _journal;
     private FileStream? _blackBox;
+    private FileStream? _decisionsFile;
+    private readonly List<DecisionRow> _decisions = [];
     private int _deltas;
     private int _compactAt;
 
@@ -105,6 +112,11 @@ public sealed class FileJournal : INodeJournal, IDisposable
     public string JournalPath => Path.Combine(_folder, JournalFile);
 
     public string BlackBoxPath => Path.Combine(_folder, BlackBoxFile);
+
+    public string DecisionsPath => Path.Combine(_folder, DecisionsFile);
+
+    /// <inheritdoc />
+    public IReadOnlyList<DecisionRow> Decisions() => [.. _decisions];
 
     /// <summary>Test seam: run once a compaction's snapshot is written beside and fsynced, before it is moved into place.</summary>
     internal Action? BeforeSnapshotMove { get; set; }
@@ -212,9 +224,57 @@ public sealed class FileJournal : INodeJournal, IDisposable
             // A whole last line that was never ended: end it, so the next append starts on a line of its own.
             File.AppendAllText(JournalPath, "\n");
         }
+        LoadDecisions();
         // Read whole, so this build may write: a store with no record (an older node's) is stamped with this one's.
         StampRecord();
         return new NodeHistory(snapshot?.Stream, snapshot, deltas);
+    }
+
+    /// <summary>Reads <c>decisions.jsonl</c> back, one decision a line; a last line a crash cut short is dropped, as the journal's is.</summary>
+    private void LoadDecisions()
+    {
+        _decisions.Clear();
+        if (!File.Exists(DecisionsPath))
+        {
+            return;
+        }
+
+        var text = File.ReadAllText(DecisionsPath);
+        var lines = text.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            DecisionRow? row = null;
+            try
+            {
+                row = JsonSerializer.Deserialize(line, PilotJsonContext.Default.DecisionRow);
+            }
+            catch (JsonException) when (i == lines.Length - 1)
+            {
+                // The line a crash cut short, only ever the last.
+            }
+
+            if (row is null)
+            {
+                if (i == lines.Length - 1)
+                {
+                    Replace(DecisionsPath, text[..^lines[i].Length]);
+                    break;
+                }
+                throw new InvalidDataException($"{DecisionsPath} line {i + 1} cannot be read by this build, so the file is left as it is");
+            }
+            _decisions.Add(row);
+        }
+
+        if (text.Length > 0 && text[^1] != '\n' && File.Exists(DecisionsPath) && File.ReadAllText(DecisionsPath) is { Length: > 0 } now && now[^1] != '\n')
+        {
+            File.AppendAllText(DecisionsPath, "\n");
+        }
     }
 
     /// <summary>Throws <see cref="StoreTooNewException"/> when the record says a newer contract wrote the store; a missing record is an older store.</summary>
@@ -303,6 +363,10 @@ public sealed class FileJournal : INodeJournal, IDisposable
         if (nodeEvent is CommandResultEvent result)
         {
             Record(result);
+        }
+        else if (nodeEvent is DecisionEvent decided)
+        {
+            Record(decided.Decision);
         }
 
         if (_deltas >= _compactAt)
@@ -408,6 +472,16 @@ public sealed class FileJournal : INodeJournal, IDisposable
         box.Flush(flushToDisk: false);
     }
 
+    /// <summary>One line in <c>decisions.jsonl</c>, appended and flushed to disk: a decision is not to be lost to a crash.</summary>
+    private void Record(DecisionRow decision)
+    {
+        var file = _decisionsFile ??= Open(DecisionsPath);
+        file.Write(JsonSerializer.SerializeToUtf8Bytes(decision, PilotJsonContext.Default.DecisionRow));
+        file.Write(NewLine);
+        file.Flush(flushToDisk: true);
+        _decisions.Add(decision);
+    }
+
     private void WriteSnapshot(ReadOnlySpan<byte> json)
     {
         // Before the snapshot, so the record is never older than what it describes.
@@ -461,5 +535,6 @@ public sealed class FileJournal : INodeJournal, IDisposable
     {
         _journal?.Dispose();
         _blackBox?.Dispose();
+        _decisionsFile?.Dispose();
     }
 }

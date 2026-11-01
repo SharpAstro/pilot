@@ -16,9 +16,9 @@ public static class NodeWire
     /// <c>legRemoved</c> event (<c>remove-leg</c>), which a client that does not know it cannot read. 3: the <c>milestonesChanged</c> and
     /// <c>issuesChanged</c> events and the snapshot's milestones and issues (<c>set-milestone</c>). 4: the session ledger's
     /// <see cref="SessionRow.StartReason"/>, <see cref="SessionRow.EndReason"/>, <see cref="SessionRow.EndedAt"/> and
-    /// <see cref="SessionRow.WallSeconds"/> (#542).
+    /// <see cref="SessionRow.WallSeconds"/> (#542). 5: the <c>decision</c> event (#583), which a client that does not know it cannot read.
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>Which node this is.</summary>
     public const string NodeRoute = "/api/v1/node";
@@ -50,6 +50,12 @@ public static class NodeWire
     /// only: the LAN policy lets no route through it does not name.
     /// </summary>
     public const string SpendRoute = "/api/v1/spend";
+
+    /// <summary>
+    /// The decisions in the black box, a <see cref="DecisionReport"/>, oldest first: <c>/api/v1/decisions?flight=&amp;kind=&amp;since=</c>
+    /// (since as a time). This machine only, as spend is.
+    /// </summary>
+    public const string DecisionsRoute = "/api/v1/decisions";
 
     /// <summary>The ledger's waste over a window, a <see cref="SpendWasteReport"/>: <c>/api/v1/spend/waste?window=5h|today|week</c>.</summary>
     public const string SpendWasteRoute = "/api/v1/spend/waste";

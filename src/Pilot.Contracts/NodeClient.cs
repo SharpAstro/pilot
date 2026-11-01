@@ -164,6 +164,26 @@ public sealed class NodeClient : IDisposable
     public Task<ResponseEnvelope<SpendFlightReport>> GetSpendFlightAsync(string code, CancellationToken cancellationToken) =>
         GetEnvelopeAsync($"{NodeWire.SpendFlightRoute}?code={Uri.EscapeDataString(code)}", PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, cancellationToken);
 
+    /// <summary>The decisions in the black box, oldest first, narrowed by flight, kind and a time they were made at or after.</summary>
+    public Task<ResponseEnvelope<DecisionReport>> GetDecisionsAsync(string? flight, string? kind, DateTimeOffset? since, CancellationToken cancellationToken)
+    {
+        List<string> query = [];
+        if (flight is { Length: > 0 })
+        {
+            query.Add($"flight={Uri.EscapeDataString(flight)}");
+        }
+        if (kind is { Length: > 0 })
+        {
+            query.Add($"kind={Uri.EscapeDataString(kind)}");
+        }
+        if (since is { } at)
+        {
+            query.Add($"since={Uri.EscapeDataString(at.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}");
+        }
+        return GetEnvelopeAsync(query.Count == 0 ? NodeWire.DecisionsRoute : $"{NodeWire.DecisionsRoute}?{string.Join('&', query)}",
+            PilotJsonContext.Default.ResponseEnvelopeDecisionReport, cancellationToken);
+    }
+
     /// <summary>The end of a job's output: its last lines, and how long the whole of it is.</summary>
     public Task<ResponseEnvelope<JobLog>> GetJobLogAsync(string jobId, CancellationToken cancellationToken) =>
         GetEnvelopeAsync(NodeWire.JobLogRoute(jobId), PilotJsonContext.Default.ResponseEnvelopeJobLog, cancellationToken);

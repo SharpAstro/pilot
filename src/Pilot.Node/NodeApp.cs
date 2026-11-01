@@ -620,6 +620,15 @@ public static class NodeApp
                 ? Results.Json(ResponseEnvelope<SpendReport>.Ok(report), PilotJsonContext.Default.ResponseEnvelopeSpendReport)
                 : Results.Json(ResponseEnvelope<SpendReport>.Fail($"There is no window {window}; use {string.Join(", ", SpendWindows.Names)}", 400), PilotJsonContext.Default.ResponseEnvelopeSpendReport, statusCode: 400));
 
+        // The black box's decisions, oldest first: pilot decisions. This machine only, as spend is.
+        app.MapGet(NodeWire.DecisionsRoute, (string? flight, string? kind, string? since, NodeState state) =>
+            since is { Length: > 0 } && !DateTimeOffset.TryParse(since, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out _)
+                ? Results.Json(ResponseEnvelope<DecisionReport>.Fail($"since is a time, not {since}", 400), PilotJsonContext.Default.ResponseEnvelopeDecisionReport, statusCode: 400)
+                : Results.Json(ResponseEnvelope<DecisionReport>.Ok(new DecisionReport
+                {
+                    Decisions = state.Decisions(flight, kind, since is { Length: > 0 } ? DateTimeOffset.Parse(since, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal) : null),
+                }), PilotJsonContext.Default.ResponseEnvelopeDecisionReport));
+
         // What of that was spent for nothing kept: pilot spend --waste.
         app.MapGet(NodeWire.SpendWasteRoute, (string? window, SpendLedger ledger, NodeState state, TimeProvider time) =>
             ledger.Waste(window ?? "today", time.GetUtcNow(), time.LocalTimeZone, state.Usage()) is { } waste
