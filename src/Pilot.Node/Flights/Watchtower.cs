@@ -641,9 +641,10 @@ public sealed class Watchtower(
                         return;
                     }
                 }
-                // One that ended (its turn over, or stopped when quiet) on the brief it has is woken only when there is something
-                // to say to it: in place while its cache is warm, where the say resumes it; past that, a fresh one, below. Started
-                // afresh after every ended turn instead, SE1 began 83 in a day (2026-10-25), each reading its brief again cold.
+                // One that ended (its turn over, or stopped when quiet) on the brief it has: with cards untold and its cache warm the
+                // say resumes it in place; otherwise a fresh one is started below, since something keeps it. That start costs a cold
+                // read of the brief (SE1 began 83 in a day on 2026-10-25 when sessions ended after each turn), so watch the start count
+                // in pilot status's send timings on a node like that.
                 if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
                 {
                     // Past the check above, something keeps it (a flight in the air, or a connected UI), so one that is not live is

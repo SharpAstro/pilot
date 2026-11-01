@@ -276,7 +276,8 @@ public sealed class CurrentSessionTests : IDisposable
         Row("t0000001", "du1-watchtower", SessionState.Ended, lastResponse: Start);
         Directory.CreateDirectory(_data);
         File.WriteAllText(_tower.BriefFile, Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower), _options.Machine));
-        await _tower.LookAsync(Ct);
+        // The ring is raised before the first look: with a flight in the air an ended watchtower with nothing untold is started
+        // afresh (PIL584), so the warm in-place resume, its transient refusal and its retry are what this checks.
         _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
         _refuse = "claude --bg --resume failed (1): JSON Parse error: Unexpected EOF";
 
