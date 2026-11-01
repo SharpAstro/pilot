@@ -573,6 +573,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private Layout.Node SettingRowNode(SettingRow setting, int index)
     {
+        if (IsRange(setting))
+        {
+            return RangeRowNode(setting, index);
+        }
         var state = setting.Source == SettingSources.CommandLine ? "from the node's command line, which wins"
             : setting.Pending ? $"saved as {(setting.Saved ?? "the default")}: applies at the next start"
             : setting.Source == SettingSources.File ? "saved" : "default";
@@ -590,6 +594,149 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // Repo roots grow a line per folder: their row takes the height its lines ask for.
         row = setting.Many ? row.HAuto() : row.RowH(RowHeight);
         return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    // A role's range (#599): its key ends in -range and its choices are the line of pairs, in order.
+    internal static bool IsRange(SettingRow setting) => setting.Key.EndsWith("-range", StringComparison.Ordinal) && setting.Choices.Length > 1;
+
+    // Which handle a pair press moves (default or max, "" for the nearer one) and whether a press sets this node's range or the fleet's, by key.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _handle = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _fleetScope = new(StringComparer.Ordinal);
+
+    /// <summary>Where a range's two ends sit on the line of pairs; a bare model sits on its lowest effort. -1 for what is not on the line.</summary>
+    internal static (int Default, int Max) HandlesOf(SettingRow setting)
+    {
+        int At(string pair)
+        {
+            var found = Array.FindIndex(setting.Choices, c => string.Equals(c, pair, StringComparison.OrdinalIgnoreCase));
+            return found >= 0 ? found : Array.FindIndex(setting.Choices, c => c.StartsWith(pair + "-", StringComparison.OrdinalIgnoreCase));
+        }
+        var ends = setting.Value.Split("..", 2);
+        var def = At(ends[0].Trim());
+        var max = ends.Length > 1 ? At(ends[1].Trim()) : def;
+        return (def, max);
+    }
+
+    /// <summary>
+    /// The range the handles hold after pair <paramref name="pick"/> is pressed: the chosen handle ("default" or "max") moves to
+    /// it, or with none chosen the nearer one does. A press that would put the max below the default, or the default above the max,
+    /// changes nothing (null), so no handle ever lands on a pair the range does not allow.
+    /// </summary>
+    internal static (int Default, int Max)? Moved((int Default, int Max) now, int pick, string handle)
+    {
+        var moving = handle is "default" or "max" ? handle
+            : pick < now.Default ? "default"
+            : pick > now.Max ? "max"
+            : Math.Abs(pick - now.Default) <= Math.Abs(pick - now.Max) ? "default" : "max";
+        var next = moving == "default" ? (pick, now.Max) : (now.Default, pick);
+        return next.Item1 > next.Item2 || next == now ? null : next;
+    }
+
+    private static string ShortPair(string pair)
+    {
+        var cut = pair.IndexOf('-');
+        var model = cut < 0 ? pair : pair[..cut];
+        var effort = cut < 0 ? "" : pair[(cut + 1)..];
+        return $"{(model.Length > 0 ? char.ToUpperInvariant(model[0]) : '?')} {(effort == "medium" ? "med" : effort)}".TrimEnd();
+    }
+
+    private static string SourceWords(SettingRow setting) => setting.Source switch
+    {
+        SettingSources.Fleet => "set for the fleet",
+        SettingSources.ThisNode => "set on this node",
+        SettingSources.BuiltIn or SettingSources.Default => "built in",
+        SettingSources.CommandLine => "from the node's command line, which wins",
+        _ => setting.Source,
+    };
+
+    private Layout.Node RangeRowNode(SettingRow setting, int index)
+    {
+        var (def, max) = HandlesOf(setting);
+        var key = setting.Key;
+        var handle = _handle.GetValueOrDefault(key, "");
+        var fleet = _fleetScope.GetValueOrDefault(key);
+        var cells = new List<Layout.Node>();
+        var marks = new List<Layout.Node>();
+        for (var i = 0; i < setting.Choices.Length; i++)
+        {
+            var pair = setting.Choices[i];
+            var at = i;
+            var end = i == def || i == max;
+            var inside = i > def && i < max;
+            var allowed = Moved((def, max), i, handle) is not null;
+            var action = $"settings:{key}:pair:{pair}";
+            var cell = Layout.Builder.Text(ShortPair(pair), 11f, end ? Bright : allowed || inside ? Body : Faint, TextAlign.Center).Pad(2f, 4f).WStar().HFixed(ControlH)
+                .Bg(end ? Chosen : inside ? FieldBg : Button).WithTooltip(pair);
+            if (allowed)
+            {
+                cell = cell.BgHover(end ? Chosen : ButtonHover).Follows(new HitResult.ButtonHit(action), _ => PickPair(setting, at));
+            }
+            cells.Add(cell);
+            var label = i == def && i == max ? "default · max" : i == def ? "default" : i == max ? "max" : "";
+            marks.Add(Layout.Builder.Text(label, 10f, handle.Length > 0 && label.StartsWith(handle, StringComparison.Ordinal) ? Bright : Body, TextAlign.Center).WStar().HFixed(14f));
+        }
+        var scope = Layout.Builder.HStack(
+                Pill("this node", $"settings:{key}:scope:node", () => SetScope(key, false), chosen: !fleet),
+                Pill("fleet", $"settings:{key}:scope:fleet", () => SetScope(key, true), chosen: fleet),
+                Pill("default handle", $"settings:{key}:handle:default", () => SetHandle(key, "default"), chosen: handle == "default"),
+                Pill("max handle", $"settings:{key}:handle:max", () => SetHandle(key, "max"), chosen: handle == "max"),
+                Layout.Builder.Spacer().WStar())
+            .WithGap(6f).HFixed(ControlH);
+        var lines = new List<Layout.Node>
+        {
+            Layout.Builder.HStack([.. cells]).WithGap(2f).HFixed(ControlH),
+            Layout.Builder.HStack([.. marks]).WithGap(2f).HFixed(14f),
+            Layout.Builder.Text($"{(fleet ? "setting the fleet's range" : "setting this node's range")}: a press moves {(handle.Length > 0 ? "the " + handle + " handle" : "the nearer handle")}", 11f, Dim).RowH(16f),
+            scope,
+        };
+        if ((setting.Saved is not null && setting.Source != SettingSources.CommandLine && !fleet) || (fleet && setting.FleetValue is not null))
+        {
+            var action = $"settings:{key}:default:{(fleet ? "fleet" : "node")}";
+            var args = fleet ? new[] { key, "default", "--fleet" } : [key, "default"];
+            lines.Add(Layout.Builder.HStack(NodePill(fleet ? "reset the fleet's" : "reset", action, () => Act(Verbs.Set, args, $"{setting.Label}: back to the default…", action)), Layout.Builder.Spacer().WStar()).HFixed(ControlH));
+        }
+        var fleetLine = setting.FleetValue is { } fv ? $"the fleet's range is {fv}" : "no fleet range is set";
+        lines.Add(Layout.Builder.Text($"{setting.Value} · {SourceWords(setting)} · {fleetLine}", 11f, Body).WithTooltip(setting.Detail).RowH(18f));
+        if (setting.Deviations.Length > 0)
+        {
+            var text = "differs from the fleet's: " + string.Join("; ", setting.Deviations.Select(d => $"{d.Node} runs {d.Value}"));
+            lines.Add(WrappedProse.Paragraphs(text, 11f, Todo, 40));
+        }
+        lines.Add(Layout.Builder.Text(setting.Detail, 11f, Dim).WithTooltip(setting.Detail).RowH(18f));
+        var row = Layout.Builder.HStack(
+                Layout.Builder.Spacer().Bg(setting.Deviations.Length > 0 ? Todo : Faint).WFixed(StripeWidth).HStar(),
+                Layout.Builder.VStack(
+                        Layout.Builder.Text(setting.Label, 14f, Bright).RowH(22f),
+                        Layout.Builder.Text(SourceWords(setting), 11f, Dim).RowH(18f))
+                    .WFixed(TitleWidth),
+                Layout.Builder.VStack([.. lines]).WithGap(4f).WStar().HAuto())
+            .WithGap(14f).Pad(8f, 6f).HAuto();
+        return (index & 1) == 1 ? row.Bg(RowAltBg) : row;
+    }
+
+    private void SetScope(string key, bool fleet)
+    {
+        _fleetScope[key] = fleet;
+        Changed?.Invoke();
+    }
+
+    private void SetHandle(string key, string handle)
+    {
+        _handle[key] = _handle.GetValueOrDefault(key, "") == handle ? "" : handle;
+        Changed?.Invoke();
+    }
+
+    private void PickPair(SettingRow setting, int pick)
+    {
+        if (Moved(HandlesOf(setting), pick, _handle.GetValueOrDefault(setting.Key, "")) is not { } next)
+        {
+            return;
+        }
+        var fleet = _fleetScope.GetValueOrDefault(setting.Key);
+        var range = $"{setting.Choices[next.Default]}..{setting.Choices[next.Max]}";
+        string[] args = fleet ? [setting.Key, range, "--fleet"] : [setting.Key, range];
+        var action = $"settings:{setting.Key}:pair:{setting.Choices[pick]}";
+        Act(Verbs.Set, args, $"{setting.Label}: {range}{(fleet ? " for the fleet" : "")}…", action);
     }
 
     // How a setting is changed: a pill per choice, a field (Enter saves), or for repo roots each folder with an x and a field to add one.
