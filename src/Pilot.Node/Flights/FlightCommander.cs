@@ -1026,7 +1026,61 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                 var uses = released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer) && consumed.Contains((waiting.Code, r.Id, r.Producer))).ToList();
                 waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
+            if (foldedInto is null)
+            {
+                ReleaseConnection(waiting, flight.Code);
+                continue;
+            }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    /// <summary>
+    /// Drops the landed flight <paramref name="landed"/> from the connections of <paramref name="waiting"/> (its package waits stay), settles it
+    /// and raises a Handled card on the waiting flight saying what it still waits for (pilot #590).
+    /// </summary>
+    private void ReleaseConnection(FlightRow waiting, string landed)
+    {
+        var settled = Settle(waiting with { Connections = [.. waiting.Connections.Where(c => c != landed)] });
+        state.PutFlight(settled);
+        var made = settled.State == FlightState.Flying
+            ? $"{landed} landed: {waiting.Code} no longer waits for it and flies now"
+            : $"{landed} landed: {waiting.Code} no longer waits for it, but still waits for {FlightWaiting.For(settled)}";
+        state.RaiseCard(CardBin.Handled, ConnectionReleasedKind, Verbs.FlightTarget(waiting.Code), $"{landed} landed: {waiting.Code} no longer waits for it", made);
+    }
+
+    /// <summary>The kind of the Handled card raised when a connection to a landed flight is released.</summary>
+    public const string ConnectionReleasedKind = "connection-released";
+
+    /// <summary>
+    /// Releases every connection of a flight in the air to a flight of this node that has landed here (not folded, not moved to another node),
+    /// for rows stuck that way before the release existed and for a node restarted between a land and its release. Returns how many ended.
+    /// </summary>
+    public async Task<int> ReleaseLandedConnectionsAsync(CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            var released = 0;
+            foreach (var waitingRow in state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Length > 0).ToList())
+            {
+                var waiting = waitingRow;
+                foreach (var code in waitingRow.Connections)
+                {
+                    var other = state.Flights().FirstOrDefault(f => f.Code == code);
+                    if (other is { State: FlightState.Landed, MovedTo: null, FoldedInto: null })
+                    {
+                        ReleaseConnection(waiting, code);
+                        waiting = state.Flights().First(f => f.Code == waiting.Code);
+                        released++;
+                    }
+                }
+            }
+            return released;
+        }
+        finally
+        {
+            _one.Release();
         }
     }
 
