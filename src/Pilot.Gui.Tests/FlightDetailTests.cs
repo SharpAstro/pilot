@@ -672,7 +672,7 @@ public sealed class FlightDetailTests
         line.Working.Select(s => s.Id).ShouldBe(["wwww0001"]);
         var flying = Open(new FlightsScreen([line], "live", Now));
         flying.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:plan" }).ShouldBeFalse();
-        flying.Count(r => r.Result is HitResult.ButtonHit { Action: var action } && action.Contains(":session:", StringComparison.Ordinal)).ShouldBe(1);
+        flying.Count(r => r.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("flight:TIA1611:session:", StringComparison.Ordinal)).ShouldBe(1);
         flying.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:session:wwww0001" }).OnClick!.Invoke(InputModifier.None);
         opened.ShouldBe(["wwww0001"]);
     }
