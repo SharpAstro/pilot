@@ -172,12 +172,15 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task ACreateEnsuresTheLabelsTheNodeReadsOncePerRepo()
     {
         var (github, shortcut) = Trackered();
+        github.FieldCreateFails = null;
 
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51", "one")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-53", "story")).Ok.ShouldBeTrue();
 
-        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Priority, PilotMarks.Recheck]);
+        // The fake's org gets the Priority field at setup, so only the recheck label is made; 'pilot: priority' is made only without the field.
+        github.FieldsCreated.ShouldBe(1);
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck]);
         github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
         PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
         PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);
@@ -193,7 +196,8 @@ public sealed class FlightCommanderTests : IDisposable
 
         Flight("TIA61").State.ShouldBe(FlightState.Flying);
         github.IssueLabels[61].ShouldBe(["pilot node: DE1"]);
-        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused");
+        // The fake org cannot make the field either, so that refusal is a card of its own beside the label's.
+        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused" && c.Title.StartsWith("The label", StringComparison.Ordinal));
         card.Bin.ShouldBe(CardBin.Handled);
     }
 

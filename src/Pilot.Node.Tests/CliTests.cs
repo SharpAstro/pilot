@@ -263,20 +263,22 @@ public sealed class CliTests : IAsyncLifetime
         _node.State.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
 
         // The PR rang: a card with the merge on the head it was opened at; answering it merges and lands the flight.
+        // Repo setup at the create raised its Handled cards first, so the ring is found by kind, not by a fixed number.
+        var ring = _node.State.Cards().Single(c => c.Kind == "pr-ready").Id;
         var (_, cards, _) = await Pilot(_root, "cards");
-        cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");
-        cards.ShouldContain("1. Merge: pilot answer c1 1");
+        cards.ShouldContain($"{ring}  RING  TIA1611's PR #71 is ready to merge");
+        cards.ShouldContain($"1. Merge: pilot answer {ring} 1");
         var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
-        cardsMarkdown.ShouldContain("## c1 · RING · TIA1611's PR #71 is ready to merge");
-        cardsMarkdown.ShouldContain("`pilot answer c1 1`");
+        cardsMarkdown.ShouldContain($"## {ring} · RING · TIA1611's PR #71 is ready to merge");
+        cardsMarkdown.ShouldContain($"`pilot answer {ring} 1`");
         (await Pilot(_root, "cards", "--output-format", "rich")).Output.ShouldBe(cardsMarkdown);
         (await Pilot(_root, "cards", "--output-format", "auto")).Output.ShouldBe(cards);
-        await Ok(_root, "answer", "c1", "1");
+        await Ok(_root, "answer", ring, "1");
         // By rebase, the node's default merge method, so every commit's subject reaches main (tianwen#1783 was squashed).
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
-        after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");
+        after.Single(c => c.Id == ring).Outcome.ShouldBe("Merge");
         after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.

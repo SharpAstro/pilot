@@ -184,6 +184,12 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// <c>flight-priority flight/&lt;code&gt; &lt;urgent|high|medium|low|none&gt;</c>: writes the Priority field of the flight's issue
+    /// (<c>none</c> clears it) and puts the level on the flight's row. Refused, naming the <c>pilot: priority</c> label, where the repo has no field.
+    /// </summary>
+    public const string FlightPriority = "flight-priority";
+
+    /// <summary>
     /// <c>receive-flight flight/&lt;code&gt; &lt;FlightMove as JSON&gt;</c> (#376): another node of the fleet hands this one a flight, with its whole
     /// record (<see cref="FlightMove"/>). Only under a LAN grant, and only by a node that is not in maintenance and has
     /// <c>accept-fleet-flights</c> on. The node makes the plane from the pushed branch, puts the flight, its legs and its open

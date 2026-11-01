@@ -817,11 +817,55 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
     public string? EnsureFails { get; set; }
 
+    /// <summary>The labels the repo has, as setup lists them; a label made by <see cref="EnsureLabelAsync"/> joins it.</summary>
+    public HashSet<string> RepoLabels { get; } = [];
+
     public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         LabelsEnsured.Add((repoPath, label));
-        return EnsureFails is { } why ? Task.FromException(new FlightException(why)) : Task.CompletedTask;
+        if (EnsureFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        RepoLabels.Add(label);
+        return Task.CompletedTask;
     }
+
+    /// <summary>How many times the Priority field was made in the org.</summary>
+    public int FieldsCreated { get; private set; }
+
+    /// <summary>When set, making the Priority field fails with it, as a token that cannot create fields; by default an org the token cannot make fields in.</summary>
+    public string? FieldCreateFails { get; set; } = "the token cannot make issue fields";
+
+    public Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (HasPriorityField)
+        {
+            return Task.FromResult(false);
+        }
+        if (FieldCreateFails is { } why)
+        {
+            return Task.FromException<bool>(new FlightException(why));
+        }
+        HasPriorityField = true;
+        FieldsCreated++;
+        return Task.FromResult(true);
+    }
+
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.ToArray());
+
+    /// <summary>Every repo label deleted, in order.</summary>
+    public List<string> LabelsDeleted { get; } = [];
+
+    public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        LabelsDeleted.Add(label);
+        RepoLabels.Remove(label);
+        return Task.CompletedTask;
+    }
+
+    public Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.Values.Count(l => l.Contains(label)));
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
@@ -832,6 +876,39 @@ internal sealed class FakeGitHub : IGitHub
         if (IssueLabels.TryGetValue(number, out var labels))
         {
             labels.Remove(label);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>When on, the repo has the Priority field; off (the default) is a repo or org without one.</summary>
+    public bool HasPriorityField { get; set; }
+
+    /// <summary>The Priority field's value of each issue, by number; one not listed is unset.</summary>
+    public Dictionary<int, IssuePriority> IssuePriorities { get; } = [];
+
+    /// <summary>Every write of the Priority field, as (number, level), in order.</summary>
+    public List<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
+
+    /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
+    public string? PrioritySetFails { get; set; }
+
+    public Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(HasPriorityField ? new PriorityRead(true, IssuePriorities.TryGetValue(number, out var level) ? level : null) : PriorityRead.NoField);
+
+    public Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        if (PrioritySetFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        PrioritySets.Add((number, level));
+        if (level is { } set)
+        {
+            IssuePriorities[number] = set;
+        }
+        else
+        {
+            IssuePriorities.Remove(number);
         }
         return Task.CompletedTask;
     }
