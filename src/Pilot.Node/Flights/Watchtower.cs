@@ -200,12 +200,14 @@ public sealed class Watchtower(
     }
 
     /// <summary>
-    /// The watchtower's row now: the one it started, else the newest of its name, live first. One renamed is not current: it
-    /// is still the node's, but stopped (<see cref="StopOthersAsync"/>), and cards go to the current one only.
+    /// The watchtower's row now: the one it started, else the newest the node knows as its watchtower, live first. Known by id
+    /// (<see cref="IsWatchtower"/>), never by name: a say resumes it as a copy that Claude Code titles after its work, and taken
+    /// by name the renamed current one was stopped as another (<see cref="StopOthersAsync"/>) after every answer (SE1,
+    /// 2026-10-31: 44f74bec, d4ccbfc7, b61b72f3). Cards go to the current one only.
     /// </summary>
     public SessionRow? Current()
     {
-        var rows = state.Sessions().Where(r => IsWatchtower(r) && r.Name == Name).ToList();
+        var rows = state.Sessions().Where(IsWatchtower).ToList();
         if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
         {
             return own;
@@ -747,34 +749,12 @@ public sealed class Watchtower(
         }
     }
 
-    /// <summary>
-    /// The name the row this node started has now, when it is not <see cref="Name"/>: noted on the row as <c>renamed to
-    /// &lt;name&gt;</c>: still the node's, so it is stopped, never left running. Null when it is under its own name, or gone.
-    /// </summary>
-    private string? NoteRename()
-    {
-        if (_job is not { } job || state.Sessions().FirstOrDefault(s => s.Id == job) is not { } row || row.Name == Name)
-        {
-            return null;
-        }
-        var because = $"renamed to {row.Name}";
-        if (row.EndedBecause != because)
-        {
-            state.PutSession(row with { EndedBecause = because });
-        }
-        return row.Name;
-    }
-
     /// <summary>Starts a fresh watchtower, stopping <paramref name="replacing"/> first; false, with a ring, when it could not.</summary>
     private async Task<bool> StartAsync(string why, CancellationToken cancellationToken, SessionRow? replacing = null)
     {
         if (!options.Watchtower)
         {
             return false;
-        }
-        if (NoteRename() is { } renamed)
-        {
-            why += $"; the one it started was renamed to {renamed}";
         }
         if (replacing is not null)
         {
