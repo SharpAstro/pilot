@@ -204,6 +204,26 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AnAnswerCommentSeenByTheSweepSendsTheLastLegRoundOnce()
+    {
+        var flight = await AskedDesign();
+        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+        await _reviews.SweepAsync(Ct);
+        var started = _workers.Started.Count;
+        await _reviews.SweepAsync(Ct);
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
+        Fixers.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started);
+        _github.IssueComments.ShouldBeEmpty();
+        var notice = _state.Cards().Single(c => c.Kind == PrReviews.DesignSettledKind);
+        notice.Detail.ShouldNotBeNull().ShouldContain("sent round");
+    }
+
+    [Fact]
     public async Task WithNoAnswerReviewFixOnAFlightsPrIsRefusedAsOnAnyOther()
     {
         var flight = await AskedDesign();
