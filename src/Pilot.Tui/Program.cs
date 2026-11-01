@@ -196,12 +196,13 @@ chat.OnSendOn = async (node, text) =>
     Redraw();
     return refused;
 };
-// A card's Chat about this opens the fleet chat, this node's watchtower's, with the card quoted with its node.
+// A card's Chat about this opens the chat of the node the card was raised on where it can be read here, else the fleet chat
+// (this node's watchtower's), with the card quoted with its node.
 cards.OnChatAbout = card =>
 {
     var node = cards.NodeOf(card);
     chrome.Show(PilotPage.Chat);
-    chat.SwitchTo(null);
+    chat.SwitchTo(node is { Here: false } && chat.Readable(node) ? node : null);
     chat.Attach(card, node);
 };
 flights.OnChatAboutCard = card => cards.OnChatAbout?.Invoke(card);
