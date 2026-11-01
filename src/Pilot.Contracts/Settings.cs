@@ -59,6 +59,12 @@ public static class SettingSources
 
     public const string File = "settings";
 
+    /// <summary>A role's range when no setting names it: the built-in one.</summary>
+    public const string BuiltIn = "built in";
+
+    /// <summary>A role's range the settings of this node name.</summary>
+    public const string ThisNode = "this node";
+
     /// <summary>The node's command line (or its environment) gave it, and wins over the file.</summary>
     public const string CommandLine = "command line";
 }

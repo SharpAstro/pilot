@@ -187,7 +187,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task HighUsageMakesALightReviewSaidInItsBriefAndOnThePrReadyCard()
     {
-        var start = await Review("1", lines: 600, fiveHour: 88, roles: new() { ["reviewer-model"] = "opus", ["reviewer-effort"] = "high" });
+        var start = await Review("1", lines: 600, fiveHour: 88, roles: new() { ["reviewer-range"] = "opus-high" });
 
         start.Brief.ShouldContain("Depth: light (usage at 88%).");
         start.Brief.ShouldContain("Review lightly: one pass, no subagents.");
@@ -214,7 +214,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task HeadroomAndALargeDiffMakeADeepReviewOnTheStrongerModelWithUpToThreeSubagents()
     {
-        var start = await Review("1", lines: 500, fiveHour: 20, roles: new() { ["reviewer-model"] = "sonnet", ["reviewer-effort"] = "medium", ["reviewer-deep-model"] = "opus" });
+        var start = await Review("1", lines: 500, fiveHour: 20, roles: new() { ["reviewer-range"] = "sonnet-medium..opus-high" });
 
         start.Brief.ShouldContain("Depth: deep (usage at 20%, 500 lines in 1 file).");
         start.Brief.ShouldContain("up to 3");
@@ -227,7 +227,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ASmallDiffOrLittleHeadroomIsAStandardReviewOnTheReviewersOwnModel()
     {
-        var small = await Review("1", lines: 5, fiveHour: 20, roles: new() { ["reviewer-model"] = "opus", ["reviewer-deep-model"] = "fable" });
+        var small = await Review("1", lines: 5, fiveHour: 20, roles: new() { ["reviewer-range"] = "opus..opus-high" });
         small.Brief.ShouldContain("Depth: standard (usage at 20%).");
         (small.Model, small.Effort).ShouldBe(("opus", null));
 
@@ -277,14 +277,14 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
-    public void AReviewerRunsOneEffortStepBelowOrAboveItsOwnAndTheDeepSettingsWin()
+    public void AReviewerRunsOneEffortStepBelowItsDefaultAndADeepReviewOnItsMax()
     {
-        var own = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-effort"] = "low", ["reviewer-model"] = "opus" } });
+        var own = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-range"] = "opus-low..opus-medium" } });
         (own.ReviewerEffort(ReviewDepth.Light), own.ReviewerEffort(ReviewDepth.Standard), own.ReviewerEffort(ReviewDepth.Deep)).ShouldBe(("low", "low", "medium"));
 
-        var deep = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-deep-effort"] = "max", ["reviewer-deep-model"] = "fable" } });
-        (deep.ReviewerModel(ReviewDepth.Deep), deep.ReviewerModel(ReviewDepth.Light), deep.ReviewerEffort(ReviewDepth.Deep), deep.ReviewerEffort(ReviewDepth.Light)).ShouldBe(("fable", "opus", "max", "low"));
-        (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, "high"));
+        var deep = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-range"] = "sonnet-medium..opus-xhigh" } });
+        (deep.ReviewerModel(ReviewDepth.Deep), deep.ReviewerModel(ReviewDepth.Light), deep.ReviewerEffort(ReviewDepth.Deep), deep.ReviewerEffort(ReviewDepth.Light)).ShouldBe(("opus", "sonnet", "xhigh", "low"));
+        (RoleModels.Unset.ReviewerModel(ReviewDepth.Deep), RoleModels.Unset.ReviewerEffort(ReviewDepth.Standard), RoleModels.Unset.ReviewerEffort(ReviewDepth.Deep)).ShouldBe((null, null, null));
     }
 
     /// <summary>The flight's page draws the report as Markdown (PIL383), so the reviewer is asked to write it as that.</summary>

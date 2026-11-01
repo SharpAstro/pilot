@@ -14,8 +14,8 @@ internal static class AdmissionHeld
     public static RoleModels CapOfOne()
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", ["1"]).Settings!;
-        settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
-        settings = NodeSettings.With(settings, "reviewer-model", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, "worker-range", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, "reviewer-range", ["opus"]).Settings!;
         return new RoleModels(settings);
     }
 

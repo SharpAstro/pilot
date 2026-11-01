@@ -70,25 +70,25 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
-    public void TheWorkerLadderKeysRoundTripAndTakeTheirValues()
+    public void TheWorkerRangeAndLadderKeysRoundTripAndTakeTheirValues()
     {
         var file = Path.Combine(_root, NodeSettings.FileName);
         var settings = new NodeSettings();
-        foreach (var (key, value) in new[] { ("worker-model-max", "sonnet"), ("worker-effort-max", "xhigh"), ("worker-ladder", "off") })
+        foreach (var (key, value) in new[] { ("worker-range", "sonnet-low..opus-xhigh"), ("worker-ladder", "off") })
         {
             settings = NodeSettings.With(settings, key, [value]).Settings.ShouldNotBeNull();
         }
         settings.Write(file);
 
         var read = NodeSettings.Read(file);
-        (string.Join(' ', read.Get("worker-model-max")!), string.Join(' ', read.Get("worker-effort-max")!), string.Join(' ', read.Get("worker-ladder")!)).ShouldBe(("sonnet", "xhigh", "off"));
+        (string.Join(' ', read.Get("worker-range")!), string.Join(' ', read.Get("worker-ladder")!)).ShouldBe(("sonnet-low..opus-xhigh", "off"));
         read.WorkerLadder.ShouldBe(false);
         var roles = new RoleModels(read);
-        (roles.WorkerModelMax, roles.WorkerEffortMax, roles.WorkerLadder).ShouldBe(("sonnet", "xhigh", false));
+        (roles.Range(RoleModels.Worker).ToString(), roles.WorkerLadder).ShouldBe(("sonnet-low..opus-xhigh", false));
         var defaults = new RoleModels(null);
-        (defaults.WorkerModelMax, defaults.WorkerEffortMax, defaults.WorkerLadder).ShouldBe(("opus", "max", true));
+        (defaults.Range(RoleModels.Worker).ToString(), defaults.WorkerLadder).ShouldBe(("sonnet..opus-xhigh", true));
         NodeSettings.With(read, "worker-ladder", ["default"]).Settings!.WorkerLadder.ShouldBeNull();
-        NodeSettings.With(read, "worker-effort-max", ["loud"]).Error.ShouldBe("worker-effort-max takes low, medium, high, xhigh, max or none");
+        NodeSettings.With(read, "worker-range", ["loud"]).Error.ShouldNotBeNull().ShouldStartWith("worker-range takes pairs of sonnet, opus");
         NodeSettings.With(read, "worker-ladder", ["maybe"]).Error.ShouldBe("worker-ladder takes on or off");
     }
 
@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort, worker-model-max, worker-effort-max, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
@@ -387,64 +387,48 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
-    public void EachRoleHasItsModelAndNoneLeavesItToClaudeCode()
+    public void EachRoleHasItsRangeAndTheDefaultPairIsWhatASessionStartsOn()
     {
         var defaults = new RoleModels(null);
-        RoleModels.Roles.Select(defaults.Model).ShouldBe(["sonnet", "sonnet", "opus", "opus", "opus"]);
+        RoleModels.Roles.Select(defaults.Model).ShouldBe(["sonnet", "sonnet", "opus", "opus"]);
         RoleModels.Roles.Select(defaults.Effort).ShouldAllBe(e => e == null);
         RoleModels.Unset.Model(RoleModels.Worker).ShouldBeNull();
 
-        var saved = NodeSettings.With(new NodeSettings(), "worker-model", ["opus"]).Settings!;
-        saved = NodeSettings.With(saved, "watchtower-model", ["none"]).Settings!;
-        saved = NodeSettings.With(saved, "reviewer-effort", ["max"]).Settings!;
+        var saved = NodeSettings.With(new NodeSettings(), "worker-range", ["opus"]).Settings!;
+        saved = NodeSettings.With(saved, "watchtower-range", ["sonnet", "sonnet-high"]).Settings!;
+        saved = NodeSettings.With(saved, "reviewer-range", ["opus-medium..opus-xhigh"]).Settings!;
         var chosen = new RoleModels(saved);
-        (chosen.Model(RoleModels.Worker), chosen.Model(RoleModels.Watchtower), chosen.Effort(RoleModels.Reviewer)).ShouldBe(("opus", (string?)null, "max"));
+        (chosen.Model(RoleModels.Worker), chosen.Model(RoleModels.Watchtower), chosen.Effort(RoleModels.Reviewer)).ShouldBe(("opus", "sonnet", "medium"));
 
         var file = Path.Combine(_root, NodeSettings.FileName);
         saved.Write(file);
-        NodeSettings.Read(file).Get("worker-model").ShouldBe(["opus"]);
-        NodeSettings.With(saved, "worker-model", ["Opus 5"]).Error.ShouldBe("worker-model takes a model (sonnet, opus, haiku, or a full id as claude-opus-5-5) or none");
-        NodeSettings.With(saved, "planner-effort", ["huge"]).Error.ShouldBe("planner-effort takes low, medium, high, xhigh, max or none");
-        NodeSettings.With(saved, "worker-model", ["claude-opus-5-5[1m]"]).Settings.ShouldNotBeNull();
+        NodeSettings.Read(file).Get("worker-range").ShouldBe(["opus..opus"]);
+        NodeSettings.With(saved, "worker-range", ["Opus 5"]).Error.ShouldNotBeNull().ShouldStartWith("worker-range takes pairs");
+        NodeSettings.With(saved, "planner-range", ["opus-huge"]).Error.ShouldNotBeNull().ShouldStartWith("planner-range takes pairs");
     }
 
     [Fact]
-    public async Task ARolesModelIsInForceForItsNextSessionWithNoRestart()
+    public async Task ARolesRangeIsInForceForItsNextSessionWithNoRestart()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
 
-        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["worker-model", "opus"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["worker-range", "opus-low..opus-high"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
 
-        result.Way.ShouldBe("worker-model saved as opus; the next session of that kind starts with it");
+        result.Way.ShouldBe("worker-range saved as opus-low..opus-high; the next session of that kind starts with it");
         node.App.Services.GetRequiredService<RoleModels>().Model(RoleModels.Worker).ShouldBe("opus");
         var page = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull();
-        page.Settings.Single(s => s.Key == "worker-model").ShouldSatisfyAllConditions(s => s.Value.ShouldBe("opus"), s => s.Pending.ShouldBeFalse());
-        page.Settings.Single(s => s.Key == "planner-model").Value.ShouldBe("opus");
-        page.Settings.Single(s => s.Key == "watchtower-model").Value.ShouldBe("sonnet");
+        page.Settings.Single(s => s.Key == "worker-range").ShouldSatisfyAllConditions(s => s.Value.ShouldBe("opus-low..opus-high"), s => s.Source.ShouldBe(SettingSources.ThisNode), s => s.Pending.ShouldBeFalse());
+        page.Settings.Single(s => s.Key == "planner-range").ShouldSatisfyAllConditions(s => s.Value.ShouldBe("opus..opus-high"), s => s.Source.ShouldBe(SettingSources.BuiltIn));
+        page.Settings.Single(s => s.Key == "watchtower-range").Value.ShouldBe("sonnet..sonnet-high");
     }
 
     [Fact]
-    public async Task ADeepReviewsSettingsShowWhatItRunsOnWhenNothingDeepIsSet()
+    public void ADeepReviewRunsOnTheReviewersMaxAndNeverOnEffortMax()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["reviewer-model", "sonnet"], Who = "tests" }, Ct);
-
-        var page = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull();
-
-        page.Settings.Single(s => s.Key == "reviewer-deep-model").Value.ShouldBe("sonnet");
-        page.Settings.Single(s => s.Key == "reviewer-deep-effort").Value.ShouldBe("high");
-    }
-
-    [Fact]
-    public void ADeepReviewsNoneSettingPassesNoFlagWhereUnsetFollowsTheReviewer()
-    {
-        var unset = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-model"] = "sonnet", ["reviewer-effort"] = "medium" } });
-        unset.ReviewerModel(ReviewDepth.Deep).ShouldBe("sonnet");
-        unset.ReviewerEffort(ReviewDepth.Deep).ShouldBe("high");
-
-        var none = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-model"] = "sonnet", ["reviewer-deep-model"] = "none", ["reviewer-deep-effort"] = "none" } });
-        none.ReviewerModel(ReviewDepth.Deep).ShouldBeNull();
-        none.ReviewerEffort(ReviewDepth.Deep).ShouldBeNull();
+        var range = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string> { ["reviewer-range"] = "sonnet-high..opus-medium" } });
+        (range.ReviewerModel(ReviewDepth.Deep), range.ReviewerEffort(ReviewDepth.Deep)).ShouldBe(("opus", "medium"));
+        (range.ReviewerModel(ReviewDepth.Standard), range.ReviewerEffort(ReviewDepth.Standard)).ShouldBe(("sonnet", "high"));
+        NodeSettings.With(new NodeSettings(), "reviewer-range", ["sonnet-high..opus-max"]).Error.ShouldNotBeNull().ShouldContain("effort max");
     }
 
     [Fact]
