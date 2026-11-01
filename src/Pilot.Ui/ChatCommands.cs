@@ -11,7 +11,7 @@ internal static class ChatCommands
     /// </summary>
     public static async Task<string?> TellAsync(NodeClient client, string text, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [text], Who = who, RequestId = Guid.NewGuid().ToString("N") }, cancellationToken);
         return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     }
 
@@ -21,7 +21,7 @@ internal static class ChatCommands
     /// </summary>
     public static async Task<string?> TellAboutCardAsync(NodeClient client, string cardId, string words, string who, CancellationToken cancellationToken)
     {
-        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.CardTarget(cardId), Args = [words], Who = who }, cancellationToken);
+        var envelope = await client.SendAsync(new CommandRequest { Verb = Verbs.Tell, Target = Verbs.CardTarget(cardId), Args = [words], Who = who, RequestId = Guid.NewGuid().ToString("N") }, cancellationToken);
         return envelope.Success && envelope.Response is { Ok: true } ? null : $"refused: {envelope.Response?.Error ?? envelope.Error}";
     }
 
