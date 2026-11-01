@@ -87,7 +87,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
     private const float SpendWidth = 130f;
-    private const float AgeWidth = 70f;
+    private const float AgeWidth = 80f;
     private const float RateWidth = 90f;
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;

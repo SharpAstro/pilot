@@ -445,7 +445,7 @@ public sealed class ListTableTests : IDisposable
         (cells.HeaderX("Last response") - cells.HeaderX("Context") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         (cells.HeaderX("Spend") - cells.HeaderX("State") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         (cells.HeaderX("Age") - cells.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(130f, 0.5f);
-        (cells.HeaderX("Spend/min") - cells.HeaderX("Age") - ListTable.ColumnGap).ShouldBe(70f, 0.5f);
+        (cells.HeaderX("Spend/min") - cells.HeaderX("Age") - ListTable.ColumnGap).ShouldBe(80f, 0.5f);
         (cells.HeaderX("Context") - cells.HeaderX("Model") - ListTable.ColumnGap).ShouldBe(140f, 0.5f);
         cells.HasHeader("Node").ShouldBeFalse("the Node column shows only with several nodes known");
         view.Table.Saved.ShouldBeEmpty();
