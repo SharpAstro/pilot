@@ -93,6 +93,7 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         _reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, options), options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            PostsItself = false,
             TakeFlightVerdict = _legs.TakePrVerdictAsync,
             SendFlightRound = _legs.AnsweredDesignAsync,
         };
