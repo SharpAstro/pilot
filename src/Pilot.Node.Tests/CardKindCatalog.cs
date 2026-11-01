@@ -36,6 +36,7 @@ internal static class CardKindCatalog
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain"),
         new("worker-failed", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing"),
         new("worker-missing", "Ring", [Watch], "LegWatchTests.AFailedWorkerAndOneThatNeverShowedUpRing"),
+        new("worker-never-turned", "Ring|Handled", [Watch], "LegWatchTests.AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing"),
         new("worker-nudged", "Handled", [Watch], "LegWaitTests.AnIdleWorkerWhoseLongWaitEndsIsWokenOnceAndNotNudgedOnTopOfIt"),
         new("worker-resumed", "Handled", [Watch], "LegWatchTests.AWorkerTheUsageLimitStoppedIsResumedOnlyOnceItsLimitHasReset"),
         new("over-budget", "Ring", [Watch], "SignalTests.AWorkerPastItsBudgetRingsUntilTheBudgetIsRaised"),
@@ -160,6 +161,7 @@ internal static class CardKindCatalog
     public static readonly HashSet<string> VariableKinds =
     [
         "Flights/LegWatch.cs|kind",
+        "Flights/LegWatch.cs|cardKind",
         "Flights/StartGate.cs|kind",
         "Flights/FlightCommander.cs|card.Kind",
         "Flights/PrReviews.cs|kind",

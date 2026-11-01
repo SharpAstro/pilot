@@ -151,12 +151,15 @@ public sealed class LegCardTests
     [Fact]
     public async Task AWorkerThatNeverShowedUpSaysHowLongAgoItStartedAndOffersOnlyAFreshWorker()
     {
+        // The first look stops and starts it once more (the first-turn ladder); the second finds it still gone.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(5));
 
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Title.ShouldBe("TIA1/parser's worker du1-tia1-parser never showed up, 5 min after it started");
+        card.Title.ShouldBe("TIA1/parser's worker du1-tia1-parser never showed up, 10 min after it started");
         card.Detail.ShouldStartWith("started as job a1b2c3d4");
         card.Choices.Select(c => c.Label).ShouldBe(["Start a fresh worker on parser (the last one never showed up)"]);
     }

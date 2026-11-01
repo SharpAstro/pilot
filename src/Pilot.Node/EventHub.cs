@@ -1,5 +1,7 @@
 using System.Net.WebSockets;
+using System.Text.Json;
 using Node.Lib;
+using Pilot.Contracts;
 
 namespace Pilot.Node;
 
@@ -16,8 +18,10 @@ namespace Pilot.Node;
 /// <para><b>Order holds per client.</b> One sender per socket, in the order its queue was written, which is the order
 /// the node numbered the deltas.</para>
 /// </remarks>
-public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
+public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub> logger)
 {
+    private const int MaxMessage = 4096;
+
     /// <summary>How far behind a client may fall before it is closed.</summary>
     public const int DefaultQueueCapacity = 512;
 
@@ -38,7 +42,7 @@ public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
         {
             using var subscription = state.Subscribe(since, stream, client);
             var sender = SendQueuedAsync(client);
-            await ReceiveUntilClosedAsync(socket, stopping);
+            await ReceiveUntilClosedAsync(socket, client, stopping);
             client.Stop();
             await sender;
 
@@ -54,18 +58,34 @@ public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
         }
         finally
         {
+            // Whatever ended the stream, what it showed goes with it.
+            views.Forget(client);
             client.Stop();
             Interlocked.Decrement(ref _clients);
         }
     }
 
+    private static ClientPage? ReadPage(ReadOnlySpan<byte> json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(json, PilotJsonContext.Default.ClientPage);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
-    /// Reads until the client closes. A client sends nothing the node acts on yet; reading is what notices it has gone,
+    /// Reads until the client closes. The one thing a client says is the page it shows (<see cref="ClientPage"/>), kept in
+    /// <see cref="PageViews"/> for this client; anything else it sends is ignored. Reading is also what notices it has gone,
     /// and what ends once an evicted client's socket is aborted.
     /// </summary>
-    private static async Task ReceiveUntilClosedAsync(WebSocket socket, CancellationToken stopping)
+    private async Task ReceiveUntilClosedAsync(WebSocket socket, object client, CancellationToken stopping)
     {
         var buffer = new byte[1024];
+        var message = new MemoryStream();
         try
         {
             while (socket.State is WebSocketState.Open)
@@ -74,6 +94,24 @@ public sealed class EventHub(NodeState state, ILogger<EventHub> logger)
                 if (received.MessageType is WebSocketMessageType.Close)
                 {
                     return;
+                }
+                if (received.MessageType is not WebSocketMessageType.Text)
+                {
+                    message.SetLength(0);
+                    continue;
+                }
+                // A message far longer than a page name is not one: dropped unread.
+                if (message.Length + received.Count <= MaxMessage)
+                {
+                    message.Write(buffer, 0, received.Count);
+                }
+                if (received.EndOfMessage)
+                {
+                    if (message.Length is > 0 && message.Length <= MaxMessage && ReadPage(message.GetBuffer().AsSpan(0, (int)message.Length)) is { } said)
+                    {
+                        views.Say(client, said.Page);
+                    }
+                    message.SetLength(0);
                 }
             }
         }
