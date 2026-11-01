@@ -52,6 +52,14 @@ public interface ITracker
 
     /// <summary>The item's sub-tasks, whoever added them; empty when they cannot be read.</summary>
     Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken);
+
+    /// <summary>The item's Priority field; <see cref="PriorityRead.NoField"/> where the tracker has none (the label stands in).</summary>
+    Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken) => Task.FromResult(PriorityRead.NoField);
+
+    /// <summary>Sets the item's Priority field (null clears it).</summary>
+    /// <exception cref="FlightException">The tracker has no such field or refused it.</exception>
+    Task SetPriorityAsync(string repoPath, int id, IssuePriority? level, CancellationToken cancellationToken) =>
+        throw new FlightException("this tracker has no Priority field");
 }
 
 /// <summary>How a brief tells a session to read a work item in one tracker. Written once per tracker, so Briefs holds no tracker branches.</summary>
@@ -139,6 +147,10 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
         github.CloseSubIssueAsync(repoPath, SubIssueNumber(subTask), $"The leg was removed from the flight working on #{id}.", cancellationToken);
 
     public Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken) => github.SubIssuesAsync(repoPath, id, cancellationToken);
+
+    public Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken) => github.IssuePriorityAsync(repoPath, id, cancellationToken);
+
+    public Task SetPriorityAsync(string repoPath, int id, IssuePriority? level, CancellationToken cancellationToken) => github.SetIssuePriorityAsync(repoPath, id, level, cancellationToken);
 
     private static int SubIssueNumber(SubTask subTask) =>
         int.TryParse(subTask.Id, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number)

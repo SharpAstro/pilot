@@ -114,6 +114,12 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
+    public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
+    public bool HasPriorityField { get; init; }
+
     /// <summary>
     /// Why its planner or reviewer waits for admission (the Opus cap, the one-flight-per-repo mode); a leg's own wait is on
     /// <see cref="LegRow.Queued"/>. Not a stall and no ring: the node asks again on its sweep. Null when it waits for nothing.

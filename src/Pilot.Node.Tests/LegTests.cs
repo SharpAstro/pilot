@@ -789,6 +789,39 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>When on, the repo has the Priority field; off (the default) is a repo or org without one.</summary>
+    public bool HasPriorityField { get; set; }
+
+    /// <summary>The Priority field's value of each issue, by number; one not listed is unset.</summary>
+    public Dictionary<int, IssuePriority> IssuePriorities { get; } = [];
+
+    /// <summary>Every write of the Priority field, as (number, level), in order.</summary>
+    public List<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
+
+    /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
+    public string? PrioritySetFails { get; set; }
+
+    public Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(HasPriorityField ? new PriorityRead(true, IssuePriorities.TryGetValue(number, out var level) ? level : null) : PriorityRead.NoField);
+
+    public Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        if (PrioritySetFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        PrioritySets.Add((number, level));
+        if (level is { } set)
+        {
+            IssuePriorities[number] = set;
+        }
+        else
+        {
+            IssuePriorities.Remove(number);
+        }
+        return Task.CompletedTask;
+    }
+
     public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {
         IssueComments.Add((number, body));

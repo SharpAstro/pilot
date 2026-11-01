@@ -31,9 +31,9 @@ public sealed record AdmissionRow
 }
 
 /// <summary>One flight waiting for admission and why: its own planner or reviewer's wait, else its first queued leg's.</summary>
-public sealed record QueuedFlight(string Code, string? Title, string Why, bool Priority, DateTimeOffset Since)
+public sealed record QueuedFlight(string Code, string? Title, string Why, bool Priority, DateTimeOffset Since, IssuePriority? Level = null)
 {
-    /// <summary>The flights waiting for admission, the priority ones first, then in the order they formed; the one read every client shows.</summary>
+    /// <summary>The flights waiting for admission, by Priority (Urgent, High, Medium, unset, Low), then in the order they formed; the one read every client shows.</summary>
     public static QueuedFlight[] Of(IEnumerable<FlightRow> flights, IEnumerable<LegRow> legs, AdmissionRow? admission)
     {
         var all = legs as IReadOnlyCollection<LegRow> ?? [.. legs];
@@ -41,8 +41,14 @@ public sealed record QueuedFlight(string Code, string? Title, string Why, bool P
             .Where(f => f.State != FlightState.Landed)
             .Select(f => (Flight: f, Why: f.Queued ?? all.Where(l => l.Flight == f.Code && l.State == LegState.Planned && l.Queued is not null).OrderBy(l => l.Order).Select(l => l.Queued).FirstOrDefault()))
             .Where(x => x.Why is not null)
-            .Select(x => new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, admission?.Priority.Contains(x.Flight.Code) == true, x.Flight.CreatedAt))
-            .OrderByDescending(q => q.Priority).ThenBy(q => q.Since)];
+            .Select(x =>
+            {
+                var priority = admission?.Priority.Contains(x.Flight.Code) == true;
+                // Without the field the label is the only mark, and it ranks as High.
+                var level = x.Flight.HasPriorityField ? x.Flight.IssuePriority : priority ? IssuePriority.High : (IssuePriority?)null;
+                return new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, priority, x.Flight.CreatedAt, level);
+            })
+            .OrderBy(q => IssuePriorities.Rank(q.Level)).ThenBy(q => q.Since)];
     }
 }
 

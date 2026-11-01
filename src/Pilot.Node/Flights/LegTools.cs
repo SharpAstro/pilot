@@ -335,9 +335,23 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
 internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
     IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
 
+/// <summary>What GitHub's Priority field says of an issue: whether the repo has the field (and the token reads it), and the level, null when unset.</summary>
+public sealed record PriorityRead(bool HasField, IssuePriority? Level)
+{
+    /// <summary>The repo or org has no Priority field, or the token cannot read it: the <c>pilot: priority</c> label stands in.</summary>
+    public static PriorityRead NoField { get; } = new(false, null);
+}
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
+    /// <summary>The Priority field of issue <paramref name="number"/>: <see cref="PriorityRead.NoField"/> where the repo has none or gh cannot read it, a null level where it is unset.</summary>
+    Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>Sets the Priority field of issue <paramref name="number"/> to <paramref name="level"/>; null clears it.</summary>
+    /// <exception cref="FlightException">The repo has no such field or GitHub refused it.</exception>
+    Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken);
+
     /// <summary>
     /// Where PR <paramref name="number"/>'s merge stands on GitHub (<see cref="MergeState"/>); null when GitHub would not say
     /// (<c>UNKNOWN</c> while it works the PR out, or no answer).

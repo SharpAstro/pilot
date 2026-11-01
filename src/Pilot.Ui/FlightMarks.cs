@@ -58,10 +58,10 @@ internal sealed record FlightMarks(string? Status, string? Label, string? Warnin
     /// <summary>The word a priority flight carries on its row, its page and its card: the flight bypasses the Opus cap and the repo hold.</summary>
     public const string PriorityMark = "priority";
 
-    /// <summary>Whether the flight is a priority one: the node says so (its issue's label too), else its PR's label does.</summary>
+    /// <summary>Whether the flight is a priority one: the node says so (the issue's Priority field, or its label where the repo has no field), else the field or its PR's label does.</summary>
     public static bool IsPriority(FlightRow flight, AdmissionRow? admission = null) =>
         admission?.Priority.Contains(flight.Code, StringComparer.Ordinal) == true
-        || (flight.GitHubLabel ?? "").Split(',', StringSplitOptions.TrimEntries).Contains("pilot: priority", StringComparer.OrdinalIgnoreCase);
+        || IssuePriorities.IsPriority(flight.HasPriorityField, flight.IssuePriority, flight.GitHubLabel);
 
     /// <summary>A commit as the pages name it: its first seven characters.</summary>
     public static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
