@@ -238,6 +238,7 @@ public static class NodeApp
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
+                Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
