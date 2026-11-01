@@ -31,7 +31,7 @@ public sealed class DecisionTests : IDisposable
         var made = Record(state, "flight/PIL583", DecisionKinds.Design, "no", "sebastian", DecisionByKinds.Person);
 
         var back = state.Decisions().ShouldHaveSingleItem();
-        back.ShouldBe(made);
+        Same(back, made);
         back.Subject.ShouldBe("flight/PIL583");
         back.Kind.ShouldBe("design");
         back.Question.ShouldBe("Which for flight/PIL583?");
@@ -52,7 +52,7 @@ public sealed class DecisionTests : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize<NodeEvent>(new DecisionEvent { Seq = made.Seq, At = made.At, Decision = made }, PilotJsonContext.Default.NodeEvent);
 
         json.ShouldContain("\"kind\":\"decision\"");
-        ((DecisionEvent)System.Text.Json.JsonSerializer.Deserialize(json, PilotJsonContext.Default.NodeEvent)!).Decision.ShouldBe(made);
+        Same(((DecisionEvent)System.Text.Json.JsonSerializer.Deserialize(json, PilotJsonContext.Default.NodeEvent)!).Decision, made);
         await Task.CompletedTask;
     }
 
@@ -78,7 +78,7 @@ public sealed class DecisionTests : IDisposable
         using var again = new FileJournal(_folder, maxDeltas: 4);
         var restarted = new NodeState(again, TimeProvider.System);
         restarted.Decisions().Select(d => d.Subject).ShouldBe(["flight/PIL1", "flight/PIL2"]);
-        restarted.Decisions().First().ShouldBe(first);
+        Same(restarted.Decisions().First(), first);
 
         // And a third start still has them, once each.
         Record(restarted, "flight/PIL3", DecisionKinds.Dismiss);
@@ -167,6 +167,13 @@ public sealed class DecisionTests : IDisposable
         PilotCommand.ParseSince(text, now).ShouldBe(now.AddMinutes(-minutes));
         PilotCommand.ParseSince("not a time", now).ShouldBeNull();
         PilotCommand.ParseSince("2026-10-27T09:00:00+00:00", now).ShouldBe(DateTimeOffset.Parse("2026-10-27T09:00:00+00:00"));
+    }
+
+    /// <summary>Record equality compares the options array by reference, so compare it by value here.</summary>
+    private static void Same(DecisionRow actual, DecisionRow expected)
+    {
+        actual.Options.ShouldBe(expected.Options);
+        (actual with { Options = [] }).ShouldBe(expected with { Options = [] });
     }
 
     private sealed class StepTime(DateTimeOffset start) : TimeProvider
