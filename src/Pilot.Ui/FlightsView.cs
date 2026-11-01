@@ -649,6 +649,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         Palette.Use(Night);
         BeginFrame();
+        _mapBodySeen = null;
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
@@ -658,7 +659,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _arranged = arranged;
         NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
-        if (RevealLeg(arranged))
+        // The map's body was not the size its tree was built for (the first frame, or a resized window): draw again at the right fit.
+        if (RevealLeg(arranged) || NoteMapBody())
         {
             Render(screen, bounds);
         }
@@ -829,6 +831,11 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
             GoBack();
+            return true;
+        }
+        // The wheel over the map pans it (Ctrl+wheel is left to zoom); the layer menu's own list took it first where it was over it.
+        if (!IsDetailOpen && evt is InputEvent.Scroll wheel && HandleMapScroll(wheel))
+        {
             return true;
         }
         if (IsDetailOpen)

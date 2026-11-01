@@ -164,31 +164,24 @@ public sealed class FlightsCanvasTests
         var lines = rows.Select((f, i) => FlightLine.Build([f], [], Live.At, Enumerable.Range(1, legs).Select(n => Leg(f.Code, "leg" + n, n, LegState.Planned)))[0] with { Node = new NodeMark("n" + i % 2, "n", "N" + i % 2, i % 2 == 0) }).ToArray();
         var (renderer, view) = Show(FlightsViewMode.Canvas, width, lines);
         using var _ = renderer;
-        // The same map in a window wide enough to hold it at its full size.
-        var full = (int)view.Map.Width + 200;
-        var (wideRenderer, wide) = Show(FlightsViewMode.Canvas, full, lines);
-        using var __ = wideRenderer;
-
         view.Map.Width.ShouldBeGreaterThan(width);
         view.Map.Continents.Count.ShouldBe(2);
         view.MapShown.ShouldBeTrue();
         var targets = Targets(view);
         targets.ShouldNotBeEmpty();
         targets.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
-        // Each stop is drawn at the window's share of the map's width, never under half: the first airport's square at the two sizes.
+        // Each stop is drawn at the fit's scale, never under half: the first airport's square against its design size.
         var first = targets.Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
-        var whole = Targets(wide).Single(r => r.Tooltip!.StartsWith("F0/leg1:", StringComparison.Ordinal));
-        whole.Width.ShouldBe(2f * FlightMap.AirportRadius, 0.5f);
-        var scale = first.Width / whole.Width;
+        var scale = first.Width / (2f * FlightMap.AirportRadius);
+        scale.ShouldBe(view.Viewport.Scale, 0.03f);
+        scale.ShouldBeGreaterThanOrEqualTo(MapViewport.MinScale - 0.01f);
         scale.ShouldBeLessThan(1f);
-        scale.ShouldBeGreaterThanOrEqualTo(0.5f);
-        scale.ShouldBe(MathF.Min(1f, (width - 48f) / view.Map.Width), 0.03f);
     }
 
     [Theory]
     [InlineData(900)]
     [InlineData(1280)]
-    public void AMapWiderThanTwiceThePageShowsTheGridWithEveryFlightInReach(int width)
+    public void AMapWiderThanTwiceThePageStaysAMapShownAtTheFloorWithEveryFlightInReach(int width)
     {
         // Two continents of 24 legs a route: the map is wider than twice the page, so at half size its far side would be cut off.
         var rows = Enumerable.Range(0, 4).Select(i => Flight("F" + i)).ToArray();
@@ -198,16 +191,13 @@ public sealed class FlightsCanvasTests
 
         view.Map.Width.ShouldBeGreaterThan(2f * width);
         view.CanvasShown.ShouldBeTrue();
-        view.MapShown.ShouldBeFalse();
+        // With pan, the far side is in reach: no grid, and the map is drawn at the floor scale.
+        view.MapShown.ShouldBeTrue();
+        view.Viewport.Scale.ShouldBe(MapViewport.MinScale);
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
-        // The grid's cards, one a flight, each inside the page; and no map target and no layer menu.
-        var cards = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ToList();
-        cards.Select(r => ((HitResult.ListItemHit)r.Result).Index).Distinct().Count().ShouldBe(rows.Length);
-        cards.ShouldAllBe(r => r.X >= 0 && r.X + r.Width <= width);
-        regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action ?? "")
-            .Where(a => a.StartsWith("map:", StringComparison.Ordinal) || a.StartsWith(FlightMapLayerPalette.GripAction, StringComparison.Ordinal))
-            .ShouldBeEmpty();
+        regions.Any(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ShouldBeFalse();
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
     private static ClickableRegion Region(FlightsView<RgbaImage> view, Func<string, bool> tooltip)
@@ -415,7 +405,7 @@ public sealed class FlightsCanvasTests
         landedView.Map.Route("A")!.Plane.ShouldBeNull();
         // The plane's own target, or for one parked on its sign the sign's, which is as wide as the ring.
         var ring = Hit(view, parked ? "map:A:destination" : "map:A:plane");
-        ring.Width.ShouldBe(2f * FlightMap.PlaneRadius, 0.5f);
+        ring.Width.ShouldBe(2f * FlightMap.PlaneRadius * view.Viewport.Scale, 0.5f);
         BrightIn(flying.Surface, ring, bright).ShouldBeGreaterThan(10);
         // The landed flight's stop under it is centred where the plane was, and nothing in the ring's square is Bright.
         var stop = Hit(landedView, parked ? "map:A:destination" : "map:A:leg:drawing");
