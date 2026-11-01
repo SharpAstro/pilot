@@ -167,6 +167,35 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    public async Task ACreateEnsuresTheLabelsTheNodeReadsOncePerRepo()
+    {
+        var (github, shortcut) = Trackered();
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51", "one")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-53", "story")).Ok.ShouldBeTrue();
+
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Priority, PilotMarks.Recheck]);
+        github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
+        PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
+        PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);
+    }
+
+    [Fact]
+    public async Task ARefusedReadLabelRaisesNoRingAndLosesNoFlight()
+    {
+        var (github, _) = Trackered();
+        github.EnsureFails = "label refused";
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "61", "kept")).Ok.ShouldBeTrue();
+
+        Flight("TIA61").State.ShouldBe(FlightState.Flying);
+        github.IssueLabels[61].ShouldBe(["pilot node: DE1"]);
+        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused");
+        card.Bin.ShouldBe(CardBin.Handled);
+    }
+
+    [Fact]
     public async Task AnItemWithAnotherNodesLabelIsRefusedNamingThatNodeAndMakesNoPlane()
     {
         var (github, shortcut) = Trackered();
