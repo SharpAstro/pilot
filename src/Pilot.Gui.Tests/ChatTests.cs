@@ -891,29 +891,31 @@ public sealed class ChatTests
     }
 
     [Fact]
-    public async Task ATypedMessageIsWorkingAtOnceKeepsItsTextTakesNoSecondSendAndClearsWhenTheNodeTakesIt()
+    public async Task ATypedMessageLeavesTheBoxAtOnceIsSendingAndQueuesASecondBehindIt()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var node = new TaskCompletionSource<string?>();
         var sent = 0;
-        var chat = NewChat(renderer, send: _ => { sent++; return node.Task; });
+        var chat = NewChat(renderer, send: _ => { sent++; return sent == 1 ? node.Task : Task.FromResult<string?>(null); });
         await Read(chat, 6);
         chat.Input.InsertText("hello");
 
         var first = chat.SendAsync();
         Described(chat).ShouldContain("sending…");
-        chat.Input.Text.ShouldBe("hello");
-        await chat.SendAsync();
+        chat.Input.Text.ShouldBe("");
+        chat.Input.InsertText("again");
+        var second = chat.SendAsync();
         sent.ShouldBe(1);
 
         node.SetResult(null);
         await first;
-        chat.Input.Text.ShouldBe("");
+        await second;
+        sent.ShouldBe(2);
         Described(chat).ShouldNotContain("sending…");
     }
 
     [Fact]
-    public async Task ARefusedMessageStaysInTheBoxAndIsSaidInTheNodesWords()
+    public async Task ARefusedMessageIsGoneFromTheBoxAndIsSaidInTheNodesWords()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chat = NewChat(renderer, send: _ => Task.FromResult<string?>("the watchtower is down"));
@@ -922,7 +924,7 @@ public sealed class ChatTests
 
         await chat.SendAsync();
 
-        chat.Input.Text.ShouldBe("hello");
+        chat.Input.Text.ShouldBe("");
         Described(chat).ShouldContain("the watchtower is down");
     }
 
@@ -971,7 +973,7 @@ public sealed class ChatTests
     }
 
     [Fact]
-    public async Task AMessageAboutACardKeepsItsQuoteUntilTheNodeTakesIt()
+    public async Task AMessageAboutACardTakesItsQuoteOutOfTheBoxAtEnterAndStillGoesAboutTheCard()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var node = new TaskCompletionSource<string?>();
@@ -982,11 +984,10 @@ public sealed class ChatTests
         chat.Input.InsertText("why?");
 
         var send = chat.SendAsync();
-        chat.QuotedCard.ShouldNotBeNull();
-        node.SetResult(null);
-        await send;
         chat.QuotedCard.ShouldBeNull();
         chat.Input.Text.ShouldBe("");
+        node.SetResult(null);
+        await send;
     }
 
     private static RGBAColor32? ColorOf(ChatView<RgbaImage> chat, string contains) =>
