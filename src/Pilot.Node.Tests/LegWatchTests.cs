@@ -307,6 +307,52 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AnIdleWorkerWithRoomRingsAndItsDetailSaysItIsIdleWithRoom()
+    {
+        Worker(SessionState.Idle, context: 20_000);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            await _watch.LookAsync(Ct);
+        }
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
+        card.Detail.ShouldStartWith("idle with room in its context (10% of its window used) and no job of its own running; ");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWaitingOnAJobOfItsOwnRaisesNoRingAndOneHandledLineSayingSo()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _state.PutJob(new JobRow
+        {
+            Id = "j3", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j3.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        _said.ShouldBeEmpty();
+        var line = Handled().ShouldHaveSingleItem();
+        line.Kind.ShouldBe("worker-waiting-job");
+        line.Title.ShouldContain("waits on a job of its own");
+    }
+
+    [Fact]
+    public void AFullContextIdleWorkerIsClassifiedFullAndOneWithRoomAsRoom()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        var leg = _state.Legs().First();
+        _watch.ClassifyIdle(leg, _state.Sessions().First()).ShouldBe(LegWatch.IdleCause.Full);
+        Worker(SessionState.Idle, context: 1_000);
+        _watch.ClassifyIdle(leg, _state.Sessions().First()).ShouldBe(LegWatch.IdleCause.Room);
+    }
+
+    [Fact]
     public async Task AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged()
     {
         Worker(SessionState.Idle, context: 190_000);

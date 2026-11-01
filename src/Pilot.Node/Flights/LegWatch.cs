@@ -378,15 +378,23 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
-        if (now - since < IdleGrace || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
-                && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase))))
+        if (now - since < IdleGrace)
         {
+            return;
+        }
+        var cause = ClassifyIdle(leg, worker);
+        if (cause == IdleCause.OwnJob)
+        {
+            if (_ownJobNoted.Add(leg.WorkerJob!))
+            {
+                state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is idle because it waits on a job of its own; the job wakes it");
+            }
             return;
         }
         var job = leg.WorkerJob!;
         // A worker whose context is near full is never nudged: a nudge is a turn it has no room for. It is compacted once, then
         // the leg goes round with a fresh worker (pilot #578).
-        if (worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow)
+        if (cause == IdleCause.Full)
         {
             await FullAsync(leg, worker, since, now, cancellationToken);
             return;
@@ -403,8 +411,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
             Ring(leg, Idle, answered > 0 ? $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, though it answers its nudges" : $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}",
                 answered > 0
-                    ? $"nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
-                    : $"nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
+                    ? $"{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
+                    : $"{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
                 worker);
             return;
         }
@@ -423,9 +431,34 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"the node tried to nudge it: {result.Error}", worker);
+            Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"{RoomLead(worker)}the node tried to nudge it: {result.Error}", worker);
         }
     }
+
+    /// <summary>Why an idle worker is idle (pilot #578): its context is full, it waits on a job of its own, or it is idle with room.</summary>
+    internal enum IdleCause { Full, OwnJob, Room }
+
+    /// <summary>
+    /// The one place an idle worker's cause is read. A job of its own is one it owns (by row or name, since Claude Code may continue a
+    /// session as a copy) or one of its flight and leg; a live job of its own wins over a full context, as the job wakes the worker.
+    /// </summary>
+    internal IdleCause ClassifyIdle(LegRow leg, SessionRow worker)
+    {
+        if (state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+            && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase)
+                || (string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))))
+        {
+            return IdleCause.OwnJob;
+        }
+        return worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow ? IdleCause.Full : IdleCause.Room;
+    }
+
+    /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
+    private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"idle with room in its context ({100.0 * worker.ContextTokens / worker.ContextWindow:0}% of its window used) and no job of its own running; ")
+        : "idle with room in its context and no job of its own running; ";
+
+    private readonly HashSet<string> _ownJobNoted = new(StringComparer.Ordinal);
 
     /// <summary>What a full worker's summary keeps: the leg, and a way of reading that does not fill the window again.</summary>
     public const string FullFocus = "Keep your leg: its goal, the steps done and left, and what you were doing when this was cut. "
@@ -440,7 +473,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             // The fresh worker filled and stalled too: another one would do the same, so a person decides.
             Ring(leg, Idle, $"{Name(leg)}'s worker has filled its context again ({share}) and stopped, after a replacement for a full context",
-                $"the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {Steps(leg)}, so the node nudges and replaces no more",
+                $"context full: the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {Steps(leg)}, so the node nudges and replaces no more",
                 worker, redoWhy: "filled its context twice");
             return;
         }
@@ -480,7 +513,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         else
         {
             Ring(leg, Idle, $"{Name(leg)}'s worker is at {share} of its context window and could not be replaced: {Clip(around.Error ?? "no reason given")}",
-                $"the node compacted it, and it is still full; the go-around was refused: {around.Error}", worker);
+                $"context full: the node compacted it, and it is still full; the go-around was refused: {around.Error}", worker);
         }
     }
 
