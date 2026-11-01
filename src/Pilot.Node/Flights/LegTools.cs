@@ -40,7 +40,7 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, string? briefFolder = null) : IWorkerLauncher
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
@@ -95,10 +95,19 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         // A background session has no one to accept Claude Code's trust prompt: the folder it starts from (the repo's main
         // checkout, or the watchtower's) is trusted first. A trust that cannot be recorded is left for claude to refuse.
         trust.Ensure(start.RepoPath);
+        string prompt;
+        try
+        {
+            prompt = Inline(start.Name, start.Brief, briefFolder ?? DefaultBriefFolder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new FlightException($"the brief of {start.Name} is {start.Brief.Length:N0} characters, too long to pass on a command line, and its file could not be written: {ex.Message}");
+        }
         ClaudeRun run;
         try
         {
-            run = await ClaudeCli.RunAsync(Arguments(start), Inline(start.Name, start.Brief, BriefFolder), start.RepoPath, Timeout, cancellationToken);
+            run = await ClaudeCli.RunAsync(Arguments(start), prompt, start.RepoPath, Timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is FileNotFoundException or System.ComponentModel.Win32Exception or TimeoutException)
         {
@@ -120,7 +129,42 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
     /// <c>ENAMETOOLONG: name too long, uv_spawn</c> and rang as a reviewer that never took a turn.</summary>
     public const int MaxInlineBrief = 24_000;
 
-    private static string BriefFolder => Path.Combine(Path.GetTempPath(), "pilot-briefs");
+    /// <summary>How long a brief file is kept: as long as a session may need to read it again after it compacts.</summary>
+    public static readonly TimeSpan BriefFileLife = TimeSpan.FromDays(5);
+
+    private static string DefaultBriefFolder => Path.Combine(Path.GetTempPath(), "pilot-briefs");
+
+    /// <summary>The folder brief files go in under the node's data folder.</summary>
+    public static string BriefFolderIn(string dataFolder) => Path.Combine(dataFolder, "briefs");
+
+    /// <summary>Deletes the brief files in <paramref name="folder"/> not written within <paramref name="life"/>; returns how many. Never throws.</summary>
+    public static int SweepBriefs(string folder, TimeSpan life, DateTime now)
+    {
+        var removed = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folder, "*.md"))
+            {
+                try
+                {
+                    if (now - File.GetLastWriteTimeUtc(file) > life)
+                    {
+                        File.Delete(file);
+                        removed++;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A file in use stays for the next start.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No folder yet, or not readable: nothing to sweep.
+        }
+        return removed;
+    }
 
     /// <summary>
     /// The brief to pass: <paramref name="brief"/> itself when it fits, else a short one naming a file in
