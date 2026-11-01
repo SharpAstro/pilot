@@ -90,6 +90,7 @@ internal static class CardKindCatalog
         new("autopilot-merge-refused", "Ring", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver"),
         new("pr-marks-refused", "ForYou", [Leg, "Flights/PrMarks.cs", Reviews], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "ForYou|Handled", [Flight, Move, Leg, "Flights/RepoSetup.cs"], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
+        new("design-mirror-failed", "Ring", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [Flight], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
         new("issue-left-open", "ForYou", [Flight], SourcePinned),
