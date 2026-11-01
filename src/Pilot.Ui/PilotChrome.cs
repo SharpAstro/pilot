@@ -933,7 +933,7 @@ internal sealed class PilotChrome<TSurface>
     }
 
     /// <summary>
-    /// Keeps the widths the user drags the list pages' columns to, and the Night switch, in <paramref name="file"/>: the pages
+    /// Keeps the widths the user drags the list pages' columns to, the Night switch and the Pull requests page's folds, in <paramref name="file"/>: the pages
     /// start from what it holds, and <paramref name="redraw"/> is asked for a frame as a drag moves a divider.
     /// </summary>
     public void KeepColumnWidths(GuiSettingsFile file, Action redraw)
@@ -944,6 +944,7 @@ internal sealed class PilotChrome<TSurface>
             file.Attach(table);
             table.Changed += redraw;
         }
+        file.Attach(PullRequests);
         file.Attach(Night);
         Night.Changed += _ => redraw();
         // The map's layers, kept in the same file and asking for a frame when one is toggled.
