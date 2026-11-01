@@ -60,6 +60,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>Says a job's end to its owner: <see cref="NodeCommands.RunAsync"/> with a <c>say</c>.</summary>
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
+    /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
+    public SessionLedger? Ledger { get; set; }
+
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
@@ -1116,7 +1119,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Says how the job ended to its owner, a real turn for an idle worker; a wake that fails rings, so the result is never lost in silence.</summary>
-    private async Task TellAsync(JobRow job, CancellationToken cancellationToken, string[]? last = null)
+    internal async Task TellAsync(JobRow job, CancellationToken cancellationToken, string[]? last = null)
     {
         // Once only: a row already told (by this node, or one before it) is never told again.
         if (job.Owner is null || Say is null || job.Told || state.Jobs().FirstOrDefault(j => j.Id == job.Id) is { Told: true })
@@ -1132,7 +1135,29 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         };
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";
-        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(WakeTarget(job.Owner, job.OwnerName)), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        var sessions = state.Sessions();
+        var ownerRow = OwnerRow(job.Owner, sessions);
+        var target = WakeTarget(job.Owner, job.OwnerName);
+        if (ownerRow is not null)
+        {
+            // A session replaced by a later one of its role (a go-around, a restart) hands its jobs on: the end goes to the
+            // current session, saying whose job it was (#601).
+            var candidates = ownerRow.Role == SessionRole.Worker
+                ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
+                : sessions;
+            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+            {
+                target = replacement.Id;
+                text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
+            }
+            else if (EndedNormally(ownerRow))
+            {
+                // The owner finished its work and nothing took its place: nobody is waiting on this job.
+                state.PutJob(job with { Told = true });
+                return;
+            }
+        }
+        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
         if (result.Ok)
         {
             state.PutJob(job with { Told = true });
@@ -1175,6 +1200,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// A worker Claude Code continued as a copy is a row of its own, and the first row's session has stopped, so waking it
     /// would leave the copy, which holds the later conversation, waiting on a job it never hears of (TIA1774's j3).
     /// </summary>
+    private SessionRow? OwnerRow(string owner, SessionRow[] sessions) =>
+        sessions.FirstOrDefault(s => s.Id == owner)
+        ?? sessions.Where(s => s.SessionId == owner || s.EarlierSessionIds?.Contains(owner) == true).OrderByDescending(s => s.StartedAt).FirstOrDefault();
+
+    private bool EndedNormally(SessionRow row) =>
+        WindDown.Why(state, Ledger, row) is not null
+        || Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Finished };
+
     internal string WakeTarget(string owner, string? ownerName)
     {
         // By id only, never a namesake (#542): the owner's own row, or the row its id moved to (a continuation lists it among its
