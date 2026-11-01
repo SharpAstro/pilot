@@ -276,6 +276,8 @@ public sealed partial class LegCommander(
             && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
+            // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().
+            await CheckLegEndOverlapAsync(command.Target, cancellationToken);
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
         }
 
