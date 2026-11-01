@@ -24,6 +24,37 @@ internal sealed record ChecklistLine(int Order, string Leg, bool Done, bool Fail
     public string Title => $"{Order}. {Leg}";
 }
 
+/// <summary>
+/// One session of a flight in words: its name, model and effort, state and, once it ended, how it ended and when. <see cref="Role"/>
+/// is <c>worker</c>, <c>validator</c>, <c>planner</c> or <c>reviewer</c>.
+/// </summary>
+internal sealed record LegSessionLine(SessionRow Row, string Role, string Name, string Model, string State, string? Ended)
+{
+    public bool IsLive => Row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !Row.Gone;
+
+    public static LegSessionLine From(SessionRow row, string role, DateTimeOffset now)
+    {
+        var state = row.Gone && row.State is SessionState.Waiting or SessionState.Idle ? "gone" : row.State switch
+        {
+            SessionState.Working => "working",
+            SessionState.Waiting => "waiting",
+            SessionState.Idle => "idle",
+            SessionState.Ended => "ended",
+            _ => "failed",
+        };
+        string? ended = null;
+        if (row.State is SessionState.Ended or SessionState.Failed)
+        {
+            var how = row.EndReason ?? row.EndedBecause ?? state;
+            ended = row.EndedAt is { } at ? $"{how} {SessionLine.Ago(now - at)}" : how;
+        }
+        return new LegSessionLine(row, role, row.Name, SessionLine.ModelText(row.Model, row.Effort), state, ended);
+    }
+
+    /// <summary>The session as the dump writes it: <c>worker | name | Opus 5.5 · xhigh | working</c>, or its end in place of the state.</summary>
+    public string ToDumpText() => $"{Role} | {Name} | {Model} | {Ended ?? State}";
+}
+
 /// <summary>One leg as the flight's page shows it, every field already in words.</summary>
 internal sealed record LegDetail
 {
@@ -64,7 +95,30 @@ internal sealed record LegDetail
     public static string? AttemptOf(LegRow leg) =>
         Verbs.AttemptOf(leg);
 
-    public static LegDetail From(LegRow leg, DateTimeOffset now) => new()
+    /// <summary>The leg's current session: its worker row; null for a leg that never started.</summary>
+    public LegSessionLine? Session { get; init; }
+
+    /// <summary>The leg's other worker and validator sessions, newest first.</summary>
+    public IReadOnlyList<LegSessionLine> Earlier { get; init; } = [];
+
+    public static LegDetail From(LegRow leg, DateTimeOffset now, IReadOnlyList<SessionRow>? sessions = null)
+    {
+        var validatorLeg = leg.Name + "-validator";
+        var mine = (sessions ?? [])
+            .Where(s => s.Flight == leg.Flight && ((s.Leg == validatorLeg && s.Role != SessionRole.Planner) || (s.Leg == leg.Name && s.Role == SessionRole.Worker)))
+            .ToList();
+        var workers = mine.Where(s => s.Leg == leg.Name).ToList();
+        var current = workers.FirstOrDefault(s => leg.WorkerJob is not null && s.Id == leg.WorkerJob)
+            ?? workers.Where(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone).OrderByDescending(s => s.StartedAt).FirstOrDefault();
+        return Make(leg, now) with
+        {
+            Session = current is null ? null : LegSessionLine.From(current, "worker", now),
+            Earlier = [.. mine.Where(s => s != current).OrderByDescending(s => s.StartedAt)
+                .Select(s => LegSessionLine.From(s, s.Leg == validatorLeg ? "validator" : "worker", now))],
+        };
+    }
+
+    private static LegDetail Make(LegRow leg, DateTimeOffset now) => new()
     {
         Row = leg,
         Name = leg.Name,
@@ -139,11 +193,18 @@ internal sealed record FlightDetail
     /// <summary>What the ledger says the flight has spent so far, per leg and round; null where the node has not told or the flight has spent nothing.</summary>
     public SpendFlightReport? Spend { get; init; }
 
+    /// <summary>The flight's own planner and reviewer sessions: live first, then ended, newest first.</summary>
+    public IReadOnlyList<LegSessionLine> Sessions { get; init; } = [];
+
     public static FlightDetail From(FlightLine line, DateTimeOffset now, SpendFlightReport? spend = null) => new()
     {
         Line = line,
+        Sessions = [.. line.AllSessions
+            .Where(s => s.Role is SessionRole.Planner or SessionRole.Reviewer)
+            .Select(s => LegSessionLine.From(s, s.Role == SessionRole.Planner ? "planner" : "reviewer", now))
+            .OrderByDescending(l => l.IsLive).ThenByDescending(l => l.Row.StartedAt)],
         Spend = spend is { Messages: > 0 } ? spend : null,
-        Legs = [.. line.LegRows.OrderBy(l => l.Order).Select(l => LegDetail.From(l, now))],
+        Legs = [.. line.LegRows.OrderBy(l => l.Order).Select(l => LegDetail.From(l, now, line.AllSessions))],
     };
 
     /// <summary>The page as a dump writes it, one line per leg, step and artifact.</summary>
@@ -164,12 +225,18 @@ internal sealed record FlightDetail
             lines.Add("other sub-tasks:");
             lines.AddRange(OtherSubTasks.Select(s => $"  [{(s.Done ? "x" : " ")}] {s.Title}{(s.Url.Length > 0 ? $" | {s.Url}" : "")}"));
         }
+        lines.AddRange(Sessions.Select(x => $"session: {x.ToDumpText()}"));
         foreach (var leg in Legs)
         {
             lines.Add($"{leg.Order}. {leg.Name} | {string.Join(" · ", new[] { leg.State, leg.StepsText, leg.GoArounds, leg.Attempt }.OfType<string>())}");
             lines.Add($"   goal: {leg.Goal}");
             lines.Add($"   done when: {leg.DoneWhen}");
             lines.AddRange(leg.Steps.Select(s => $"   [{(s.Done ? "x" : " ")}] {s.Text}"));
+            if (leg.Session is { } current)
+            {
+                lines.Add($"   session: {current.ToDumpText()}");
+            }
+            lines.AddRange(leg.Earlier.Select(e => $"   earlier session: {e.ToDumpText()}"));
             lines.AddRange(leg.Artifacts.Select(a => $"   artifact {a.Title}: {a.Location}"));
         }
         return string.Join('\n', lines);
