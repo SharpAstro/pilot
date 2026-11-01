@@ -756,6 +756,7 @@ public static class Briefs
         text.AppendLine($"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
+        text.AppendLine("- If GitHub refuses a push because the PR is in a merge queue or has merged, the node follows it up: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");
         text.AppendLine("- End your turn once the push and the comment are done.");
         return text.ToString();
     }
