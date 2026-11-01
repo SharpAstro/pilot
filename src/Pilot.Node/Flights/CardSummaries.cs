@@ -134,6 +134,7 @@ public static partial class CardSummaries
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",
             NodeState.StoreCardKind => "The node's store could not write its snapshot. Every change is still journaled, so a restart loses nothing; fix the folder or the disk.",
+            Pilot.Node.Sessions.SessionMessenger.StopUnconfirmedKind => "A session was told to stop and its process may still run. The card's choice ends it again; the title says which session.",
             UsageReader.HighKind => "The 5-hour usage window is nearly spent. Workers stop when it runs out and the node resumes them after the reset; nothing to do.",
             StartGate.WeekKind => "The 7-day usage window is largely spent. Pause flights by hand if the week should last; nothing is stopped by itself.",
             RemovalQueueStart.Kind => "Folders of landed flights or closed reviews are still held open by Windows. The node removes them once they are let go; close whatever holds them.",

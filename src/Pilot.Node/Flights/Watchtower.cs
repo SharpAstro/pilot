@@ -215,7 +215,7 @@ public sealed class Watchtower(
         // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
         // cf26a311 gone and fd282f70, ended 4 h earlier, named), so only a live one stands in and else the look starts a fresh one.
         var vanished = _job is not null;
-        return rows.Where(r => !vanished || Live(r)).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
+        return rows.Where(r => !_replaced.Contains(r.Id) && (!vanished || Live(r))).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
@@ -588,7 +588,7 @@ public sealed class Watchtower(
                 }
             }
             // Every look: a watchtower of this node but the current, renamed or not, is stopped.
-            await StopOthersAsync(row?.Id, null, cancellationToken);
+            await StopOthersAsync(row?.Id, cancellationToken);
 
             if (watching is null)
             {
@@ -758,15 +758,14 @@ public sealed class Watchtower(
         }
         if (replacing is not null)
         {
-            try
+            // Never taken as current again, ended or not. An idle one is ended now, through the node's end-session path (stop confirmed,
+            // jobs cancelled, reason ledgered); one mid-turn is told it is replaced once the fresh one has an id (StopOthersAsync), and
+            // ended when idle or after the grace. One whose end did not take is not in _stopped: later looks end it again.
+            _replaced.Add(replacing.Id);
+            if (replacing.State != SessionState.Working)
             {
-                await launcher.StopAsync(replacing.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
+                await EndOneAsync(replacing, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken);
             }
-            catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                // Gone already: the fresh one starts all the same.
-            }
-            _stopped.Add(replacing.Id);
         }
 
         var folder = options.WatchtowerFolder;
@@ -809,7 +808,7 @@ public sealed class Watchtower(
         TellAllOpen();
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
-        await StopOthersAsync(_job, replacing?.Id, cancellationToken);
+        await StopOthersAsync(_job, cancellationToken);
         return true;
     }
 
@@ -878,50 +877,135 @@ public sealed class Watchtower(
         _parkedOpen = [];
     }
 
+    /// <summary>How long a replaced watchtower still mid-turn is given, once told, before it is ended all the same.</summary>
+    public TimeSpan ReplacedGrace { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>How long after an end that did not take the same session is ended again.</summary>
+    public TimeSpan EndRetryAfter { get; init; } = TimeSpan.FromMinutes(1);
+
+    // Rows the node replaced (never current again), the mid-turn ones told so, when each one's grace began, and when each end was last tried.
+    private readonly HashSet<string> _replaced = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _toldReplaced = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _graceFrom = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _endTried = new(StringComparer.Ordinal);
+
     /// <summary>
-    /// One watchtower per node: stops every live background watchtower row but <paramref name="keep"/> (and the one just
-    /// stopped, <paramref name="replaced"/>), and says which in one Handled line. An interactive session is someone's terminal, never stopped.
+    /// Ends a watchtower session as <c>pilot session end</c> does (<see cref="Verbs.EndSession"/> run as the node: the stop confirmed
+    /// by the messenger, its jobs cancelled, the reason ledgered, a card raised when the stop did not take). It joins <c>_stopped</c>
+    /// only once confirmed, so a later look tries a session still live again. False when it was not confirmed or was tried lately.
     /// </summary>
-    private async Task StopOthersAsync(string? keep, string? replaced, CancellationToken cancellationToken)
+    private async Task<bool> EndOneAsync(SessionRow row, string why, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        // Known by id (IsWatchtower), whatever its name or role now: a renamed one is still the node's. Ones already stopped
-        // wait for the tracker to show them ended, and are not stopped and reported again on every look.
+        if (_endTried.TryGetValue(row.Id, out var tried) && now - tried < EndRetryAfter)
+        {
+            return false;
+        }
+        _endTried[row.Id] = now;
+        CommandResult result;
+        try
+        {
+            result = await run(new CommandRequest { Verb = Verbs.EndSession, Target = Verbs.SessionTarget(row.Id), Args = [why], Who = LegWatch.Who }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            await Error.WriteLineAsync($"watchtower: ending {row.Id} failed: {ex.Message}");
+            return false;
+        }
+        if (!result.Ok)
+        {
+            await Error.WriteLineAsync($"watchtower: ending {row.Id} was not confirmed, tried again after {EndRetryAfter.TotalSeconds:0} s: {result.Error}");
+            return false;
+        }
+        _stopped.Add(row.Id);
+        _endTried.Remove(row.Id);
+        return true;
+    }
+
+    /// <summary>
+    /// One watchtower per node: ends every live background watchtower row but <paramref name="keep"/>, and says which in one Handled
+    /// line. A replaced one mid-turn is told once (the node's voice) and ended when idle or after <see cref="ReplacedGrace"/>; one
+    /// whose end did not take is ended again on a later look. An interactive session is someone's terminal, never ended.
+    /// </summary>
+    private async Task StopOthersAsync(string? keep, CancellationToken cancellationToken)
+    {
+        // Known by id (IsWatchtower), whatever its name or role now: a renamed one is still the node's. Ones whose end was confirmed
+        // wait for the tracker to show them ended, and are not ended and reported again on every look.
         var others = state.Sessions()
-            .Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.Id != keep && r.Id != replaced && !_stopped.Contains(r.Id))
+            .Where(r => r.Kind == SessionKind.Background && IsWatchtower(r) && Live(r) && r.Id != keep && !_stopped.Contains(r.Id))
             .OrderBy(r => r.StartedAt)
             .ToList();
         if (others.Count == 0)
         {
             return;
         }
+        var now = time.GetUtcNow();
+        var ended = new List<SessionRow>();
         foreach (var other in others)
         {
-            try
+            var replaced = _replaced.Contains(other.Id);
+            if (other.State == SessionState.Working && !await GraceOverAsync(other, keep, now, cancellationToken))
             {
-                await launcher.StopAsync(other.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
+                continue;
             }
-            catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            var why = replaced ? $"replaced by {keep ?? "a fresh watchtower"}" : $"a second watchtower beside {keep ?? "the current one"}";
+            if (await EndOneAsync(other, why, now, cancellationToken))
             {
-                // Gone already: nothing to stop.
+                ended.Add(other);
             }
-            _stopped.Add(other.Id);
         }
-        state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
-            $"Stopped {(others.Count == 1 ? "another watchtower" : $"{others.Count} other watchtowers")} (one per node): {string.Join(", ", others.Select(r => $"{r.Name} ({r.Id})"))}");
+        if (ended.Count > 0)
+        {
+            state.RaiseCard(CardBin.Handled, "watchtower-duplicate", Verbs.WatchtowerTarget,
+                $"Stopped {(ended.Count == 1 ? "another watchtower" : $"{ended.Count} other watchtowers")} (one per node): {string.Join(", ", ended.Select(r => $"{r.Name} ({r.Id})"))}");
+        }
     }
 
-    /// <summary>Stops a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
-    private async Task StopQuietAsync(SessionRow row, CancellationToken cancellationToken)
+    /// <summary>
+    /// Tells a session mid-turn it is replaced, until the say is delivered once; true when <see cref="ReplacedGrace"/> has passed
+    /// since the first try, told or not, so a session the tell never reaches is still ended.
+    /// </summary>
+    private async Task<bool> GraceOverAsync(SessionRow row, string? by, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        if (!_graceFrom.TryGetValue(row.Id, out var from))
+        {
+            _graceFrom[row.Id] = from = now;
+        }
+        if (now - from >= ReplacedGrace)
+        {
+            return true;
+        }
+        if (_toldReplaced.Contains(row.Id))
+        {
+            return false;
+        }
+        var line = $"You are replaced by session {by ?? "a fresh one"}. Finish what you are on and keep nothing only you hold; the node ends this session when you are idle.";
         try
         {
-            await launcher.StopAsync(row.Id, SessionEndReasons.Watchtower, "watchtower", cancellationToken);
+            var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [line], Who = LegWatch.Who }, cancellationToken);
+            if (result.Ok)
+            {
+                _toldReplaced.Add(row.Id);
+            }
+            else
+            {
+                await Error.WriteLineAsync($"watchtower: telling {row.Id} it is replaced failed, tried again on the next look: {result.Error}");
+            }
         }
-        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            // Gone already: there is nothing to stop.
+            await Error.WriteLineAsync($"watchtower: telling {row.Id} it is replaced failed, tried again on the next look: {ex.Message}");
         }
-        _stopped.Add(row.Id);
+        return false;
+    }
+
+    /// <summary>Ends a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
+    private async Task StopQuietAsync(SessionRow row, CancellationToken cancellationToken)
+    {
+        if (!await EndOneAsync(row, "nothing to watch", time.GetUtcNow(), cancellationToken))
+        {
+            // Not confirmed: kept as current, so the next look ends it again; the messenger's card says when it will not stop.
+            return;
+        }
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
