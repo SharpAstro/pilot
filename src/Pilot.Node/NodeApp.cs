@@ -165,7 +165,8 @@ public static class NodeApp
         builder.Services.AddSingleton(_ => new StartOptionsBook(StartOptionsBook.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new SessionLedger(SessionLedger.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
-        builder.Services.AddSingleton<ClaudeWorkerLauncher>();
+        builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
+            services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder)));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
@@ -781,6 +782,10 @@ internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log) : IH
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        if (ClaudeWorkerLauncher.SweepBriefs(ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder), ClaudeWorkerLauncher.BriefFileLife, DateTime.UtcNow) is > 0 and var swept)
+        {
+            log.Write($"pilot-node: removed {swept} brief file(s) older than {ClaudeWorkerLauncher.BriefFileLife.TotalDays:0} days");
+        }
         log.Write($"pilot-node: start, version {FileJournal.RunningVersion}, socket {options.SocketPath}, data folder {options.DataFolder}, LAN {(options.Lan ? $"port {options.LanPort}" : "off")}");
         return Task.CompletedTask;
     }
