@@ -776,6 +776,18 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>Every label asked to be made in a repo with no item, by repo path, in order.</summary>
+    public List<(string Repo, string Label)> LabelsEnsured { get; } = [];
+
+    /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
+    public string? EnsureFails { get; set; }
+
+    public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        LabelsEnsured.Add((repoPath, label));
+        return EnsureFails is { } why ? Task.FromException(new FlightException(why)) : Task.CompletedTask;
+    }
+
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
         if (IssueLabelFails is { } why)

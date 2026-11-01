@@ -27,6 +27,10 @@ public interface ITracker
     /// <exception cref="FlightException">The tracker refused it.</exception>
     Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
 
+    /// <summary>Makes <paramref name="label"/> in the repo when missing, without putting it on an item. A tracker with no repo-wide labels skips it.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => Task.CompletedTask;
+
     /// <summary>Takes <paramref name="label"/> off the item.</summary>
     /// <exception cref="FlightException">The tracker refused it.</exception>
     Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
@@ -124,6 +128,8 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
     public Task<string[]> LabelsAsync(string repoPath, int id, CancellationToken cancellationToken) => github.IssueLabelsAsync(repoPath, id, cancellationToken);
 
     public Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.AddIssueLabelAsync(repoPath, id, label, cancellationToken);
+
+    public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => github.EnsureLabelAsync(repoPath, label, cancellationToken);
 
     public Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.RemoveIssueLabelAsync(repoPath, id, label, cancellationToken);
 
