@@ -145,7 +145,7 @@ public sealed class CompactorTests
     {
         var log = new StringWriter();
         _compactor.Error = log;
-        _ledger.Started("t0000001", "du1-watchtower", Pilot.Node.Sessions.SessionRoles.Resolve("du1-watchtower", background: true), Pilot.Node.Sessions.SessionStartReasons.WatchtowerStart, null);
+        _ledger.Started("t0000001", "du1-watchtower", Pilot.Node.Sessions.SessionRoles.Resolve("du1-watchtower", background: true), Pilot.Contracts.SessionStartReasons.WatchtowerStart, null);
         Row("t0000001", "du1-watchtower", context: 700_000);
 
         await _compactor.LookAsync(Ct);
