@@ -20,12 +20,12 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
     }
 
     /// <summary>TIA1 (B), TIA2 (C) and TIA3 (A), A waiting on B and C.</summary>
-    private async Task Three(FlightCommander flights)
+    private async Task Three(FlightCommander flights, NodeState? on = null)
     {
         await Create(flights, "1", "2", "3");
         (await Run(flights, Verbs.Connect, "flight/TIA3", "TIA1")).Ok.ShouldBeTrue();
         (await Run(flights, Verbs.Connect, "flight/TIA3", "TIA2")).Ok.ShouldBeTrue();
-        F("TIA3").State.ShouldBe(FlightState.Held);
+        (on ?? _state).Flights().Single(f => f.Code == "TIA3").State.ShouldBe(FlightState.Held);
     }
 
     private CardRow[] Released(string code) =>
@@ -76,7 +76,7 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
         {
             var state = new NodeState(journal, TimeProvider.System);
             var (flights, _) = Commanders(state);
-            await Three(flights);
+            await Three(flights, state);
             (await Run(flights, Verbs.Land, "flight/TIA1")).Ok.ShouldBeTrue();
         }
 
@@ -107,6 +107,7 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
     {
         await Three(_flights);
 
+        (await Leg(Verbs.Overlap, "flight/TIA1", "TIA2", "same work")).Ok.ShouldBeTrue();
         (await Leg(Verbs.Fold, "flight/TIA1", "TIA2")).Ok.ShouldBeTrue();
 
         var a = F("TIA3");
