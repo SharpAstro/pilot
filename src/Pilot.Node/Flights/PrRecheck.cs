@@ -361,7 +361,9 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             var why = await legs.ChecksFailedAsync(code, pr.Head, cancellationToken);
             if (why is not null)
             {
-                state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{code}'s PR #{entry.Number} fails its checks", why, link: pr.Url);
+                var failChoices = legs.ChecksFailedChoices(code, pr.Head, entry.Number);
+                state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, LegCommander.ChecksFailedTitle(code, entry.Number, null, why), why, failChoices, link: pr.Url,
+                    summary: legs.ChecksFailedSummary(code, entry.Number, why, failChoices));
             }
             return await FinishAsync(entry, pr, why is null ? $"checks failed at {head}, sent back as changes" : $"checks failed at {head}, not sent back ({why}), rung", LabelOf(code), cancellationToken);
         }

@@ -246,7 +246,8 @@ public sealed class SessionModelCheckTests : IDisposable
         Started(start, AgentRows.SessionB);
         var folder = Path.Combine(_profile.Profile.Root, "jobs", AgentRows.SessionB[..8]);
         Directory.CreateDirectory(folder);
-        File.WriteAllText(Path.Combine(folder, "state.json"), """{"respawnFlags":["--model","sonnet"]}""");
+        // Its own start flags, name and model with them: flags that lost either are not its options (ResumeOptionsTests).
+        File.WriteAllText(Path.Combine(folder, "state.json"), """{"respawnFlags":["-n","de1-pil1-worker","--permission-mode","auto","--strict-mcp-config","--model","sonnet","--effort","medium"]}""");
         await LiveAsync(AgentRows.SessionB, start.Name, "claude-sonnet-5-5", "medium");
         var row = _state.Sessions().Single();
 

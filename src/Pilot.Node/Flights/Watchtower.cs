@@ -200,12 +200,14 @@ public sealed class Watchtower(
     }
 
     /// <summary>
-    /// The watchtower's row now: the one it started, else the newest of its name, live first. One renamed is not current: it
-    /// is still the node's, but stopped (<see cref="StopOthersAsync"/>), and cards go to the current one only.
+    /// The watchtower's row now: the one it started, else the newest the node knows as its watchtower, live first. Known by id
+    /// (<see cref="IsWatchtower"/>), never by name: a say resumes it as a copy that Claude Code titles after its work, and taken
+    /// by name the renamed current one was stopped as another (<see cref="StopOthersAsync"/>) after every answer (SE1,
+    /// 2026-10-31: 44f74bec, d4ccbfc7, b61b72f3). Cards go to the current one only.
     /// </summary>
     public SessionRow? Current()
     {
-        var rows = state.Sessions().Where(r => IsWatchtower(r) && r.Name == Name).ToList();
+        var rows = state.Sessions().Where(IsWatchtower).ToList();
         if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
         {
             return own;
@@ -714,13 +716,14 @@ public sealed class Watchtower(
     {
         if (row.ApiErrorResetsAt is not { } resets)
         {
-            state.RaiseCard(CardBin.Ring, Stopped, Verbs.WatchtowerTarget, "The watchtower was stopped by the API", $"{error}, with no time it clears",
-                [new CardChoice { Label = "Restart it", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["stopped by the API"] }]);
+            state.RaiseCard(CardBin.Ring, Stopped, Verbs.WatchtowerTarget, $"The watchtower was stopped by the API with no time it clears: {LegCommander.OneLine(error)}", $"{error}. The node cannot tell when it can resume it, so rings come straight to you until it runs again.",
+                [new CardChoice { Label = "Start a fresh watchtower now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["stopped by the API"] }]);
             return;
         }
         if (now < resets + ResetMargin)
         {
-            state.RaiseCard(CardBin.ForYou, Stopped, Verbs.WatchtowerTarget, $"The watchtower hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
+            // The node resumes it by itself at the reset: a Handled line, not a card that needs someone.
+            state.RaiseCard(CardBin.Handled, Stopped, Verbs.WatchtowerTarget, $"The watchtower hit the usage limit; it resumes at {resets.ToLocalTime():HH:mm}",
                 $"{error}; until then no card reaches it, so rings come straight to you");
             return;
         }
@@ -746,34 +749,12 @@ public sealed class Watchtower(
         }
     }
 
-    /// <summary>
-    /// The name the row this node started has now, when it is not <see cref="Name"/>: noted on the row as <c>renamed to
-    /// &lt;name&gt;</c>: still the node's, so it is stopped, never left running. Null when it is under its own name, or gone.
-    /// </summary>
-    private string? NoteRename()
-    {
-        if (_job is not { } job || state.Sessions().FirstOrDefault(s => s.Id == job) is not { } row || row.Name == Name)
-        {
-            return null;
-        }
-        var because = $"renamed to {row.Name}";
-        if (row.EndedBecause != because)
-        {
-            state.PutSession(row with { EndedBecause = because });
-        }
-        return row.Name;
-    }
-
     /// <summary>Starts a fresh watchtower, stopping <paramref name="replacing"/> first; false, with a ring, when it could not.</summary>
     private async Task<bool> StartAsync(string why, CancellationToken cancellationToken, SessionRow? replacing = null)
     {
         if (!options.Watchtower)
         {
             return false;
-        }
-        if (NoteRename() is { } renamed)
-        {
-            why += $"; the one it started was renamed to {renamed}";
         }
         if (replacing is not null)
         {
@@ -809,11 +790,11 @@ public sealed class Watchtower(
                 return false;
             }
             var untrusted = ex.Message.Contains("not trusted", StringComparison.OrdinalIgnoreCase);
-            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, "The watchtower could not be started",
+            state.RaiseCard(CardBin.Ring, Down, Verbs.WatchtowerTarget, untrusted ? $"The watchtower could not be started: {folder} was never trusted by Claude Code" : $"The watchtower could not be started: {LegCommander.OneLine(ex.Message)}",
                 untrusted
                     ? $"Claude Code starts no background session in a folder never trusted. Run `claude` in {folder} once and accept the prompt (or start the node with --watchtower-folder <a trusted folder>); the node tries again every {RetryAfter.TotalMinutes:0} minutes."
                     : $"{ex.Message}; the node tries again in {RetryAfter.TotalMinutes:0} minutes",
-                [new CardChoice { Label = "Try now", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
+                [new CardChoice { Label = "Start the watchtower now instead of waiting for the next try", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = ["tried again from its card"] }]);
             return false;
         }
 

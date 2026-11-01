@@ -212,15 +212,15 @@ internal sealed class SummaryCard
         var head = new List<Layout.Node>
         {
             // Stretched to the row's height, so the text's own middle is the row's: the title, what it covers and the button share one.
-            Layout.Builder.Text("Summary", 15f, p.Bright).WAuto().HStar(),
-            Layout.Builder.Text(ask.About, 12f, p.Dim).WStar().HStar().WithTooltip(ask.About),
+            Layout.Builder.Text("Summary", 15f, p.Bright).Selectable().WAuto().HStar(),
+            Layout.Builder.Text(ask.About, 12f, p.Dim).Selectable().WStar().HStar().WithTooltip(ask.About),
         };
         if (board.CanAsk)
         {
             head.Add(Button(board, ask, row, running, p));
         }
         var statusColor = kind switch { StatusKind.Running => p.Held, StatusKind.Refused => p.Failed, _ => p.Dim };
-        var statusLine = Layout.Builder.Text(status, 12f, statusColor).WithTooltip(full is null ? status : $"{status}\n{full}");
+        var statusLine = Layout.Builder.Text(status, 12f, statusColor).Selectable().WithTooltip(full is null ? status : $"{status}\n{full}");
 
         var rows = new List<Layout.Node>
         {

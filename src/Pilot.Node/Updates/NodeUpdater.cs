@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 
 namespace Pilot.Node.Updates;
 
@@ -115,7 +116,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {latest.Version} is out", Kind);
             state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {latest.Version} is out (this is {Version})",
                 $"The node installs it and restarts; flights, sessions and jobs carry on.",
-                [new CardChoice { Label = "Update", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
+                [new CardChoice { Label = $"Install pilot {latest.Version} and restart the node", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }],
                 latest.Url);
         }
     }
@@ -191,8 +192,8 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             if (_failed != release.Version)
             {
                 _failed = release.Version;
-                state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {release.Version} could not be installed", ex.Message,
-                    [new CardChoice { Label = "Try again", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }], release.Url);
+                state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, $"pilot {release.Version} could not be installed: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                    [new CardChoice { Label = $"Install pilot {release.Version} again", Verb = Verbs.Update, Target = Verbs.NodeTarget, Args = [UpdateArgs.Install] }], release.Url);
             }
             return ex.Message;
         }

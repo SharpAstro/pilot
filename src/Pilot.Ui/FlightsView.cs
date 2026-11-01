@@ -553,79 +553,16 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>The links' menu: its open items and its notice.</summary>
     internal LinkMenu Links => _links;
 
-    // The text selected on the open flight's page (its host has a clipboard to copy it to), made on first use: it measures through the renderer.
-    private TextSelection<TSurface>? _selection;
+    internal override Action<string>? SelectionCopy => CopyText;
 
-    /// <summary>The selection over the open flight page's text; a view has one, as it has one link menu.</summary>
-    internal TextSelection<TSurface> Selection => _selection ??= new TextSelection<TSurface>(Renderer);
+    internal override LinkMenu? SelectionLinks => _links;
 
-    /// <summary>The Fill leaf laid over the open page: painted after its text and before the menus over it, it is where the selection is drawn.</summary>
-    private const string SelectionKey = "text-selection";
+    internal override RectF32 SelectionViewport => _detailScroll.Viewport;
 
-    /// <summary>Lets go of the selected text: the page it was made on was left.</summary>
-    internal void ClearSelection() => _selection?.Clear();
+    // The open flight's page only.
+    internal override bool SelectionOn => IsDetailOpen && base.SelectionOn;
 
-    private void DrawSelection(Layout.Content.Fill fill)
-    {
-        if (fill.Key != SelectionKey)
-        {
-            return;
-        }
-        Selection.Frame(SelectableTextRegions, _detailScroll.Viewport);
-        var palette = P;
-        Selection.Paint(
-            (text, region, x, y, width, height, color) => DrawText(text, region.FontPath, x, y, width, height, region.FontSize, color, TextAlign.Near, region.VerticalAlign),
-            palette.SelectionBg, palette.SelectionText);
-    }
-
-    /// <summary>
-    /// The open page's selection, ahead of the router: a left drag over its text selects it, Ctrl+C and a right-click on the
-    /// selection copy it through <see cref="CopyText"/>. Never takes a press that is a button's, a link's, a field's or a
-    /// scrollbar's, and lets go while a menu or the viewer is up (those presses are theirs). True for what it took.
-    /// </summary>
-    public bool HandleSelection(InputEvent evt)
-    {
-        if (!IsDetailOpen || CopyText is null || Wizard.IsOpen || _links.MenuItems.Count > 0 || _menu.IsOpen
-            || Gallery.Viewing is not null || About is { IsOpen: true })
-        {
-            return false;
-        }
-        switch (evt)
-        {
-            case InputEvent.KeyDown { Key: InputKey.C, Modifiers: InputModifier.Ctrl } when Selection.Text is { } text:
-                _links.Copy(text, Selection.Pointer.X, Selection.Pointer.Y);
-                return true;
-            case InputEvent.MouseDown { Button: MouseButton.Right } right:
-                // A link keeps its own menu (Copy URL, and Copy beside it); the selection's is for the text itself.
-                if (!Selection.Contains(right.X, right.Y) || Under(right.X, right.Y, r => r is { OnContextMenu: not null }))
-                {
-                    return false;
-                }
-                _links.OpenSelection(new PointerPress(right.X, right.Y, right.Button, right.Modifiers, right.ClickCount));
-                return true;
-            default:
-                // Property patterns throughout: a region that is not plain chrome, or has anything to do with a press, is not ours.
-                return Selection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
-                    || r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
-                    or { Dismisses: not null } or { FocusOnOpen: true }));
-        }
-    }
-
-    // Whether the topmost region painted under the point is one the test holds for.
-    private bool Under(float x, float y, Func<ClickableRegion, bool> test)
-    {
-        var regions = new List<ClickableRegion>();
-        CollectPaintedRegions(regions);
-        for (var i = regions.Count - 1; i >= 0; i--)
-        {
-            var r = regions[i];
-            if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
-            {
-                return test(r);
-            }
-        }
-        return false;
-    }
+    internal override bool SelectionBlocked => base.SelectionBlocked || Wizard.IsOpen || _menu.IsOpen || Gallery.Viewing is not null || About is { IsOpen: true };
 
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
@@ -717,7 +654,6 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         {
             DrawCanvas(fill, rect);
             Gallery.DrawFill(fill, rect);
-            DrawSelection(fill);
         });
         _arranged = arranged;
         NoteLayersArranged(arranged);
@@ -927,12 +863,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
         var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
-        if (open is not null && CopyText is not null)
-        {
-            // After the page's text and before the menus over it: where the selection is drawn (DrawSelection).
-            page = Layout.Builder.Overlay(page, Layout.Builder.Fill(key: SelectionKey).Stretch());
-            _links.SelectedText ??= () => Selection.Text;
-        }
+        // After the page's text and before the menus over it: where the selection is drawn.
+        page = WithSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;
         page = Gallery.Over(page);
         page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
@@ -1051,7 +983,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     };
 
     // A line of the panel: one row, ending in an ellipsis where the column is narrower than it, with the whole of it on hover.
-    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).WithTooltip(text).RowH(20f);
+    private static Layout.Node DetailLine(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color).Selectable().WithTooltip(text).RowH(20f);
 
     // A link that leaves the app: a click opens it, a right-click offers Copy URL (over the row's own menu, which stays on the rest of the row).
     private Layout.Node Link(string text, string location, string action) =>
@@ -1186,7 +1118,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         ["Sessions"] = l => l.Sessions.Length > 0 && char.IsDigit(l.Sessions[0]) ? int.Parse(l.Sessions.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture) : 0,
     };
 
-    private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint);
+    private Layout.Node Label(string text) => Layout.Builder.Text(text, 12f, Faint).Selectable();
 
     // Past these a text may well be cut by its column's ellipsis, so it carries its whole text as hover text: what a flight or leg
     // is held for runs past a column ("waiting for PNG243, SharpAstro.Png.Extensions.Experimental 3.23 on nuget.org").

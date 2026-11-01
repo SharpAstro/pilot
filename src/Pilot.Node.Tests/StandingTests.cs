@@ -387,7 +387,7 @@ public sealed class StandingTests
         using var remote = NodeClient.Remote($"127.0.0.1:{port}");
         var ticket = (await remote.AskGrantAsync("se2-gui", Ct)).Response.ShouldNotBeNull();
         var card = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-        (await node.Client.SendAsync(Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", false, "Allow"), Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", false, card.Choices[0].Label), Ct)).Success.ShouldBeTrue();
         using var granted = NodeClient.Remote($"127.0.0.1:{port}", (await remote.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token);
 
         // A merge from the LAN reaches the flight, even named for the watchtower or a worker here.

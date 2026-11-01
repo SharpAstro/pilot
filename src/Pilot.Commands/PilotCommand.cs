@@ -569,8 +569,8 @@ public static class PilotCommand
         var remove = Action(new Command("remove", "Take a planned leg out of the flight; the legs after it keep their order") { Arguments = { code, legName, removeWhy } },
             (p, client, ct) => Send(client, Verbs.RemoveLeg, Verbs.LegTarget(p.GetValue(code)!, p.GetValue(legName)!), p.GetValue(removeWhy) ?? [], who, ct));
 
-        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on), or verified (anyone's: the node finishes a failed leg only if its plane matches its pushed branch and its check passes)");
-        outcome.AcceptOnlyFromAmong("done", "failed", "accepted", "verified");
+        var outcome = Arg("outcome", "done, failed, or accepted (the controller's: a failed leg marked done anyway, its failure kept in its report, so the flight goes on), or verified (anyone's: the node finishes a failed leg only if its plane matches its pushed branch and its check passes); pushed-with-lease and merged-with-origin are the controller's, for a blocked push");
+        outcome.AcceptOnlyFromAmong("done", "failed", "accepted", "verified", "pushed-with-lease", "merged-with-origin");
         var report = Words("report", "A line on what was done, or why not", required: false);
         var finish = Action(new Command("finish", "Finish the leg: done reruns its check; failed rings for a go-around, unless its work is pushed and checks out, when the node finishes it") { Arguments = { outcome, report }, Options = { leg } },
             (p, client, ct) => OnLeg(p, client, Verbs.FinishLeg, _ => [p.GetValue(outcome)!, .. p.GetValue(report) ?? []], ct));

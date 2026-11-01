@@ -12,7 +12,7 @@ internal static class WrappedProse
     /// punctuation) with a node of its own, drawn in the word's place: a link in the middle of the sentence. <paramref name="selectable"/>
     /// marks each word's run selectable, for the page whose host offers a selection (a word is a region; the copy joins them as the page reads).
     /// </summary>
-    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0, Func<string, Layout.Node?>? link = null, bool selectable = false, int lineChars = 0)
+    public static Layout.Node Of(string text, float size, RGBAColor32 color, int maxLines = 0, Func<string, Layout.Node?>? link = null, bool selectable = true, int lineChars = 0)
     {
         var words = (maxLines > 0 && lineChars > 0 ? Bound(text, maxLines * lineChars) : text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .SelectMany(word => link?.Invoke(word) is { } linked ? [linked] : Pieces(word).Select(piece => Layout.Builder.Text(piece, size, color).WAuto().Selectable(selectable)))

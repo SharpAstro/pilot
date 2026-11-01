@@ -200,7 +200,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var parts = new List<Layout.Node>
         {
             Layout.Builder.HStack(
-                Layout.Builder.Text("ideating…", 13f, P.Held).WithTooltip("Claude is choosing its repo and the node is filing it in that repo's Ideas milestone").WAuto(),
+                Layout.Builder.Text("ideating…", 13f, P.Held).Selectable().WithTooltip("Claude is choosing its repo and the node is filing it in that repo's Ideas milestone").WAuto(),
                 WrappedProse.Of(lines[0], 14f, P.Bright).WStar()).WithGap(10f).WStar(),
         };
         if (lines.Length > 1 && lines[1].Trim().Length > 0)
@@ -616,6 +616,15 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         }
     }
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
+
     public void Render(IdeasScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -786,7 +795,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
             var working = Working && _noting.IsEmpty;
             var hint = Hint(NoteInput, working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo" + (Upload is null ? "" : " · Ctrl+V pastes an image"), out var hintColor);
-            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
+            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).Selectable().RowH(16f));
         }
         if (_said.Length > 0)
         {
@@ -814,6 +823,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 break;
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
+        whole = WithSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 
@@ -918,7 +928,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     {
         var parts = new List<Layout.Node>
         {
-            Layout.Builder.Text(card.Kind == CardKinds.IdeaRepo ? "Where does it belong?" : "Two versions of an idea", 11f, P.Dim).WStar(),
+            Layout.Builder.Text(card.Kind == CardKinds.IdeaRepo ? "Where does it belong?" : "Two versions of an idea", 11f, P.Dim).Selectable().WStar(),
             WrappedProse.Of(card.Title, 14f, P.Bright),
         };
         if (!string.IsNullOrWhiteSpace(card.Detail))
@@ -937,7 +947,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
 
     private Layout.Node Header(IdeaRow idea) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(Name(idea), 13f, Link).WAuto(),
+                Layout.Builder.Text(Name(idea), 13f, Link).Selectable().WAuto(),
                 WrappedProse.Of(idea.Title, 15f, P.Bright))
             .WithGap(10f).WStar().HAuto();
 
@@ -954,7 +964,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var key = (KeyOf(idea), idea.Body, IsNight);
         if (!_markdown.TryGetValue(key, out var document))
         {
-            _markdown[key] = document = Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+            _markdown[key] = document = SelectableTree.Of(Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) }));
         }
         return document;
     }
@@ -1072,7 +1082,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                         yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Pick the milestone to put it in.", 12f, P.Body).WStar();
                     }
                     yield return Layout.Builder.HStack(
-                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).Selectable().WAuto(),
                             Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
                         .WithGap(10f).RowH(30f);
                 }
@@ -1081,7 +1091,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 {
                     if (_choices is { Done: false })
                     {
-                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).RowH(18f);
+                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).Selectable().RowH(18f);
                     }
                     var items = Items(RowInput.Text);
                     chosen = Chosen(items);
@@ -1130,7 +1140,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                     var editHint = Hint(EditInput, "", out var editColor);
                     if (editHint.Length > 0)
                     {
-                        yield return Layout.Builder.Text(editHint, 11f, editColor).RowH(16f);
+                        yield return Layout.Builder.Text(editHint, 11f, editColor).Selectable().RowH(16f);
                     }
                 }
                 yield return Layout.Builder.Text(mode switch
@@ -1138,7 +1148,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                     Mode.Plan => "Type to filter · Enter plans the chosen milestone · Esc cancels",
                     Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels" + (Upload is null ? "" : " · Ctrl+V pastes an image"),
                     _ => "Enter sends · Esc cancels",
-                }, 11f, P.Faint).RowH(16f);
+                }, 11f, P.Faint).Selectable().RowH(16f);
                 break;
             case Mode.Tidy:
                 foreach (var node in TidyRows(idea))
@@ -1149,7 +1159,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             case Mode.Move:
                 var repos = _screen.Repos.Where(r => !string.Equals(r, idea.Repo, StringComparison.OrdinalIgnoreCase)).ToList();
                 yield return repos.Count == 0
-                    ? Layout.Builder.Text("The node tracks no other repo.", 12f, P.Dim).RowH(18f)
+                    ? Layout.Builder.Text("The node tracks no other repo.", 12f, P.Dim).Selectable().RowH(18f)
                     : Layout.Builder.WrapH([.. repos.Select(r => NodeButton(idea, r, $"move:{KeyOf(idea)}:{r}", "moving", () => Run(() => MoveAsync(idea, r), $"move {idea.Id}"), Tint, idOf: false))])
                         .WithGap(8f).WithLineGap(4f).WStar();
                 yield return CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body);
@@ -1162,7 +1172,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     {
         if (_proposal is not { } proposal || proposal.Key != KeyOf(idea))
         {
-            yield return Layout.Builder.Text("● Claude is tidying it…", 12f, P.Held).RowH(18f);
+            yield return Layout.Builder.Text("● Claude is tidying it…", 12f, P.Held).Selectable().RowH(18f);
             yield break;
         }
         var tidy = proposal.Tidy;
@@ -1170,7 +1180,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         {
             var (mark, color) = kind switch { '+' => ("+ ", P.Flying), '-' => ("- ", P.Failed), _ => ("  ", P.Dim) };
             yield return Layout.Builder.HStack(
-                    Layout.Builder.Text(mark, 13f, color).WFixed(16f),
+                    Layout.Builder.Text(mark, 13f, color).Selectable().WFixed(16f),
                     line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
                 .WStar().HAuto();
         }
@@ -1233,8 +1243,8 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     // A planned or dropped idea: one line, still found by its id, its page one click away.
     private Layout.Node Folded(IdeaRow idea) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(Name(idea), 12f, Link).WAuto(),
-                Layout.Builder.Text(idea.State == IdeaState.Planned ? "planned" : "dropped", 11f, P.Dim).WAuto(),
+                Layout.Builder.Text(Name(idea), 12f, Link).Selectable().WAuto(),
+                Layout.Builder.Text(idea.State == IdeaState.Planned ? "planned" : "dropped", 11f, P.Dim).Selectable().WAuto(),
                 idea.State == IdeaState.Planned && IdeaIds.FlightOf(_screen.Flights, _screen.Moves, idea.Repo, idea.Number) is { } flight
                     ? Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
                         .Follows(new HitResult.ButtonHit($"ideas:flight:{KeyOf(idea)}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto()

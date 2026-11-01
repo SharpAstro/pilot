@@ -180,7 +180,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             catch (Exception ex)
             {
                 // The sweep takes the step again every minute; the flight is taken, so this is a card, not a failed receive.
-                state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} could not go on by itself after it came here", ex.Message);
+                state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} came here, but its next step was refused: {LegCommander.OneLine(ex.Message)}", ex.Message);
             }
         }, CancellationToken.None);
         _advancing[task] = true;
@@ -486,7 +486,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
+            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
         }
     }
 
@@ -973,7 +973,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
         if (foldedInto is null)
         {
-            state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
+            // Landed needs no one: a Handled line.
+            state.RaiseCard(CardBin.Handled, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
                 $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
         }
         else

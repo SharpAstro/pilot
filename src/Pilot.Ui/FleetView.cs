@@ -473,6 +473,15 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The selected node's index, or -1.</summary>
     public int Selected => ListCursor.ListId == ListId && ListCursor.IsOpen ? ListCursor.Index : -1;
 
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
+
     public void Render(FleetScreen screen, RectF32 bounds)
     {
         Palette.Use(Night);
@@ -517,6 +526,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var page = Layout.Builder.VStack(Header(screen), Main(screen).Stretch()).Bg(Ground).Stretch();
+        page = WithSelection(page);
         return About?.Over(page) ?? page;
     }
 
@@ -642,34 +652,34 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var cells = new List<Layout.Node>
         {
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Whole(line.Machine).RowH(22f),
-                Layout.Builder.Text(where, 11f, Dim).Whole(where).RowH(18f),
-                Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
-                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
+                Layout.Builder.Text(line.Machine, 15f, line.Connected ? Bright : Dim).Selectable().Whole(line.Machine).RowH(22f),
+                Layout.Builder.Text(where, 11f, Dim).Selectable().Whole(where).RowH(18f),
+                Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
+                Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 1 ? 16f : 0f)),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Whole(line.Account).RowH(22f),
+                Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Selectable().Whole(line.Account).RowH(22f),
                 line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
-                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).WFixed(MarkIconWidth),
-                                Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).WAuto()).WAuto()] : (Layout.Node[])[]),
-                            .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).WAuto()] : (Layout.Node[])[]),
-                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).WAuto()] : (Layout.Node[])[]),
-                            Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).WStar()]).WithGap(MarkGap).RowH(18f)
-                    : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).RowH(18f),
+                                Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).Selectable().WFixed(MarkIconWidth),
+                                Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).Selectable().WAuto()).WAuto()] : (Layout.Node[])[]),
+                            .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).Selectable().WAuto()] : (Layout.Node[])[]),
+                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).Selectable().WAuto()] : (Layout.Node[])[]),
+                            Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().WStar()]).WithGap(MarkGap).RowH(18f)
+                    : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().RowH(18f),
                 // An unreachable node's last known usage and its status (when last heard, why) each have a line of their own, so they read in full.
-                Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).RowH(LastKnownUsageHeight(line)),
-                Layout.Builder.Text(line.Connected ? "" : line.StateLines[0], 11f, Dim).RowH(line.Connected ? 0f : 16f),
-                Layout.Builder.Text(line.StateLines.Length > 1 ? line.StateLines[1] : "", 11f, Dim).RowH(line.StateLines.Length > 1 ? 16f : 0f),
+                Layout.Builder.Text(line.Connected ? "" : line.Usage, 11f, Dim).Selectable().RowH(LastKnownUsageHeight(line)),
+                Layout.Builder.Text(line.Connected ? "" : line.StateLines[0], 11f, Dim).Selectable().RowH(line.Connected ? 0f : 16f),
+                Layout.Builder.Text(line.StateLines.Length > 1 ? line.StateLines[1] : "", 11f, Dim).Selectable().RowH(line.StateLines.Length > 1 ? 16f : 0f),
                 // Its own line, so a narrow column clips this one and not the marks above.
-                Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).RowH(16f),
+                Layout.Builder.Text(line.Watchtower ?? "", 11f, line.WatchtowerChurning ? Ringing : Dim).Selectable().RowH(16f),
                 // A churning one says why, on a line of its own under the words.
-                Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).RowH(line.WatchtowerSummary is null ? 0f : 16f)),
+                Layout.Builder.Text(line.WatchtowerSummary ?? "", 11f, Ringing).Selectable().RowH(line.WatchtowerSummary is null ? 0f : 16f)),
             SessionsCell(line),
             Layout.Builder.VStack(
-                Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).RowH(22f),
-                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).RowH(18f)),
-            ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Whole(rings)),
+                Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).Selectable().RowH(22f),
+                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).Selectable().RowH(18f)),
+            ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Selectable().Whole(rings)),
             Layout.Builder.VStack(
                 Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),
                 Presses.RefusalLine(line.Where, 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f)),
@@ -689,7 +699,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var split = line.Sessions.IndexOf(" · ", StringComparison.Ordinal);
         if (line.WaitingOnYou <= 0 || OnWaiting is not { } onWaiting || split < 0)
         {
-            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, line.LastKnown ? Dim : waiting ? Ringing : Body));
+            return ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, line.LastKnown ? Dim : waiting ? Ringing : Body).Selectable());
         }
         return ListTable.Top(Layout.Builder.HStack(
                 Layout.Builder.Text(line.Sessions[..split] + " ·", 13f, Body).WAuto(),

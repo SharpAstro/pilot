@@ -156,8 +156,12 @@ public sealed class WatchtowerTests : IDisposable
         _said.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A say resumes the watchtower as a copy that Claude Code titles after its work: the row the node started is still its
+    /// current watchtower, known by id, so it is neither stopped nor replaced (SE1, 2026-10-31: stopped after every answer).
+    /// </summary>
     [Fact]
-    public async Task ARenamedWatchtowerIsStillTheNodesSoItIsStoppedAndAFreshOneStarts()
+    public async Task ARenamedWatchtowerIsStillTheCurrentOneSoItIsNeitherStoppedNorReplaced()
     {
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
@@ -166,10 +170,12 @@ public sealed class WatchtowerTests : IDisposable
         _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
 
         await _tower.LookAsync(Ct);
+        await _tower.LookAsync(Ct);
 
-        Ended().ShouldContain("job00001");
-        _workers.Started.Count.ShouldBe(2);
-        _tower.Current().ShouldBeNull();
+        _workers.Stopped.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(1);
+        _tower.Current()!.Id.ShouldBe("job00001");
+        _tower.TellTarget().Target.ShouldBe(Verbs.SessionTarget("job00001"));
     }
 
     [Fact]
@@ -337,7 +343,7 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task ARowItStartedThatTurnsUpRenamedIsNotedAsSoAndTheFreshStartSaysSo()
+    public async Task ARowItStartedThatTurnsUpRenamedIsTakenAsItIsWithNoEndNotedAndNoFreshStart()
     {
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
@@ -346,9 +352,9 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00001", SessionState.Idle, name: "my-own-name");
         await _tower.LookAsync(Ct);
 
-        _workers.Started.Count.ShouldBe(2);
-        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBe("renamed to my-own-name");
-        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldContain("the one it started was renamed to my-own-name");
+        _workers.Started.Count.ShouldBe(1);
+        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBeNull();
+        _state.Cards().Where(c => c.Kind == "watchtower-duplicate").ShouldBeEmpty();
     }
 
     [Fact]
@@ -474,7 +480,9 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00001", SessionState.Idle, apiError: "rate_limit", resetsAt: Start.AddHours(1));
 
         await _tower.LookAsync(Ct);
-        Open().ShouldHaveSingleItem().Kind.ShouldBe(Watchtower.Stopped);
+        // A stop with a reset time needs no one: a Handled line, not an open card.
+        Open().ShouldBeEmpty();
+        _state.Cards(openOnly: false).Single(c => c.Kind == Watchtower.Stopped).Bin.ShouldBe(CardBin.Handled);
         _said.ShouldBeEmpty();
 
         _time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromMinutes(2));

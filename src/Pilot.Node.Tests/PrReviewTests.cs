@@ -359,7 +359,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("claude is not logged in");
         var choice = card.Choices.ShouldHaveSingleItem();
-        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Review again", Verbs.ReviewPr, "pr/acme/widget#7"));
+        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Start the review of acme/widget#7 afresh", Verbs.ReviewPr, "pr/acme/widget#7"));
         Directory.Exists(row.Worktree).ShouldBeFalse();
     }
 }
@@ -836,7 +836,7 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         _github.StatusFails = "GitHub refused the status: no permission";
         (await Run(Verbs.ReviewPr, "pr/acme/gadget#9", "controller")).Error.ShouldBeNull();
         var started = _state.Cards(openOnly: true).Single(c => c.Kind == PrMarks.RefusedKind);
-        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused the pilot/review status on acme/gadget#9", "pr/acme/gadget#9"));
+        (started.Bin, started.Title, started.Subject).ShouldBe((CardBin.ForYou, "GitHub refused the pilot/review status on acme/gadget#9: GitHub refused the status: no permission", "pr/acme/gadget#9"));
         started.Detail.ShouldNotBeNull().ShouldContain("no permission");
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewing);
         _github.Statuses.ShouldBeEmpty();

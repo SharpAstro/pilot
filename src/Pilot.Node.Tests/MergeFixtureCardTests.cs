@@ -113,7 +113,7 @@ public sealed class MergeFixtureCardTests
         card.State.ShouldBe(CardState.Open);
         card.Title.ShouldContain(title);
         card.Link.ShouldBe(PrUrl);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR unmergeable)", Verbs.GoAround)]);
     }
 
     [Fact]

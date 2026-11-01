@@ -95,13 +95,30 @@ public sealed class ResumeOptionsTests : IDisposable
     public async Task ASessionWithRespawnFlagsIsResumedPlainly(string role, WorkerStart start, string flags)
     {
         role.ShouldNotBeEmpty();
-        flags.ShouldNotBeEmpty();
         Started(start, AgentRows.SessionB);
-        RespawnFlags(AgentRows.SessionB, """{"respawnFlags":["--model","sonnet"]}""");
+        RespawnFlags(AgentRows.SessionB, $$"""{"respawnFlags":[{{string.Join(',', flags.Split(' ').Select(f => $"\"{f}\""))}}]}""");
 
         var request = await ResumeAsync(AgentRows.SessionB, start.Name);
 
         ClaudeCliDelivery.ResumeArguments(request).ShouldBe(["--bg", "--resume", AgentRows.SessionB]);
+    }
+
+    /// <summary>
+    /// Flags on file that lost the name or model the session was started with are not its options: SE1's watchtower, resumed
+    /// plainly, came back as a copy whose flags were only <c>--model opus[1m]</c>, unnamed (2026-10-31). It is resumed with the
+    /// options it was started with.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Roles))]
+    public async Task ASessionWhoseFlagsOnFileLostItsNameOrModelIsResumedWithTheOptionsItWasStartedWith(string role, WorkerStart start, string flags)
+    {
+        role.ShouldNotBeEmpty();
+        Started(start, AgentRows.SessionB);
+        RespawnFlags(AgentRows.SessionB, """{"respawnFlags":["--model","opus[1m]"]}""");
+
+        var request = await ResumeAsync(AgentRows.SessionB, start.Name);
+
+        ClaudeCliDelivery.ResumeArguments(request).ShouldBe(["--bg", "--resume", AgentRows.SessionB, .. flags.Split(' ')]);
     }
 
     [Fact]

@@ -413,6 +413,7 @@ public sealed class PrRecheckTests : IDisposable
 
         var ring = NoFixerCards(openOnly: true).ShouldHaveSingleItem();
         ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Kind.ShouldBe(PrReviews.NoFixerKind);
         ring.Detail.ShouldNotBeNull().ShouldContain("design: is this wanted?");
         ring.Detail.ShouldContain("the author's to decide");
 

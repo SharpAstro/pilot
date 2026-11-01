@@ -180,7 +180,7 @@ public sealed class UsageTests : IDisposable
         reader.Read();
 
         var card = _state.Cards().ShouldHaveSingleItem();
-        (card.Bin, card.Kind).ShouldBe((CardBin.ForYou, UsageReader.HighKind));
+        (card.Bin, card.Kind).ShouldBe((CardBin.Handled, UsageReader.HighKind));
         card.Title.ShouldStartWith("5-hour usage is at 91%");
     }
 
