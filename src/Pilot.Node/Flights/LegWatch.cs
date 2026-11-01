@@ -995,6 +995,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 var cwd = string.IsNullOrEmpty(row.Cwd) ? "unknown" : row.Cwd;
                 why = $"the node did not start it and it is no role, leg, flight or PR of this node; cwd {cwd}, running {Ago(now, row.StartedAt)}";
             }
+            if (why is not null && NodeIsEnding(row, now))
+            {
+                // The node stopped it, or its flight just landed: give the stop time to take before a person is rung.
+                continue;
+            }
             if (why is null || !_strays.Add(row.Id))
             {
                 continue;
@@ -1004,6 +1009,18 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
         }
+    }
+
+    /// <summary>How long a node stop (or the landing of a flight) may take to end a session before one still running needs a person. Separate from <see cref="StrayGrace"/>, which is about a done leg's worker.</summary>
+    public TimeSpan StopGrace { get; init; } = TimeSpan.FromMinutes(5);
+
+    private bool NodeIsEnding(SessionRow row, DateTimeOffset now)
+    {
+        if (Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndedAt: { } endedAt, EndedBy: not "claude" } && now - endedAt < StopGrace)
+        {
+            return true;
+        }
+        return row.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Landed, LandedAt: { } landed } && now - landed < StopGrace;
     }
 
     /// <summary>How long a session no role claims may run before it rings as a stranger, measured from its start.</summary>
