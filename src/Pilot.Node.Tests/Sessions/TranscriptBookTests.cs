@@ -148,6 +148,66 @@ public sealed class TranscriptBookTests : IDisposable
         book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull();
     }
 
+    private static string Json(string text) => System.Text.Json.JsonSerializer.Serialize(text);
+
+    private static string CardForm(string words) => CardContext.Compose(new CardRow
+    {
+        Id = "c7", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/TIA1/parser", Title = "parser failed", Detail = new string('x', 300), At = DateTimeOffset.UtcNow, State = CardState.Open,
+        Choices = [new CardChoice { Label = "Retry", Verb = Verbs.Answer, Target = "card/c7", Args = ["Retry"] }],
+    }, "DU1", null, words);
+
+    public static TheoryData<string, string, string> Taken() => new()
+    {
+        // queued as, taken as (a user line), form
+        { "why did it fail?", "why did it fail?", "plain" },
+        { ClaudeCliDelivery.RelayText("why did it fail?"), ClaudeCliDelivery.RelayText("why did it fail?"), "relayed, taken whole" },
+        // A resume delivers the words without the relay's footer, with no dequeue between.
+        { ClaudeCliDelivery.RelayText("why did it fail?"), "why did it fail?", "relayed, resumed without the footer" },
+        { ClaudeCliDelivery.RelayText("why did it fail?", "ab12cd34"), "why did it fail?", "relayed with a reply note, resumed" },
+        { CardForm("why did it fail?"), CardForm("why did it fail?"), "card context" },
+        { ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), CardForm("why did it fail?"), "card context relayed, resumed" },
+        { ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), "card context relayed, taken whole" },
+        { "line one\nline two", "line one\r\nline two", "line endings differ" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Taken))]
+    public void AQueuedMessageIsClearedWhenItIsTakenAsATurnWhateverFormItTook(string queued, string taken, string form)
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            $$$"""{"type":"queue-operation","operation":"enqueue","content":{{{Json(queued)}}}}""",
+            """{"type":"queue-operation","operation":"dequeue"}""",
+            $$$"""{"type":"user","message":{"role":"user","content":{{{Json(taken)}}}}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull(form);
+    }
+
+    [Theory]
+    [MemberData(nameof(Taken))]
+    public void AQueuedMessageIsClearedWhenItIsTakenMidTurnWhateverFormItTook(string queued, string taken, string form)
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            $$$"""{"type":"queue-operation","operation":"enqueue","content":{{{Json(queued)}}}}""",
+            $$$"""{"type":"queue-operation","operation":"remove","content":{{{Json(queued)}}}}""",
+            $$$"""{"type":"attachment","attachment":{"type":"queued_command","prompt":{{{Json(taken)}}}}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull(form);
+    }
+
+    [Fact]
+    public void TwoQueuedMessagesOfTheSameWordsAreTakenOneAtATime()
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"enqueue","content":"again"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"again"}""",
+            """{"type":"user","message":{"role":"user","content":"again"}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["again"]);
+    }
+
     [Theory]
     [InlineData("Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive] deletes the repo. Try again.", "auto mode: [Destructive]")]
     [InlineData("Permission for this command was denied by a built-in Claude Code safety check: it writes outside the project.", "a built-in safety check")]
