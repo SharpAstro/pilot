@@ -533,6 +533,11 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
 
+    /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
+
     /// <summary>
     /// Opens an issue in the repo and links it as a sub-issue of issue <paramref name="parent"/> (the sub-issues REST API, with the
     /// new issue's database id); returns its number and URL. An issue that could not be linked is closed again, not left behind.
@@ -678,6 +683,9 @@ public static class PilotMarks
 
 /// <summary>A review GitHub made: its id, its state (<c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>) and its page.</summary>
 public sealed record PostedReview(long Id, string State, string Url);
+
+/// <summary>A conversation comment on a PR: who wrote it, what it says, when.</summary>
+public sealed record PrComment(string Author, string Body, DateTimeOffset CreatedAt);
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
 public sealed partial class GhCli : IGitHub
@@ -1668,6 +1676,30 @@ public sealed partial class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the comment on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+    }
+
+    public async Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "comments"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read the comments of #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var found = new List<PrComment>();
+        using var doc = System.Text.Json.JsonDocument.Parse(output);
+        if (doc.RootElement.TryGetProperty("comments", out var comments) && comments.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var c in comments.EnumerateArray())
+            {
+                var login = c.TryGetProperty("author", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Object && a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
+                var body = c.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+                if (c.TryGetProperty("createdAt", out var t) && DateTimeOffset.TryParse(t.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at))
+                {
+                    found.Add(new PrComment(login, body, at));
+                }
+            }
+        }
+        return found;
     }
 
     private static string Clip(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";

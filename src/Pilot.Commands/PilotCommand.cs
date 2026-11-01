@@ -719,11 +719,12 @@ public static class PilotCommand
             });
         // review fix: the fixer of a PR whose review asked for changes, as its card's Fix it starts it (#350: tianwen #1857's
         // fixer could not start, its card was gone, and nothing but a script could start it again)
-        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does") { Arguments = { prRef } },
+        var fixAnswer = new Argument<string[]>("answer") { Description = "The answer to the review's question of design, posted on the PR first; without it the PR's author's or the controller's comment after the review is the answer", Arity = ArgumentArity.ZeroOrMore };
+        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does; a review that asked a question of design needs its answer (words after the PR, or a comment on the PR)") { Arguments = { prRef, fixAnswer } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
-                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), p.GetValue(fixAnswer) ?? [], who, ct);
             });
         var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
         {

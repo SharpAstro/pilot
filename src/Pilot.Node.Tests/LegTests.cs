@@ -792,8 +792,15 @@ internal sealed class FakeGitHub : IGitHub
     public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {
         IssueComments.Add((number, body));
+        PrConversation.Add((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
         return Task.CompletedTask;
     }
+
+    /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
+    public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+
+    public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
 
     /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
     public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];

@@ -1333,7 +1333,7 @@ public sealed class PrReviews(
         {
             return "a flight owns it, so its own legs fix it";
         }
-        if (review.Findings.Any(IsDesign))
+        if (review.DesignAnswer is null && review.Findings.Any(IsDesign))
         {
             return "its review asks a question of design, which is the author's to decide";
         }
@@ -1361,9 +1361,21 @@ public sealed class PrReviews(
             var started = await StartAsync(pr, cancellationToken);
             return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
-        if (review.Verdict != "changes")
+        var asksDesign = review.Findings.Any(IsDesign);
+        if (review.Verdict != "changes" && !asksDesign)
         {
             throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
+        }
+        var words = string.Join(' ', command.Args ?? []).Trim();
+        string? given = null;
+        if (asksDesign)
+        {
+            given = words.Length > 0 ? words : await AnswerCommentAsync(pr, review, cancellationToken);
+            if (given is not { Length: > 0 })
+            {
+                throw new FlightException($"{pr}'s review asks a question of design and it has no answer yet: answer it on the PR, or give the answer with review fix {pr} <answer>");
+            }
+            review = review with { DesignAnswer = given };
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
@@ -1371,7 +1383,29 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
+        if (asksDesign && words.Length > 0)
+        {
+            // The words given are the answer, so they are on the PR first, where the author reads them too.
+            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+        }
         return await StartFixerAsync(pr, review, cancellationToken);
+    }
+
+    /// <summary>
+    /// The answer a PR's conversation gives a review's design question: the newest comment by the PR's author or gh's login made
+    /// after the review was posted (or finished), or null.
+    /// </summary>
+    private async Task<string?> AnswerCommentAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var since = review.PostingAt ?? review.FinishedAt ?? review.StartedAt;
+        var login = await github.LoginAsync(cancellationToken);
+        var comments = await github.PrCommentsAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken);
+        return comments
+            .Where(c => c.CreatedAt > since && c.Body.Trim().Length > 0
+                && (string.Equals(c.Author, review.Author, StringComparison.OrdinalIgnoreCase) || string.Equals(c.Author, login, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => c.Body.Trim())
+            .FirstOrDefault();
     }
 
     /// <summary>

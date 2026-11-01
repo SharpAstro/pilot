@@ -715,6 +715,21 @@ public static class Briefs
                 text.AppendLine($"- {finding.Path}:{finding.Line} {finding.Body}");
             }
         }
+        var questions = review.Findings.Where(f => f.Body.StartsWith("design:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (questions.Length > 0 && review.DesignAnswer is { Length: > 0 } answer)
+        {
+            text.AppendLine();
+            text.AppendLine("The review asked these questions of design. The answer below is the author's decision: carry it out, do not reopen it.");
+            foreach (var question in questions)
+            {
+                text.AppendLine();
+                text.AppendLine($"### Question: {question.Path}:{question.Line}");
+                text.AppendLine(question.Body);
+            }
+            text.AppendLine();
+            text.AppendLine("### Answer");
+            text.AppendLine(answer);
+        }
         text.AppendLine();
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
         text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
@@ -835,8 +850,8 @@ public static class Briefs
         // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
-        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises,");
-        text.AppendLine("and a flight's leg past its round cap, are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises");
+        text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
         text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
         if (model is { Length: > 0 })
@@ -958,7 +973,7 @@ public static class Briefs
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
-        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
+        text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you unless they ask for it in the chat, so answer it with a redo of the leg (a go-around), a resume");
