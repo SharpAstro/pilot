@@ -834,8 +834,8 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many times the Priority field was made in the org.</summary>
     public int FieldsCreated { get; private set; }
 
-    /// <summary>When set, making the Priority field fails with it, as a token that cannot create fields.</summary>
-    public string? FieldCreateFails { get; set; }
+    /// <summary>When set, making the Priority field fails with it, as a token that cannot create fields; by default an org the token cannot make fields in.</summary>
+    public string? FieldCreateFails { get; set; } = "the token cannot make issue fields";
 
     public Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
     {

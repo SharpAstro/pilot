@@ -79,6 +79,7 @@ public static partial class CardSummaries
             "planner-ended" => $"The planner of {what} was ended once its first leg flew, so it no longer holds an Opus slot. Nothing to do; a later plan starts a fresh one.",
             "planner-started" => $"A planner was started for {what}. Nothing to do; its plan comes as a card.",
             PrMarks.RefusedKind => "GitHub refused a status, label or ready mark on a PR; the review itself stands. The node sets what is missing at its next look, so nothing to do unless it keeps refusing.",
+            "repo-setup" => "What repo setup made and found in a repo: the Priority field and the labels the node reads. Nothing to do; a refusal has its own card.",
             "node-label-refused" => "GitHub refused the node's label on a flight's PR or issue. Add it by hand if the flight should show which node flies it.",
             "plane-left" => "A flight's plane folder could not be deleted because a process holds it. The node tries again at its next start; delete it by hand if it stays.",
             "issue-left-open" => "A landed flight's issue is still open on GitHub. Close it by hand; its work is in the merged PR.",

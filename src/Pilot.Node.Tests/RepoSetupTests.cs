@@ -16,6 +16,8 @@ public sealed class RepoSetupTests
     private readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
     private readonly FakeGitHub _github = new();
 
+    public RepoSetupTests() => _github.FieldCreateFails = null;
+
     private Task Setup(RepoSetup? setup = null) => (setup ?? new RepoSetup(_state)).EnsureAsync(new GitHubTracker(_github), Repo, "TIA1", Ct);
 
     private IEnumerable<string> Titles(string kind) => _state.Cards(openOnly: false).Where(c => c.Kind == kind).Select(c => c.Title);

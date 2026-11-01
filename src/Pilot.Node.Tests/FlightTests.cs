@@ -170,6 +170,7 @@ public sealed class FlightCommanderTests : IDisposable
     public async Task ACreateEnsuresTheLabelsTheNodeReadsOncePerRepo()
     {
         var (github, shortcut) = Trackered();
+        github.FieldCreateFails = null;
 
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51", "one")).Ok.ShouldBeTrue();
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
