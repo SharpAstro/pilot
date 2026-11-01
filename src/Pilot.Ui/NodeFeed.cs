@@ -34,6 +34,10 @@ internal sealed class NodeFeed : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task? _run;
     private long _version;
+    private DecisionRow? _lastDecision;
+
+    /// <summary>The newest decision the stream carried, for a page showing decisions to read again; null before the first.</summary>
+    public DecisionRow? LastDecision => Volatile.Read(ref _lastDecision);
     private bool _everConnected;
     private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
     private readonly Func<CancellationToken, Task<NodeInfo>>? _nodeInfo;
@@ -397,6 +401,10 @@ internal sealed class NodeFeed : IAsyncDisposable
     private void Apply(NodeEvent next)
     {
         _mirror.Apply(next);
+        if (next is DecisionEvent decided)
+        {
+            Volatile.Write(ref _lastDecision, decided.Decision);
+        }
         var snapshot = next is SnapshotEvent;
         SessionRow[] sessions = [.. _mirror.Sessions.Values];
         FlightRow[] flights = [.. _mirror.Flights.Values];
