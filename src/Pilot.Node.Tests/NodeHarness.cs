@@ -164,8 +164,13 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>How long the test node's stop may take before its hosted services are told to give up.</summary>
     internal static readonly TimeSpan StopCap = TimeSpan.FromSeconds(3);
 
+    /// <summary>Completes when the planners a create started off its reply have finished starting (a create plans its flight, PIL565).</summary>
+    public Task PlannedAsync() => App.Services.GetRequiredService<Pilot.Node.Flights.FlightCommander>().WhenAdvancedAsync();
+
     private async Task StopNodeAsync()
     {
+        // A planner still starting holds its plane's files; let it finish before the node and the test's folders go.
+        await PlannedAsync();
         var took = Stopwatch.StartNew();
         await App.StopAsync();
         if (took.Elapsed >= StopCap)

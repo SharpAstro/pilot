@@ -548,8 +548,8 @@ internal sealed partial class IdeasView<TSurface>
                 Say($"{Label(item)}: {way}", refusal: false);
                 return;
             }
-            var planning = await RunAsync("planning:" + item.Key, "ideas:board:" + Verbs.PlanFlight + ":" + code, "planning", Verbs.PlanFlight, Verbs.FlightTarget(code), []);
-            Say(planning is { Ok: true } ? $"made {code} of {Label(item)}; its planner is planning the legs" : $"made {code} of {Label(item)}, but it has no planner: {planning?.Error ?? "the node did not answer"}", planning is not { Ok: true });
+            // The node starts the planner itself off the create's reply, so no plan-flight follows.
+            Say($"made {code} of {Label(item)}; its planner is planning the legs", refusal: false);
         }
         finally
         {
