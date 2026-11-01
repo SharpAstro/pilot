@@ -128,4 +128,74 @@ public sealed class StraySessionTests
         _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(1);
         _ledger.All().ShouldBeEmpty();
     }
+
+    private LegWatch NewWatch() => new(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time) { Ledger = _ledger };
+
+    private int Strays() => _state.Cards().Count(c => c.Kind == LegWatch.StraySession);
+
+    private void PutStopped(string id)
+    {
+        _state.PutSession(Row(id, "de1-tia1-old", SessionRole.AdHoc, "TIA1"));
+        _ledger.Adopt(_state.Sessions().First(x => x.Id == id), null);
+        _ledger.Stopped([id], SessionEndReasons.Planned, "node");
+    }
+
+    [Fact]
+    public async Task ASessionTheNodeJustStoppedRingsNoCardInsideTheGrace()
+    {
+        PutStopped("stop1111");
+        var watch = NewWatch();
+        for (var i = 0; i < 3; i++)
+        {
+            await watch.LookAsync(Ct);
+            _time.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        Strays().ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ASessionStillWorkingAfterTheStopGraceRingsExactlyOnce()
+    {
+        PutStopped("stop1111");
+        var watch = NewWatch();
+        await watch.LookAsync(Ct);
+        _time.Advance(watch.StopGrace + TimeSpan.FromMinutes(1));
+        for (var i = 0; i < 4; i++)
+        {
+            await watch.LookAsync(Ct);
+        }
+
+        Strays().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ASessionThatEndsInsideTheGraceNeverRings()
+    {
+        PutStopped("stop1111");
+        var watch = NewWatch();
+        await watch.LookAsync(Ct);
+        _state.PutSession(Row("stop1111", "de1-tia1-old", SessionRole.AdHoc, "TIA1") with { State = SessionState.Ended });
+        _time.Advance(watch.StopGrace + TimeSpan.FromMinutes(5));
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+
+        Strays().ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AReviewerOfAFlightThatJustLandedRingsNothingInsideTheGraceAndOnceAfter()
+    {
+        _state.PutFlight(_state.Flights().First(f => f.Code == "TIA1") with { State = FlightState.Landed, LandedAt = _time.GetUtcNow() });
+        _state.PutSession(Row("rev11111", "de1-tia1-review", SessionRole.AdHoc, "TIA1"));
+        var watch = NewWatch();
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+        Strays().ShouldBe(0);
+
+        _time.Advance(watch.StopGrace + TimeSpan.FromMinutes(1));
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+        Strays().ShouldBe(1);
+    }
 }

@@ -86,8 +86,9 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private const float ContextWidth = 160f;
     private const float LastWidth = 120f;
     private const float StateWidth = 160f;
-    private const float SpendWidth = 160f;
-    private const float AgeWidth = 70f;
+    private const float SpendWidth = 130f;
+    private const float AgeWidth = 80f;
+    private const float RateWidth = 90f;
     private const float ActWidth = 84f;
     private const float NodeWidth = 64f;
 
@@ -121,7 +122,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static RGBAColor32 AnswerBg => Palette.Current.Action;
     private static RGBAColor32 AnswerHoverBg => Palette.Current.ActionHover;
 
-    // Model, Last response, Spend and the archive button are the columns a narrow window drops, each as it can no longer
+    // Model, Last response, Spend, Age, Spend/min and the archive button are the columns a narrow window drops, each as it can no longer
     // have its whole width (Optional), so the Session column keeps its SessionMin for the role and the name. The engine
     // decides, from the room it has; no width is measured here.
 
@@ -851,6 +852,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Sorted(ListColumn.Fixed(StateTitle, StateWidth, StateMin)),
             Sorted(ListColumn.Optional("Spend", SpendWidth), descendingFirst: true),
             Sorted(ListColumn.Optional("Age", AgeWidth)),
+            Sorted(ListColumn.Optional("Spend/min", RateWidth), descendingFirst: true),
             ListColumn.Optional("", ActWidth),
         };
         if (_marked)
@@ -880,6 +882,8 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         [StateTitle] = l => SessionLine.StateOrder(l.Row.State),
         ["Spend"] = l => l.Row.SpendWeighted,
         ["Age"] = l => l.Row.StartedAt,
+        // An unknown rate (no known start) sorts below every known one, so it is last in the default, highest-first order.
+        ["Spend/min"] = l => l.SpendRate ?? -1d,
     };
 
     private const string StateTitle = "State";
@@ -901,6 +905,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 (line.WaitingFor ?? line.EndedBecause) is { } detail ? Layout.Builder.Text(detail, 11f, Dim) : null),
             Metered(line.Spend, line.SpendFraction, body),
             Cell(Layout.Builder.Text(line.Age, 14f, body)),
+            Cell(Layout.Builder.Text(line.SpendPerMinute, 14f, body)),
             Act(line, index),
         };
         if (_marked)

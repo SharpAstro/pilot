@@ -377,6 +377,9 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+  A repeat of a merge while the flight's first one is still running answers Ok with way `in-progress` (`MergeWays.InProgress`):
+  nothing is merged yet, so its card stays open, the autopilot and the armed-at-green merge neither report "merged" nor ring, and a
+  recheck ends with the label off and a Handled line saying a merge is already running. The first merge's own result updates the card.
 - **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
   kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
   a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
