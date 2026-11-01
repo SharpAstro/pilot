@@ -18,7 +18,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     public TextWriter Error { get; set; } = TextWriter.Null;
 
     /// <summary>The kinds of card the watch raises, all about a leg; the watch closes them when its worker works again.</summary>
-    public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing];
+    public static readonly string[] Kinds = [Stopped, Idle, Waiting, Failed, Missing, NeverTurned];
 
     /// <summary>The models the redo choice names for its next worker (the worker ladder, PIL402); the node sets it.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
@@ -46,6 +46,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>A worker that never showed up in the session listing: rings, the fresh worker is the way on.</summary>
     public const string Missing = "worker-missing";
+
+    /// <summary>A leg's worker that showed no first turn after two starts.</summary>
+    public const string NeverTurned = "worker-never-turned";
 
     /// <summary>A worker past its leg's budget: not a stall, so not among <see cref="Kinds"/>; it closes when the budget is extended or the leg ends.</summary>
     public const string OverBudget = "over-budget";
@@ -76,6 +79,27 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>How long a flight may be in the air with no legs and no planner before the watch starts one: whoever created it plans it first.</summary>
     public TimeSpan PlanGrace { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long a started planner has to show a first turn (context above 0, or a response) before the node stops it and starts it once more.</summary>
+    public TimeSpan FirstTurnGrace { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>The planner this node started for a flight (by flight code): its job and when, for one the session listing never shows; the node sets it.</summary>
+    public Func<string, (string Job, DateTimeOffset At)?> StartedPlanner { get; set; } = _ => null;
+
+    /// <summary>Stops a flight's planner (claude stop), forgets it, and starts a fresh one in its place; the node sets it. Throws when the start is refused.</summary>
+    public Func<string, CancellationToken, Task> RestartPlanner { get; set; } = (_, _) => Task.CompletedTask;
+
+    /// <summary>Stops a flight's planner (claude stop) and forgets it, with no fresh one; the node sets it.</summary>
+    public Func<string, CancellationToken, Task> StopPlanner { get; set; } = (_, _) => Task.CompletedTask;
+
+    /// <summary>Stops a leg's worker and starts a fresh one in its place, not counted as a go-around (flight code, leg name); the node sets it. Throws when the start is refused.</summary>
+    public Func<string, string, CancellationToken, Task> RestartWorker { get; set; } = (_, _, _) => Task.CompletedTask;
+
+    /// <summary>As <see cref="RestartWorker"/>, for the leg's validator.</summary>
+    public Func<string, string, CancellationToken, Task> RestartValidator { get; set; } = (_, _, _) => Task.CompletedTask;
+
+    /// <summary>Stops a session by its job (claude stop); the node sets it.</summary>
+    public Func<string, CancellationToken, Task> StopSession { get; set; } = (_, _) => Task.CompletedTask;
 
     /// <summary>How long a background session waits on its person before it rings rather than being a card for you.</summary>
     public TimeSpan RingAfter { get; init; } = TimeSpan.FromMinutes(15);
@@ -133,8 +157,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
+        _ladderLooked.Clear();
         await LookAtReviewsAsync(sessions, now, cancellationToken);
-        LookAtValidators(sessions, now);
+        await LookAtValidatorsAsync(sessions, now, cancellationToken);
         LookAtStrays(sessions, now);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
@@ -144,12 +169,25 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
             var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
+            // A worker that shows no first turn is stopped and started once more, before any ring or nudge.
+            var (turned, twice) = await FirstTurnLadderAsync(subject, leg.WorkerJob!, worker, leg.StartedAt ?? now, "worker", NeverTurned, subject, Name(leg), now,
+                token => RestartWorker(leg.Flight, leg.Name, token), cancellationToken);
+            if (twice is not null && worker is not null)
+            {
+                state.RaiseCard(CardBin.Ring, NeverTurned, subject, $"{Name(leg)}'s worker never took a turn after two starts", twice, Choices(leg, null, "Resume"),
+                    summary: $"The worker of {Name(leg)} showed no first turn after two starts. {Models.RedoLabel(leg, "it never took a turn after two starts")} starts a fresh worker.");
+            }
+            if (turned)
+            {
+                continue;
+            }
             if (worker is null)
             {
                 if (leg.StartedAt is { } started && now - started > ShowUpGrace)
                 {
                     Ring(leg, Missing, $"{Name(leg)}'s worker {leg.Worker} never showed up, {Ago(now, started)} after it started",
-                        $"started as job {leg.WorkerJob}, and no session of that id is running on this machine, so there is nobody to say anything to");
+                        $"started as job {leg.WorkerJob}, and no session of that id is running on this machine, so there is nobody to say anything to"
+                        + (twice is null ? "" : $"; {twice}"));
                 }
                 continue;
             }
@@ -191,6 +229,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     await IdleAsync(leg, worker, now, cancellationToken);
                     break;
             }
+        }
+        foreach (var key in _firstTurns.Keys.Where(k => !_ladderLooked.Contains(k)).ToArray())
+        {
+            _firstTurns.Remove(key);
         }
     }
 
@@ -311,8 +353,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return;
         }
-        // Or one whose leg's check is queued or running: a check job has the flight and leg but no owner, and its end wakes the worker.
-        if (state.Jobs().Any(j => j.Kind == JobKind.Check && j.State is JobState.Running or JobState.Queued
+        // Never a nudge to a session that has not taken its first turn (the first-turn check owns it), nor to one whose leg's check is queued or running:
+        // a check job has the flight and leg but no owner, and its end wakes the worker.
+        if (NoTurnYet(worker) || state.Jobs().Any(j => j.Kind == JobKind.Check && j.State is JobState.Running or JobState.Queued
             && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))
         {
             return;
@@ -398,14 +441,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// A leg's validator (#34) that never shows up, fails, or stops without its GO or NO-GO rings, with the leg's ways on:
     /// started anyway, or taken out. Unwatched, its leg waited for an answer that was not coming (the review of #160).
     /// </summary>
-    private void LookAtValidators(SessionRow[] sessions, DateTimeOffset now)
+    private async Task LookAtValidatorsAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
         foreach (var leg in state.Legs().Where(l => l is { State: LegState.Planned, Validation: LegValidation.Pending, ValidatorJob: not null }))
         {
             var subject = Subject(leg);
             var startedAt = state.Cards().Where(c => c.Kind == LegCommander.ValidatingKind && c.Subject == subject).Select(c => c.At).DefaultIfEmpty(now).Max();
             var row = sessions.FirstOrDefault(s => s.Id == leg.ValidatorJob);
-            string? why = row switch
+            var (done, twice) = await FirstTurnLadderAsync(subject + "/validator", leg.ValidatorJob!, row, startedAt, "validator", ValidationStalled, subject, Name(leg), now,
+                token => RestartValidator(leg.Flight, leg.Name, token), cancellationToken);
+            if (done && twice is null)
+            {
+                continue;
+            }
+            string? why = twice is not null ? $"its validator never took a turn after two starts: {twice}" : row switch
             {
                 null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
                 null => null,
@@ -478,6 +527,24 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private async Task LookAtReviewerAsync(SessionRow[] sessions, DateTimeOffset now, string job, DateTimeOffset startedAt, string subject, string name, string again, CancellationToken cancellationToken)
     {
         var row = sessions.FirstOrDefault(s => s.Id == job);
+        var (done, twice) = await FirstTurnLadderAsync(subject, job, row, startedAt, "reviewer", ReviewStalled, subject, name, now, async token =>
+        {
+            var restarted = await run(new CommandRequest { Verb = again, Target = subject, Who = Who }, token);
+            if (!restarted.Ok)
+            {
+                throw new InvalidOperationException(restarted.Error);
+            }
+        }, cancellationToken);
+        if (twice is not null)
+        {
+            state.RaiseCard(CardBin.Ring, ReviewStalled, subject, $"{name}'s reviewer never took a turn after two starts", twice,
+                [new CardChoice { Label = "Review again", Verb = again, Target = subject }],
+                summary: $"The reviewer of {name} showed no first turn after two starts. Review again starts it afresh.");
+        }
+        if (done || twice is not null)
+        {
+            return;
+        }
         string? why = row switch
         {
             null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
@@ -532,6 +599,83 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.
     private readonly Dictionary<string, (int Tries, DateTimeOffset At)> _planStalls = new(StringComparer.Ordinal);
 
+    // Each flight's planners that never took a first turn: one is started once more, the second rings.
+    private readonly Dictionary<string, int> _noFirstTurn = new(StringComparer.Ordinal);
+
+    // The first-turn ladder of every other session the node starts, by subject: the starts that showed nothing so far, the job
+    // last acted on, and when. The subjects looked at in this look are kept; the rest are forgotten.
+    private readonly Dictionary<string, (int Seen, string Job, DateTimeOffset At)> _firstTurns = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _ladderLooked = new(StringComparer.Ordinal);
+
+    /// <summary>A live session that has shown no first turn: no context and no response yet. The one rule for planners, workers, validators and reviewers.</summary>
+    private static bool NoTurnYet(SessionRow row) =>
+        row is { Gone: false, State: SessionState.Working or SessionState.Idle, ContextTokens: 0, LastResponseAt: null };
+
+    /// <summary>
+    /// The first-turn ladder for a session the node started: no row, or <see cref="NoTurnYet"/>, past <see cref="FirstTurnGrace"/>
+    /// from its start. The first time it is stopped by <paramref name="restart"/> and started afresh (a Handled card says so);
+    /// the second time the job is stopped and the text for a ring is returned. Done is true when the caller has nothing more to
+    /// look at for it (a restart was made, a fresh start is awaited, or the ring text is the answer); a ring text with Done false
+    /// is for a session that never showed in the listing, which the caller rings in its own words.
+    /// </summary>
+    private async Task<(bool Done, string? Ring)> FirstTurnLadderAsync(string key, string job, SessionRow? row, DateTimeOffset knownStart, string what, string cardKind,
+        string subject, string name, DateTimeOffset now, Func<CancellationToken, Task> restart, CancellationToken cancellationToken)
+    {
+        _ladderLooked.Add(key);
+        var has = _firstTurns.TryGetValue(key, out var acted);
+        if (row is not null && (row.ContextTokens > 0 || row.LastResponseAt is not null))
+        {
+            _firstTurns.Remove(key);
+            return (false, null);
+        }
+        if (has && acted.Seen >= 2 && acted.Job != job)
+        {
+            // A start from outside (a person's redo) after the ladder gave up: its own ladder from the top.
+            _firstTurns.Remove(key);
+            has = false;
+        }
+        if (has && acted.Seen == 1 && acted.Job == job)
+        {
+            // Stopped and a fresh one asked for: given the grace to appear, then rung for as one that could not be started.
+            if (now - acted.At <= FirstTurnGrace)
+            {
+                return (true, null);
+            }
+            _firstTurns[key] = (2, job, now);
+            return (row is not null, $"the {what} of {name} took no first turn and was stopped, and a fresh one did not appear in {Ago(now, acted.At)}");
+        }
+        var since = row is null ? knownStart : NoTurnYet(row) ? row.StartedAt : (DateTimeOffset?)null;
+        if (since is not { } at || now - at <= FirstTurnGrace)
+        {
+            return (has && acted.Seen >= 2 && row is not null && NoTurnYet(row), null);
+        }
+        var took = $"{name}'s {what} (job {job}) took no first turn in {Ago(now, at)}";
+        if (!has)
+        {
+            _firstTurns[key] = (1, job, now);
+            try
+            {
+                await restart(cancellationToken);
+                state.CloseCardsAbout(subject, "started again", cardKind);
+                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{name}'s {what} (job {job}) took no first turn and was started again", $"{took}; stopped it and started a fresh {what}");
+                return (true, null);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _firstTurns[key] = (2, job, now);
+                return (true, $"{took}; the fresh {what} could not be started: {ex.Message}");
+            }
+        }
+        // The fresh one showed nothing either: stopped, and the person's to decide.
+        if (acted.Seen == 1)
+        {
+            _firstTurns[key] = (2, job, now);
+            await StopSession(job, cancellationToken);
+            return (row is not null, $"{took}; its first start showed nothing either");
+        }
+        return (row is not null, null);
+    }
+
     /// <summary>
     /// A flight in the air with no legs is its planner's: one working or waiting is left alone; one idle past the grace
     /// without its legs is told to hand them in; one ended, failed or never started gets a fresh planner, once; then the
@@ -553,6 +697,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 state.CloseCardsAbout(subject, "planning again", PlanStalled);
             }
+            if (planner is { State: SessionState.Working or SessionState.Idle or SessionState.Waiting, Gone: false }
+                && (planner.ContextTokens > 0 || planner.LastResponseAt is not null))
+            {
+                _noFirstTurn.Remove(subject);
+            }
             if (cards.Any(c => c.State == CardState.Open && c.Subject == subject && c.Kind != PlanStalled))
             {
                 continue;
@@ -563,6 +712,45 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 state.CloseCardsAbout(subject, "its planner waits for admission", PlanStalled);
                 continue;
             }
+            // A planner that never took a turn: telling it to finish is pointless, so this comes before the idle ladder.
+            var started = StartedPlanner(flight.Code);
+            DateTimeOffset? neverSince = planner is not null && NoTurnYet(planner)
+                ? planner.StartedAt
+                : planner is null && started is { } known ? known.At : null;
+            if (neverSince is { } since && now - since > FirstTurnGrace)
+            {
+                var seen = _noFirstTurn.GetValueOrDefault(subject);
+                var job = planner?.Id ?? started?.Job ?? "unknown";
+                var took = $"{flight.Code}'s planner (job {job}) took no first turn in {Ago(now, since)}";
+                state.CloseCardsAbout(subject, "planning again", PlanStalled);
+                if (seen == 0)
+                {
+                    _noFirstTurn[subject] = 1;
+                    try
+                    {
+                        await RestartPlanner(flight.Code, cancellationToken);
+                        state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner (job {job}) took no first turn and was started again", $"{took}; stopped it and started a fresh planner");
+                        continue;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        took += $"; the fresh planner could not be started: {ex.Message}";
+                    }
+                }
+                else
+                {
+                    await StopPlanner(flight.Code, cancellationToken);
+                }
+                _noFirstTurn[subject] = 2;
+                state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code}'s planner never took a turn, twice", took,
+                    [new CardChoice { Label = $"Plan {flight.Code} again", Verb = Verbs.PlanFlight, Target = subject }],
+                    summary: $"{flight.Code}'s planner never took a first turn after two starts. Plan {flight.Code} again starts a fresh one.");
+                continue;
+            }
+            if (_noFirstTurn.GetValueOrDefault(subject) >= 2 && planner is null or { Gone: true } or { State: SessionState.Failed or SessionState.Ended })
+            {
+                continue;
+            }
             string? why = planner switch
             {
                 null when now - flight.CreatedAt > PlanGrace => $"it has had no legs and no planner for {Ago(now, flight.CreatedAt)}",
@@ -570,6 +758,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 { State: SessionState.Working or SessionState.Waiting } => null,
                 { State: SessionState.Failed } => "its planner failed before planning any legs",
                 { State: SessionState.Ended } => "its planner ended without planning any legs",
+                { State: SessionState.Idle, Gone: true } => "its planner was stopped without planning any legs",
                 _ when now - (planner.LastResponseAt ?? planner.StartedAt) >= IdleGrace => $"its planner stopped {Ago(now, planner.LastResponseAt ?? planner.StartedAt)} ago without planning any legs",
                 _ => null,
             };
@@ -582,7 +771,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 continue;
             }
-            var idle = planner is { State: SessionState.Idle };
+            // An idle row with no process is gone, not idle: a stop from outside frees the planner's place.
+            var idle = planner is { State: SessionState.Idle, Gone: false };
             if (tries == 0 && idle)
             {
                 _planStalls[subject] = (1, now);
@@ -615,6 +805,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             _planStalls.Remove(subject);
             state.CloseCardsAbout(subject, "it has legs now", PlanStalled);
+        }
+        foreach (var subject in _noFirstTurn.Keys.Where(k => !unplanned.Contains(k)).ToArray())
+        {
+            _noFirstTurn.Remove(subject);
         }
     }
 
