@@ -29,4 +29,10 @@ public sealed record ChatPage
 
     /// <summary>Messages said to the watchtower that it has not taken yet, oldest first; null with none.</summary>
     public string[]? Queued { get; init; }
+
+    /// <summary>
+    /// The send id of each line of <see cref="Queued"/> (same length and order; null where a line has none), like
+    /// <see cref="TranscriptEntry.SendId"/>. Null with none, and from an older node.
+    /// </summary>
+    public string?[]? QueuedIds { get; init; }
 }

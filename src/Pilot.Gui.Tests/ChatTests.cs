@@ -1036,6 +1036,131 @@ public sealed class ChatTests
         Described(chat).Split("launch it now").Length.ShouldBe(2, "the words show once, in the notice");
     }
 
+    // A chat whose feed is whatever the test last set, as a node's chat route gives it: what came after the index asked for.
+    private sealed class LiveFeed
+    {
+        public List<TranscriptEntry> Entries = [.. Conversation()];
+        public string[]? Queued;
+        public string?[]? QueuedIds;
+        public readonly List<string?> SendIds = [];
+
+        public ChatView<RgbaImage> Chat(RgbaImageRenderer renderer)
+        {
+            var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+            chat.Load = (after, _) => Task.FromResult(new ChatPage
+            {
+                Entries = [.. Entries.Where(e => e.Index > after)], Total = Entries.Count, Queued = Queued, QueuedIds = QueuedIds,
+            });
+            // What the node's tell reads as the request id: the id the page gave the send.
+            chat.OnSend = _ =>
+            {
+                SendIds.Add(ChatCommands.SendId.Value);
+                return Task.FromResult<string?>(null);
+            };
+            return chat;
+        }
+
+        public async Task ReadAsync(ChatView<RgbaImage> chat)
+        {
+            chat.Open();
+            for (var i = 0; i < 100 && chat.Entries.Count < Entries.Count; i++)
+            {
+                chat.Refresh();
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+            chat.Close();
+            chat.Entries.Count.ShouldBe(Entries.Count);
+        }
+    }
+
+    private static int Times(ChatView<RgbaImage> chat, string words) => Described(chat).Split(words).Length - 1;
+
+    [Fact]
+    public async Task AnEchoAQueuedLineAndTheEntryOfOneSendCarryingItsIdAreOneRow()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = new LiveFeed();
+        var chat = feed.Chat(renderer);
+        await feed.ReadAsync(chat);
+        await chat.SendAsync("look at the sky map");
+        var id = feed.SendIds.ShouldHaveSingleItem().ShouldNotBeNull();
+
+        // The page's own echo, until the feed carries the send.
+        Times(chat, "look at the sky map").ShouldBe(1);
+
+        // The feed carries it twice, as the entry and as a stale queued line, both with its id: one row, the entry.
+        feed.Entries.Add(new TranscriptEntry { Index = 6, Kind = TranscriptKind.User, Text = "look at the sky map", At = At.AddMinutes(7), SendId = id });
+        feed.Queued = ["look at the sky map"];
+        feed.QueuedIds = [id];
+        await feed.ReadAsync(chat);
+
+        Times(chat, "look at the sky map").ShouldBe(1);
+        Described(chat).ShouldNotContain("waiting");
+    }
+
+    [Fact]
+    public async Task AQueuedLineCarryingTheSendsIdReplacesItsEchoAndShowsOnce()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = new LiveFeed();
+        var chat = feed.Chat(renderer);
+        await feed.ReadAsync(chat);
+        await chat.SendAsync("ship it");
+        var id = feed.SendIds.Single().ShouldNotBeNull();
+
+        feed.Queued = ["ship it"];
+        feed.QueuedIds = [id];
+        chat.Open();
+        for (var i = 0; i < 100 && chat.Entries.Count < 6; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        chat.Refresh();
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        chat.Close();
+
+        Times(chat, "ship it").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TwoSendsOfTheSameWordsShowTwiceWhetherOrNotTheFeedCarriesTheFirst()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = new LiveFeed();
+        var chat = feed.Chat(renderer);
+        await feed.ReadAsync(chat);
+        await chat.SendAsync("ok");
+        await chat.SendAsync("ok");
+        feed.SendIds.Count.ShouldBe(2);
+        feed.SendIds.Distinct().Count().ShouldBe(2, "each send has its own id");
+        Times(chat, "ok").ShouldBe(2);
+
+        // The first is taken: its entry carries its id, and only the second's echo remains beside it.
+        feed.Entries.Add(new TranscriptEntry { Index = 6, Kind = TranscriptKind.User, Text = "ok", At = At.AddMinutes(7), SendId = feed.SendIds[0] });
+        await feed.ReadAsync(chat);
+        Times(chat, "ok").ShouldBe(2);
+
+        // The second is taken too: two entries, two rows.
+        feed.Entries.Add(new TranscriptEntry { Index = 7, Kind = TranscriptKind.User, Text = "ok", At = At.AddMinutes(8), SendId = feed.SendIds[1] });
+        await feed.ReadAsync(chat);
+        Times(chat, "ok").ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AnEntryWithNoIdFromAnOlderNodeIsStillMatchedByItsWords()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var feed = new LiveFeed();
+        var chat = feed.Chat(renderer);
+        await feed.ReadAsync(chat);
+        await chat.SendAsync("an older node");
+
+        feed.Entries.Add(new TranscriptEntry { Index = 6, Kind = TranscriptKind.User, Text = "an older node", At = At.AddMinutes(7) });
+        await feed.ReadAsync(chat);
+
+        Times(chat, "an older node").ShouldBe(1);
+    }
+
     [Fact]
     public async Task ADeliveredMessageIsNotShownTwiceOnceTheFeedCarriesIt()
     {

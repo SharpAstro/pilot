@@ -51,6 +51,13 @@ public sealed record TranscriptEntry
     /// check</c>, <c>don't-ask mode</c>, <c>permissions</c> or <c>you said no</c>.
     /// </summary>
     public string? Denied { get; init; }
+
+    /// <summary>
+    /// The id of the send (<c>CommandRequest.RequestId</c>) this prompt is, on a user prompt the node delivered to the watchtower
+    /// from a chat send; null for any other and from an older node. A client shows an entry and its own pending echo with the
+    /// same id as one row. Optional, so it does not raise <see cref="NodeWire.Version"/>.
+    /// </summary>
+    public string? SendId { get; init; }
 }
 
 /// <summary>

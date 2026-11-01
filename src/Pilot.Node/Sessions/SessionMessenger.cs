@@ -153,8 +153,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
     internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
 
-    private void Remember(string? key, string way, string? sessionId, string? route)
+    /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
+    public SendLog? Sends { get; init; }
+
+    private void Remember(string? key, string way, string? sessionId, string? route, CommandRequest command, string text, DateTimeOffset began)
     {
+        Sends?.Record(command.RequestId, text, began);
         if (key is not null)
         {
             _delivered[key] = new Delivered(way, sessionId, route, DateTime.UtcNow);
@@ -176,6 +180,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             throw new SessionDeliveryException($"{command.Verb} takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}");
         }
+        var began = DateTimeOffset.UtcNow;
         var id = command.Target[Verbs.SessionTargetPrefix.Length..];
         var text = string.Join(' ', command.Args).Trim();
         if (compact)
@@ -238,7 +243,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 case SayWays.Resumed:
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
-                    Remember(deliveredKey, SayWays.Resumed, resumedAs, null);
+                    Remember(deliveredKey, SayWays.Resumed, resumedAs, null, command, text, began);
                     return (SayWays.Resumed, resumedAs, null, false);
                 default:
                     // A replaced session shares its name with its successor: it is reached by its session id only, never by the
@@ -249,7 +254,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                         RefuseAmbiguous(row, rows);
                     }
                     var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: direct), cancellationToken);
-                    Remember(deliveredKey, SayWays.Relayed, null, route);
+                    Remember(deliveredKey, SayWays.Relayed, null, route, command, text, began);
                     return (SayWays.Relayed, null, route, false);
             }
         }

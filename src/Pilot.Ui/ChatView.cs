@@ -45,9 +45,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued)
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
     {
-        public static readonly Held Empty = new([], 0, null, false, null, [], []);
+        public static readonly Held Empty = new([], 0, null, false, null, [], [], []);
     }
 
     private Held _held = Held.Empty;
@@ -73,7 +73,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the person sent that the feed may not show yet: dimmed and marked sending until the node answers, then kept until the feed carries it.
     private ImmutableList<Own> _own = [];
-    private sealed record Own(Guid Id, string Text, bool Sending);
+    private sealed record Own(Guid Id, string Text, bool Sending)
+    {
+        // The id this send goes to the node with (its request id), which the feed's entry and queued line for it carry back.
+        public string SendId => Id.ToString("N");
+    }
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -337,7 +341,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 }
                 ImmutableInterlocked.Update(ref _held, held => new Held(
                     renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
-                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? []));
+                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -428,12 +432,17 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var own = new Own(Guid.NewGuid(), message, true);
         ImmutableInterlocked.Update(ref _own, o => o.Add(own));
         _scroll.ScrollToEnd();
-        var refused = await Presses.PressAsync(key, hit, _ => send(message));
+        var refused = await Presses.PressAsync(key, hit, _ =>
+        {
+            // The send reads it before its first await: the request id is the echo's, so the feed's entry for it is the same row.
+            ChatCommands.SendId.Value = own.SendId;
+            return send(message);
+        });
         if (refused is null)
         {
             taken?.Invoke();
         }
-        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Replace(own, own with { Sending = false }) : o.Remove(own));
+        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Contains(own) ? o.Replace(own, own with { Sending = false }) : o : o.Remove(own));
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · {Clip(message)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -536,12 +545,20 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
+        // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
+        // line whose id an entry carries is that entry's send already taken (a stale line), and shows no more.
+        var entryIds = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is not null).Select(e => e.SendId!).ToHashSet(StringComparer.Ordinal);
+        var queuedIds = held.Queued.Select((_, i) => i < held.QueuedIds.Length ? held.QueuedIds[i] : null).ToArray();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
-        rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
-        // What the person sent that the feed does not carry yet; once it does (an entry or a queued line with the same words) only the feed's copy shows.
-        var shown = held.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.Text).Concat(held.Queued).ToList();
-        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => !m.Sending && shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))));
-        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))))
+        rows.AddRange(held.Queued.Where((_, i) => queuedIds[i] is not { } id || !entryIds.Contains(id)).Select(q => Waiting(q).WStar()));
+        // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
+        // shows. The words are compared only with the feed's lines that have no id (an older node's).
+        var carried = entryIds.Concat(queuedIds.OfType<string>()).ToHashSet(StringComparer.Ordinal);
+        var unnamed = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is null).Select(e => e.Text)
+            .Concat(held.Queued.Where((_, i) => queuedIds[i] is null)).ToList();
+        bool InFeed(Own m) => carried.Contains(m.SendId) || !m.Sending && unnamed.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
+        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => InFeed(m)));
+        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !InFeed(m)))
         {
             rows.Add(Sent(mine.Text, mine.Sending).WStar());
         }
