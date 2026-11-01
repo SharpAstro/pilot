@@ -117,8 +117,8 @@ public sealed partial class LegCommander
                 {
                     continue;
                 }
-                var code = OtherCode(other);
-                if (flight.Overlaps.Any(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)))
+                var otherCode = OtherCode(other);
+                if (flight.Overlaps.Any(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, otherCode, StringComparison.OrdinalIgnoreCase)))
                 {
                     quiet.Add((other, unforeseen));
                 }
