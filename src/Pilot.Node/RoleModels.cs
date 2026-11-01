@@ -57,9 +57,41 @@ public sealed partial class RoleModels
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 
-    /// <summary>The role's range: the saved one, else the built-in.</summary>
-    public RoleRange Range(string role) =>
-        Raw(RangeKey(role)) is { } v && RoleRange.TryParse([v], out var range, out _) ? range! : BuiltIn(role);
+    /// <summary>The role's range: this node's own, else the fleet's, else the built-in.</summary>
+    public RoleRange Range(string role) => RangeWithSource(role).Range;
+
+    /// <summary>The role's range and where it comes from (<see cref="SettingSources.ThisNode"/>, <see cref="SettingSources.Fleet"/> or <see cref="SettingSources.BuiltIn"/>).</summary>
+    public (RoleRange Range, string Source) RangeWithSource(string role)
+    {
+        if (Raw(RangeKey(role)) is { } own && RoleRange.TryParse([own], out var mine, out _))
+        {
+            return (mine!, SettingSources.ThisNode);
+        }
+        if (FleetRaw(RangeKey(role)) is { } fleet && RoleRange.TryParse([fleet], out var shared, out _))
+        {
+            return (shared!, SettingSources.Fleet);
+        }
+        return (BuiltIn(role), SettingSources.BuiltIn);
+    }
+
+    /// <summary>The fleet's range for the role, when one was set; null when none was.</summary>
+    public RoleRange? FleetRange(string role) =>
+        FleetRaw(RangeKey(role)) is { } v && RoleRange.TryParse([v], out var range, out _) ? range : null;
+
+    /// <summary>This node's effective range for every role, with its source: what the node publishes.</summary>
+    public RoleRangeInfo[] Ranges() => [.. Roles.Select(r =>
+    {
+        var (range, source) = RangeWithSource(r);
+        return new RoleRangeInfo(r, range.ToString(), source);
+    })];
+
+    private string? FleetRaw(string key)
+    {
+        lock (_lock)
+        {
+            return _settings.FleetRoles?.GetValueOrDefault(key);
+        }
+    }
 
     /// <summary>Raised after <see cref="Apply"/>, for what runs on a setting it must not wait to be asked again (the pull request watch's pace).</summary>
     public event Action? Applied;

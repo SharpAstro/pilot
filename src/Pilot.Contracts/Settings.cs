@@ -50,7 +50,16 @@ public sealed record SettingRow
 
     /// <summary>Whether the file holds a value the node does not run with yet: it applies at the node's next start.</summary>
     public bool Pending { get; init; }
+
+    /// <summary>For a role range: the reachable nodes whose range differs from the fleet's, each with its value; empty when none does, or for any other setting.</summary>
+    public SettingDeviation[] Deviations { get; init => field = value ?? []; } = [];
+
+    /// <summary>For a role range: the fleet's value, when one is set; null otherwise.</summary>
+    public string? FleetValue { get; init; }
 }
+
+/// <summary>A node whose value for a setting differs from the fleet's: its name and what it runs with.</summary>
+public sealed record SettingDeviation(string Node, string Value);
 
 /// <summary>Where a setting's running value comes from.</summary>
 public static class SettingSources
@@ -64,6 +73,9 @@ public static class SettingSources
 
     /// <summary>A role's range the settings of this node name.</summary>
     public const string ThisNode = "this node";
+
+    /// <summary>A role's range set once for the fleet and sent to this node.</summary>
+    public const string Fleet = "fleet";
 
     /// <summary>The node's command line (or its environment) gave it, and wins over the file.</summary>
     public const string CommandLine = "command line";

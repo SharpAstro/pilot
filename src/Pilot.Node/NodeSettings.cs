@@ -146,6 +146,37 @@ public sealed record NodeSettings
     /// <summary>The roles' ranges by key (<c>worker-range</c>: <c>sonnet..opus-xhigh</c>); a key left out takes the role's built-in range.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
 
+    /// <summary>The file's object holding the fleet layer of the role ranges: not a setting a person sets by key, but what <c>set node &lt;range&gt; --fleet</c> on any node saved here.</summary>
+    public const string FleetRangesField = "fleet-ranges";
+
+    /// <summary>The fleet's role ranges by key, kept apart from this node's own (<see cref="Roles"/>), which win over them.</summary>
+    public IReadOnlyDictionary<string, string>? FleetRoles { get; init; }
+
+    /// <summary>These settings with the fleet's range for <paramref name="key"/> set to <paramref name="values"/> (none, or <c>default</c>, takes it out), or why not.</summary>
+    public static (NodeSettings? Settings, string? Error) WithFleet(NodeSettings settings, string key, IReadOnlyList<string> values)
+    {
+        if (!IsRoleKey(key))
+        {
+            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey))}");
+        }
+        // Checked as an own value is, then the own layer is put back as it was.
+        var (checkedRange, error) = With(new NodeSettings(), key, values);
+        if (checkedRange is null)
+        {
+            return (null, error);
+        }
+        var fleet = new Dictionary<string, string>(settings.FleetRoles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+        if (checkedRange.Roles?.GetValueOrDefault(key) is { } range)
+        {
+            fleet[key] = range;
+        }
+        else
+        {
+            fleet.Remove(key);
+        }
+        return (settings with { FleetRoles = fleet.Count == 0 ? null : fleet }, null);
+    }
+
     public static string PathIn(string dataFolder) => Path.Combine(dataFolder, FileName);
 
     /// <summary>The file at <paramref name="file"/>; none, or one that is not a JSON object, is no settings at all.</summary>
@@ -172,6 +203,17 @@ public sealed record NodeSettings
             if (root[key] is { } value && Values(value) is { } values && With(settings, key, values) is { Settings: { } read })
             {
                 settings = read;
+            }
+        }
+        if (root[FleetRangesField] is JsonObject fleetRanges)
+        {
+            foreach (var role in RoleModels.Roles)
+            {
+                var key = RoleModels.RangeKey(role);
+                if (fleetRanges[key] is JsonValue v && v.TryGetValue<string>(out var text) && WithFleet(settings, key, [text]) is { Settings: { } withFleet })
+                {
+                    settings = withFleet;
+                }
             }
         }
         return Migrated(settings, root);
@@ -239,6 +281,15 @@ public sealed record NodeSettings
                     _ => JsonValue.Create(values[0]),
                 };
             }
+        }
+        if (FleetRoles is { Count: > 0 })
+        {
+            var fleet = new JsonObject();
+            foreach (var (key, range) in FleetRoles.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                fleet[key] = JsonValue.Create(range);
+            }
+            root[FleetRangesField] = fleet;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
         var temp = file + ".tmp";

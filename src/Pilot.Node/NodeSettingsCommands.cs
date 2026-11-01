@@ -45,6 +45,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, $"set takes a setting ({string.Join(", ", NodeSettings.Keys)}), then its value; none, or default, takes it out");
         }
         var key = args[0].Trim().ToLowerInvariant();
+        // A role range set for the fleet: saved here as the fleet layer (this node's own value still wins), and sent to every peer reached.
+        if (args.Contains("--fleet", StringComparer.OrdinalIgnoreCase))
+        {
+            return SetFleet(command, key, [.. args[1..].Where(a => !a.Equals("--fleet", StringComparison.OrdinalIgnoreCase))]);
+        }
         var (updated, error) = NodeSettings.With(NodeSettings.Read(options.SettingsFile), key, args[1..]);
         if (updated is null)
         {
@@ -104,6 +109,36 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}");
     }
 
+    private CommandResult SetFleet(CommandRequest command, string key, string[] values)
+    {
+        var (updated, error) = NodeSettings.WithFleet(NodeSettings.Read(options.SettingsFile), key, values);
+        if (updated is null)
+        {
+            return state.Complete(command, error);
+        }
+        try
+        {
+            updated.Write(options.SettingsFile);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return state.Complete(command, $"{options.SettingsFile} could not be written: {ex.Message}");
+        }
+        roles.Apply(updated);
+        var value = updated.FleetRoles?.GetValueOrDefault(key) ?? "removed";
+        var way = $"{key} saved for the fleet as {value}, and in force now where this node has no value of its own";
+        // One sent from another node (a grant) is not sent on.
+        if (command.Grant is null && slots is not null)
+        {
+            var sent = slots.PushFleet(key, values);
+            if (sent.Count > 0)
+            {
+                way += "; " + string.Join("; ", sent);
+            }
+        }
+        return state.Complete(command, null, setting: Row(key, updated), way: way);
+    }
+
     /// <summary>
     /// <c>restart-node node [why…]</c>: the node starts its successor and stops, as a saved setting makes it; jobs run
     /// detached and are not waited for, so the answer (and a Handled card naming the caller) says how many carry on under the next node.
@@ -158,6 +193,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var pinned = options.CommandLineKeys?.Contains(key) == true;
         var started = options.Saved?.Get(key) is { } before ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, before)) : null;
         var (label, detail, choices) = Describe(key);
+        var role = RoleOf(key);
+        var (deviations, fleetValue) = role is not null && slots is not null ? slots.DeviationsOf(role) : ([], null);
         return new SettingRow
         {
             Key = key,
@@ -167,11 +204,13 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             Saved = file,
             // A live setting runs with what the file says now; any other with what it said at the start.
             Source = pinned ? SettingSources.CommandLine
-                : RoleOf(key) is not null ? (file is not null ? SettingSources.ThisNode : SettingSources.BuiltIn)
+                : role is not null ? roles.RangeWithSource(role).Source
                 : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
             Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey,
             Pending = !pinned && !Live(key) && (file ?? Default(key)) != running,
+            Deviations = deviations,
+            FleetValue = fleetValue,
         };
     }
 
