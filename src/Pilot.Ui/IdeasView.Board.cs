@@ -116,6 +116,47 @@ internal sealed partial class IdeasView<TSurface>
 
     // ---- Sections ----
 
+    /// <summary>The label of the pill that folds every group, and the one it turns into once they are folded.</summary>
+    internal const string CollapseAllLabel = "Collapse all";
+
+    /// <summary>The label of the pill that unfolds every group.</summary>
+    internal const string ExpandAllLabel = "Expand all";
+
+    // The sections a fold applies to: those with a mark in the current view (the list pins Unsorted; the canvas folds nothing).
+    private List<BoardSection> Collapsible(List<BoardSection> shown) =>
+        ViewMode switch
+        {
+            IdeasViewMode.List => shown,
+            IdeasViewMode.Tree => [_board.Unsorted, .. shown],
+            _ => [],
+        };
+
+    // One pill beside the view switch: Collapse all, which becomes Expand all once every collapsible section is folded.
+    private IEnumerable<Layout.Node> FoldAllPill(List<BoardSection> shown)
+    {
+        var sections = Collapsible(shown);
+        if (sections.Count == 0)
+        {
+            yield break;
+        }
+        var all = sections.All(s => _collapsed.Contains(s.Key));
+        yield return CardsView<TSurface>.Pill(all ? ExpandAllLabel : CollapseAllLabel, "ideas:fold-all", () =>
+        {
+            foreach (var section in sections)
+            {
+                if (all)
+                {
+                    _collapsed.Remove(section.Key);
+                }
+                else
+                {
+                    _collapsed.Add(section.Key);
+                }
+            }
+            Changed?.Invoke();
+        }, Tint, P.Bright);
+    }
+
     // A section's header, then what the node suggested for its items: the new milestones and Accept all. A header that is
     // collapsible shows its mark and folds the section on a press; one that is a target answers a drop (its region is what
     // SectionAt finds). In the list the pinned section is neither; the tree grid has every section both; a canvas column is a
@@ -313,9 +354,13 @@ internal sealed partial class IdeasView<TSurface>
         }
         if (Send is not null)
         {
-            yield return IsBusy("suggest:" + item.Key)
-                ? CardsView<TSurface>.Dead("Suggesting…")
-                : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
+            // An item already in a real milestone has its place; only an idea or an issue with no milestone is asked about.
+            if (_board.SectionOf(item.Key) is not { Kind: BoardSectionKind.Milestone })
+            {
+                yield return IsBusy("suggest:" + item.Key)
+                    ? CardsView<TSurface>.Dead("Suggesting…")
+                    : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
+            }
             if (!flown)
             {
                 yield return IsBusy("ready:" + item.Key)

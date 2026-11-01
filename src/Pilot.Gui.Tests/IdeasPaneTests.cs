@@ -1146,9 +1146,9 @@ public sealed class IdeasPaneTests
         await Task.WhenAll(tasks);
         (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.CheckReady, "issue/pilot/#12"));
         tasks.Clear();
-        Click(Regions(chrome, screen), "ideas:suggest:pilot#12");
+        Click(Regions(chrome, screen), "ideas:suggest:pilot#20");
         await Task.WhenAll(tasks);
-        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "issue/pilot/#12"));
+        (sent.Last().Verb, sent.Last().Target).ShouldBe((Verbs.SuggestMilestones, "issue/pilot/#20"));
 
         // A ready issue offers Plan flight, which starts the chat.
         tasks.Clear();
@@ -1456,7 +1456,7 @@ public sealed class IdeasPaneTests
         var chat = new List<string>();
         chrome.Ideas.OnChatAbout = chat.Add;
         regions = Regions(chrome, screen);
-        foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
+        foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#20", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
         {
             Actions(regions).ShouldContain(action);
         }
@@ -1660,10 +1660,12 @@ public sealed class IdeasPaneTests
         Click(regions, "ideas:row:pilot#12");
         chrome.Ideas.Selected.ShouldBe("pilot#12");
         regions = Regions(chrome, screen);
-        foreach (var action in new[] { "ideas:ready:pilot#12", "ideas:suggest:pilot#12", "ideas:open:pilot#12" })
+        foreach (var action in new[] { "ideas:ready:pilot#12", "ideas:open:pilot#12" })
         {
             Actions(regions).ShouldContain(action);
         }
+        // Its milestone is its place: no Suggest milestone.
+        Actions(regions).ShouldNotContain("ideas:suggest:pilot#12");
         // The detail is below the grid's rows, under the handle, and says the whole title the row may have cut.
         Region(regions, "ideas:ready:pilot#12").Y.ShouldBeGreaterThan(Region(regions, SplitDetail).Y);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("Resize the split");
@@ -1849,5 +1851,57 @@ public sealed class IdeasPaneTests
                 }
             }
         }
+    }
+    [Fact]
+    public void SuggestMilestoneShowsOnlyOnIdeasAndIssuesWithNoMilestone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 2400);
+        var (chrome, _, _) = Chrome(renderer);
+        var screen = BoardScreen();
+        var actions = Actions(Regions(chrome, screen)).ToList();
+        string Key(int n, string repo = "pilot") => chrome.Ideas.Board.Sections.SelectMany(x => x.Items).First(i => i.Number == n && i.Repo == repo).Key;
+
+        // An idea (Unsorted) and an issue with no milestone are asked about; issues in a milestone are not.
+        actions.ShouldContain("ideas:suggest:" + Key(380));
+        actions.ShouldContain("ideas:suggest:" + Key(20));
+        actions.ShouldNotContain("ideas:suggest:" + Key(12));
+        actions.ShouldNotContain("ideas:suggest:" + Key(13));
+        actions.ShouldNotContain("ideas:suggest:" + Key(14));
+    }
+
+    [Fact]
+    public void CollapseAllFoldsEveryMilestoneSectionAndExpandAllUnfoldsThemInTheListAndTheTree()
+    {
+        foreach (var mode in new[] { IdeasViewMode.List, IdeasViewMode.Tree })
+        {
+            using var renderer = new RgbaImageRenderer(1280, 2400);
+            var (chrome, _, _) = Chrome(renderer);
+            chrome.Ideas.ViewMode = mode;
+            var screen = BoardScreen();
+            var open = "Resize the split";
+
+            var regions = Regions(chrome, screen);
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(open, customMessage: mode.ToString());
+            Click(regions, "ideas:fold-all");
+
+            Spoken(renderer, chrome, screen, 1280).ShouldNotContain(open, customMessage: mode.ToString());
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.ExpandAllLabel);
+            Spoken(renderer, chrome, screen, 1280).ShouldNotContain(IdeasView<RgbaImage>.CollapseAllLabel);
+            var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, 1280, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > TopBar.Height).Select(f => f.Line).ShouldBeEmpty();
+
+            Click(Regions(chrome, screen), "ideas:fold-all");
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(open, customMessage: mode.ToString());
+            Spoken(renderer, chrome, screen, 1280).ShouldContain(IdeasView<RgbaImage>.CollapseAllLabel);
+        }
+    }
+
+    [Fact]
+    public void TheCanvasHasNoCollapseAll()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var (chrome, _, _) = Chrome(renderer);
+        chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
+        Actions(Regions(chrome, BoardScreen())).ShouldNotContain("ideas:fold-all");
     }
 }
