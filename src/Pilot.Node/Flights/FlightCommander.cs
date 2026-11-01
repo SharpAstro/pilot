@@ -477,6 +477,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             return;
         }
+        await EnsureReadLabelsAsync(tracker, repoPath, code, cancellationToken);
         try
         {
             await tracker.AddLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(Machine), cancellationToken);
@@ -490,6 +491,33 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         catch (FlightException ex)
         {
             state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
+        }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Repo, string Label), bool> _readLabelsMade = new();
+
+    /// <summary>
+    /// Makes each label the node reads from a person (<see cref="PilotMarks.ReadFromPeople"/>) in the repo, once per repo per run.
+    /// A refusal is a Handled card, never a ring, and never loses the flight; it is tried again at the next create.
+    /// </summary>
+    private async Task EnsureReadLabelsAsync(ITracker tracker, string repoPath, string code, CancellationToken cancellationToken)
+    {
+        foreach (var label in PilotMarks.ReadFromPeople)
+        {
+            if (_readLabelsMade.ContainsKey((repoPath, label)))
+            {
+                continue;
+            }
+            try
+            {
+                await tracker.EnsureLabelAsync(repoPath, label, cancellationToken);
+                _readLabelsMade[(repoPath, label)] = true;
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {label} could not be made in the repo of {code}: {LegCommander.OneLine(ex.Message)}", ex.Message);
+                return;
+            }
         }
     }
 

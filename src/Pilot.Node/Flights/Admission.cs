@@ -61,6 +61,9 @@ public sealed record FleetSession(string Node, string Label, string? Model, bool
     /// <summary>What names the session across nodes and across a claim and the session that follows it (<c>worker:PIL1</c>); the label when none is given.</summary>
     public string Identity { get; init; } = "";
 
+    /// <summary>For an Idle session counted only because it has work pending (<c>idle, job j12 running</c>); null for any other. Never part of the key.</summary>
+    public string? Note { get; init; }
+
     internal string Key => Identity.Length > 0 ? Node.ToUpperInvariant() + "/" + Identity : Node.ToUpperInvariant() + "/" + Label;
 }
 
@@ -149,7 +152,7 @@ public static class Admission
         if (IsOpus(request.Model) && input.OpusCap > 0
             && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
         {
-            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}"))}");
+            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => (s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}") + (s.Note is null ? "" : $" ({s.Note})")))}");
         }
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }

@@ -60,8 +60,14 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     private AdmissionInput Input(string? asking, IReadOnlySet<string>? ignoring, FleetAdmission.View view, bool localOnly = false)
     {
         var settings = models();
-        var live = state.Sessions().Where(s => !s.Archived && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
-            && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && ignoring?.Contains(s.Name) != true).ToArray();
+        var jobs = state.Jobs();
+        var cards = state.Cards(openOnly: true);
+        var legs = state.Legs();
+        // Every live-listed row decides a flight's phase and repo hold; only the counted subset takes an Opus slot (an Idle row counts while it has work pending).
+        var live = state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && ignoring?.Contains(s.Name) != true
+            && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToArray();
+        var counted = live.Select(s => (Row: s, Note: s.State == SessionState.Idle ? PendingWork(s, jobs, cards, legs) : null))
+            .Where(c => c.Row.State != SessionState.Idle || c.Note is not null).ToArray();
         // Starts out, and sessions the node recorded (a flying leg's worker, a review's reviewer) that the tracker has not listed yet: they count by what they
         // were started with, until a session row of their name takes over.
         var rows = state.Sessions();
@@ -72,7 +78,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             .Concat(state.Flights().Where(f => f.Review is { State: ReviewState.Reviewing, Reviewer: not null })
                 .Select(f => new Start(f, f.Review!.Reviewer!, f.Code, AdmissionRole.Reviewer, settings.ReviewerModel(ReviewDepth.Standard), f.Review.StartedAt)));
         var starts = _starts.Values.Concat(recorded).Where(s => ignoring?.Contains(s.Label) != true && !Listed(s)).ToArray();
-        var sessions = live.Select(s => new FleetSession(machine, s.Name, s.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(s.Role), s.Flight) })
+        var sessions = counted.Select(c => new FleetSession(machine, c.Row.Name, c.Row.Model) { Identity = FleetAdmission.IdentityOf(RoleOf(c.Row.Role), c.Row.Flight), Note = c.Note })
             .Concat(starts.Select(s => new FleetSession(machine, s.Label, s.Model) { Identity = FleetAdmission.IdentityOf(s.Role, s.Flight) })).ToArray();
         if (localOnly)
         {
@@ -99,6 +105,42 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         }).Concat(FleetAdmission.FlightsOf(view)).ToArray();
         var (cap, onePerRepo) = Fleet.Settings(view, settings);
         return new AdmissionInput(sessions, flights, cap, onePerRepo);
+    }
+
+    /// <summary>
+    /// What an Idle session has pending that the node will wake it for, said as <c>idle, job j12 running</c>; null when it has nothing, and then it holds no
+    /// slot. A job Queued or Running it owns, an open card it asked (or one about its flight or leg a person must answer), or its leg's wait.
+    /// </summary>
+    private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
+    {
+        // A session the node just started has taken no first turn: it holds the slot it was admitted for.
+        if (session is { ContextTokens: 0, LastResponseAt: null, Gone: false })
+        {
+            return "idle, no first turn yet";
+        }
+        // The owner is matched as JobRunner.WakeTarget does: by the row's id, session id or an earlier session id (a continuation, #560).
+        bool Owns(string? owner) => owner is not null && (string.Equals(owner, session.Id, StringComparison.Ordinal) || string.Equals(owner, session.SessionId, StringComparison.Ordinal)
+            || session.EarlierSessionIds?.Contains(owner) == true);
+        if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && Owns(j.Owner)) is { } job)
+        {
+            return $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}";
+        }
+        // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
+        if (jobs.FirstOrDefault(j => !j.Told && j.Kind == JobKind.Run && Owns(j.Owner)) is { } ended)
+        {
+            return $"idle, job {ended.Id} result to tell";
+        }
+        var subjects = session.Flight is null ? [] : session.Leg is null ? new[] { $"flight/{session.Flight}" } : [$"flight/{session.Flight}", $"flight/{session.Flight}/{session.Leg}"];
+        var card = cards.FirstOrDefault(c => c.State == CardState.Open
+            && (string.Equals(c.AskedBy, session.Name, StringComparison.OrdinalIgnoreCase) || c.AlsoAskedBy.Contains(session.Name, StringComparer.OrdinalIgnoreCase)
+                || c.Bin is CardBin.Ring or CardBin.ForYou && subjects.Contains(c.Subject, StringComparer.OrdinalIgnoreCase)));
+        if (card is not null)
+        {
+            return $"idle, card {card.Id} open";
+        }
+        return session.Flight is not null && session.Leg is not null
+            && legs.Any(l => l.Wait is not null && string.Equals(l.Flight, session.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(l.Name, session.Leg, StringComparison.OrdinalIgnoreCase))
+            ? "idle, leg wait" : null;
     }
 
     private static AdmissionRole RoleOf(SessionRole role) => role switch
@@ -199,7 +241,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     {
         var view = Fleet.Cached;
         var (cap, onePerRepo) = Fleet.Settings(view, models());
-        var own = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).Select(s => s.Label);
+        var own = OwnSessions().Where(s => !s.Meta && Admission.IsOpus(s.Model)).Select(s => s.Note is null ? s.Label : $"{s.Label} ({s.Note})");
         var leased = Fleet.IsOwner(view)
             ? Fleet.Leases().Where(l => !l.Node.Equals(machine, StringComparison.OrdinalIgnoreCase) && Admission.IsOpus(l.Model)).Select(l => $"{l.Label} on {l.Node}")
             : [];
