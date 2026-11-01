@@ -85,7 +85,7 @@ public sealed class FleetRangeTests : IAsyncLifetime
         set.Ok.ShouldBeTrue(set.Error);
         set.Way.ShouldNotBeNull().ShouldContain("BB1: sent");
         set.Way.ShouldContain("cc1.local:47731 (did not answer: connection refused)");
-        ModelsOf(_b).Range(RoleModels.Worker).ToString().ShouldBe("sonnet-high");
+        ModelsOf(_b).Range(RoleModels.Worker).ToString().ShouldBe("sonnet-high..sonnet-high");
         ModelsOf(_c).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.BuiltIn);
     }
 
@@ -109,7 +109,7 @@ public sealed class FleetRangeTests : IAsyncLifetime
 
         own.Ok.ShouldBeTrue(own.Error);
         var (range, source) = ModelsOf(_b).RangeWithSource(RoleModels.Worker);
-        (range.ToString(), source).ShouldBe(("opus-medium", SettingSources.ThisNode));
+        (range.ToString(), source).ShouldBe(("opus-medium..opus-medium", SettingSources.ThisNode));
         var row = RowOfA();
         row.FleetValue.ShouldBe("sonnet-high..opus-high");
         row.Deviations.ShouldBe([new SettingDeviation("BB1", "opus-medium..opus-medium")]);
