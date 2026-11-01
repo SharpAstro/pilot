@@ -1011,6 +1011,9 @@ public sealed class PrReviews(
     /// <summary>
     /// A reviewed PR whose verdict is approve or comment goes in its base's merge queue at the reviewed head once its checks
     /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
+    /// A review with a design: finding holds the queue until its answer has been carried out: unanswered, or with its fixer on or
+    /// waiting for a slot, it is left with no note for a later sweep; a fixer's push is reviewed afresh at its new head. A fixer that
+    /// ended without a push leaves the PR unqueued with the Merge card for the person.
     /// </summary>
     internal async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
@@ -1033,6 +1036,28 @@ public sealed class PrReviews(
         if (read.Draft)
         {
             return;
+        }
+        // A question of design holds the queue until its answer has been carried out: a fixer's push moves the head, and the fresh
+        // review of that head decides the queue as any review does. No note, so a later sweep looks again.
+        if (review.Findings.Any(IsDesign))
+        {
+            var target = Verbs.PrTarget(review.Repo, review.Number);
+            if (review.DesignAnswer is null || review.Fixer is not null || _queued.ContainsKey(target))
+            {
+                return;
+            }
+            if (string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+            {
+                if (review.FixRound is > 0)
+                {
+                    var why = "the answer to its design question was given and its fixer ended without a push";
+                    state.PutPrReview(review with { QueueNote = why });
+                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued: {why}",
+                        $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
+                        [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                }
+                return;
+            }
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
@@ -1166,6 +1191,12 @@ public sealed class PrReviews(
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
+            // Once per fixer and worktree: a worktree that cannot be removed is tried again, the follow-up is not.
+            if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) && review.FixWorktree is not null
+                && _followedUp.TryAdd($"{review.Repo}#{review.Number}:{review.FixWorktree}", 0))
+            {
+                await FollowUpAsync(pr, review, read, cancellationToken);
+            }
             await EndFixerAsync(review, cancellationToken);
             return;
         }
@@ -1194,6 +1225,97 @@ public sealed class PrReviews(
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
+
+    /// <summary>The Handled line a follow-up PR of a merged PR's fixer leaves.</summary>
+    public const string FixFollowUpKind = "pr-fix-follow-up";
+
+    /// <summary>The For-you card of a fixer's commits that could not be pushed or opened as a follow-up PR; the local branch holds them.</summary>
+    public const string FixFollowUpFailedKind = "pr-fix-follow-up-failed";
+
+    /// <summary>
+    /// The PR merged while its fixer worked (#617): commits in the fixer's worktree past the merged head are pushed to a new branch and
+    /// opened as a follow-up PR against the same base, which is reviewed as any PR. Nothing past the head, nothing to do. A push or a
+    /// create that fails is a For-you card naming the commit and the local branch that keeps it. Never a force push.
+    /// </summary>
+    private async Task FollowUpAsync(PrRef pr, PrReviewRow review, PullRequest read, CancellationToken cancellationToken)
+    {
+        var worktree = review.FixWorktree!;
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        if (review.FixerJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        var merged = read.Head.Length > 0 ? read.Head : review.Head;
+        var baseBranch = read.Base.Length > 0 ? read.Base : "main";
+        // A worktree folder gone (or half removed, with no .git of its own, where git would resolve to the clone around it) holds nothing to follow up.
+        if (!Directory.Exists(worktree) || !(File.Exists(Path.Combine(worktree, ".git")) || Directory.Exists(Path.Combine(worktree, ".git"))))
+        {
+            return;
+        }
+        string tip = "HEAD";
+        string localBranch = read.HeadRef;
+        try
+        {
+            var count = await git.RunAsync(["rev-list", "--count", $"{merged}..HEAD"], worktree, cancellationToken);
+            if (!count.Ok)
+            {
+                state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
+                    $"{pr} merged while its fixer worked: its commits could not be counted ({LegCommander.OneLine(count.Why)})",
+                    $"{count.Why}\nThe fixer's worktree {worktree} is removed; anything it committed stays on its local branch in {review.ClonePath}.", link: review.Url);
+                return;
+            }
+            if (!int.TryParse(count.Output.Trim(), out var ahead) || ahead == 0)
+            {
+                return;
+            }
+            var head = await git.RunAsync(["rev-parse", "HEAD"], worktree, cancellationToken);
+            tip = head.Ok ? head.Output.Trim() : "HEAD";
+            var name = await git.RunAsync(["symbolic-ref", "--short", "HEAD"], worktree, cancellationToken);
+            localBranch = name.Ok ? name.Output.Trim() : read.HeadRef;
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
+                $"{pr} merged while its fixer worked: its commits could not be looked at ({LegCommander.OneLine(ex.Message)})",
+                $"{ex.Message}\nAnything the fixer committed stays on its local branch in {review.ClonePath}.", link: review.Url);
+            return;
+        }
+        var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
+        void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
+            $"{pr} merged while its fixer worked: commit {Short(tip)} has no follow-up PR ({LegCommander.OneLine(why)})",
+            $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it if {branch} is not on origin, and open a PR against {baseBranch} by hand.", link: review.Url);
+        try
+        {
+            var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
+            if (!push.Ok)
+            {
+                Failed($"git could not push {branch}: {push.Why}");
+                return;
+            }
+            var answer = review.DesignAnswer is { Length: > 0 } given ? $"\n\nThe design answer it carried out: {given}" : "";
+            var findings = review.Findings.Length > 0 ? "\n\nFindings of the review:\n" + string.Join('\n', review.Findings.Select(f => "- " + f)) : "";
+            var body = $"Follow-up of {pr} ({review.Url}), which merged while its fixer was still working. These are the fixer's commits past the merged head {Short(merged)}.\n\nFrom the review of {pr}.{findings}{answer}";
+            var created = await github.CreateAsync(review.ClonePath, branch, baseBranch, $"Follow-up of {pr}: {read.Title}", body, cancellationToken);
+            var follow = new PrRef(pr.Owner, pr.Name, created.Number);
+            state.RaiseCard(CardBin.Handled, FixFollowUpKind, subject, $"{pr} merged while its fixer worked: its commit {Short(tip)} is now {follow} on {branch}", $"against {baseBranch}", link: created.Url);
+            try
+            {
+                await StartAsync(follow, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, Verbs.PrTarget(follow.Repo, follow.Number), $"{follow}: the follow-up's review could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                    [new CardChoice { Label = $"Start the review of {follow}", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget(follow.Repo, follow.Number) }], link: created.Url);
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            Failed(ex.Message);
+        }
+    }
+
+    // Fixers whose merged PR was already followed up (or failed to be), keyed by PR and worktree, so a worktree that will not go is retried alone.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _followedUp = new(StringComparer.Ordinal);
 
     /// <summary>Stops a PR's fixer and removes its worktree, then clears the fix fields; false when the worktree is held, said on a card and tried again.</summary>
     private async Task<bool> EndFixerAsync(PrReviewRow review, CancellationToken cancellationToken)
@@ -1555,7 +1677,21 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
+        // A PR already in the merge queue is taken out first: the fixer's push would otherwise land the queued head without the fix.
+        var dequeued = false;
+        if (review.Fixer is null && await github.MergeQueueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken) is { State: "OPEN", Queued: true })
+        {
+            await github.DequeueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken);
+            dequeued = true;
+            review = review with { QueuedAt = null };
+            state.PutPrReview(review);
+        }
         var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        if (dequeued)
+        {
+            state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
+                $"{pr} was taken out of the merge queue so the fix can be pushed", "The answer to its design question started a fixer; its push is reviewed afresh and queued when green.", link: review.Url);
+        }
         if (!string.IsNullOrEmpty(postWords))
         {
             // Posted once the start was not refused, so a retry does not post them twice.

@@ -80,7 +80,10 @@ public sealed record PrReviewRow
     /// <summary>When the node put the PR in its base's merge queue after an approve or comment verdict (#279); a review is decided once.</summary>
     public DateTimeOffset? QueuedAt { get; init; }
 
-    /// <summary>Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue.</summary>
+    /// <summary>
+    /// Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue,
+    /// or whose design answer's fixer ended without a push. An open design question holds the queue with no note (it is looked at again).
+    /// </summary>
     public string? QueueNote { get; init; }
 
     /// <summary>The session fixing what a changes verdict found (#290), <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c>; null while none was started.</summary>
