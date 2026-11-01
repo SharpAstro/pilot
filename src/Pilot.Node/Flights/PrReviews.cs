@@ -1423,7 +1423,7 @@ public sealed class PrReviews(
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
         if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
         {
-            throw new FlightException($"not fixerStart on the autopilot: {why}; that is the person's to choose");
+            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
         var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
         if (asksDesign && words.Length > 0)
