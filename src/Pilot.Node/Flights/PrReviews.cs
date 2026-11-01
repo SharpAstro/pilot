@@ -31,6 +31,12 @@ public sealed class PrReviews(
     /// </summary>
     public Func<string, string, string, string, CancellationToken, Task<string?>>? TakeFlightVerdict { get; set; }
 
+    /// <summary>
+    /// Sends a flight's last leg round with a design question's answer: code, why (the question and the answer), who asked, the
+    /// person's word if the ask carried one; null when it went round, else why not. Set where the node is built.
+    /// </summary>
+    public Func<string, string, string?, string?, CancellationToken, Task<string?>>? SendFlightRound { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>
@@ -1234,9 +1240,12 @@ public sealed class PrReviews(
         repos.Repos().FirstOrDefault(r => string.Equals(r.GitHub, pr.Repo, StringComparison.OrdinalIgnoreCase))?.Path;
 
     /// <summary>Whether a flight's PR is this one: a flight's own review and fix are the flight's.</summary>
-    private bool FlightOwns(PrRef pr) =>
-        state.Flights().Any(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
-            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) || FlightOwner(pr) is not null;
+    private bool FlightOwns(PrRef pr) => FlightOf(pr) is not null;
+
+    /// <summary>The flight whose PR this is, by its recorded PR or the node's ownership rules; null when none.</summary>
+    private FlightRow? FlightOf(PrRef pr) =>
+        state.Flights().FirstOrDefault(f => f.PullRequestUrl is { } url && PrRef.Parse(url) is { } owned
+            && string.Equals(owned.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase) && owned.Number == pr.Number) ?? FlightOwner(pr);
 
     /// <summary>
     /// A changes verdict on a PR now posted (#290). On the controller's own PR in a repo the node tracks, with no flight owning
@@ -1246,17 +1255,20 @@ public sealed class PrReviews(
     /// </summary>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
-        if (Of(pr) is not { Fixer: null } review || FlightOwns(pr))
+        if (Of(pr) is not { Fixer: null } review)
         {
             return;
         }
+        // A flight's PR has its own legs to make changes, but a question of design is the person's: it rings here, and the answer
+        // sends the flight's last leg round (review fix).
+        var flight = FlightOf(pr);
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
         var asksDesign = review.Findings.Any(IsDesign);
-        if (review.Verdict != "changes" && !asksDesign)
+        if (flight is not null && !asksDesign || review.Verdict != "changes" && !asksDesign)
         {
             return;
         }
-        if (TrackedClone(pr) is null)
+        if (flight is null && TrackedClone(pr) is null)
         {
             // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
             RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there");
@@ -1265,7 +1277,15 @@ public sealed class PrReviews(
         if (asksDesign)
         {
             var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide.");
+            if (flight is not null)
+            {
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
+                    $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
+                    [AnswerChoice(subject)]);
+                return;
+            }
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide. Answer posts what you type on the PR and starts the fixer.",
+                [AnswerChoice(subject)]);
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -1333,7 +1353,7 @@ public sealed class PrReviews(
         {
             return "a flight owns it, so its own legs fix it";
         }
-        if (review.Findings.Any(IsDesign))
+        if (review.DesignAnswer is null && review.Findings.Any(IsDesign))
         {
             return "its review asks a question of design, which is the author's to decide";
         }
@@ -1361,9 +1381,43 @@ public sealed class PrReviews(
             var started = await StartAsync(pr, cancellationToken);
             return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
-        if (review.Verdict != "changes")
+        var asksDesign = review.Findings.Any(IsDesign);
+        if (review.Verdict != "changes" && !asksDesign)
         {
             throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
+        }
+        var words = string.Join(' ', command.Args ?? []).Trim();
+        string? given = null;
+        if (asksDesign)
+        {
+            given = words.Length > 0 ? words : review.DesignAnswer is { Length: > 0 } stored ? stored : await AnswerCommentAsync(pr, review, cancellationToken);
+            if (given is not { Length: > 0 })
+            {
+                throw new FlightException($"{pr}'s review asks a question of design and it has no answer yet: answer it on the PR, or give the answer with review fix {pr} <answer>");
+            }
+            review = review with { DesignAnswer = given };
+            // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
+            state.PutPrReview(review);
+        }
+        if (asksDesign && FlightOf(pr) is { } flight)
+        {
+            if (SendFlightRound is not { } send)
+            {
+                throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
+            }
+            if (words.Length > 0)
+            {
+                await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+            }
+            var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {command.Who}):\n{given}\nMake the changes the answer calls for.";
+            if (await send(flight.Code, round, command.Who, command.PersonsWord, cancellationToken) is { } refused)
+            {
+                throw new FlightException(refused);
+            }
+            state.PutPrReview(review);
+            state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"{flight.Code}'s last leg went round with the answer", DesignKind);
+            return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
@@ -1371,7 +1425,30 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
-        return await StartFixerAsync(pr, review, cancellationToken);
+        var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        if (asksDesign && words.Length > 0)
+        {
+            // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
+            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+        }
+        return fixerStart;
+    }
+
+    /// <summary>
+    /// The answer a PR's conversation gives a review's design question: the newest comment by the PR's author or gh's login made
+    /// after the review was posted (or finished), or null.
+    /// </summary>
+    private async Task<string?> AnswerCommentAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var since = review.PostingAt ?? review.FinishedAt ?? review.StartedAt;
+        var login = await github.LoginAsync(cancellationToken);
+        var comments = await github.PrCommentsAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken);
+        return comments
+            .Where(c => c.CreatedAt > since && c.Body.Trim().Length > 0
+                && (string.Equals(c.Author, review.Author, StringComparison.OrdinalIgnoreCase) || string.Equals(c.Author, login, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => c.Body.Trim())
+            .FirstOrDefault();
     }
 
     /// <summary>
@@ -1506,6 +1583,12 @@ public sealed class PrReviews(
 
     /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
     private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
+
+    /// <summary>The label of the design card's Answer choice.</summary>
+    public const string AnswerLabel = "Answer";
+
+    /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
+    internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
 
     /// <summary>
     /// Raises a review's card once: the review keeps which kinds it raised (<see cref="PrReviewRow.Raised"/>, in the journal), so a

@@ -95,6 +95,12 @@ public sealed record PrReviewRow
     /// <summary>Which round of fixing the fixer is on, 1 for the first; null while there is no fixer.</summary>
     public int? FixRound { get; init; }
 
+    /// <summary>
+    /// The answer to the review's design questions (findings starting <c>design:</c>) the fixer was started on: the words given on
+    /// <c>review fix</c> or the author's or controller's comment after the review. Null when there was none; optional on the wire.
+    /// </summary>
+    public string? DesignAnswer { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }

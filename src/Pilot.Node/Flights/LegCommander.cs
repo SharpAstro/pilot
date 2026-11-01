@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
@@ -1941,6 +1942,44 @@ public sealed partial class LegCommander(
         }
     }
 
+    // The flights whose answered design question is sending a leg round now: that go-around may take a done leg, as the answer is the person's word.
+    private readonly ConcurrentDictionary<string, byte> _answeredDesign = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A PR review's design question on a flight's PR, answered: the flight's last leg goes round with <paramref name="why"/> (the
+    /// question and its answer), even when it is done. It is the go-around command itself, so the cap on rounds, the held loop and
+    /// the taking back of an armed merge all hold. Null when it went round; else why not.
+    /// </summary>
+    public async Task<string?> AnsweredDesignAsync(string code, string why, string? who, string? personsWord, CancellationToken cancellationToken)
+    {
+        if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is not { } last)
+        {
+            return $"{code} has no leg to send round";
+        }
+        _answeredDesign[code] = 0;
+        try
+        {
+            var result = await RunAsync(new CommandRequest
+            {
+                Verb = Verbs.GoAround,
+                Target = Verbs.LegTarget(code, last.Name),
+                Args = [why],
+                Who = who is { Length: > 0 } ? who : "node",
+                PersonsWord = personsWord,
+            }, cancellationToken);
+            // A command queued behind the lock runs later, and still needs the mark.
+            if (result.Later is { } later)
+            {
+                result = await later;
+            }
+            return result.Error;
+        }
+        finally
+        {
+            _answeredDesign.TryRemove(code, out _);
+        }
+    }
+
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(command.Target);
@@ -1952,7 +1991,9 @@ public sealed partial class LegCommander(
         }
         // A done leg goes around too when the review asked for changes: that is how they are made.
         // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
+        // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
         if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
+            && !(leg.State == LegState.Done && _answeredDesign.ContainsKey(flight.Code))
             && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind is MergeFailed or PrReady && c.Subject == Verbs.FlightTarget(flight.Code) && c.Choices.Any(ch => ch.Verb == Verbs.GoAround))))
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
