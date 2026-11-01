@@ -430,7 +430,7 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Detail).ShouldBe((LegWatch.Idle, "the node tried to nudge it: the folder is gone"));
+        (card.Kind, card.Detail).ShouldBe((LegWatch.Idle, "idle with room in its context (0% of its window used) and no job of its own running; the node tried to nudge it: the folder is gone"));
         card.Title.ShouldEndWith("could not be nudged: the folder is gone");
     }
 
