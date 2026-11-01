@@ -17,7 +17,15 @@ internal static class CardKindCatalog
 {
     public const string SourcePinned = "CardKindTests.SourcePinned";
 
-    private const string Leg = "Flights/LegCommander.cs";
+    private const string LegAdvance = "Flights/LegCommander.Advance.cs";
+    private const string LegPlan = "Flights/LegCommander.Plan.cs";
+    private const string LegStart = "Flights/LegCommander.Start.cs";
+    private const string LegFinish = "Flights/LegCommander.Finish.cs";
+    private const string LegOpenPr = "Flights/LegCommander.OpenPr.cs";
+    private const string LegPlanners = "Flights/LegCommander.Planners.cs";
+    private const string LegReview = "Flights/LegCommander.Review.cs";
+    private const string LegMerge = "Flights/LegCommander.Merge.cs";
+    private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Watch = "Flights/LegWatch.cs";
     private const string Flight = "Flights/FlightCommander.cs";
@@ -48,41 +56,41 @@ internal static class CardKindCatalog
         new("plan-stalled", "Ring|Handled", [Watch], "LegWatchTests.AnIdlePlannerWithNoLegsIsToldToHandThemInThenRungNeverReplaced"),
         new("session-waiting", "Ring|ForYou", [Watch], "WaitingCardTests.TheCardClosesWhenTheSessionWorksAgain"),
         new("leg-wait-late", "Ring", [Watch], "LegWaitTests.AFileWaitPastItsUntilRingsOnceAndKeepsWaiting"),
-        new("leg-failed", "Ring", [Leg], "PushBlockedTests.AFailedLegWhoseCheckFailsGetsTheOrdinaryCardNotThePushBlockedOne"),
-        new("push-blocked", "Ring", [Leg], "PushBlockedTests.ARebasedBranchWithAPassingCheckRaisesAPushBlockedCardNamingTheForcePush"),
-        new("push-diverged", "Ring", [Leg], "PushTests.A_conflicting_remote_commit_is_refused_with_both_heads_and_the_remote_is_left_as_it_was"),
-        new("leg-self-finished", "Handled", [Leg], "LegSelfFinishTests.A_failed_leg_with_its_work_pushed_and_its_check_passing_is_finished_by_the_node"),
-        new("leg-no-go", "Ring", [Leg], "CardSummaryRaiserTests.TheNoGoSummaryNamesTheChoicesTheCardOffers"),
-        new("leg-validating", "Handled", [Leg], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
-        new("leg-removed", "Handled", [Leg], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
+        new("leg-failed", "Ring", [LegFinish], "PushBlockedTests.AFailedLegWhoseCheckFailsGetsTheOrdinaryCardNotThePushBlockedOne"),
+        new("push-blocked", "Ring", [LegFinish], "PushBlockedTests.ARebasedBranchWithAPassingCheckRaisesAPushBlockedCardNamingTheForcePush"),
+        new("push-diverged", "Ring", [LegOpenPr], "PushTests.A_conflicting_remote_commit_is_refused_with_both_heads_and_the_remote_is_left_as_it_was"),
+        new("leg-self-finished", "Handled", [LegFinish], "LegSelfFinishTests.A_failed_leg_with_its_work_pushed_and_its_check_passing_is_finished_by_the_node"),
+        new("leg-no-go", "Ring", [LegStart], "CardSummaryRaiserTests.TheNoGoSummaryNamesTheChoicesTheCardOffers"),
+        new("leg-validating", "Handled", [LegStart], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
+        new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
         new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard"),
-        new("next-step", "Ring|Handled", [Leg, Flight], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive"),
-        new("sibling-behind", "ForYou", [Leg], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
-        new("sibling-pulled", "Handled", [Leg], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
-        new("planner-started", "Handled", [Leg], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
-        new("planned", "ForYou", [Leg], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
+        new("next-step", "Ring|Handled", [LegAdvance, Flight], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive"),
+        new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
+        new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
+        new("planner-started", "Handled", [LegPlanners], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
+        new("planned", "ForYou", [LegPlanners], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
         new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal"),
-        new("flown-elsewhere", "Ring", [Leg], "OneNodePerFlightTests.APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer"),
-        new("pilot-md-too-long", "Ring", [Leg], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount"),
+        new("flown-elsewhere", "Ring", [LegPlan], "OneNodePerFlightTests.APlanOfAFlightWhoseBranchAPeerFliesIsRefusedWithARingNamingThePeer"),
+        new("pilot-md-too-long", "Ring", [LegAdvance], "PilotMdTests.APilotMdOverTheLimitIsNotQuotedAndRaisesOneCardNamingTheRepoTheFlightAndTheLineCount"),
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough"),
         new("package-late", "Ring", ["Flights/PackageWatch.cs"], "PackageWaitTests.APublishRunThatFailedRaisesTheCardAtOnce"),
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
-        new("spend-alert", "Ring", [Leg], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
-        new("review-kept", "Handled", [Leg], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
-        new("review-notes", "ForYou", [Leg], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
-        new("review-loop", "ForYou", [Leg], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings"),
+        new("spend-alert", "Ring", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
+        new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
+        new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
+        new("review-loop", "ForYou", [LegReview], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings"),
         new("stray-session", "Ring", ["Flights/LegWatch.cs"], "WindDownTests.TheSweepRingsOnceForALiveSessionOfALandedFlightAndOnceForOneTheLedgerDoesNotKnow"),
 
         // Flights: landing, moving, PRs.
-        new("review-changes", "Ring", [Leg], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
+        new("review-changes", "Ring", [LegReview], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
         new("laid-on-base", "Handled", [Lay], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
         new("lay-failed", "Ring", [Lay], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain"),
-        new("pr-ready", "Ring", [Leg, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
-        new("pr-conflicts", "Ring", [Leg], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
+        new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
+        new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
-        new("merge-taken-back", "Handled", [Leg], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
+        new("merge-taken-back", "Handled", [LegMerge], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
         new("merged-under-leg", "Ring", [Flight], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),
         new("not-landed", "Ring", [Checks], "MergedUnderLegTests.AMergeSeenWithUncommittedChangesKeepsThePlaneAndRings"),
         new("closed-landed", "Handled", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings"),
@@ -91,8 +99,8 @@ internal static class CardKindCatalog
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver"),
-        new("pr-marks-refused", "ForYou", [Leg, "Flights/PrMarks.cs", Reviews], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
-        new("node-label-refused", "ForYou|Handled", [Flight, Move, Leg, "Flights/RepoSetup.cs"], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
+        new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", Reviews], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
+        new("node-label-refused", "ForYou|Handled", [Flight, Move, LegOpenPr, "Flights/RepoSetup.cs"], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "Ring", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [Flight], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
