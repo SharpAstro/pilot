@@ -116,7 +116,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+            run = await ClaudeCli.RunAsync(Arguments(start), Inline(start.Name, start.Brief, BriefFolder), start.RepoPath, Timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is FileNotFoundException or System.ComponentModel.Win32Exception or TimeoutException)
         {
@@ -132,6 +132,30 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
         ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
+    }
+
+    /// <summary>The longest brief passed as it is. <c>claude --bg</c> hands the prompt to the session it spawns on its command
+    /// line, which Windows caps at 32,767 characters: PIL584's 35,509-character review brief failed three starts with
+    /// <c>ENAMETOOLONG: name too long, uv_spawn</c> and rang as a reviewer that never took a turn.</summary>
+    public const int MaxInlineBrief = 24_000;
+
+    private static string BriefFolder => Path.Combine(Path.GetTempPath(), "pilot-briefs");
+
+    /// <summary>
+    /// The brief to pass: <paramref name="brief"/> itself when it fits, else a short one naming a file in
+    /// <paramref name="folder"/> that holds it whole, for the session to read before anything else.
+    /// </summary>
+    public static string Inline(string name, string brief, string folder)
+    {
+        if (brief.Length <= MaxInlineBrief)
+        {
+            return brief;
+        }
+        Directory.CreateDirectory(folder);
+        var file = Path.Combine(folder, $"{name}-{Guid.NewGuid():N}.md");
+        File.WriteAllText(file, brief);
+        return $"Your brief is {brief.Length:N0} characters, too long to pass on a command line, so it is in {file}. " +
+            "Read that whole file first and follow it as your brief; it is everything you were started to do.";
     }
 
     public async Task StopAsync(string job, CancellationToken cancellationToken) =>
