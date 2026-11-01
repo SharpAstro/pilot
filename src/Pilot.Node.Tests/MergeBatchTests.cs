@@ -362,6 +362,7 @@ public sealed class MergeBatchTests
         GhCli.ParseNoRules(rules).ShouldBe(open);
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeAskedWhileABatchWaitsOnItsCiWaitsForTheBatchToEnd()
     {
         var (node, _, release, held, _) = await QueueAsync(batch: true, ["TIA1", "TIA2"], "success");
@@ -456,6 +457,7 @@ public sealed class MergeBatchTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABatchOfARealRepoStartsFromOriginMainAndLandsBothPrsOnMainWithAPlainPush()
     {
         // The git the batch runs, against a bare origin: what a faked git cannot show (the remote's names, the merges, the pushes).

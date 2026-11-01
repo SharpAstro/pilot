@@ -10,6 +10,8 @@ namespace Pilot.Node.Tests;
 /// A review that asks a question of design (a finding starting <c>design:</c>) is fixed once the question has an answer: the words
 /// given on <c>review fix</c> (posted on the PR first), or the PR's author's comment after the review. Without one it is refused.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (5.3 to 11.1 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class DesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -95,6 +97,8 @@ public sealed class DesignAnswerTests : PrFixTestsBase
 /// The same question of design on a flight's PR goes through the flight's go-around: it rings the design card naming the flight, and
 /// review fix with an answer sends the flight's last leg round with the question and the answer, starting no PR fixer.
 /// </summary>
+/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
+[Trait("Category", "Slow")]
 public sealed class FlightDesignAnswerTests : ReviewTestsBase
 {
     private const string Head = "cafe0000cafe0000";
@@ -339,6 +343,8 @@ public sealed class DesignQuestionTests
 /// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
 /// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (all three measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";

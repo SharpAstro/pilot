@@ -11,6 +11,7 @@ namespace Pilot.Node.Tests;
 /// A flight's legs kept as sub-tasks of its work item, for the repos that opt in (<c>sub-task-repos</c>): a leg planned gets one,
 /// a leg done ticks it, a leg removed closes it, a refusing tracker never fails the leg, and a person's own sub-task is listed on the flight row.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class SubTaskSyncTests : LegCommanderTestsBase
 {
     private readonly StringWriter _log = new();
@@ -41,6 +42,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARepoNotOptedInWritesNothingToItsTracker()
     {
         OptIn("some-other-repo");
@@ -95,6 +97,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegDoneClosesItsSubIssueAndTheOtherStaysOpen()
     {
         OptIn("tianwen");
@@ -109,6 +112,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedLegTheControllerMarksDoneAnywayClosesItsSubIssueToo()
     {
         OptIn("tianwen");
@@ -124,6 +128,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegRemovedClosesItsSubIssueAsNotPlannedAndTheLegGoesOn()
     {
         OptIn("tianwen");
@@ -139,6 +144,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusingTrackerIsLoggedNeverFailsTheLegAndIsTriedAgainAtTheNextChange()
     {
         OptIn("tianwen");
@@ -159,6 +165,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusalToCloseALegDoneIsLoggedAndTheLegIsDoneAllTheSame()
     {
         OptIn("tianwen");
@@ -173,6 +180,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASubIssueAPersonAddedIsListedOnTheFlightRowAndChangesNoLeg()
     {
         OptIn("tianwen");
@@ -272,6 +280,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortcutStoryKeepsATaskPerLegTicksItWhenDoneDeletesItWhenRemovedAndListsAPersonsOwn()
     {
         var shortcut = await ShortcutFlight();

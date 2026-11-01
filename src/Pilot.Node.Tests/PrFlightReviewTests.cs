@@ -64,6 +64,7 @@ public sealed class PrFlightReviewTests : ReviewTestsBase
     };
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ReviewPrOnAFlightsPrByUrlIsRefusedNamingTheFlightsReview()
     {
         var flight = await AtChanges();
@@ -75,6 +76,7 @@ public sealed class PrFlightReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ReviewPrOnAPrWhoseHeadBranchIsAFlightsIsRefusedToo()
     {
         var flight = await AtChanges();
@@ -87,6 +89,7 @@ public sealed class PrFlightReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady()
     {
         var flight = await AtChanges();
@@ -105,6 +108,7 @@ public sealed class PrFlightReviewTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnApproveAtAnOlderHeadChangesNothing()
     {
         var flight = await AtChanges();

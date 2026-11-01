@@ -162,6 +162,7 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanningMovesTheIdeaToTheNamedMilestoneAndMakesItsFlightRememberingTheIdea()
     {
         _github.AddMilestone(Repo, "v2", dueOn: new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
@@ -210,6 +211,7 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldingAnIdeaIntoAFlightCommentsItsWordsOnTheFlightsIssueAndDropsItAsFolded()
     {
         _github.AddMilestone(Repo, "v1");
@@ -229,6 +231,7 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanningIntoANamedMilestoneMovesItThereAndRefusesOneThatIsNotOpenBeforeAnyFlightIsMade()
     {
         _github.AddMilestone(Repo, "v1", dueOn: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
@@ -309,6 +312,7 @@ public sealed class IdeaTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheRepoWatchReadsTheIdeasMilestoneIntoTheRepoStatusAndTheNodesRows()
     {
         File.WriteAllText(Path.Combine(Repo, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
@@ -376,6 +380,7 @@ public sealed class IdeaCliTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task IdeaNotesAnIdeaAndPrintsItsIdAndIdeasListsItAndDropClosesIt()
     {
         var repo = Path.Combine(_root, "tianwen");
@@ -408,6 +413,7 @@ public sealed class IdeaCliTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task IdeaPlanWithoutAMilestoneProposesOneAndPlansNothingAndNewMilestoneMakesIt()
     {
         var repo = Path.Combine(_root, "tianwen");

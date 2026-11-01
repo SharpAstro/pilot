@@ -151,6 +151,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortcutFlightIsCodedFromTheRepoPrefixAndTheCardNumberWithSuffixes()
     {
         var commander = Commander(null, new FakeShortcut(HttpStatusCode.NotFound, ""));
@@ -172,6 +173,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitHubFlightKeepsItsPlainBranch()
     {
         (await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "12")).Ok.ShouldBeTrue();
@@ -199,6 +201,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortcutTitleIsReadFromTheApiWithTheToken()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"id\":101645,\"name\":\"Cards on Shortcut\"}");
@@ -216,6 +219,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGivenTitleWinsAndNoRequestIsMade()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"name\":\"From Shortcut\"}");
@@ -228,6 +232,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WithoutATokenTheGivenTitleStandsIn()
     {
         var handler = new FakeShortcut(HttpStatusCode.OK, "{\"name\":\"From Shortcut\"}");
@@ -237,6 +242,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortcutFlightWithNeitherTokenNorTitleIsRefusedNamingWhatIsMissing()
     {
         var result = await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "sc-7");
@@ -248,6 +254,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStoryTheTokenCannotReadIsRefusedWithoutATitle()
     {
         var result = await Create(Commander("bad", new FakeShortcut(HttpStatusCode.Unauthorized, "")), "sc-7");
@@ -257,6 +264,7 @@ public sealed class TrackerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABareNumberStaysAGitHubIssueAndNeedsNoTitle()
     {
         var result = await Create(Commander(null, new FakeShortcut(HttpStatusCode.OK, "{}")), "12");

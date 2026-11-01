@@ -95,6 +95,7 @@ public sealed class RepoPolicyTests : IDisposable
         WorkItem.Parse(given, TrackerKind.Shortcut).Item.ShouldBe(new WorkItem(tracker, 101645));
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABareNumberOnAShortcutDefaultRepoMakesAShortcutFlightAndOnAnyOtherRepoAGitHubOne()
     {
         var parent = Path.Combine(_root, "repos");
@@ -117,6 +118,7 @@ public sealed class RepoPolicyTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneIsCutFromADevelopDefaultBranchAndSeveralRepoRootsAreAllListed()
     {
         var first = Path.Combine(_root, "one");
@@ -142,6 +144,7 @@ public sealed class RepoPolicyTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public void TheSetupChecklistSaysWhetherAShortcutTokenIsPresent()
     {
         var absent = new NodeSetup(new NodeOptions("/tmp/n.sock", _root), "pilot-node", _root) { ShortcutToken = () => null };

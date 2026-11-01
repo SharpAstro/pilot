@@ -9,6 +9,7 @@ namespace Pilot.Node.Tests;
 /// A PR that merges cleanly with its base but cannot be rebased onto it is laid on the base as one commit before it joins a merge
 /// queue that rebases (pilot #523). Real git over the seed's bare origin; FakeGitHub answers the queue's method.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class RebaseLayFlightTests : ReviewTestsBase
 {
     private static void Commit(string cwd, string message) =>

@@ -138,6 +138,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotFinishPutsBackWhatItReplaced()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
@@ -243,6 +244,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotMoveAsideAnOldOnlyFilePutsEverythingBackAndNamesTheHolder()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
@@ -265,6 +267,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotReplaceAHeldFileNamesTheProcessHoldingIt()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");

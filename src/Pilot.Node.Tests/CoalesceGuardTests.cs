@@ -9,6 +9,7 @@ namespace Pilot.Node.Tests;
 /// A repeat of a step the node is already running (a merge, a PR open, a reviewer start) answers ok "already in progress" instead of a
 /// refusal (PIL575); one that has not moved for <see cref="LegCommander.StuckAfter"/> is stuck and is refused, so it rings.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class CoalesceGuardTests : ReviewTestsBase
 {
     private static readonly TimeSpan Stuck = TimeSpan.FromMilliseconds(300);
