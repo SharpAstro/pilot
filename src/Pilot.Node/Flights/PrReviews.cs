@@ -1011,6 +1011,9 @@ public sealed class PrReviews(
     /// <summary>
     /// A reviewed PR whose verdict is approve or comment goes in its base's merge queue at the reviewed head once its checks
     /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
+    /// A review with a design: finding holds the queue until its answer has been carried out: unanswered, or with its fixer on or
+    /// waiting for a slot, it is left with no note for a later sweep; a fixer's push is reviewed afresh at its new head. A fixer that
+    /// ended without a push leaves the PR unqueued with the Merge card for the person.
     /// </summary>
     internal async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
@@ -1033,6 +1036,28 @@ public sealed class PrReviews(
         if (read.Draft)
         {
             return;
+        }
+        // A question of design holds the queue until its answer has been carried out: a fixer's push moves the head, and the fresh
+        // review of that head decides the queue as any review does. No note, so a later sweep looks again.
+        if (review.Findings.Any(IsDesign))
+        {
+            var target = Verbs.PrTarget(review.Repo, review.Number);
+            if (review.DesignAnswer is null || review.Fixer is not null || _queued.ContainsKey(target))
+            {
+                return;
+            }
+            if (string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+            {
+                if (review.FixRound is > 0)
+                {
+                    var why = "the answer to its design question was given and its fixer ended without a push";
+                    state.PutPrReview(review with { QueueNote = why });
+                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued: {why}",
+                        $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
+                        [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                }
+                return;
+            }
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
@@ -1555,7 +1580,21 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
+        // A PR already in the merge queue is taken out first: the fixer's push would otherwise land the queued head without the fix.
+        var dequeued = false;
+        if (review.Fixer is null && await github.MergeQueueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken) is { State: "OPEN", Queued: true })
+        {
+            await github.DequeueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, cancellationToken);
+            dequeued = true;
+            review = review with { QueuedAt = null };
+            state.PutPrReview(review);
+        }
         var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        if (dequeued)
+        {
+            state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
+                $"{pr} was taken out of the merge queue so the fix can be pushed", "The answer to its design question started a fixer; its push is reviewed afresh and queued when green.", link: review.Url);
+        }
         if (!string.IsNullOrEmpty(postWords))
         {
             // Posted once the start was not refused, so a retry does not post them twice.
