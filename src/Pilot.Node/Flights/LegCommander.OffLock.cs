@@ -74,6 +74,10 @@ public sealed partial class LegCommander
         return call;
     }
 
+    /// <summary>True while the flight has a call of <paramref name="what"/> out that is live: out for less than <see cref="StuckAfter"/>. A stuck one is not live, so it is refused and rung as before.</summary>
+    internal bool IsCalling(string code, string what) =>
+        _calling.TryGetValue(code, out var busy) && busy.What == what && time.GetUtcNow() - busy.At < StuckAfter;
+
     /// <summary>
     /// Takes the lock and the flight, as <see cref="Calling"/> does, for a call of the node's own (a rebase, a send back for changes):
     /// where a person's command is refused while the flight has calls out, this waits for them, without the lock.
