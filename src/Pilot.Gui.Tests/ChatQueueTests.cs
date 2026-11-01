@@ -75,6 +75,10 @@ public sealed class ChatQueueTests
 
         holds[0].SetResult(null);
         await first;
+        for (var i = 0; i < 100 && called.Count < 2; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
         called.ShouldBe(["alpha", "bravo"]);
         Described(chat).ShouldNotContain("queued");
 
@@ -185,29 +189,87 @@ public sealed class ChatQueueTests
         told.ShouldBe([("c1", "why c1?"), ("c3", "and c3?")]);
     }
 
+    private static readonly NodeMark Se1 = new("se1", "http://se1", "SE1", Here: false);
+    private static readonly NodeMark Se2 = new("se2", "http://se2", "SE2", Here: false);
+
+    private static ChatView<RgbaImage> NewMultiChat(RgbaImageRenderer renderer, Func<NodeMark, string, Task<string?>> sendOn)
+    {
+        var chat = NewChat(renderer, _ => Task.FromResult<string?>(null));
+        chat.LoadOn = (_, _, _) => Task.FromResult(new ChatPage { Entries = [], Total = 0 });
+        chat.OnSendOn = sendOn;
+        return chat;
+    }
+
     [Fact]
-    public async Task SwitchingNodeDropsWhatIsStillQueuedForTheOldOne()
+    public async Task AMessageQueuedForANodeIsStillDeliveredToItAfterSwitchingAndIsNotDrawnOnTheOtherPage()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
         var hold = Held();
-        var called = new List<string>();
-        var chat = NewChat(renderer, text =>
+        var called = new List<(string Node, string Text)>();
+        var chat = NewMultiChat(renderer, (node, text) =>
         {
-            called.Add(text);
-            return hold.Task;
+            called.Add((node.Where, text));
+            return called.Count == 1 ? hold.Task : Task.FromResult<string?>(null);
         });
-
+        chat.SwitchTo(Se1);
         chat.Input.InsertText("alpha");
         var first = chat.SendAsync();
         chat.Input.InsertText("bravo");
         var second = chat.SendAsync();
 
-        chat.SwitchTo(new NodeMark("se1", "http://se1", "SE1", Here: false));
-        await second;
+        chat.SwitchTo(Se2);
+        Described(chat).ShouldNotContain("alpha");
+        Described(chat).ShouldNotContain("bravo");
 
         hold.SetResult(null);
         await first;
-        called.ShouldBe(["alpha"]);
+        await second;
+        called.ShouldBe([(Se1.Where, "alpha"), (Se1.Where, "bravo")]);
+    }
+
+    [Fact]
+    public async Task AFailedLineForANodeIsNotDrawnOnAnotherPageAndIsBackWhenReturning()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewMultiChat(renderer, (_, _) => Task.FromResult<string?>("down"));
+        chat.SwitchTo(Se1);
+        chat.Input.InsertText("alpha");
+        await chat.SendAsync();
+        chat.Failures.Count.ShouldBe(1);
+
+        chat.SwitchTo(Se2);
+        Described(chat).ShouldNotContain("you · failed");
+        Actions(chat).ShouldNotContain(a => a.StartsWith("chat:retry:", StringComparison.Ordinal));
+
+        chat.SwitchTo(Se1);
+        Described(chat).ShouldContain("you · failed");
+        Actions(chat).ShouldContain(a => a.StartsWith("chat:edit:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ASendThatIsCancelledByATimeoutEndsFailedAndTheNextOneStillGoes()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var called = new List<string>();
+        var chat = NewChat(renderer, text =>
+        {
+            called.Add(text);
+            return text == "alpha"
+                ? throw new TaskCanceledException("timed out", new TimeoutException())
+                : Task.FromResult<string?>(null);
+        });
+        chat.Input.InsertText("alpha");
+        var first = chat.SendAsync();
+        chat.Input.InsertText("bravo");
+        var second = chat.SendAsync();
+        await first.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await second.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        called.ShouldBe(["alpha", "bravo"]);
+        Described(chat).ShouldContain("you · failed");
+        var actions = Actions(chat);
+        actions.ShouldContain(a => a.StartsWith("chat:retry:", StringComparison.Ordinal));
+        actions.ShouldContain(a => a.StartsWith("chat:edit:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -308,7 +370,7 @@ public sealed class ChatQueueTests
 
         Click(chat, Actions(chat).Single(a => a.StartsWith("chat:edit:", StringComparison.Ordinal)));
         chat.Input.Text.ShouldBe("why c1?");
-        chat.QuotedCard?.Id.ShouldBe("c1");
+        chat.QuotedCard.ShouldNotBeNull().Id.ShouldBe("c1");
         chat.Failures.ShouldBeEmpty();
         Described(chat).ShouldNotContain("you · failed");
 
@@ -319,19 +381,6 @@ public sealed class ChatQueueTests
         chat.Input.InsertText("draft");
         Click(chat, Actions(chat).Single(a => a.StartsWith("chat:edit:", StringComparison.Ordinal)));
         chat.Input.Text.ShouldBe("draft\nwhy c1?");
-    }
-
-    [Fact]
-    public async Task SwitchingNodeDropsAFailedLineToo()
-    {
-        using var renderer = new RgbaImageRenderer(1280, 800);
-        var chat = NewChat(renderer, _ => Task.FromResult<string?>("down"));
-        chat.Input.InsertText("alpha");
-        await chat.SendAsync();
-        chat.Failures.Count.ShouldBe(1);
-
-        chat.SwitchTo(new NodeMark("se1", "http://se1", "SE1", Here: false));
-        chat.Failures.ShouldBeEmpty();
     }
 
     [Fact]
