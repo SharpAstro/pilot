@@ -155,9 +155,9 @@ public sealed class ListTableTests : IDisposable
 
     private PilotChrome<RgbaImage> Chrome() => new(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
 
-    private static void ClickTitle(SessionsView<RgbaImage> view, SessionsScreen screen, string title)
+    private static void ClickTitle(SessionsView<RgbaImage> view, SessionsScreen screen, string title, float width = PageWidth)
     {
-        view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"sessions:table:{title}").OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
@@ -208,7 +208,8 @@ public sealed class ListTableTests : IDisposable
             using (var file = GuiSettingsFile.Open(path))
             {
                 chrome.KeepColumnWidths(file, () => { });
-                ClickTitle(chrome.Sessions, screen, "Spend");
+                // Spend is an optional column: at 1280 it is dropped now Age and Spend/min share the row, so this click needs the wide page.
+                ClickTitle(chrome.Sessions, screen, "Spend", 1400f);
                 file.Flush();
             }
 
@@ -243,7 +244,10 @@ public sealed class ListTableTests : IDisposable
         }
         finally
         {
-            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+            if (Directory.Exists(Path.GetDirectoryName(path)!))
+            {
+                Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+            }
         }
     }
 
@@ -646,8 +650,8 @@ public sealed class ListTableTests : IDisposable
         var view = Sessions();
         var screen = SessionsScreenOf();
 
-        // Wide enough for everything, then too narrow for the optional columns: they go from the header and the rows alike.
-        var wide = Arranged(view.Tree(screen), 1280f);
+        // Wide enough for everything (Age and Spend/min included), then too narrow for the optional columns: they go from the header and the rows alike.
+        var wide = Arranged(view.Tree(screen), 1400f);
         var narrow = Arranged(view.Tree(screen), 760f);
         var first = screen.Lines[0];
 
