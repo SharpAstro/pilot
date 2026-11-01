@@ -63,10 +63,12 @@ internal sealed class PullRequestNode
 /// <summary>
 /// The Pull requests page: every open PR of the repos pilot works in, grouped by org (its counts, and why its read failed if it
 /// did) and then by repo, each in the order of the PR that most needs the person; an org and a repo fold on a click anywhere on
-/// their header, and stay folded while the window is open; a row is a state chip, <c>#123 Title</c> as a link,
+/// their header, and the folds are saved in <c>gui-settings.json</c> and restored at the next start; a row is a state chip, <c>#123 Title</c> as a link,
 /// the flight's code, the author, pilot's review and when it was updated, in columns that line up across the groups, with
 /// the column for the row's actions at the right. The pills (Mine, Flights, Needs me: a lit one clicked again goes back to every PR) and the repo search narrow the
 /// list; a click selects a row (its flight's cards light in the panel), a double-click or Enter opens its flight or the PR.
+/// Up and Down walk every row, the headers included; Left folds an open header or goes to the row's parent, Right unfolds a folded
+/// header or goes to its first child, and Enter on a header folds or unfolds it.
 /// Generic over the surface, as the other pages are.
 /// </summary>
 internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
@@ -775,6 +777,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             if (moveTo >= 0)
             {
                 Select(moveTo);
+                // The row moved to may be off screen (a parent scrolled above the top, a first child below the bottom): the next build
+                // brings it into view, as a jump does.
+                _scrollTo = (0f, 0f);
             }
             // A fold changed the rows: the cursor keeps its node, whose row the next build finds again.
             return true;
@@ -1160,7 +1165,10 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .RowH(OrgHeight)
             // Day: the button blue, set off from a repo's panel grey. Night: its header red, as dark as the rows' so the red ink on
             // it reads as well as theirs (the button red would take it under 3:1).
-            .Bg(NightOrNull is { } night ? night.HeaderBg : P.Button)
+            // Selected, the header is lit: in day the selection blue (the focus blue is too near the button blue to tell apart), at night
+            // the button red, the brightest fill its red ink still reads on at 3:1. Stated, not a BgFocus: the cursor's hit is the row
+            // around it, not this button, and a terminal paints no focus of its own.
+            .Bg(index == Selected ? OrgSelectedBg : NightOrNull is { } night ? night.HeaderBg : P.Button)
             .BgHover(NightOrNull is { } dark ? dark.RowHoverBg : P.ButtonHover)
             .Follows(new HitResult.ButtonHit($"prs:org:{org.Org}"), _ =>
             {
@@ -1170,6 +1178,9 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .WithTooltip(folded ? $"Show {org.Org}'s repos" : $"Fold {org.Org}'s repos away");
         return AsRow(header, index, OrgHeight);
     }
+
+    /// <summary>The fill of an org's header the cursor is on: day's selection blue, night's button red.</summary>
+    internal RGBAColor32 OrgSelectedBg => NightOrNull is { } night ? night.Button : P.SelectionBg;
 
     // A header is a row of the list as well as a button: the list row is what the arrow keys reach, and the button inside it is the click.
     private Layout.Node AsRow(Layout.Node header, int index, float height) =>
@@ -1206,7 +1217,8 @@ internal sealed class PullRequestsView<TSurface>(Renderer<TSurface> renderer) : 
             .WithGap(8f)
             .Pad(8f, 0f)
             .RowH(GroupHeight)
-            .Bg(P.PanelBg)
+            // Selected, lit as a PR's row is: a terminal paints no focus of its own, and the header's own fill hides the row's.
+            .Bg(index == Selected ? P.RowFocusBg : P.PanelBg)
             .BgHover(P.RowHoverBg)
             .Follows(new HitResult.ButtonHit($"prs:group:{group.Repo}"), _ =>
             {

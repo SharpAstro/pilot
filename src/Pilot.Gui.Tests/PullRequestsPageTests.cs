@@ -1070,7 +1070,7 @@ public sealed class PullRequestsPageTests
     }
 
     [Fact]
-    public void TheKeyboardSkipsTheRowsOfAFoldedOrgAndSelectingAFoldedRepoShowsItsOrgToo()
+    public void DownFromTheLastPRStopsOnAFoldedOrgsHeaderAndSelectingAFoldedRepoShowsItsOrgToo()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (chrome, page) = Chrome(renderer);
@@ -1081,10 +1081,15 @@ public sealed class PullRequestsPageTests
         page.VisiblePullRequests.Select(r => r.Number).ShouldBe([12]);
         page.SelectedPr().ShouldBe(0);
 
-        // Down from the only row listed stays on it: no row of the folded org is ever selected.
-        page.HandleInput(new InputEvent.KeyDown(InputKey.Down, InputModifier.None));
+        // Painted, so Down has the rows the frame drew: from the only PR listed it lands on the folded org's header, a stop as every
+        // header is, and never on a row of the folded org.
+        page.Render(screen, new RectF32(0, 0, 1280, 900));
+        Key(page, InputKey.Down).ShouldBeTrue();
         Arrange(renderer, page, screen);
-        page.SelectedRow.ShouldNotBeNull().Number.ShouldBe(12);
+        page.SelectedHeader.ShouldBe("SharpAstro");
+        page.SelectedRow.ShouldBeNull();
+        page.IsOrgFolded("SharpAstro").ShouldBeTrue();
+        page.VisiblePullRequests.Select(r => r.Number).ShouldBe([12]);
 
         // A jump to a PR of the folded org (a card's link) opens the org and its repo.
         page.Toggle("SharpAstro/pilot");
@@ -1234,6 +1239,89 @@ public sealed class PullRequestsPageTests
         // A header selected survives the page laying out again.
         Arrange(renderer, page, screen);
         page.SelectedHeader.ShouldBe("SharpAstro");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AHeaderTheCursorIsOnIsDrawnSelectedInDayAndNight(bool night)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        chrome.Night.On = night;
+        page.Night = chrome.Night;
+        var palette = night ? Palette.Night : Palette.Standard;
+        var screen = Screen();
+        Arrange(renderer, page, screen);
+
+        Layout.Node Header(ImmutableArray<Layout.ArrangedNode<float>> arranged, string action) =>
+            arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: var hit } && hit == action).Node;
+
+        // The cursor on an org's header: it, and only it of the orgs, is in the selected fill, which its ink reads on.
+        page.Select(page.Rows.ToList().FindIndex(r => r.Item.Org?.Org == "SharpAstro"));
+        var arranged = Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro");
+        var org = Header(arranged, "prs:org:SharpAstro").Background.ShouldNotBeNull();
+        org.ShouldBe(page.OrgSelectedBg);
+        org.ShouldBe(night ? Palette.Night.Button : Palette.Standard.SelectionBg);
+        var other = Header(arranged, "prs:org:sebgod").Background.ShouldNotBeNull();
+        other.ShouldNotBe(org);
+        Contrast(palette.Bright, org).ShouldBeGreaterThanOrEqualTo(night ? 3.0 : 4.5);
+        Header(arranged, "prs:group:SharpAstro/DIR.Lib").Background.ShouldBe(palette.PanelBg);
+
+        // The cursor on a repo's header: it is in the fill a selected PR's row has (its link reads there as a PR title's does), its
+        // siblings are not, and the org lets its fill go.
+        page.Select(page.Rows.ToList().FindIndex(r => r.Item.Repo?.Repo == "SharpAstro/DIR.Lib"));
+        arranged = Arrange(renderer, page, screen);
+        page.SelectedHeader.ShouldBe("SharpAstro/DIR.Lib");
+        Header(arranged, "prs:group:SharpAstro/DIR.Lib").Background.ShouldBe(palette.RowFocusBg);
+        Header(arranged, "prs:group:SharpAstro/pilot").Background.ShouldBe(palette.PanelBg);
+        Header(arranged, "prs:org:SharpAstro").Background.ShouldBe(night ? Palette.Night.HeaderBg : Palette.Standard.Button);
+    }
+
+    [Fact]
+    public void LeftAndRightBringTheRowTheyMoveToIntoView()
+    {
+        // A short window, so the list is longer than its viewport.
+        const float width = 1280f, height = 400f;
+        using var renderer = new RgbaImageRenderer((int)width, (int)height);
+        var (chrome, page) = Chrome(renderer);
+        chrome.Show(PilotPage.PullRequests);
+        var screen = Screen();
+        var bounds = new RectF32(0, 0, width, height);
+        page.Render(screen, bounds);
+
+        // The cursor on the last PR, scrolled to by Down until it is there.
+        var last = page.Rows.Count - 1;
+        for (var i = 0; i < 40 && page.Selected != last; i++)
+        {
+            Key(page, InputKey.Down);
+            page.Render(screen, bounds);
+        }
+        page.Selected.ShouldBe(last);
+        var arranged = Arrange(renderer, page, screen, width, height);
+        InView(arranged, last).ShouldBeTrue();
+
+        // Left to its repo's header, Left to fold it, and Left again to the org's, which sits far above the viewport's top.
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            Key(page, InputKey.Left).ShouldBeTrue();
+            page.Render(screen, bounds);
+        }
+        page.SelectedHeader.ShouldBe("SharpAstro");
+        page.Render(screen, bounds);
+        page.Render(screen, bounds);
+        arranged = Arrange(renderer, page, screen, width, height);
+        InView(arranged, page.Selected).ShouldBeTrue();
+    }
+
+    // Whether the list's row <index> is wholly inside the list's viewport.
+    private static bool InView(ImmutableArray<Layout.ArrangedNode<float>> arranged, int index)
+    {
+        var viewport = arranged.Single(a => a.Node.Scroll is not null).Bounds;
+        var row = arranged.First(a => a.Node.Hit is HitResult.ListItemHit h && h.Index == index).Bounds;
+        return row.Y >= viewport.Y - 0.5f && row.Y + row.Height <= viewport.Y + viewport.Height + 0.5f;
     }
 
     [Fact]
