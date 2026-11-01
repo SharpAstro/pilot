@@ -1343,12 +1343,14 @@ public static class PilotCommand
         if (console)
         {
             var mcp = new Command("mcp", "Serve these commands as MCP tools, and the node's flights, legs, cards and sessions as resources, over stdio: claude mcp add pilot -- pilot mcp");
+            var handedOver = new Option<bool>("--handed-over") { Hidden = true, Description = "Started by another pilot mcp's hand-over: never hands over itself" };
+            mcp.Options.Add(handedOver);
             mcp.SetAction(async (parseResult, ct) =>
             {
                 var utf8 = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
                 using var input = new StreamReader(Console.OpenStandardInput(), utf8);
                 await using var stdout = new StreamWriter(Console.OpenStandardOutput(), utf8);
-                await new McpServer(cwd, parseResult.GetValue(node), parseResult.GetValue(socket)).RunAsync(input, stdout, ct);
+                await new McpServer(cwd, parseResult.GetValue(node), parseResult.GetValue(socket), handedOver: parseResult.GetValue(handedOver)).RunAsync(input, stdout, ct);
                 return 0;
             });
             root.Subcommands.Add(mcp);
