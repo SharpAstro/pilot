@@ -268,11 +268,13 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
             var listedName = tracker.ListedName(row);
-            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file.
-            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
             // earlier ids) and else by its name, which a compaction keeps too.
-            var recorded = onFile ? null : starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            var recorded = starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file,
+            // and so is one whose flags on file lost the name or model it was started with (a copy an earlier resume made).
+            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id)
+                && (recorded is null || tracker.Profile.RespawnFlagsCover(row.SessionId, recorded.Arguments));
             var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
                 StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);
