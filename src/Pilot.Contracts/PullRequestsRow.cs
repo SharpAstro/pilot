@@ -128,6 +128,9 @@ public sealed record PullRequestRow
 
     /// <summary>The page of that review's comment.</summary>
     public string? ReviewUrl { get; init; }
+
+    /// <summary>The names of the labels on it (the first 20 GitHub gives): what the node's recheck looks for, and a page could show.</summary>
+    public string[] Labels { get; init => field = value ?? []; } = [];
 }
 
 /// <summary>An org whose PRs could not be read, and why: the rest of the row is the other orgs'.</summary>

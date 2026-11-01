@@ -7,6 +7,9 @@ namespace Pilot.Ui;
 internal interface INodeEvents : IAsyncDisposable
 {
     ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken);
+
+    /// <summary>Tells the node which page this client shows (<see cref="ClientPages"/>); a stream that cannot say it ignores it.</summary>
+    ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
 
 /// <summary>
@@ -153,6 +156,33 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
+    // The page this window shows (ClientPages) and the stream it is said over now, if one is open: the node forgets a page when
+    // its stream closes, so every new stream is told it again.
+    private string? _page;
+    private INodeEvents? _live;
+
+    /// <summary>Tells the node which page this window shows, or none with null: now over the open stream, and again on every reconnect.</summary>
+    public void SayPage(string? page)
+    {
+        Volatile.Write(ref _page, page);
+        if (Volatile.Read(ref _live) is { } live)
+        {
+            _ = SayAsync(live, page, _stop.Token);
+        }
+    }
+
+    private async Task SayAsync(INodeEvents events, string? page, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await events.SayPageAsync(page, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException or System.Net.WebSockets.WebSocketException or IOException)
+        {
+            // The stream went first; the next one is told the page when it opens.
+        }
+    }
+
     /// <summary>The node's jobs.</summary>
     public IReadOnlyList<JobRow> Jobs() => Volatile.Read(ref _view).Jobs;
 
@@ -246,9 +276,21 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+                Volatile.Write(ref _live, events);
+                if (Volatile.Read(ref _page) is { } shown)
                 {
-                    Apply(next);
+                    await SayAsync(events, shown, cancellationToken).ConfigureAwait(false);
+                }
+                try
+                {
+                    while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+                    {
+                        Apply(next);
+                    }
+                }
+                finally
+                {
+                    Interlocked.CompareExchange(ref _live, null, events);
                 }
 
                 SetStatus($"the node on {_socketPath} closed the stream; reconnecting", connected: false);
@@ -437,6 +479,8 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed class ClientEvents(NodeEventStream stream) : INodeEvents
     {
         public ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken) => stream.ReadAsync(cancellationToken);
+
+        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => stream.SayPageAsync(page, cancellationToken);
 
         public ValueTask DisposeAsync() => stream.DisposeAsync();
     }
