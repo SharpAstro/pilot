@@ -219,7 +219,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
             else
             {
-                Get<Autopilot>().Handled(command);
+                // A card's answer, an Answer or a Dismiss is recorded as the card's own row, which reads (autopilot).
+                Get<Autopilot>().Handled(command, record: !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss));
             }
         }
         return result;
@@ -235,6 +236,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (command.Autopilot || command.Who == "node" && Get<RoleModels>().Autopilot)
         {
             return DecisionByKinds.Autopilot;
+        }
+        if (command.PersonsWord is null && command.Who == "node")
+        {
+            return DecisionByKinds.Node;
         }
         if (command.PersonsWord is not null || standing.Kind == StandingKind.Person)
         {
@@ -585,7 +590,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return state.Complete(command, $"{choice.Label} was refused: {result.Error}");
         }
         // One decision per answer: a design answer is recorded by the review fix it runs, which knows the question and the options.
-        if (choice.Verb != Verbs.FixPr)
+        if (choice.Verb != Verbs.FixPr || card.Kind != PrReviews.DesignKind)
         {
             RecordCardDecision(command, card, DecisionSources.KindOf(choice.Verb, choice.Args) ?? DecisionKinds.Card, choice.Label, given ?? "");
         }

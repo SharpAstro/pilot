@@ -77,6 +77,7 @@ public sealed class FlightDetailDecisionsTests
     [Theory]
     [InlineData(700, 1.5f)]
     [InlineData(1300, 1f)]
+    [InlineData(1600, 1f)]
     [InlineData(1900, 1.25f)]
     public void NoTextOverlapsOnTheFlightPageWithDecisions(int width, float dpi)
     {

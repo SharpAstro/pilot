@@ -799,9 +799,21 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
         var result = await legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = merge.Target, Args = merge.Args ?? [], Who = "node" }, cancellationToken);
         var rule = $"autopilot on, review passed, checks {status ?? "unknown"}";
-        state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?", ["Merge", "Wait"],
-            result.Ok ? "Merge" : "Wait", "node", DecisionByKinds.Autopilot,
-            result.Ok ? rule : $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}");
+        // One row per attempt, its choice saying what happened; a merge already running is no new attempt.
+        if (!result.Ok || result.Way != MergeWays.InProgress)
+        {
+            var (choice, reason) = !result.Ok
+                ? ("Wait", $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}")
+                : result.Way switch
+                {
+                    MergeWays.Armed => ("Arm the merge", $"{rule}: armed to merge when they pass"),
+                    MergeWays.Queued => ("Join the merge queue", rule),
+                    MergeWays.Updated => ("Bring the branch up to date", $"{rule}; the branch was behind its base"),
+                    _ => ("Merge", rule),
+                };
+            state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?",
+                ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.Autopilot, reason);
+        }
         if (result.Ok && result.Way == MergeWays.Updated)
         {
             // Behind its base: brought up to date and reviewed afresh, which closed the card and offers the merge again. Handled, not refused.

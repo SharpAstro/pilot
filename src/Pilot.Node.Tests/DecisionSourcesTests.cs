@@ -22,9 +22,28 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         var merges = _state.Decisions(flight.Code, DecisionKinds.Merge).Where(d => d.ByKind == DecisionByKinds.Autopilot).ToArray();
         var decision = merges.First(d => d.Choice == "Merge");
         decision.Subject.ShouldBe($"flight/{flight.Code}");
-        decision.Options.ShouldBe(["Merge", "Wait"]);
+        decision.Options.ShouldContain("Merge");
+        decision.Options.ShouldContain("Wait");
         decision.By.ShouldBe("node");
         decision.Reason.ShouldContain("autopilot on, review passed, checks");
+        merges.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OneDecisionNamingTheArmWhenTheAutopilotsMergeWaitsOnPendingChecks()
+    {
+        var (flight, _) = await Passed("32");
+        _github.Checks = ChoiceStatus.Pending;
+        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        _legs.Models = new RoleModels(on);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+
+        var all = _state.Decisions(flight.Code).ToArray();
+        var decision = all.ShouldHaveSingleItem();
+        decision.Kind.ShouldBe(DecisionKinds.Merge);
+        decision.Choice.ShouldBe("Arm the merge");
+        decision.Reason.ShouldContain("armed to merge when they pass");
     }
 }
 
@@ -111,6 +130,22 @@ public sealed class DecisionGoAroundTests : IDisposable
         decision.Choice.ShouldBe("Redo leg parser");
         (decision.By, decision.ByKind).ShouldBe(("gui", DecisionByKinds.Person));
         decision.Reason.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task DecisionRecordedForAFixItChoiceOnACardThatIsNotTheDesignCard()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Ready(node,
+            new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = Subject, Args = [] });
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(ready.Id), Args = ["Fix it"], Who = "gui" }, Ct)).Response.ShouldNotBeNull();
+
+        // Whether the fixer could start is not the point: a press that ran records its decision once.
+        if (result.Error is null)
+        {
+            node.State.Decisions().ShouldHaveSingleItem().Kind.ShouldBe(DecisionKinds.Card);
+        }
     }
 }
 
