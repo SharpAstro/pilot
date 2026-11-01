@@ -79,7 +79,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
-        // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
+        // A role's range is read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey)
         {
@@ -254,7 +254,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     // The role a range key is for.
     private static string? RoleOf(string key) => RoleModels.Roles.FirstOrDefault(r => key == RoleModels.RangeKey(r));
 
-    /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
+    /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's range, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey

@@ -1,13 +1,12 @@
-using System.Text.RegularExpressions;
 using Pilot.Contracts;
 
 namespace Pilot.Node;
 
 /// <summary>
-/// The model and effort each kind of session the node starts runs on (#114): the watchtower and workers on Sonnet, planners
-/// and reviewers on Opus, unless the settings say otherwise. A leg's own <c>--model</c> or <c>--effort</c> still wins for
-/// its worker. Read when a session starts, so <c>set node worker-model opus</c> applies to the next one, with no restart.
-/// <c>none</c> passes no flag: the session takes Claude Code's own default.
+/// The range of model and effort each kind of session the node starts runs on (#114, #599): the watchtower and workers
+/// start on Sonnet, planners and reviewers on Opus, unless the settings say otherwise. A leg's own <c>--model</c> or
+/// <c>--effort</c> still wins for its worker. Read when a session starts, so <c>set node worker-range opus..opus-xhigh</c>
+/// applies to the next one, with no restart.
 /// </summary>
 public sealed partial class RoleModels
 {
@@ -36,9 +35,6 @@ public sealed partial class RoleModels
 
     /// <summary>The setting that holds a role's range (<c>worker-range</c>: <c>sonnet-high..opus-xhigh</c>).</summary>
     public static string RangeKey(string role) => role + "-range";
-
-    /// <summary>A role's model when the settings name none: Opus where judgement decides what follows, Sonnet elsewhere.</summary>
-    public static string DefaultModel(string role) => role is Planner or Reviewer ? "opus" : "sonnet";
 
     /// <summary>A role's built-in range: its default model at Claude Code's own effort, up to the max a ladder or a deep review steps to.</summary>
     public static RoleRange BuiltIn(string role) => role switch
@@ -478,10 +474,4 @@ public sealed partial class RoleModels
             }
         }
     }
-
-    /// <summary>Whether <paramref name="value"/> names a model: an alias (sonnet, opus) or a full id (claude-opus-5-5[1m]).</summary>
-    public static bool IsModel(string value) => ModelName().IsMatch(value);
-
-    [GeneratedRegex(@"^[a-z0-9][a-z0-9.\-]*(\[[a-z0-9]+\])?$", RegexOptions.CultureInvariant)]
-    private static partial Regex ModelName();
 }

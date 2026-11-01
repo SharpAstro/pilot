@@ -57,7 +57,7 @@ public sealed record NodeSettings
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
     public static IReadOnlyList<string> MergeMethods { get; } = ["rebase", "squash", "merge"];
 
-    /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
+    /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
         [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
@@ -219,6 +219,8 @@ public sealed record NodeSettings
         return Migrated(settings, root);
     }
 
+    // A reviewer pinned to Sonnet (reviewer-model) with no reviewer-deep-* keys migrates to sonnet..opus-high: its deep reviews
+    // now run on the built-in max, on purpose, as the settlement of the sonnet-versus-opus mismatch.
     // Settings from before ranges (#599) held a model and an effort per role, a worker max and a deep review's own: each role that
     // has any becomes the nearest range, its max raised to its default when that sits above, effort max read as xhigh.
     private static NodeSettings Migrated(NodeSettings settings, JsonObject root)
