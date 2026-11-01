@@ -36,6 +36,23 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AnAnswerCommentWhoseFixerFailedToStartNeverSettlesTheCardWithAFalseClaim()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        Comment("ada", "Keep it a library, no service.", TimeSpan.FromMinutes(1));
+        // The clone's origin goes dead, so the start fails after the answer is stored.
+        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", Path.Combine(Path.GetTempPath(), "pilot-no-such-origin-" + Guid.NewGuid().ToString("N")));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind
+            && (c.Title + c.Detail).Contains("Opus slot", StringComparison.OrdinalIgnoreCase));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
+    }
+
+    [Fact]
     public async Task ReviewFixWithAnswerWordsPostsThemOnThePrAndStartsTheFixerWithThem()
     {
         await Review("acme/widget#7", "changes", Question);
@@ -205,6 +222,26 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         leg.State.ShouldBe(LegState.Flying);
         leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
         Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnAnswerCommentSeenByTheSweepSendsTheLastLegRoundOnce()
+    {
+        var flight = await AskedDesign();
+        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+        await _reviews.SweepAsync(Ct);
+        var started = _workers.Started.Count;
+        await _reviews.SweepAsync(Ct);
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
+        Fixers.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started);
+        _github.IssueComments.ShouldBeEmpty();
+        var notice = _state.Cards().Single(c => c.Kind == PrReviews.DesignSettledKind);
+        notice.Detail.ShouldNotBeNull().ShouldContain("sent round");
     }
 
     [Fact]
