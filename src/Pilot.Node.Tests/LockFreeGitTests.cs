@@ -95,8 +95,9 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
         await AnOtherFlightsCommandsAnswerAtOnce(other, merge);
         var again = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
-        again.Ok.ShouldBeFalse();
-        again.Error.ShouldNotBeNull().ShouldContain("is being merged already");
+        // A repeat of a merge that is running is coalesced (PIL575): ok, not refused (CoalesceGuardTests covers the stuck one).
+        again.Ok.ShouldBeTrue(again.Error);
+        again.Made.ShouldNotBeNull().ShouldContain(LegCommander.AlreadyInProgress);
 
         gate.Open();
         var done = await merge;

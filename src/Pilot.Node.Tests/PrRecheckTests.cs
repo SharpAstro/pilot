@@ -658,6 +658,36 @@ public sealed class PrRecheckTests : IDisposable
     }
 
     [Fact]
+    public async Task ARecheckWhileTheFlightsMergeRunsSaysSoTakesTheLabelOffAndDoesNotSayMerged()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Passing;
+        var head = _github.Pr!.Head;
+        var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.OnCall = call =>
+        {
+            if (call != nameof(IGitHub.MergeAsync))
+            {
+                return Task.CompletedTask;
+            }
+            reached.TrySetResult();
+            return Task.WhenAny(open.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        };
+        var first = _legs.RunAsync(new CommandRequest { Verb = Verbs.Merge, Target = Verbs.FlightTarget(_state.Flights().Single().Code), Args = [head], Who = "controller" }, Ct);
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the first merge did not reach GitHub");
+
+        await LookAsync();
+
+        Handled().ShouldBe([$"recheck of widget#7: a merge is already running at {Short(head)}"]);
+        Handled().ShouldNotContain(h => h.Contains("merged at"));
+        _github.Labels[7].ShouldNotContain(PilotMarks.Recheck);
+        open.SetResult();
+        (await first).Ok.ShouldBeTrue();
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task AFlightsPrWithNothingToDoSaysSoAndLeavesTheLabelForWhereItStands()
     {
         await PassedFlightAsync();
