@@ -44,6 +44,7 @@ public sealed class ConnectReleaseTests : OverlapTestsBase
         FlightWaiting.For(a).ShouldBe("TIA2");
         var card = Released("TIA3").ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Handled);
+        card.Kind.ShouldBe(FlightCommander.ConnectionReleasedKind);
         card.Title.ShouldContain("TIA1 landed");
         card.Title.ShouldContain("no longer waits");
         card.Detail.ShouldNotBeNull().ShouldContain("still waits for TIA2");
