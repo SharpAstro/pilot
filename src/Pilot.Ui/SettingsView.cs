@@ -604,14 +604,33 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _fleetScope = new(StringComparer.Ordinal);
 
     /// <summary>Where a range's two ends sit on the line of pairs; a bare model sits on its lowest effort. -1 for what is not on the line.</summary>
-    internal static (int Default, int Max) HandlesOf(SettingRow setting)
+    internal static (int Default, int Max) HandlesOf(SettingRow setting, bool fleet = false) => HandlesOf(setting, EditedText(setting, fleet));
+
+    /// <summary>The stored text of the range a press edits: the fleet's when the fleet scope is on and one is set, else the row's own.</summary>
+    internal static string EditedText(SettingRow setting, bool fleet) => fleet && setting.FleetValue is { Length: > 0 } fv ? fv : setting.Value;
+
+    /// <summary>The range a press on pair <paramref name="pick"/> sends: <paramref name="text"/> with only the end that moved replaced, so a bare end stays bare; null when nothing moves.</summary>
+    internal static string? PressedRange(SettingRow setting, string text, int pick, string handle)
+    {
+        var now = HandlesOf(setting, text);
+        if (Moved(now, pick, handle) is not { } next)
+        {
+            return null;
+        }
+        var ends = text.Split("..", 2);
+        var def = ends[0].Trim();
+        var max = ends.Length > 1 ? ends[1].Trim() : def;
+        return next.Default != now.Default ? $"{setting.Choices[pick]}..{max}" : $"{def}..{setting.Choices[pick]}";
+    }
+
+    private static (int Default, int Max) HandlesOf(SettingRow setting, string text)
     {
         int At(string pair)
         {
             var found = Array.FindIndex(setting.Choices, c => string.Equals(c, pair, StringComparison.OrdinalIgnoreCase));
             return found >= 0 ? found : Array.FindIndex(setting.Choices, c => c.StartsWith(pair + "-", StringComparison.OrdinalIgnoreCase));
         }
-        var ends = setting.Value.Split("..", 2);
+        var ends = text.Split("..", 2);
         var def = At(ends[0].Trim());
         var max = ends.Length > 1 ? At(ends[1].Trim()) : def;
         return (def, max);
@@ -651,10 +670,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private Layout.Node RangeRowNode(SettingRow setting, int index)
     {
-        var (def, max) = HandlesOf(setting);
         var key = setting.Key;
         var handle = _handle.GetValueOrDefault(key, "");
         var fleet = _fleetScope.GetValueOrDefault(key);
+        var (def, max) = HandlesOf(setting, fleet);
         var cells = new List<Layout.Node>();
         var marks = new List<Layout.Node>();
         for (var i = 0; i < setting.Choices.Length; i++)
@@ -728,12 +747,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private void PickPair(SettingRow setting, int pick)
     {
-        if (Moved(HandlesOf(setting), pick, _handle.GetValueOrDefault(setting.Key, "")) is not { } next)
+        var fleet = _fleetScope.GetValueOrDefault(setting.Key);
+        if (PressedRange(setting, EditedText(setting, fleet), pick, _handle.GetValueOrDefault(setting.Key, "")) is not { } range)
         {
             return;
         }
-        var fleet = _fleetScope.GetValueOrDefault(setting.Key);
-        var range = $"{setting.Choices[next.Default]}..{setting.Choices[next.Max]}";
         string[] args = fleet ? [setting.Key, range, "--fleet"] : [setting.Key, range];
         var action = $"settings:{setting.Key}:pair:{setting.Choices[pick]}";
         Act(Verbs.Set, args, $"{setting.Label}: {range}{(fleet ? " for the fleet" : "")}…", action);

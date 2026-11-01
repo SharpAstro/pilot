@@ -262,6 +262,15 @@ public sealed partial class RoleModels
                 effort = efforts[target];
             }
         }
+        if (plannedEffort is null && max.Effort is { } top && effort is not null && ModelRank(model) >= 0 && ModelRank(model) >= ModelRank(max.Model))
+        {
+            // a step that lands on the max's model never runs above the max's effort, whatever the default's was
+            var efforts = RoleRange.Efforts;
+            if (Array.IndexOf(efforts, effort) > Array.IndexOf(efforts, top))
+            {
+                effort = top;
+            }
+        }
         return (model, effort);
     }
 

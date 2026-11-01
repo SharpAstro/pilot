@@ -55,6 +55,19 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public void ADefaultEffortAboveTheMaxsIsCappedWhenTheStepLandsOnTheMaxModel()
+    {
+        var a = Models(("worker-range", "sonnet-high..opus-medium"));
+        a.WorkerFor(null, null, 2).ShouldBe(("sonnet", "high"));
+        foreach (var attempt in new[] { 3, 4, 5, 6 })
+        {
+            a.WorkerFor(null, null, attempt).ShouldBe(("opus", "medium"));
+        }
+        Models(("worker-range", "sonnet-xhigh..opus-low")).WorkerFor(null, null, 5).ShouldBe(("opus", "low"));
+        a.WorkerFor("opus", "max", 4).ShouldBe(("opus", "max"));
+    }
+
+    [Fact]
     public void ALadderSwitchedOffKeepsTheLegsModel()
     {
         var off = Models(("worker-ladder", "off"));

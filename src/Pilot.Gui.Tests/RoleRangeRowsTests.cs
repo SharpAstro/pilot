@@ -122,6 +122,25 @@ public sealed class RoleRangeRowsTests
     }
 
     [Fact]
+    public void APressReplacesOnlyTheEndThatMovedSoABareEndStaysBare()
+    {
+        var row = Range("sonnet..opus-xhigh", SettingSources.BuiltIn);
+        var at = (string pair) => Array.IndexOf(Line, pair);
+        SettingsView<RgbaImage>.PressedRange(row, row.Value, at("opus-high"), "").ShouldBe("sonnet..opus-high");
+        SettingsView<RgbaImage>.PressedRange(row, "opus..opus-high", at("opus-xhigh"), "max").ShouldBe("opus..opus-xhigh");
+    }
+
+    [Fact]
+    public void AFleetScopePressStartsFromTheFleetsRangeNotTheNodesOverride()
+    {
+        var row = Range("opus-low..opus-low", SettingSources.ThisNode, saved: "opus-low", fleet: "sonnet..opus-xhigh");
+        var text = SettingsView<RgbaImage>.EditedText(row, fleet: true);
+        text.ShouldBe("sonnet..opus-xhigh");
+        SettingsView<RgbaImage>.PressedRange(row, text, Array.IndexOf(Line, "opus-high"), "").ShouldBe("sonnet..opus-high");
+        SettingsView<RgbaImage>.EditedText(row, fleet: false).ShouldBe("opus-low..opus-low");
+    }
+
+    [Fact]
     public void AHandleNeverLandsBelowTheDefaultOrAboveTheMaxAndNeverOnTheLineBeyondEffortXhigh()
     {
         SettingsView<RgbaImage>.Moved((2, 5), 1, "max").ShouldBeNull();

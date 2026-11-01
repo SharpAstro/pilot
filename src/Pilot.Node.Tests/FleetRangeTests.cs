@@ -92,12 +92,37 @@ public sealed class FleetRangeTests : IAsyncLifetime
     [Fact]
     public void ARangeSentByAnotherNodeIsNotSentOn()
     {
-        // B sets it for the fleet with no peer of its own: it is saved there, and A and C hear nothing.
-        var set = Set(_b, Key, "--fleet", "opus-low");
+        // Every node knows the other two, so a push that were sent on would reach a node more than once.
+        var received = new List<TestPeer>();
+        TestPeer To(NodeHarness node)
+        {
+            var peer = new TestPeer(node);
+            received.Add(peer);
+            return peer;
+        }
+        foreach (var (node, others) in new[] { (_b, new[] { _a, _c }), (_c, new[] { _a, _b }) })
+        {
+            var gate = GateOf(node);
+            gate.Fleet.Fleet = new ListFleet(others.Select(o => (IFleetPeer)To(o)).ToArray());
+            gate.Fleet.ViewFor = TimeSpan.Zero;
+        }
+        var toA = received.Where(p => p.Node == _a).ToArray();
+        var toB = new[] { _toB };
+        var toC = new[] { _toC };
+        received.AddRange([_toB, _toC]);
+
+        var set = Set(_a, Key, "--fleet", "opus-low");
 
         set.Ok.ShouldBeTrue(set.Error);
-        ModelsOf(_b).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.Fleet);
-        ModelsOf(_a).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.BuiltIn);
+        toB.Sum(p => p.Settings).ShouldBe(1);
+        toC.Sum(p => p.Settings).ShouldBe(1);
+        received.Where(p => p.Node == _b).Sum(p => p.Settings).ShouldBe(1);
+        received.Where(p => p.Node == _c).Sum(p => p.Settings).ShouldBe(1);
+        toA.Sum(p => p.Settings).ShouldBe(0);
+        foreach (var node in new[] { _b, _c })
+        {
+            ModelsOf(node).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.Fleet);
+        }
     }
 
     [Fact]
@@ -140,6 +165,11 @@ public sealed class FleetRangeTests : IAsyncLifetime
     {
         public bool Down { get; set; }
 
+        public NodeHarness Node => node;
+
+        /// <summary>The admission-setting commands this peer was sent.</summary>
+        public int Settings { get; private set; }
+
         public string Endpoint => $"{node.Options.Machine.ToLowerInvariant()}.local:47731";
 
         public bool HasGrant => true;
@@ -178,6 +208,10 @@ public sealed class FleetRangeTests : IAsyncLifetime
         public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
             Reach();
+            if (command.Verb == Verbs.AdmissionSetting)
+            {
+                Settings++;
+            }
             return Task.FromResult(node.App.Services.GetRequiredService<AdmissionGate>().Handle(command with { Grant = "peer" }));
         }
     }
