@@ -11,10 +11,11 @@ namespace Pilot.Node.Flights;
 /// What <c>claude --help</c> says of <c>--strict-mcp-config</c>: "Only use MCP servers from --mcp-config, ignoring all other
 /// MCP configurations". So with no <c>--mcp-config</c> a session got no server at all (not even pilot's), and with one it
 /// gets exactly the file's servers: the user's and the project's <c>.mcp.json</c> are skipped, which is what keeps a repo's
-/// servers needing approval out of a background session. The claude.ai connectors are account-level and are not read from
-/// those files; a session that still shows them is switched off on its environment, not here. Auto-compaction is set by
-/// <c>--autocompact auto</c>, a start option like the rest, so it is kept in the recorded options and a resume passes it
-/// again, with no dependence on <c>DISABLE_AUTO_COMPACT</c> being absent from the child's environment.
+/// servers needing approval out of a background session. Claude Code also leaves the claude.ai connectors out under
+/// <c>--strict-mcp-config</c> ("MCP servers are restricted to explicitly passed config"), so nothing else is needed for them.
+/// <c>--autocompact auto</c> pins the auto-compact window to Claude Code's default; it does not switch compaction on (that is
+/// the <c>autoCompactEnabled</c> setting, on by default, overridden by <c>DISABLE_AUTO_COMPACT</c> in the environment). It is a
+/// start option like the rest, so it is kept in the recorded options and a resume passes it again.
 /// <para>
 /// The file holds pilot's server (the <c>pilot</c> beside the node, <c>--node-socket &lt;socket&gt; mcp</c>) and, for a repo
 /// that declares some, those servers of the repo's <c>.mcp.json</c> that its PILOT.md lists under a heading

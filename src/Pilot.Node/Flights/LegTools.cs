@@ -84,7 +84,7 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         // --strict-mcp-config: a repo's own .mcp.json (tianwen's debug inspectors) needs its servers approved, which a
         // background session has no one to ask, so it sat "blocked" before its first turn. Workers need none of them.
         // (Finding, see SessionMcpConfig: --strict-mcp-config loads only --mcp-config's servers, so the file names pilot's own
-        // and the repo's declared extras. --autocompact auto turns auto-compaction on explicitly as a kept start option.)
+        // and the repo's declared extras. --autocompact auto pins the auto-compact window to Claude Code's default, as a kept start option.)
         args.AddRange(["-n", start.Name, "--permission-mode", "auto", "--strict-mcp-config"]);
         if (start.McpConfig is { Length: > 0 } mcp)
         {

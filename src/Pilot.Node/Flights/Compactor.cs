@@ -159,7 +159,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                 if (limit > 0 && PersonMessages is not null)
                 {
                     var persons = PersonMessages(row);
-                    var since = mark is not null && persons >= mark.Persons ? persons - mark.Persons : persons;
+                    if (mark is null)
+                    {
+                        // First sight (after a node restart too): the count runs from here, not from the transcript's whole history.
+                        _marks[row.Id] = mark = new WatchtowerMark(row.LastResponseAt, persons, Pending: false);
+                    }
+                    var since = persons >= mark.Persons ? persons - mark.Persons : persons;
                     if (since >= limit)
                     {
                         chatty = $"the chat has {since} person messages since its last compaction";
@@ -207,7 +212,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             {
                 _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true);
             }
-            var stamped = row with { LastCompactedAt = at, CompactedBecause = why };
+            // The compaction took seconds: stamp the row as the state holds it now, not the copy read before it ran.
+            var stamped = (state.Sessions().FirstOrDefault(r => r.Id == row.Id) ?? row) with { LastCompactedAt = at, CompactedBecause = why };
             if (Ledger?.Compacted([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], at, why) is not null)
             {
                 state.PutSession(stamped);

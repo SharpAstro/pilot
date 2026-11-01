@@ -163,7 +163,19 @@ public sealed class WatchtowerLiveTests : IDisposable
     public async Task ADeadWatchtowerProcessWithAFlightInTheAirIsStartedAgain()
     {
         Flight();
-        PutRow("job00001", SessionState.Ended);
+        Row("job00001", SessionState.Ended);
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AConnectingUiStartsAnEndedWatchtowerThatHasItsBriefOnFileWithNoCardUntold()
+    {
+        Flight(FlightState.Landed);
+        Row("job00001", SessionState.Ended);
+        _views.Say(new object(), "cards");
 
         await _tower.LookAsync(Ct);
 

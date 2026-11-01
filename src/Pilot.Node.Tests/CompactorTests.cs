@@ -121,6 +121,9 @@ public sealed class CompactorTests
     public async Task ALongChatIsCompactedOnceIdleAndTheCountStartsOverAfterwards()
     {
         Row("t0000001", "du1-watchtower", context: 90_000);
+        // First sight seeds the count (a node restart does not owe a compaction for the transcript's history).
+        _persons = 0;
+        await _compactor.LookAsync(Ct);
         _persons = 39;
         await _compactor.LookAsync(Ct);
         _said.ShouldBeEmpty();

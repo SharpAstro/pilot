@@ -46,6 +46,21 @@ public sealed class SessionMcpConfigTests : IDisposable
     }
 
     [Fact]
+    public void TheLauncherWritesTheConfigForAStartAndNamesItInTheStart()
+    {
+        var repo = Repo("# PILOT.md
+", null);
+        var launcher = new ClaudeWorkerLauncher(new ClaudeTrust(Path.Combine(_root, "claude.json")), options: new NodeOptions("/run/node.sock", Path.Combine(_root, "data")));
+
+        var start = launcher.WithMcp(new WorkerStart("de1-pil1-worker", repo, "pil1", "b", "sonnet", "low"));
+
+        start.McpConfig.ShouldNotBeNull();
+        File.Exists(start.McpConfig).ShouldBeTrue();
+        ServerNames(start.McpConfig).ShouldBe(["pilot"]);
+        ClaudeWorkerLauncher.Arguments(start).ShouldContain("--strict-mcp-config");
+    }
+
+    [Fact]
     public void ARepoDeclaringAnExtraGetsItFromItsMcpJson()
     {
         var repo = Repo("# PILOT.md\n\n## MCP servers for legs\n\n- `inspector`: the debug inspector\n- missing\n\n## Next\n- other\n",

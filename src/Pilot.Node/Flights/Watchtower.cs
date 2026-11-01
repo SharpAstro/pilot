@@ -644,11 +644,10 @@ public sealed class Watchtower(
                 // afresh after every ended turn instead, SE1 began 83 in a day (2026-10-25), each reading its brief again cold.
                 if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
                 {
-                    if (Untold().Count == 0)
-                    {
-                        return;
-                    }
-                    if (Warm(row, now))
+                    // Past the check above, something keeps it (a flight in the air, or a connected UI), so one that is not live is
+                    // started with no card to wait for: chatting never waits for a cold start (PIL584). With cards untold and its cache
+                    // warm, the say resumes it in place; otherwise a fresh one is started below.
+                    if (Untold().Count > 0 && Warm(row, now))
                     {
                         _job = row.Id;
                         if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)

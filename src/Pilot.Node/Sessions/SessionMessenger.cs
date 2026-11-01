@@ -241,7 +241,27 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     : $"{row.Name} is interactive: someone is at it, so /compact is typed there, not sent from here");
             }
 
-            switch (Choose(row))
+            // A watchtower kept live is idle between turns with its process running: a message goes into that process over the intercom,
+            // with no stop and no resume (PIL584). A compaction stays a resume, since /compact has to be the session's own next turn; a
+            // failed direct relay (no live endpoint) falls back to the resume.
+            var way = Choose(row);
+            if (way == SayWays.Resumed && !compact && row is { Kind: SessionKind.Background, State: SessionState.Idle, Role: SessionRole.Watchtower })
+            {
+                var liveClock = Stopwatch.StartNew();
+                try
+                {
+                    var liveRoute = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: true), cancellationToken);
+                    Timings?.Record(SendTimings.Relay, liveClock.Elapsed, $"target={command.Target}");
+                    Remember(deliveredKey, SayWays.Relayed, null, liveRoute, command, text, began);
+                    return (SayWays.Relayed, null, liveRoute, false);
+                }
+                catch (SessionDeliveryException)
+                {
+                    // No live endpoint, or it refused: wake it by the resume below.
+                }
+            }
+
+            switch (way)
             {
                 case SayWays.Resumed:
                     var resumeClock = Stopwatch.StartNew();
