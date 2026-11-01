@@ -132,6 +132,7 @@ public abstract class LegHoldTestsBase : IDisposable
 public sealed class LegHoldTests1 : LegHoldTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped()
     {
         MakeSiblingARelease();
@@ -157,6 +158,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANodeRerunOfALegsCheckWhoseOutputHasAnNu1102HoldsItToo()
     {
         MakeSiblingARelease();
@@ -177,6 +179,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANu1101WithoutAVersionHoldsForTheReleasesLine()
     {
         MakeSiblingARelease();
@@ -190,6 +193,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARecordedReleaseOfAConnectedFlightCountsAsBeingPublished()
     {
         // No sibling clone: the release is the one TIA2's wait records.
@@ -207,6 +211,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnNu1102OnAPackageNobodyIsPublishingFailsAndRingsAsBefore()
     {
         // The sibling is on another line than the one asked for, and no flight records a release.
@@ -221,6 +226,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnNu1102OnAPackageNuGetAlreadyServesIsNotAHold()
     {
         MakeSiblingARelease();
@@ -233,6 +239,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnNu1102WhenNuGetCannotBeReadFailsAsBefore()
     {
         MakeSiblingARelease();
@@ -245,6 +252,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailureThatNamesNoMissingPackageFailsAsBefore()
     {
         MakeSiblingARelease();
@@ -260,6 +268,7 @@ public sealed class LegHoldTests1 : LegHoldTestsBase
 public sealed class LegHoldTests2 : LegHoldTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheAutopilotStartsNothingWhileALegHoldsAndTheNodeStartsItAfreshWhenTheFakeFeedListsTheVersion()
     {
         MakeSiblingARelease();
@@ -306,6 +315,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APersonCanStartAHeldLegAnywayAndItIsFlownFromWhatThePlaneHolds()
     {
         MakeSiblingARelease();
@@ -321,6 +331,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALateHeldPackageIsOneCardNamingTheFailedRunAndTheLegStillHolds()
     {
         MakeSiblingARelease();
@@ -357,6 +368,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheHoldIsInTheStatusTheBriefsAndTheLegLine()
     {
         MakeSiblingARelease();
@@ -373,6 +385,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkersBriefSaysAMissingSiblingPackageIsReportedVerbatimAndNotWorkedAround()
     {
         MakeSiblingARelease();

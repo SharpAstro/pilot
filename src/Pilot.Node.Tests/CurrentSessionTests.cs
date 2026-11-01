@@ -81,14 +81,24 @@ public sealed class CurrentSessionTests : IDisposable
     }
 
     [Fact]
-    public void AJobsEndGoesToItsOwnersRowOrTheRowItsIdMovedToNeverANamesake()
+    public async Task AJobsEndGoesToItsOwnersRowOrTheRowItsIdMovedToNeverANamesake()
     {
-        var jobs = new JobRunner(_state, _options, _time);
+        var jobs = new JobRunner(_state, _options, _time) { Say = Run };
 
-        // The owner's own row, ended, with a live namesake beside it: still the owner.
+        // The owner's own row, ended, with a live later session of its name and role beside it: that one replaced it (#601).
         Row("w0000001", "du1-tia9-parser", SessionState.Ended);
         Row("w0000005", "du1-tia9-parser", SessionState.Idle, startedAt: Start.AddMinutes(5));
-        jobs.WakeTarget("w0000001", "du1-tia9-parser").ShouldBe("w0000001");
+        await jobs.TellAsync(Job("j1", "w0000001"), Ct);
+        var said = _said.Single(c => c.Verb == Verbs.Say);
+        said.Target.ShouldBe("session/w0000005");
+        said.Args[0].ShouldContain("w0000001");
+        _said.Clear();
+
+        // An unrelated namesake (another flight's worker) is not the replacement: the owner's own row is told.
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "w0000005") with { Flight = "TIA8", Leg = "other" });
+        await jobs.TellAsync(Job("j2", "w0000001"), Ct);
+        _said.Single(c => c.Verb == Verbs.Say).Target.ShouldBe("session/w0000001");
+        _state.RemoveSession("w0000005");
 
         // The owner's id moved to a continuation (its earlier id): that row, and not the namesake that is newer.
         Row("w0000003", "du1-tia9-parser", SessionState.Idle, startedAt: Start.AddMinutes(1), earlier: ["w0000002"]);
@@ -96,6 +106,62 @@ public sealed class CurrentSessionTests : IDisposable
 
         // An id nothing knows stays as recorded: no namesake stands in for it.
         jobs.WakeTarget("w0000009", "du1-tia9-parser").ShouldBe("w0000009");
+    }
+
+    private JobRow Job(string id, string owner)
+    {
+        var job = new JobRow
+        {
+            Id = id, Command = "dotnet test", Cwd = "/r", Owner = owner, OwnerName = "du1-tia9-parser", State = JobState.Succeeded,
+            LogPath = "/r/log", Timeout = JobRunner.DefaultTimeout, StartedAt = Start, EndedAt = Start.AddSeconds(5),
+        };
+        _state.PutJob(job);
+        return job;
+    }
+
+    [Fact]
+    public async Task AReplacedWorkersJobEndIsSaidToTheReplacementAndNamesTheReplacedSession()
+    {
+        Row("w0000001", "du1-tia9-parser", SessionState.Ended);
+        Row("w0000002", "du1-tia9-parser", SessionState.Working, startedAt: Start.AddMinutes(3));
+        var jobs = new JobRunner(_state, _options, _time) { Say = Run };
+
+        await jobs.TellAsync(Job("j1", "w0000001"), Ct);
+
+        var said = _said.Single(c => c.Verb == Verbs.Say);
+        said.Target.ShouldBe("session/w0000002");
+        said.Args[0].ShouldContain("du1-tia9-parser (w0000001)");
+        said.Args[0].ShouldContain("started this job");
+        _state.Jobs().Single(j => j.Id == "j1").Told.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AJobOfARoleWithNoLiveSessionRingsUntold()
+    {
+        Row("w0000001", "du1-tia9-parser", SessionState.Ended);
+        _refuse = "no live session";
+        var jobs = new JobRunner(_state, _options, _time) { Say = Run };
+
+        await jobs.TellAsync(Job("j1", "w0000001"), Ct);
+
+        _state.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UntoldKind);
+        _state.Jobs().Single(j => j.Id == "j1").Told.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AJobOfASessionThatEndedNormallyWithNoReplacementTellsNobodyAndIsMarkedTold()
+    {
+        Row("w0000001", "du1-tia9-parser", SessionState.Ended);
+        var ledger = new SessionLedger(null, _time);
+        ledger.Adopt(_state.Sessions().Single());
+        ledger.Stopped(["w0000001"], SessionEndReasons.Finished, "claude");
+        var jobs = new JobRunner(_state, _options, _time) { Say = Run, Ledger = ledger };
+
+        await jobs.TellAsync(Job("j1", "w0000001"), Ct);
+
+        _said.Where(c => c.Verb == Verbs.Say).ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").Told.ShouldBeTrue();
     }
 
     [Fact]

@@ -34,6 +34,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReReviewStartsOnTheLegModelAndTheRoundRecordsIt()
     {
         var flight = await Opened("1");
@@ -54,6 +55,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReReviewOfALargePrIsNotDeepAndStartsNoSubagents()
     {
         var first = await FirstReview("1", deepFirst: true, lines: 500);
@@ -76,18 +78,21 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFirstReviewOfALargeDiffGoesToTheDeepModelWhenTheSettingIsOn()
     {
         (await FirstReview("1", deepFirst: true, lines: 500)).Model.ShouldBe("opus");
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFirstReviewOfALargeDiffStaysOnTheReviewerModelWhenTheSettingIsOff()
     {
         (await FirstReview("1", deepFirst: false, lines: 500)).Model.ShouldBe("sonnet");
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFirstReviewOfASmallDiffNeverGoesToTheDeepModel()
     {
         (await FirstReview("1", deepFirst: true, lines: 1)).Model.ShouldBe("sonnet");
@@ -105,6 +110,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesWithNoBlockingFindingIsRefusedAndTheReviewStaysOpen()
     {
         var flight = await Opened("1");
@@ -116,6 +122,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesWithABlockingFindingStillSendsTheReviewBack()
     {
         var flight = await Opened("1");
@@ -127,6 +134,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound()
     {
         var flight = await Opened("1");
@@ -148,6 +156,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassWithNoNotesRaisesNoWatchtowerCard()
     {
         var flight = await Opened("1");
@@ -158,6 +167,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheReviewerBriefSplitsFindingsIntoBlockingAndNotBlocking()
     {
         var flight = await Opened("1");

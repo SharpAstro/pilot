@@ -124,6 +124,28 @@ public sealed class WatchtowerTests : IDisposable
     private CardRow[] Open() => _state.Cards(openOnly: true);
 
     [Fact]
+    public async Task AWatchtowerStillWaitingForTheTrackersFirstPollStopsAtOnceWithTheNode()
+    {
+        // A node stopped right after its start can stop before the tracker's first poll ever runs (on .NET 10 a hosted service's
+        // ExecuteAsync starts on the thread pool, and a stop that comes first skips it), so the first poll never completes. The
+        // watchtower waited for it without the stopping token and held the node's stop to the host's 30 s timeout (#559's
+        // LanTests.ALocalOnlyNodeAskedForTheLanBindsNoTcpPort on ubuntu).
+        var never = new TaskCompletionSource();
+        var tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot", Ready = () => never.Task };
+        await tower.StartAsync(Ct);
+
+        var took = System.Diagnostics.Stopwatch.StartNew();
+        using (var cap = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+        {
+            await tower.StopAsync(cap.Token);
+        }
+
+        tower.ExecuteTask.ShouldNotBeNull().IsCompleted.ShouldBeTrue();
+        took.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+        _workers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task UnreadHeadBriefNamesTheShapeAndTheReviewCommand()
     {
         _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");

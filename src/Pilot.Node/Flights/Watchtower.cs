@@ -151,7 +151,9 @@ public sealed class Watchtower(
     {
         try
         {
-            await Ready();
+            // With the stopping token: a node that stops before the tracker's first poll runs never sees that poll complete,
+            // and a wait without the token held its stop to the host's shutdown timeout.
+            await Ready().WaitAsync(stopping);
         }
         catch (OperationCanceledException)
         {

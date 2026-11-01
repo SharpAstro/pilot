@@ -10,6 +10,8 @@ namespace Pilot.Node.Tests;
 /// A review that asks a question of design (a finding starting <c>design:</c>) is fixed once the question has an answer: the words
 /// given on <c>review fix</c> (posted on the PR first), or the PR's author's comment after the review. Without one it is refused.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (5.3 to 11.1 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class DesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -31,6 +33,23 @@ public sealed class DesignAnswerTests : PrFixTestsBase
         brief.ShouldContain("Keep it a library, no service.");
         brief.ShouldContain("### Answer");
         Row.DesignAnswer.ShouldBe("Keep it a library, no service.");
+    }
+
+    [Fact]
+    public async Task AnAnswerCommentWhoseFixerFailedToStartNeverSettlesTheCardWithAFalseClaim()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        Comment("ada", "Keep it a library, no service.", TimeSpan.FromMinutes(1));
+        // The clone's origin goes dead, so the start fails after the answer is stored.
+        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", Path.Combine(Path.GetTempPath(), "pilot-no-such-origin-" + Guid.NewGuid().ToString("N")));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind
+            && (c.Title + c.Detail).Contains("Opus slot", StringComparison.OrdinalIgnoreCase));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
     }
 
     [Fact]
@@ -95,6 +114,8 @@ public sealed class DesignAnswerTests : PrFixTestsBase
 /// The same question of design on a flight's PR goes through the flight's go-around: it rings the design card naming the flight, and
 /// review fix with an answer sends the flight's last leg round with the question and the answer, starting no PR fixer.
 /// </summary>
+/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
+[Trait("Category", "Slow")]
 public sealed class FlightDesignAnswerTests : ReviewTestsBase
 {
     private const string Head = "cafe0000cafe0000";
@@ -201,6 +222,26 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         leg.State.ShouldBe(LegState.Flying);
         leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
         Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnAnswerCommentSeenByTheSweepSendsTheLastLegRoundOnce()
+    {
+        var flight = await AskedDesign();
+        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+        await _reviews.SweepAsync(Ct);
+        var started = _workers.Started.Count;
+        await _reviews.SweepAsync(Ct);
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
+        Fixers.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started);
+        _github.IssueComments.ShouldBeEmpty();
+        var notice = _state.Cards().Single(c => c.Kind == PrReviews.DesignSettledKind);
+        notice.Detail.ShouldNotBeNull().ShouldContain("sent round");
     }
 
     [Fact]
@@ -339,6 +380,8 @@ public sealed class DesignQuestionTests
 /// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
 /// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (all three measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";

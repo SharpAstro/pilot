@@ -10,6 +10,8 @@ namespace Pilot.Node.Tests;
 /// The spend alert: a leg whose rounds have spent more than the alert share of the 7-day window rings with its tokens and share
 /// before its next round starts, once per round. Real commanders on a real plane, a seeded ledger and a manual clock.
 /// </summary>
+/// <remarks>Slow: both tests fly a real leg and send it round again on a real plane (6.1 s in a loaded fast step).</remarks>
+[Trait("Category", "Slow")]
 public sealed class SpendAlertTests : LegHoldTestsBase
 {
     private void Seed(long parser, long others)

@@ -82,6 +82,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeHeldInGitHubLeavesAnotherFlightsCommandsAnsweringAtOnceAndASecondMergeOfItsFlightIsRefused()
     {
         var (flight, _) = await Passed("1");
@@ -107,6 +108,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnOpenPrHeldInGitHubLeavesAnotherFlightsCommandsAnsweringAtOnceAndRecordsThePrAfter()
     {
         var flight = await NewFlight("1", "parser");
@@ -129,6 +131,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnOpenPrHeldInAPushLeavesAnotherFlightsCommandsAnsweringAtOnce()
     {
         var flight = await NewFlight("1", "parser");
@@ -152,6 +155,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUpdateHeldInAFetchLeavesAnotherFlightsCommandsAnsweringAtOnce()
     {
         var (flight, _) = await Passed("1");
@@ -175,6 +179,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandingHeldInGitLeavesAnotherFlightsCommandsAndACreateAnswering()
     {
         var flight = await NewFlight("1", "parser");
@@ -198,10 +203,12 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         (await land).Ok.ShouldBeTrue();
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         // The flight that connected to it while it was out flies once it has landed.
-        F(other).Connections.ShouldBe([flight.Code]);
+        F(other).Connections.ShouldBeEmpty();
+        F(other).State.ShouldBe(FlightState.Flying);
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightChangedWhileItsMergeWasOutIsNotOverwrittenAndTheMergeIsNotRecorded()
     {
         var (flight, _) = await Passed("1");
@@ -228,6 +235,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AVerdictWhoseFlightChangedWhileItsPrWasBeingMarkedDraftIsNotKept()
     {
         var flight = await NewFlight("1", "parser");
@@ -250,6 +258,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhoseMarksWereSetMeanwhileIsStillAsItWasForTheMergeThatWasOut()
     {
         // What the node writes about a PR by itself (its labels, its status) comes and goes under a command: not a change of the flight.
