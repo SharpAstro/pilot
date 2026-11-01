@@ -64,7 +64,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // A cancelled say (the client's connection went) or an unexpected failure used to leave no line at all, so a say
             // that was lost, or went on in the background, was invisible in node.log (PIL595).
             var kind = ex is OperationCanceledException ? "cancelled" : $"failed: {ex.GetType().Name}: {ex.Message}";
-            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {kind} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"} {kind} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
             await log.FlushAsync(CancellationToken.None);
             throw;
         }
@@ -72,10 +72,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         var result = state.Complete(command, error, way, sessionId);
         var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
             : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
-        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+        await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
     }
+
+    /// <summary>The kind of sender a say log line marks: <c>owner</c> (a pilot UI), <c>node</c> (its own words) or <c>session</c> (a session or a peer's watchtower).</summary>
+    internal static string SenderKind(string? who) =>
+        ClaudeCliDelivery.IsOwner(who) ? "owner" : who == Flights.LegWatch.Who ? "node" : "session";
 
     /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
     public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null) =>
@@ -245,7 +249,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // with no stop and no resume (PIL584). A compaction stays a resume, since /compact has to be the session's own next turn; a
             // failed direct relay (no live endpoint) falls back to the resume.
             var way = Choose(row);
-            if (way == SayWays.Resumed && !compact && row is { Kind: SessionKind.Background, State: SessionState.Idle, Role: SessionRole.Watchtower })
+            // The owner's say (from a pilot UI) to a background session that is not mid-turn is not relayed: Claude Code tags every
+            // intercom message as a peer's, so only a resume lands it as the owner's own user turn (PIL625). A Working background
+            // session is still relayed (a resume would cut its turn) and so is an interactive one (someone is at its terminal);
+            // the result's Way says which happened.
+            var ownerTurn = !compact && way == SayWays.Resumed && ClaudeCliDelivery.IsOwner(command.Who);
+            if (way == SayWays.Resumed && !compact && !ownerTurn && row is { Kind: SessionKind.Background, State: SessionState.Idle, Role: SessionRole.Watchtower })
             {
                 var liveClock = Stopwatch.StartNew();
                 try

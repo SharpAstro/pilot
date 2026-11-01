@@ -62,6 +62,16 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     /// <summary>The clients a person types in: a command from one of them is the controller's.</summary>
     private static readonly string[] Clients = ["gui", "tui", "cli", "web"];
 
+    /// <summary>
+    /// Is <paramref name="who"/> the owner at a client: a bare client name (<c>gui</c>) or a granted peer's
+    /// <c>&lt;label&gt;/&lt;client&gt;</c> whose last segment is one. A watchtower, the node and any session name are not.
+    /// </summary>
+    public static bool IsOwner(string? who)
+    {
+        var name = (who ?? "").Trim();
+        return Clients.Contains(name[(name.LastIndexOf('/') + 1)..], StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>How long a stopped session's process may take to go.</summary>
     private static readonly TimeSpan StopWait = TimeSpan.FromSeconds(20);
 
@@ -269,7 +279,7 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     public static string RelayFrom(string? who)
     {
         var name = (who ?? "").Trim();
-        if (name.Length == 0 || Clients.Contains(name, StringComparer.OrdinalIgnoreCase))
+        if (name.Length == 0 || IsOwner(name))
         {
             return ControllerName;
         }
