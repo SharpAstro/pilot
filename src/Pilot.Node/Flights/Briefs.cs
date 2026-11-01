@@ -917,6 +917,9 @@ public static class Briefs
         text.AppendLine("  One question per block, about one thing, and each choice says in full what it does to which flight, leg, PR or job, so it");
         text.AppendLine("  reads right on its own: \"Leave PIL338's leg waits-are-said alone for now\", \"Redo leg waits-are-said once more\", never");
         text.AppendLine("  \"Leave it\" or \"Yes\". After a reply that listed several open items, ask about one of them by name, not all at once.");
+        text.AppendLine($"  A design card (kind pr-review-design) you relay: read it with `{pilot} cards`, quote its question as the card has it (with its file and line),");
+        text.AppendLine($"  and make the card's choices the ask block's lines in the card's order. The one they press is pressed with `{pilot} answer <card> <choice> --why`;");
+        text.AppendLine("  a card with only the free-text choice asks for their words.");
         text.AppendLine("- \"Let's launch a flight for X\" (or \"start a flight on X\"), said in the chat, is yours to carry out end to end, in this order:");
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");
