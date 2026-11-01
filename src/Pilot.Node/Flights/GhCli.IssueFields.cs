@@ -103,4 +103,74 @@ public sealed partial class GhCli
             throw new FlightException($"gh could not set the {PriorityFieldName} of #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
+
+    private const string OwnerFieldsQuery = """
+        query { repository(owner: "{owner}", name: "{repo}") {
+          owner { __typename id }
+          issueFields(first: 30) { nodes { __typename ... on IssueFieldSingleSelect { name } } }
+        } }
+        """;
+
+    public async Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"query={OwnerFieldsQuery}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read the issue fields of the repo: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        string? ownerId;
+        string? ownerType;
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var repo = doc.RootElement.GetProperty("data").GetProperty("repository");
+            ownerId = TextOf(repo.GetProperty("owner"), "id");
+            ownerType = TextOf(repo.GetProperty("owner"), "__typename");
+            if (repo.TryGetProperty("issueFields", out var fields) && fields.ValueKind == JsonValueKind.Object && fields.TryGetProperty("nodes", out var nodes)
+                && nodes.EnumerateArray().Any(n => n.ValueKind == JsonValueKind.Object && string.Equals(TextOf(n, "name"), PriorityFieldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            throw new FlightException("gh answered the issue fields of the repo with something unreadable");
+        }
+        if (ownerType != "Organization" || ownerId is null)
+        {
+            throw new FlightException($"the repo is owned by {(ownerType ?? "someone")}, not an organization, and only an organization has issue fields");
+        }
+        var options = string.Join(", ", new[] { ("Urgent", "RED"), ("High", "ORANGE"), ("Medium", "YELLOW"), ("Low", "GREEN") }
+            .Select((o, i) => $"{{name: \"{o.Item1}\", color: {o.Item2}, priority: {i + 1}}}"));
+        var mutation = $"mutation {{ createIssueField(input: {{ownerId: \"{ownerId}\", name: \"{PriorityFieldName}\", dataType: SINGLE_SELECT, options: [{options}]}}) {{ clientMutationId }} }}";
+        var (made, madeOutput, madeError) = await RunAsync(["api", "graphql", "-f", $"query={mutation}"], repoPath, cancellationToken);
+        if (made != 0 || madeOutput.Contains("\"errors\"", StringComparison.Ordinal))
+        {
+            throw new FlightException($"GitHub refused to make the {PriorityFieldName} field: {(madeError.Trim().Length > 0 ? madeError : madeOutput).Trim()}");
+        }
+        return true;
+    }
+
+    public async Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["label", "list", "--limit", "1000", "--json", "name", "--jq", ".[].name"], repoPath, cancellationToken);
+        return exit != 0 ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    public async Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["label", "delete", label, "--yes"], repoPath, cancellationToken);
+        if (exit != 0 && !(error + output).Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"GitHub refused to delete the label {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "list", "--state", "open", "--label", label, "--limit", "1000", "--json", "number", "--jq", "length"], repoPath, cancellationToken);
+        return exit == 0 && int.TryParse(output.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count)
+            ? count
+            : throw new FlightException($"gh could not count the open issues with the label {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+    }
 }

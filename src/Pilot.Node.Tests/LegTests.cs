@@ -817,11 +817,55 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
     public string? EnsureFails { get; set; }
 
+    /// <summary>The labels the repo has, as setup lists them; a label made by <see cref="EnsureLabelAsync"/> joins it.</summary>
+    public HashSet<string> RepoLabels { get; } = [];
+
     public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         LabelsEnsured.Add((repoPath, label));
-        return EnsureFails is { } why ? Task.FromException(new FlightException(why)) : Task.CompletedTask;
+        if (EnsureFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        RepoLabels.Add(label);
+        return Task.CompletedTask;
     }
+
+    /// <summary>How many times the Priority field was made in the org.</summary>
+    public int FieldsCreated { get; private set; }
+
+    /// <summary>When set, making the Priority field fails with it, as a token that cannot create fields.</summary>
+    public string? FieldCreateFails { get; set; }
+
+    public Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (HasPriorityField)
+        {
+            return Task.FromResult(false);
+        }
+        if (FieldCreateFails is { } why)
+        {
+            return Task.FromException<bool>(new FlightException(why));
+        }
+        HasPriorityField = true;
+        FieldsCreated++;
+        return Task.FromResult(true);
+    }
+
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.ToArray());
+
+    /// <summary>Every repo label deleted, in order.</summary>
+    public List<string> LabelsDeleted { get; } = [];
+
+    public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        LabelsDeleted.Add(label);
+        RepoLabels.Remove(label);
+        return Task.CompletedTask;
+    }
+
+    public Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.Values.Count(l => l.Contains(label)));
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
