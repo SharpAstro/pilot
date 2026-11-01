@@ -69,7 +69,8 @@ public sealed class MergeArmTests
         card.State.ShouldBe(CardState.Open);
         card.Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
         card.Detail.ShouldNotBeNull().ShouldStartWith("merging when checks pass: 1 of 3 done");
-        card.Title.ShouldContain("merges when its checks pass");
+        // The node waits (GitHub has no auto-merge set here), and the card says so rather than that it is armed.
+        card.Title.ShouldContain("waits for its checks, then the node queues it");
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ready.Id);
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Flights().Single().MergeWhenGreen.ShouldNotBeNull();
@@ -110,7 +111,7 @@ public sealed class MergeArmTests
         card.Title.ShouldContain("build (linux)");
         card.Detail.ShouldNotBeNull().ShouldContain("build (linux) failed");
         card.Link.ShouldBe(CheckLink);
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Re-run checks", Verbs.RerunChecks), ("Merge again", Verbs.Merge)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start a fresh worker on parser (the last one left the PR's checks failing)", Verbs.GoAround), ("Re-run the checks of TIA1's PR", Verbs.RerunChecks), ("Merge TIA1's PR again as it is", Verbs.Merge)]);
         card.Choices.ShouldAllBe(c => c.Status != ChoiceStatus.Armed);
         // One card, not a second dropped-merge card beside it.
         node.State.Cards().ShouldHaveSingleItem();
@@ -127,7 +128,7 @@ public sealed class MergeArmTests
         await Look(node);
 
         node.GitHub.Summary = Pending(0);
-        (await Answer(node, Card(node, ready), "Re-run checks")).Error.ShouldBeNull();
+        (await Answer(node, Card(node, ready), "Re-run the checks of TIA1's PR")).Error.ShouldBeNull();
 
         node.GitHub.Reruns.ShouldBe([63]);
         var card = Card(node, ready);
@@ -265,6 +266,7 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnArmedMergeTheQueueThrewOutSaysSoNotOnlyThatItMergesWhenChecksPass()
     {
         // tianwen #1846: thrown out of the merge queue three times for merge_conflict, re-queued by GitHub each time its checks

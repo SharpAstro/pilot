@@ -21,7 +21,7 @@ namespace Pilot.Node.Sessions;
 /// done (<see cref="NodeState.Complete"/>). Every say is logged to the node's log: who, the target, the way and the
 /// outcome, with how long it took.
 /// </remarks>
-public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null)
+public sealed class SessionMessenger(NodeState state, SessionTracker tracker, ISessionDelivery delivery, TextWriter log, StartOptionsBook? starts = null, SessionLedger? ledger = null)
 {
     // One say at a time per row: a second resume of a session mid-resume would continue the old id twice.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
@@ -35,16 +35,20 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>The command a compaction resumes a session with: Claude Code's own, its words what the summary keeps.</summary>
     public static string CompactPrompt(string focus) => focus.Length == 0 ? "/compact" : $"/compact {focus}";
 
+    /// <summary>How a message another node's watchtower passed on begins, its node's name following.</summary>
+    public const string FromWatchtowerPrefix = "[From the watchtower of node ";
+
     private async Task<CommandResult> DoAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
         string? way = null;
         string? sessionId = null;
         string? route = null;
+        var duplicate = false;
         string? error;
         try
         {
-            (way, sessionId, route) = await DeliverAsync(command, compact, cancellationToken);
+            (way, sessionId, route, duplicate) = await DeliverAsync(command, compact, cancellationToken);
             error = null;
         }
         catch (SessionDeliveryException ex)
@@ -55,16 +59,51 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             error = $"The delivery failed: {ex.Message}";
         }
+        catch (Exception ex)
+        {
+            // A cancelled say (the client's connection went) or an unexpected failure used to leave no line at all, so a say
+            // that was lost, or went on in the background, was invisible in node.log (PIL595).
+            var kind = ex is OperationCanceledException ? "cancelled" : $"failed: {ex.GetType().Name}: {ex.Message}";
+            await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"} {kind} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
+            await log.FlushAsync(CancellationToken.None);
+            throw;
+        }
 
         var result = state.Complete(command, error, way, sessionId);
-        var outcome = error is null ? "delivered" + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
+        var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
+            : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
         await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({(long)clock.Elapsed.TotalMilliseconds} ms)");
         await log.FlushAsync(cancellationToken);
         return result;
     }
 
     /// <summary><c>stop session/&lt;id&gt;</c>: a running background session stopped; an interactive or ended one refused.</summary>
-    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken)
+    public async Task<CommandResult> StopAsync(CommandRequest command, CancellationToken cancellationToken, string? reason = null) =>
+        await StopCoreAsync(command, cancellationToken, reason, cancelJobs: false);
+
+    /// <summary>The kind of the Ring card a stop that was not confirmed raises.</summary>
+    public const string StopUnconfirmedKind = "stop-unconfirmed";
+
+    /// <summary>Cancels the queued and running jobs a session owns, by its row ids and who asked; set by the node. Null: none are cancelled.</summary>
+    public Func<IReadOnlyCollection<string>, string, int>? CancelJobs { get; init; }
+
+    /// <summary>
+    /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c>: <see cref="StopAsync"/> with a reason that is required, the session's jobs cancelled,
+    /// and the reason (with who asked) kept in the ledger.
+    /// </summary>
+    public async Task<CommandResult> EndAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        if (why.Length == 0)
+        {
+            return state.Complete(command, "end-session needs a reason: pilot session end <id> <why>");
+        }
+        // The node's own end (the watchtower's replacement of a session, run as the node) is the watchtower's, not a person's.
+        var by = command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) || command.Who == Flights.LegWatch.Who ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
+        return await StopCoreAsync(command, cancellationToken, $"{by}: {why}", cancelJobs: true, why);
+    }
+
+    private async Task<CommandResult> StopCoreAsync(CommandRequest command, CancellationToken cancellationToken, string? reason, bool cancelJobs, string? why = null)
     {
         var id = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : null;
         if (id is null || state.Sessions().FirstOrDefault(r => r.Id == id) is not { } row)
@@ -79,25 +118,72 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             return state.Complete(command, $"{row.Name} has {row.State.ToString().ToLowerInvariant()} already");
         }
+        // A stop from the watchtower's own session is the watchtower's; any other is a person's.
+        reason ??= command.Who.EndsWith("-watchtower", StringComparison.OrdinalIgnoreCase) ? SessionEndReasons.Watchtower : SessionEndReasons.Person;
         try
         {
             await delivery.StopAsync(row.SessionId, cancellationToken);
         }
         catch (Exception ex) when (ex is SessionDeliveryException or TimeoutException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            return state.Complete(command, $"{row.Name} could not be stopped: {ex.Message}");
+            var pid = tracker.PidOf(row.Id);
+            var message = $"{row.Name} ({row.Id}{(pid is { } p ? $", process {p}" : "")}) could not be stopped: {ex.Message}. Not confirmed: the session may still run.";
+            // One card per session: the person sees which session, which process, what was tried, and ends it again from the card.
+            state.RaiseCard(CardBin.Ring, StopUnconfirmedKind, Verbs.SessionTarget(row.Id), $"{row.Name} was told to stop and did not",
+                $"{message} Tried: claude stop on its job, then ending its process by pid, then waiting for it to go.",
+                [new CardChoice { Label = "End it again", Verb = Verbs.EndSession, Target = Verbs.SessionTarget(row.Id), Args = [why ?? "stop again"] }]);
+            return state.Complete(command, message);
         }
+        string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
+        // The ledger first: the row's put observes an end, and must find the node's reason there, not "finished".
+        ledger?.Stopped(ids, reason, command.Who);
+        // The process is gone: the row says ended at once, not when a later listing happens to agree.
+        tracker.MarkStopped(row.Id, reason);
+        var cancelled = cancelJobs ? CancelJobs?.Invoke(ids, command.Who) ?? 0 : 0;
         tracker.Kick();
-        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped");
+        await log.WriteLineAsync($"stop: who={command.Who} target={command.Target} stopped reason={reason}{(cancelJobs ? $" jobs-cancelled={cancelled}" : "")}");
         return state.Complete(command, null);
     }
 
-    private async Task<(string? Way, string? SessionId, string? Route)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
+    private sealed record Delivered(string? Way, string? SessionId, string? Route, DateTime At);
+
+    // Request ids already delivered, per session row: a row keeps its id across a resume, so the key outlives the session id.
+    private readonly ConcurrentDictionary<string, Delivered> _delivered = new ConcurrentDictionary<string, Delivered>(StringComparer.Ordinal);
+
+    /// <summary>How long a delivered request id is remembered, as long as the node remembers a command's request id.</summary>
+    internal static readonly TimeSpan DeliveredRetention = TimeSpan.FromMinutes(15);
+
+    /// <summary>The sends delivered, kept for the chat to give each one's transcript entry and queued line its id (PIL595). Null keeps none.</summary>
+    public SendLog? Sends { get; init; }
+
+    /// <summary>How long each resume and relay took, for <c>pilot status</c> (PIL584). Null keeps none.</summary>
+    public SendTimings? Timings { get; init; }
+
+    private void Remember(string? key, string way, string? sessionId, string? route, CommandRequest command, string text, DateTimeOffset began)
+    {
+        Sends?.Record(command.RequestId, text, began);
+        if (key is not null)
+        {
+            _delivered[key] = new Delivered(way, sessionId, route, DateTime.UtcNow);
+        }
+    }
+
+    private void ForgetDelivered()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var p in _delivered.Where(p => now - p.Value.At > DeliveredRetention).ToList())
+        {
+            _delivered.TryRemove(p.Key, out _);
+        }
+    }
+
+    private async Task<(string? Way, string? SessionId, string? Route, bool Duplicate)> DeliverAsync(CommandRequest command, bool compact, CancellationToken cancellationToken)
     {
         if (!command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) || command.Target.Length == Verbs.SessionTargetPrefix.Length)
         {
             throw new SessionDeliveryException($"{command.Verb} takes a session target, {Verbs.SessionTargetPrefix}<id>, not {command.Target}");
         }
+        var began = DateTimeOffset.UtcNow;
         var id = command.Target[Verbs.SessionTargetPrefix.Length..];
         var text = string.Join(' ', command.Args).Trim();
         if (compact)
@@ -118,7 +204,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             // Another node's watchtower passing work on (fleet chat): marked with its node, so this one reports back with
             // `tell --node` and does not take the words for the person's.
-            text = $"[From the watchtower of node {node}] {text}";
+            text = $"{FromWatchtowerPrefix}{node}] {text}";
         }
 
         var gate = _busy.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
@@ -130,6 +216,24 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             await tracker.PollAsync(cancellationToken);
             var rows = state.Sessions();
             var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
+            var deliveredKey = command.RequestId is { Length: > 0 } rid ? $"{row.Id}\n{rid}" : null;
+            if (deliveredKey is not null)
+            {
+                ForgetDelivered();
+                if (_delivered.TryGetValue(deliveredKey, out var first))
+                {
+                    return (first.Way, first.SessionId, first.Route, true);
+                }
+            }
+            var replacedBy = command.Who == Flights.LegWatch.Who ? ReplacedBy(row, rows) : null;
+            if (replacedBy is { } newer && Choose(row) == SayWays.Resumed)
+            {
+                // The node's own words go to a role's current session only (#542): this one was replaced, and resuming it would
+                // bring back a conversation nobody is meant to be having. One still mid-turn is relayed to, not woken: the node
+                // tells it that it is replaced before ending it (PIL556).
+                throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {newer.Id}, the current session of its role; the node does not wake a replaced session");
+            }
             if (compact && row is not { Kind: SessionKind.Background, State: SessionState.Idle })
             {
                 throw new SessionDeliveryException(row.Kind == SessionKind.Background
@@ -137,14 +241,48 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     : $"{row.Name} is interactive: someone is at it, so /compact is typed there, not sent from here");
             }
 
-            switch (Choose(row))
+            // A watchtower kept live is idle between turns with its process running: a message goes into that process over the intercom,
+            // with no stop and no resume (PIL584). A compaction stays a resume, since /compact has to be the session's own next turn; a
+            // failed direct relay (no live endpoint) falls back to the resume.
+            var way = Choose(row);
+            if (way == SayWays.Resumed && !compact && row is { Kind: SessionKind.Background, State: SessionState.Idle, Role: SessionRole.Watchtower })
+            {
+                var liveClock = Stopwatch.StartNew();
+                try
+                {
+                    var liveRoute = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: true), cancellationToken);
+                    Timings?.Record(SendTimings.Relay, liveClock.Elapsed, $"target={command.Target}");
+                    Remember(deliveredKey, SayWays.Relayed, null, liveRoute, command, text, began);
+                    return (SayWays.Relayed, null, liveRoute, false);
+                }
+                catch (SessionDeliveryException)
+                {
+                    // No live endpoint, or it refused: wake it by the resume below.
+                }
+            }
+
+            switch (way)
             {
                 case SayWays.Resumed:
-                    return (SayWays.Resumed, await ResumeAsync(row, text, cancellationToken), null);
+                    var resumeClock = Stopwatch.StartNew();
+                    var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    Timings?.Record(SendTimings.Resume, resumeClock.Elapsed, $"target={command.Target}");
+                    ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
+                    Remember(deliveredKey, SayWays.Resumed, resumedAs, null, command, text, began);
+                    return (SayWays.Resumed, resumedAs, null, false);
                 default:
-                    RefuseAmbiguous(row, rows);
-                    var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId), cancellationToken);
-                    return (SayWays.Relayed, null, route);
+                    // A replaced session shares its name with its successor: it is reached by its session id only, never by the
+                    // name, which would carry the words to the successor.
+                    var direct = replacedBy is not null;
+                    if (!direct)
+                    {
+                        RefuseAmbiguous(row, rows);
+                    }
+                    var relayClock = Stopwatch.StartNew();
+                    var route = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: direct), cancellationToken);
+                    Timings?.Record(SendTimings.Relay, relayClock.Elapsed, $"target={command.Target}");
+                    Remember(deliveredKey, SayWays.Relayed, null, route, command, text, began);
+                    return (SayWays.Relayed, null, route, false);
             }
         }
         finally
@@ -185,6 +323,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     public static string? ReplyTo(SessionRow[] rows, SessionRow recipient, string? who) =>
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
 
+    /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
+    internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows) =>
+        row.Kind != SessionKind.Background ? null
+        : rows.Where(r => r.Id != row.Id && r.Kind == SessionKind.Background && r.Name == row.Name && r.Role == row.Role && r.StartedAt > row.StartedAt
+                && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                && r.EarlierSessionIds?.Contains(row.SessionId) != true && row.EarlierSessionIds?.Contains(r.SessionId) != true)
+            .OrderByDescending(r => r.StartedAt).FirstOrDefault();
+
     /// <summary>The way to <paramref name="row"/>, or why there is none.</summary>
     public static string Choose(SessionRow row) => (row.Kind, row.State) switch
     {
@@ -223,11 +369,13 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
             }
             var listedName = tracker.ListedName(row);
-            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file.
-            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
             // earlier ids) and else by its name, which a compaction keeps too.
-            var recorded = onFile ? null : starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            var recorded = starts?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], [listedName, row.Name]);
+            // A mismatched session (another model than it was started on) is resumed as a copy on its recorded options even when Claude Code has options on file,
+            // and so is one whose flags on file lost the name or model it was started with (a copy an earlier resume made).
+            var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id)
+                && (recorded is null || tracker.Profile.RespawnFlagsCover(row.SessionId, recorded.Arguments));
             var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
                 StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
             tracker.CompleteResume(row.Id, resumed);

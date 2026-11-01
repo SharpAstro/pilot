@@ -103,7 +103,7 @@ public sealed class FleetTests
         var opened = new List<string>();
         var asked = new List<string>();
         fleet.OnOpen = line => opened.Add(line.Where);
-        fleet.OnConnect = line => asked.Add(line.Where);
+        fleet.OnConnect = Taken.By<FleetLine>(line => asked.Add(line.Where));
         var screen = new FleetScreen(
         [
             FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")),
@@ -214,7 +214,7 @@ public sealed class FleetTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
         var forgotten = new List<string>();
-        fleet.OnForget = line => forgotten.Add(line.Where);
+        fleet.OnForget = Taken.By<FleetLine>(line => forgotten.Add(line.Where));
         var never = Summary("quiet", connected: false) with { Node = null };
         var screen = new FleetScreen(
         [
@@ -351,7 +351,7 @@ public sealed class FleetTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var fleet = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)).Fleet;
         var sent = new List<(string Where, bool On)>();
-        fleet.OnMaintenance = (line, on) => sent.Add((line.Where, on));
+        fleet.OnMaintenance = (line, on) => { sent.Add((line.Where, on)); return Task.FromResult<string?>(null); };
         var screen = new FleetScreen(
         [
             FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("laptop", "ada@example.org")),
@@ -377,7 +377,7 @@ public sealed class FleetTests
         // The window paints the same pills; PILOT_TEST_CAPTURE keeps the frame as a PNG.
         using var renderer = new RgbaImageRenderer(1280, 400);
         var painted = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath }.Fleet;
-        painted.OnMaintenance = (_, _) => { };
+        painted.OnMaintenance = (_, _) => Task.FromResult<string?>(null);
         painted.Render(screen, new RectF32(0, 0, 1280, 400));
         if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } capture)
         {

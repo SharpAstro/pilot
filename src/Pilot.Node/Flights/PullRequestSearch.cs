@@ -51,8 +51,11 @@ public static class PullRequestSearch
         return [.. batches.Select(b => b.ToArray())];
     }
 
+    // labels(first:20) is a small connection inside a PR node that already carries commits(last:1) and contexts(first:100): GitHub
+    // prices a query by its connections' requests divided by 100, so the 30 PRs of a page add 30 requests to the many thousands the
+    // checks make and the cost stays at its rounded point per page (a page's cost is read back from rateLimit, never assumed).
     public const string Query = "query($q:String!,$after:String){rateLimit{cost remaining resetAt} search(query:$q,type:ISSUE,first:30,after:$after){issueCount pageInfo{hasNextPage endCursor} "
-        + "nodes{... on PullRequest{number title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName "
+        + "nodes{... on PullRequest{number title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName labels(first:20){nodes{name}} "
         + "mergeable mergeStateStatus reviewDecision isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:100){nodes{__typename "
         + "... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}}";
@@ -154,6 +157,10 @@ public static class PullRequestSearch
             FailedUrl = failed.Link,
             Review = review,
             ReviewUrl = reviewUrl,
+            Labels = pr.TryGetProperty("labels", out var labels) && labels.ValueKind == JsonValueKind.Object
+                && labels.TryGetProperty("nodes", out var names) && names.ValueKind == JsonValueKind.Array
+                    ? [.. names.EnumerateArray().Select(l => Text(l, "name")).OfType<string>()]
+                    : [],
         };
     }
 

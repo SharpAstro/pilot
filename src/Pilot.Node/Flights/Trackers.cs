@@ -27,6 +27,10 @@ public interface ITracker
     /// <exception cref="FlightException">The tracker refused it.</exception>
     Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
 
+    /// <summary>Makes <paramref name="label"/> in the repo when missing, without putting it on an item. A tracker with no repo-wide labels skips it.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => Task.CompletedTask;
+
     /// <summary>Takes <paramref name="label"/> off the item.</summary>
     /// <exception cref="FlightException">The tracker refused it.</exception>
     Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken);
@@ -52,6 +56,29 @@ public interface ITracker
 
     /// <summary>The item's sub-tasks, whoever added them; empty when they cannot be read.</summary>
     Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken);
+
+    /// <summary>Repo setup: makes the Priority field where the tracker has them and none exists. Null where the tracker has no such field; true when made.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task<bool?> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
+    /// <summary>The labels the repo has; empty where the tracker has no repo labels.</summary>
+    Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult<string[]>([]);
+
+    /// <summary>Deletes a repo label.</summary>
+    /// <exception cref="FlightException">The tracker refused it.</exception>
+    Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>How many open items carry the label.</summary>
+    /// <exception cref="FlightException">The tracker could not say.</exception>
+    Task<int> OpenWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => Task.FromResult(0);
+
+    /// <summary>The item's Priority field; <see cref="PriorityRead.NoField"/> where the tracker has none (the label stands in).</summary>
+    Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken) => Task.FromResult(PriorityRead.NoField);
+
+    /// <summary>Sets the item's Priority field (null clears it).</summary>
+    /// <exception cref="FlightException">The tracker has no such field or refused it.</exception>
+    Task SetPriorityAsync(string repoPath, int id, IssuePriority? level, CancellationToken cancellationToken) =>
+        throw new FlightException("this tracker has no Priority field");
 }
 
 /// <summary>How a brief tells a session to read a work item in one tracker. Written once per tracker, so Briefs holds no tracker branches.</summary>
@@ -125,6 +152,8 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
 
     public Task AddLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.AddIssueLabelAsync(repoPath, id, label, cancellationToken);
 
+    public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => github.EnsureLabelAsync(repoPath, label, cancellationToken);
+
     public Task RemoveLabelAsync(string repoPath, int id, string label, CancellationToken cancellationToken) => github.RemoveIssueLabelAsync(repoPath, id, label, cancellationToken);
 
     public Task CommentAsync(string repoPath, int id, string body, CancellationToken cancellationToken) => github.CommentIssueAsync(repoPath, id, body, cancellationToken);
@@ -139,6 +168,18 @@ public sealed class GitHubTracker(IGitHub github) : ITracker
         github.CloseSubIssueAsync(repoPath, SubIssueNumber(subTask), $"The leg was removed from the flight working on #{id}.", cancellationToken);
 
     public Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken) => github.SubIssuesAsync(repoPath, id, cancellationToken);
+
+    public async Task<bool?> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken) => await github.EnsurePriorityFieldAsync(repoPath, cancellationToken);
+
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => github.RepoLabelsAsync(repoPath, cancellationToken);
+
+    public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => github.DeleteRepoLabelAsync(repoPath, label, cancellationToken);
+
+    public Task<int> OpenWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) => github.OpenIssuesWithLabelAsync(repoPath, label, cancellationToken);
+
+    public Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken) => github.IssuePriorityAsync(repoPath, id, cancellationToken);
+
+    public Task SetPriorityAsync(string repoPath, int id, IssuePriority? level, CancellationToken cancellationToken) => github.SetIssuePriorityAsync(repoPath, id, level, cancellationToken);
 
     private static int SubIssueNumber(SubTask subTask) =>
         int.TryParse(subTask.Id, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number)

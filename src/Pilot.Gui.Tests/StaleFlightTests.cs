@@ -114,7 +114,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
             .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)];
 
     private static FlightsView<RgbaImage> View(RgbaImageRenderer renderer, FlightsViewMode mode) =>
-        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode, CanCommand = true, OnAction = _ => { }, OnChat = _ => { } };
+        new(renderer) { FontPath = SessionsCapture.FontPath, Mode = mode, CanCommand = true, OnAction = _ => Task.FromResult<string?>(null), OnChat = _ => Task.FromResult<string?>(null) };
 
     [Fact]
     public async Task ADownNodesFlightsAreMarkedStaleWithItsNameAndTheReachableNodesAreNot()
@@ -216,7 +216,7 @@ public sealed class StaleFlightTests : IAsyncDisposable
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Flights.CanCommand = true;
-        chrome.Flights.OnAction = _ => { };
+        chrome.Flights.OnAction = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Flights);
         return chrome;
     }

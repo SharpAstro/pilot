@@ -64,7 +64,7 @@ public abstract class ReviewTestsBase : IDisposable
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}{output}");
     }
 
     private protected async Task<CommandResult> Run(string verb, string target, string who, params string[] args)
@@ -93,6 +93,14 @@ public abstract class ReviewTestsBase : IDisposable
             clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), $"{code}'s reviewer was not recorded");
             await Task.Delay(10, Ct);
         }
+    }
+
+    private protected void MainMoves()
+    {
+        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "commit", "-q", "-m", "later on main");
+        Git(Repo, "push", "-q", "origin", "main");
     }
 
     private protected FlightRow F(string code) => _state.Flights().Single(f => f.Code == code);
@@ -176,6 +184,7 @@ public abstract class ReviewTestsBase : IDisposable
 public sealed class ReviewTests1 : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task HighUsageMakesALightReviewSaidInItsBriefAndOnThePrReadyCard()
     {
         var start = await Review("1", lines: 600, fiveHour: 88, roles: new() { ["reviewer-model"] = "opus", ["reviewer-effort"] = "high" });
@@ -191,6 +200,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APriorityRepoIsNeverReviewedLightly()
     {
         var start = await Review("1", lines: 1, fiveHour: 88, priority: true);
@@ -201,6 +211,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task HeadroomAndALargeDiffMakeADeepReviewOnTheStrongerModelWithUpToThreeSubagents()
     {
         var start = await Review("1", lines: 500, fiveHour: 20, roles: new() { ["reviewer-model"] = "sonnet", ["reviewer-effort"] = "medium", ["reviewer-deep-model"] = "opus" });
@@ -213,6 +224,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASmallDiffOrLittleHeadroomIsAStandardReviewOnTheReviewersOwnModel()
     {
         var small = await Review("1", lines: 5, fiveHour: 20, roles: new() { ["reviewer-model"] = "opus", ["reviewer-deep-model"] = "fable" });
@@ -277,6 +289,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     /// <summary>The flight's page draws the report as Markdown (PIL383), so the reviewer is asked to write it as that.</summary>
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheReviewersBriefAsksForItsReportAsMarkdownOneListItemPerFinding()
     {
         var flight = await NewFlight("1", "parser");
@@ -298,6 +311,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrOpensAFreshReviewerAndOnlyItsPassOffersTheMerge()
     {
         var flight = await NewFlight("1", "parser");
@@ -336,6 +350,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrMergedOnGitHubItselfClosesItsCardAndLandsItsFlight()
     {
         var flight = await NewFlight("3", "parser");
@@ -348,7 +363,9 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Pr = _github.Pr! with { State = "MERGED" };
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
-        Open().ShouldHaveSingleItem().Title.ShouldBe("TIA3 landed");
+        // Landing needs no one: a Handled line, so nothing is left open.
+        Open().ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == "landed").Title.ShouldBe("TIA3 landed");
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldBe("merged on GitHub as #71");
         F("TIA3").State.ShouldBe(FlightState.Landed);
         _github.Merged.ShouldBeEmpty();
@@ -357,6 +374,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain()
     {
         var flight = await NewFlight("20", "parser");
@@ -380,7 +398,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         F("TIA20").MergeQueue.ShouldBeNull();
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged"));
+        (card.Kind, card.Bin, card.Title).ShouldBe((PrChecks.QueueDropped, CardBin.ForYou, "TIA20's PR #71 left the merge queue unmerged: failed checks"));
         card.Detail.ShouldNotBeNull().ShouldContain("failed checks");
         card.Link.ShouldBe("https://github.com/x/tianwen/pull/71");
         var merge = card.Choices.ShouldHaveSingleItem();
@@ -406,6 +424,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotTheNodeMergesAPassedFlightItselfOnceItsChecksAreNotFailingAndOnlyOnce()
     {
         // The watchtower may never merge, so the night's passed PRs sat for seven hours with the autopilot on (SE1, 2026-10-26).
@@ -433,6 +452,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotAFailingPrIsNotMerged()
     {
         var (_, _) = await Passed("31");
@@ -445,6 +465,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound()
     {
         // A test that fails by chance is not a go-around: the node runs the failed runs again first (2026-10-27).
@@ -474,6 +495,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedCheckUnderGitHubsAutoMergeRunsAgainWithTheAutoMergeLeftArmed()
     {
         // Armed through GitHub's own auto-merge: the rerun leaves it armed, so a check green on its second run merges.
@@ -495,6 +517,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
     {
         // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
@@ -520,12 +543,14 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.DraftCalls.ShouldContain((pr, true));
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.MergeDropped);
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, $"{flight.Code}'s PR fails its checks"));
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        card.Title.ShouldStartWith($"{flight.Code}'s PR fails its checks: the PR's checks failed on ");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         (await Run(Verbs.GoAround, $"flight/{flight.Code}/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThePersonPressedWhileChecksRanStillDropsOntoAForYouCardWhenTheyFailOnAutopilot()
     {
         var (flight, _) = await Passed("33");
@@ -544,6 +569,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver()
     {
         var (flight, _) = await Passed("34");
@@ -571,6 +597,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrDroppedFromTheQueueOnAConflictHasTheBaseMergedInKeepsItsPassAndStartsNoReview()
     {
         // PIL207's #238 left the queue on merge_conflict and its card offered Merge, which could only be refused again (SE1, 2026-10-25).
@@ -602,6 +629,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AQueuedPrIsLabelledQueuedAndItsRefusedLabelIsSetAtTheNextLookClosingItsCardThenPassedAgainOnceItLeaves()
     {
         var (flight, number) = await Passed("31");
@@ -637,6 +665,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConflictingPrIsLabelledConflictsWhateverItsReviewSaidAndPassedAgainOnceGitHubSaysItMerges()
     {
         var flight = await NewFlight("32", "parser");
@@ -667,6 +696,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLookKeepsTheHeadAndPilotLabelGitHubHasOnTheFlightAndWhereTheyDisagreeWithTheNode()
     {
         var (flight, number) = await Passed("33");
@@ -705,6 +735,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
     {
         var (flight, _) = await Passed("35");
@@ -725,6 +756,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 public sealed class ReviewTests2 : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrThatIsNotOpenIsNotNoted()
     {
         var (flight, _) = await Passed("34");
@@ -738,6 +770,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrWithItsReadyCardStillOpenOrABaseWithNoQueueIsNoQueueCard()
     {
         var flight = await NewFlight("21", "parser");
@@ -760,6 +793,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhosePrMergedWithNoCardOpenLandsAllTheSame()
     {
         var flight = await NewFlight("5", "parser");
@@ -775,10 +809,12 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         F("TIA5").State.ShouldBe(FlightState.Landed);
         // An issue gh would not close is the person's, said once; the flight lands all the same.
-        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open", "TIA5 landed"], ignoreOrder: true);
+        Open().Select(c => c.Title).ShouldBe(["TIA5 landed, but issue #5 is still open"]);
+        _state.Cards().ShouldContain(c => c.Kind == "landed" && c.Title == "TIA5 landed");
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings()
     {
         // PIL274: its work went in through another PR, a rebase left its branch empty, its PR was closed, and it stayed
@@ -797,6 +833,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying()
     {
         var flight = await NewFlight("7", "parser");
@@ -820,6 +857,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneIsCutFromTheRemotesDefaultEvenWithoutOriginHeadOrOnAFeatureBranch()
     {
         // The clone has no origin/HEAD and its checkout is on a feature branch: the plane still comes from origin/main.
@@ -832,6 +870,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightWhoseBaseIsNoBranchOnTheRemoteHasItsDefaultMergedInWhenItsPrOpens()
     {
         // Cut, as PIL126 was, from a feature branch that has since landed on main and gone from the remote.
@@ -857,6 +896,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheDefaultMergedInWhenTheBaseIsNoBranchOnTheRemoteIsPushedPlainOnTopOfTheOldHead()
     {
         Git(Repo, "switch", "-q", "-c", "feat/landed");
@@ -885,6 +925,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassedPrWhoseBaseMovedOnHasTheBaseMergedInAndKeepsItsPass()
     {
         var flight = await NewFlight("6", "parser");
@@ -901,11 +942,12 @@ public sealed class ReviewTests2 : ReviewTestsBase
 
         Git(F("TIA6").Worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD");
         // A clean merge of the base alone: the pass goes with the head, and the PR-ready card offers the merge at it.
-        F("TIA6").Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        F("TIA6").Review.ShouldNotBeNull().ShouldSatisfyAllConditions(r => r.State.ShouldBe(ReviewState.Passed), r => r.ReviewedHead.ShouldBe(Git(F("TIA6").Worktree, "rev-parse", "HEAD")));
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheNodesOwnBaseMergeIntoAnArmedPrLetsGoOfTheMergeAndGitHubsAutoMergeAndRaisesNoDroppedMergeCard()
     {
         var flight = await NewFlight("16", "parser");
@@ -934,6 +976,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewerThatDoesNotStartRaisesAReviewAgainCardThatSendsNothingRound()
     {
         // The review of #453: this card said "found things to fix" when no review had run.
@@ -944,12 +987,13 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA71"), "controller");
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
-        card.Title.ShouldBe("TIA71's review did not start");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Review again", Verbs.StartReview), ("Ready anyway", Verbs.Review)]);
-        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Review again starts it again");
+        card.Title.ShouldStartWith("TIA71's review did not start: ");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Start TIA71's review again", Verbs.StartReview), ("Land TIA71 without a review", Verbs.Review)]);
+        card.Summary.ShouldNotBeNull().ShouldStartWith("The reviewer of TIA71/parser did not start, so nothing was reviewed. Start TIA71's review again starts it again");
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassedPrWhoseChecksFailIsSentBackAsChangesOnceAHeadSoItsDoneLegGoesAround()
     {
         var flight = await NewFlight("7", "parser");
@@ -967,13 +1011,15 @@ public sealed class ReviewTests2 : ReviewTestsBase
         Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices.Single(c => c.Verb == Verbs.GoAround).Label.ShouldBe("Fix the failing checks");
         _github.DraftCalls.ShouldContain((_github.Pr!.Number, true));
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Title).ShouldBe((LegCommander.ReviewChanges, "TIA7's PR fails its checks"));
+        card.Kind.ShouldBe(LegCommander.ReviewChanges);
+        card.Title.ShouldStartWith("TIA7's PR fails its checks: ");
         card.Detail.ShouldNotBeNull().ShouldStartWith("the PR's checks failed on ");
         // The ring's go-around is the way round for the done leg, as for a review's changes.
         (await Run(Verbs.GoAround, "flight/TIA7/parser", "controller", "fix the checks")).Error.ShouldBeNull();
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PastThreeReviewGoAroundsTheWatchtowerMayNotSendTheLegRoundAgainButThePersonMay()
     {
         // TIA1241 went round six times overnight on review findings the worker could not act on (SE1, 2026-10-26).
@@ -1002,6 +1048,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PastThreeReviewGoAroundsThePersonMayPassTheReviewReadyAnyway()
     {
         var flight = await NewFlight("41", "parser");
@@ -1017,6 +1064,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAroundsOfALegThatFailedOrStalledDoNotCountTowardsTheReviewCap()
     {
         var flight = await NewFlight("42", "parser");
@@ -1033,6 +1081,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundOnAReviewsChangesIsCountedApartFromOneOnAFailedLeg()
     {
         var flight = await NewFlight("43", "parser");
@@ -1047,6 +1096,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewerOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
     {
         var flight = await NewFlight("8", "parser");
@@ -1081,6 +1131,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewerOfAPriorityReposFlightUsesItsOwnLimit()
     {
         var flight = await NewFlight("9", "parser");
@@ -1101,6 +1152,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
 public sealed class ReviewTests3 : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassedPrWithTheBaseMergedInOverASpentWindowKeepsItsPassAndStartsNoReview()
     {
         var flight = await NewFlight("10", "parser");
@@ -1126,6 +1178,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABaseMergeThatConflictsIsAbortedAndSaysSo()
     {
         var flight = await NewFlight("7", "parser");
@@ -1155,6 +1208,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneBehindItsBranchPushedFromElsewhereWithTheConflictResolvedTakesItAndRaisesNoConflict()
     {
         var flight = await NewFlight("17", "parser");
@@ -1185,6 +1239,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ABranchThatAlreadyHoldsItsBaseIsPushedWithNoRebase()
     {
         var flight = await NewFlight("18", "parser");
@@ -1210,6 +1265,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightBehindMainIsMergedUpToDateAndPushedPlainNeverRebased()
     {
         var flight = await NewFlight("11", "parser");
@@ -1233,6 +1289,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightAlreadyPushedWhoseBaseNeedsRepairHasTheBaseMergedInAndIsPushedPlainAndReviewedAfreshWithNoGoAround()
     {
         // As PIL126: cut from a feature branch that has landed on main and is no branch on the remote.
@@ -1264,6 +1321,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThatConflictsIsAbortedAndHandedToTheWatchtowerWithNoGoAround()
     {
         var flight = await NewFlight("13", "parser");
@@ -1305,6 +1363,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Theory]
     [InlineData("14")]
     [InlineData("15")]
+    [Trait("Category", "Slow")]
     public async Task APrOpenedFromAPlaneBehindMainIsBroughtUpToDateBeforeItIsPushed(string number)
     {
         var flight = await NewFlight(number, "parser");
@@ -1323,6 +1382,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundsPushBehindMainIsBroughtUpToDateFirstAndOneThatConflictsIsRefusedLeavingTheLegFlying()
     {
         var flight = await NewFlight("16", "parser");
@@ -1358,9 +1418,47 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Git(flight.Worktree, "ls-remote", "origin", "flight/tia16").ShouldStartWith(pushed);
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AGoAroundsLegFailedWithItsFixPushedIsFinishedByTheNodeAndReviewedAfresh()
+    {
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "20", "Flight 20")).Ok.ShouldBeTrue();
+        var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
+        (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=Its check passes",
+            "check=dotnet test", "item=The step")).Ok.ShouldBeTrue();
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
+        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        var leg = _state.Legs(flight.Code).Single();
+        var worker = leg.Worker!;
+        var started = _workers.Started.Count;
+
+        // The worker made the fix and pushed it itself, then lost its way at the end and said it failed.
+        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the fix");
+        Git(flight.Worktree, "push", "-q", "origin", $"HEAD:{flight.Branch}");
+        for (var step = 1; step <= leg.Checklist.Count(); step++)
+        {
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, $"{step}")).Ok.ShouldBeTrue();
+        }
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "lost my way")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        Open().ShouldNotContain(c => c.Kind == "leg-failed");
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.SelfFinishedKind);
+        _workers.Started.Skip(started).Select(w => w.Name).ShouldContain(Reviewer(flight.Code));
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+    }
+
     [Theory]
     [InlineData("18")]
     [InlineData("19")]
+    [Trait("Category", "Slow")]
     public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsTakenInNotLost(string number)
     {
         var flight = await NewFlight(number, "parser");
@@ -1395,15 +1493,13 @@ public sealed class ReviewTests3 : ReviewTestsBase
         File.Exists(Path.Combine(flight.Worktree, "elsewhere.txt")).ShouldBeTrue();
     }
 
-    private void MainMoves()
-    {
-        File.WriteAllText(Path.Combine(Repo, "later.txt"), "later\n");
-        Git(Repo, "add", ".");
-        Git(Repo, "commit", "-q", "-m", "later on main");
-        Git(Repo, "push", "-q", "origin", "main");
-    }
+}
 
+/// <summary>Part 4 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests4 : ReviewTestsBase
+{
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnAPrBehindMainUpdatesItKeepsItsPassedReviewAndDoesNotCallMerge()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1429,6 +1525,27 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeOnAPrBehindMainIntoABaseWithAMergeQueueJoinsTheQueueWithoutMergingMainIn()
+    {
+        // pilot #507 and #509, 2026-10-30: main merged into each waiting PR at every landing, its checks run again before it joined
+        // the queue, which builds it on the latest main anyway.
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var (flight, _) = await Passed("39");
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: false);
+        MainMoves();
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Error.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        // Nothing merged in or pushed: the head reviewed is the head queued (the plane went with the landing, so the remote says).
+        Git(Repo, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnAnUpToDatePrWithGreenChecksIsQueuedAsBefore()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1440,6 +1557,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUpdatedHeadWithPendingChecksIsNotQueuedByTheMergeOfferedAgain()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
@@ -1458,6 +1576,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnABehindPrWhosePlaneHoldsAnUncommittedFileIsRefusedWithThatSaidAndNoLegGoesRound()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
@@ -1475,12 +1594,15 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeOnAPrAlreadyInTheQueueIsNotUpdatedWhenMainMovedOn()
     {
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
         var (flight, _) = await Passed("37");
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         _github.Merge = new MergeState(MergeKinds.Queued, Position: 1);
+        // A PR GitHub has queued is one whose base has a merge queue, as GitHub reads both.
+        _github.Queue = new MergeQueueState("OPEN", _github.Pr!.Head, Queued: true, Position: 1);
         MainMoves();
 
         var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
@@ -1493,6 +1615,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeWayPushOfRewrittenPushedHistoryTakesTheRemotesCommitsInInsteadOfBeingRefused()
     {
         var flight = await NewFlight("38", "parser");
@@ -1516,6 +1639,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushStillBehindItsBaseAfterTheUpdateIsRefused()
     {
         var flight = await NewFlight("39", "parser");
@@ -1537,6 +1661,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheAutopilotsMergeOfAPrBehindMainUpdatesItAndLeavesNoRefusalCard()
     {
         var (flight, _) = await Passed("35");
@@ -1554,6 +1679,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnArmedMergeAtGreenOnAPrBehindMainUpdatesItAndDropsNoMerge()
     {
         var (flight, _) = await Passed("36");
@@ -1576,6 +1702,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassedPrWhoseBaseMergeConflictsIsHandedToTheWatchtowerAndNoLegGoesAround()
     {
         var flight = await NewFlight("8", "parser");
@@ -1606,6 +1733,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrThatConflictsUnderAReviewAskingForChangesIsHandedToTheWatchtowerOnceAHeadWithNoGoAround()
     {
         var flight = await NewFlight("9", "parser");
@@ -1629,7 +1757,13 @@ public sealed class ReviewTests3 : ReviewTestsBase
         Open().Count(c => c.Kind == LegCommander.PrConflictsKind).ShouldBe(1);
     }
 
+}
+
+/// <summary>Part 5 of ReviewTests: the class is split so its tests run side by side, not one after another.</summary>
+public sealed class ReviewTests5 : ReviewTestsBase
+{
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewAskingForChangesOfALegGoneAroundTwiceOffersToFixItsFindingsNamingRound3AndOpus()
     {
         var flight = await NewFlight("2", "parser");
@@ -1648,6 +1782,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesRingWithAGoAroundWhoseFinishIsReviewedAfreshOrReadyAnyway()
     {
         var flight = await NewFlight("2", "parser");
@@ -1658,7 +1793,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
 
         var card = Open().ShouldHaveSingleItem();
         (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Ready anyway", Verbs.Review)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround), ("Land TIA2 with the review's findings unfixed", Verbs.Review)]);
 
         // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
         var goAround = card.Choices[0];
@@ -1685,6 +1820,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewThatAsksForChangesLeavesItsPrADraftAndAPassMakesItReadyBeforeTheMergeCard()
     {
         var flight = await NewFlight("4", "parser");
@@ -1704,6 +1840,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassIsKeptOnlyOnceItsPrIsReady()
     {
         var flight = await NewFlight("5", "parser");
@@ -1723,6 +1860,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegCannotBeNamedReviewAndAReviewerIsNoWorker()
     {
         await NewFlight("3", "parser");
@@ -1731,6 +1869,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TwoConnectedFlightsLandWithNoPilotOfTheirOwn()
     {
         var first = await NewFlight("10", "core");
@@ -1767,6 +1906,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromTheMergeFailedCardIsPushedAndReviewedAfreshWhenItsLegIsDone()
     {
         var (flight, pr, checks) = await ArmedPassedFlight("31");
@@ -1803,6 +1943,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADisarmThatFailsKeepsTheArmSoItIsRetriedAndTheNodesBaseMergeRefuses()
     {
         var (flight, pr, checks) = await ArmedPassedFlight("33");
@@ -1832,6 +1973,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Theory]
     [InlineData(MergeKinds.ChangesRequested)]
     [InlineData(MergeKinds.Blocked)]
+    [Trait("Category", "Slow")]
     public async Task EveryStateAnArmedMergeLeavesTurnsGitHubsAutoMergeOff(string kind)
     {
         var (flight, pr, checks) = await ArmedPassedFlight("34");
@@ -1845,6 +1987,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APushNeverReachesAPrWhileGitHubsAutoMergeIsArmedOnIt()
     {
         var (flight, pr, checks) = await ArmedPassedFlight("35");

@@ -41,7 +41,7 @@ public sealed class SayAllTests
             OnSayAll = (line, text) =>
             {
                 sent.Add($"{line.Name}: {text}");
-                return Task.FromResult(delivered?.Invoke(line) ?? true);
+                return Task.FromResult<string?>(delivered?.Invoke(line) ?? true ? null : "the node refused it");
             },
         };
         return (view, sent, renderer);

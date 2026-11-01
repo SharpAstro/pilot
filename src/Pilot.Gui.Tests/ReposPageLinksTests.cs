@@ -64,7 +64,7 @@ public sealed class ReposPageLinksTests
     private static PilotChrome<RgbaImage> Window(RgbaImageRenderer renderer, List<string> opened)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.LinkPullRequests();
         chrome.LinkRepos();
         chrome.Repos.OnOpen = opened.Add;

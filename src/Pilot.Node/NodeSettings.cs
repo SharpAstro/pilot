@@ -30,12 +30,23 @@ public sealed record NodeSettings
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
     public const string WeekLimitKey = "week-limit";
+    public const string WeekPaceKey = "week-pace";
+    public const string SpendAlertKey = "spend-alert";
+    public const string WatchtowerCompactShareKey = "watchtower-compact-share";
+    public const string WatchtowerChatMessagesKey = "watchtower-chat-messages";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
     public const string AutopilotKey = "autopilot";
+    public const string ReviewDeepFirstKey = "review-deep-first";
     public const string ShortcutTokenKey = "shortcut-token";
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
+    public const string PrWatchIdleKey = "pr-watch-idle";
+
+    /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
+    public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
+    public const string OpusCapKey = "opus-cap";
+    public const string OneFlightPerRepoKey = "one-flight-per-repo";
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
     public const string MergeBatchKey = "merge-batch";
@@ -52,13 +63,19 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, SubTaskReposKey, MergeBatchKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
          .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
     public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r)) || key is WorkerModelMaxKey or WorkerEffortMaxKey;
 
     public bool? Lan { get; init; }
+
+    /// <summary>How many Opus sessions the fleet runs at once (<see cref="OpusCapKey"/>); 0 for no cap, 3 unless set.</summary>
+    public int? OpusCap { get; init; }
+
+    /// <summary>Whether only one flight per repo is in the air at a time (<see cref="OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool? OneFlightPerRepo { get; init; }
 
     /// <summary>Whether the node takes no new flight (<see cref="MaintenanceKey"/>): flights already made carry on, a create-flight is refused.</summary>
     public bool? Maintenance { get; init; }
@@ -71,6 +88,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
     public bool? Autopilot { get; init; }
+
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
+    public bool? ReviewDeepFirst { get; init; }
 
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
@@ -100,6 +120,20 @@ public sealed record NodeSettings
 
     /// <summary>The 7-day window's share past which a start rings, once per window, and goes ahead.</summary>
     public double? WeekLimit { get; init; }
+
+    /// <summary>The wait between the pull request watch's reads while no client shows the Pull requests page (<see cref="PrWatchIdleKey"/>); a minute is read while one does.</summary>
+    public TimeSpan? PrWatchIdle { get; init; }
+    /// <summary>The margin, in points, a start tolerates between the 7-day window's used share and its elapsed share; null is off.</summary>
+    public double? WeekPace { get; init; }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next round rings; 3 when unset.</summary>
+    public double? SpendAlert { get; init; }
+
+    /// <summary>The share of its window, in percent, past which an idle live watchtower is compacted (<see cref="WatchtowerCompactShareKey"/>); 60 when unset.</summary>
+    public double? WatchtowerCompactShare { get; init; }
+
+    /// <summary>The person messages in a watchtower chat, since its last compaction, after which it is compacted once idle (<see cref="WatchtowerChatMessagesKey"/>); 40 when unset, 0 is off.</summary>
+    public int? WatchtowerChatMessages { get; init; }
 
     /// <summary>The repos whose flights have runway: they go on past <see cref="StartLimit"/>, up to <see cref="PriorityStartLimit"/>.</summary>
     public IReadOnlyList<string>? PriorityRepos { get; init; }
@@ -159,14 +193,17 @@ public sealed record NodeSettings
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
+                    OneFlightPerRepoKey => JsonValue.Create(OneFlightPerRepo),
+                    OpusCapKey => JsonValue.Create(OpusCap),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
                     AutopilotKey => JsonValue.Create(Autopilot),
+                    ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
                     MergeBatchKey => JsonValue.Create(MergeBatch),
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
@@ -186,8 +223,11 @@ public sealed record NodeSettings
     {
         LanKey => Lan is { } lan ? [lan ? "on" : "off"] : null,
         MaintenanceKey => Maintenance is { } maintenance ? [maintenance ? "on" : "off"] : null,
+        OneFlightPerRepoKey => OneFlightPerRepo is { } one ? [one ? "on" : "off"] : null,
+        OpusCapKey => OpusCap is { } cap ? [cap.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
         AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
+        ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
         MergeBatchKey => MergeBatch is { } batch ? [batch ? "on" : "off"] : null,
         WorkerLadderKey => WorkerLadder is { } ladder ? [ladder ? "on" : "off"] : null,
         LanPortKey => LanPort is { } port ? [port.ToString(CultureInfo.InvariantCulture)] : null,
@@ -202,6 +242,11 @@ public sealed record NodeSettings
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
+        PrWatchIdleKey => PrWatchIdle is { } idle ? [DurationText(idle)] : null,
+        WeekPaceKey => WeekPace is { } pace ? [pace.ToString(CultureInfo.InvariantCulture)] : null,
+        SpendAlertKey => SpendAlert is { } alert ? [alert.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerCompactShareKey => WatchtowerCompactShare is { } wcs ? [wcs.ToString(CultureInfo.InvariantCulture)] : null,
+        WatchtowerChatMessagesKey => WatchtowerChatMessages is { } wcm ? [wcm.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityReposKey => PriorityRepos,
         RepoTrackersKey => RepoTrackers,
         NoAutoMergeReposKey => NoAutoMergeRepos,
@@ -240,6 +285,22 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } maintenance
                     ? (settings with { Maintenance = maintenance }, null)
                     : (null, "maintenance takes on or off");
+            case OneFlightPerRepoKey:
+                if (clear)
+                {
+                    return (settings with { OneFlightPerRepo = null }, null);
+                }
+                return OnOff(One()) is { } oneFlight
+                    ? (settings with { OneFlightPerRepo = oneFlight }, null)
+                    : (null, "one-flight-per-repo takes on or off");
+            case OpusCapKey:
+                if (clear)
+                {
+                    return (settings with { OpusCap = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var opus) && opus is >= 0 and <= 64
+                    ? (settings with { OpusCap = opus }, null)
+                    : (null, "opus-cap takes the most Opus sessions the fleet runs at once, 0 to 64 (0 for no cap)");
             case AcceptFleetFlightsKey:
                 if (clear)
                 {
@@ -256,6 +317,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } autopilot
                     ? (settings with { Autopilot = autopilot }, null)
                     : (null, "autopilot takes on or off");
+            case ReviewDeepFirstKey:
+                if (clear)
+                {
+                    return (settings with { ReviewDeepFirst = null }, null);
+                }
+                return OnOff(One()) is { } deepFirst
+                    ? (settings with { ReviewDeepFirst = deepFirst }, null)
+                    : (null, "review-deep-first takes on or off");
             case MergeBatchKey:
                 if (clear)
                 {
@@ -349,6 +418,53 @@ public sealed record NodeSettings
                 return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weekly) && weekly is > 0 and <= 100
                     ? (settings with { WeekLimit = weekly }, null)
                     : (null, "week-limit takes the 7-day window's share in percent, above 0 and up to 100");
+            case PrWatchIdleKey:
+                if (clear)
+                {
+                    return (settings with { PrWatchIdle = null }, null);
+                }
+                return ParseDuration(One()) is { } idle && idle >= TimeSpan.FromMinutes(1) && idle <= TimeSpan.FromHours(24)
+                    ? (settings with { PrWatchIdle = idle }, null)
+                    : (null, "pr-watch-idle takes how long to wait between reads while no one looks at the Pull requests page, 1 minute to 24 hours, as 15m or 1h (a bare number is minutes)");
+            case WeekPaceKey:
+            {
+                var raw = clear ? "off" : One();
+                if (raw is "off" or "none")
+                {
+                    return (settings with { WeekPace = null }, null);
+                }
+                if (raw == "on")
+                {
+                    return (settings with { WeekPace = 10 }, null);
+                }
+                return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var margin) && margin is >= 0 and <= 100
+                    ? (settings with { WeekPace = margin }, null)
+                    : (null, "week-pace takes off, on (a margin of 10 points) or a margin in points, 0 to 100");
+            }
+            case SpendAlertKey:
+                if (clear)
+                {
+                    return (settings with { SpendAlert = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && share is > 0 and <= 100
+                    ? (settings with { SpendAlert = share }, null)
+                    : (null, "spend-alert takes the 7-day window's share in percent, above 0 and up to 100");
+            case WatchtowerCompactShareKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerCompactShare = null }, null);
+                }
+                return double.TryParse(One(), NumberStyles.Float, CultureInfo.InvariantCulture, out var compactShare) && compactShare is > 0 and <= 100
+                    ? (settings with { WatchtowerCompactShare = compactShare }, null)
+                    : (null, "watchtower-compact-share takes the share of its window in percent, above 0 and up to 100");
+            case WatchtowerChatMessagesKey:
+                if (clear)
+                {
+                    return (settings with { WatchtowerChatMessages = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var chatMessages) && chatMessages >= 0
+                    ? (settings with { WatchtowerChatMessages = chatMessages }, null)
+                    : (null, "watchtower-chat-messages takes a count of person messages, 0 or more (0 is off)");
             case PriorityReposKey:
             {
                 if (clear)
@@ -478,6 +594,34 @@ public sealed record NodeSettings
     public TrackerKind TrackerOf(string repo) =>
         RepoTrackers?.Select(e => e.Split('=', 2)).FirstOrDefault(p => p.Length == 2 && string.Equals(p[0], repo, StringComparison.OrdinalIgnoreCase)) is { } found
             && found[1] == "shortcut" ? TrackerKind.Shortcut : TrackerKind.GitHub;
+
+    /// <summary>A duration as <c>set node</c> spells it: <c>90s</c>, <c>15m</c>, <c>2h</c>, a bare number meaning minutes; null for anything else.</summary>
+    public static TimeSpan? ParseDuration(string? text)
+    {
+        if (text is null || text.Length == 0)
+        {
+            return null;
+        }
+        var unit = char.ToLowerInvariant(text[^1]);
+        var number = char.IsAsciiDigit(unit) ? text : text[..^1];
+        if (!double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) || n <= 0 || double.IsInfinity(n))
+        {
+            return null;
+        }
+        return unit switch
+        {
+            's' => TimeSpan.FromSeconds(n),
+            'h' => TimeSpan.FromHours(n),
+            'm' or >= '0' and <= '9' => TimeSpan.FromMinutes(n),
+            _ => null,
+        };
+    }
+
+    /// <summary>A duration the way <see cref="ParseDuration"/> reads it: whole hours as <c>2h</c>, whole minutes as <c>15m</c>, else seconds.</summary>
+    public static string DurationText(TimeSpan span) =>
+        span.TotalSeconds % 3600 == 0 ? $"{(long)span.TotalHours}h"
+        : span.TotalSeconds % 60 == 0 ? $"{(long)span.TotalMinutes}m"
+        : $"{(long)span.TotalSeconds}s";
 
     // The on/off words set node takes for a switch; null for anything else.
     private static bool? OnOff(string? value) => value?.ToLowerInvariant() switch

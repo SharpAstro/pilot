@@ -155,7 +155,7 @@ public sealed class AttachmentTests : IAsyncDisposable
 
         var ticket = (await remote.AskGrantAsync("se2-gui", Ct)).Response.ShouldNotBeNull();
         var card = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var allowed = (await remote.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull();
 
         using var granted = NodeClient.Remote($"127.0.0.1:{port}", allowed.Token);
@@ -191,6 +191,7 @@ public sealed class AttachmentTests : IAsyncDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAFlightRemovesItsCopiesAndLeavesAnotherFlightsAlone()
     {
         var root = Path.Combine(Path.GetTempPath(), "p2a-" + Guid.NewGuid().ToString("N")[..8]);

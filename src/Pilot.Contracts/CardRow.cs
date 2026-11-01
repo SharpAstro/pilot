@@ -80,6 +80,12 @@ public sealed record CardChoice
     /// name when blocked. A client shows it after the status's words; null where there is nothing to add.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>
+    /// The hint of a field the choice needs words in, such as <c>Your answer</c>: a client draws a text field beside the button and sends
+    /// what was typed after the choice (<c>pilot answer &lt;card&gt; &lt;choice&gt; --words ...</c>). Null for an ordinary button.
+    /// </summary>
+    public string? AsksFor { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>
@@ -123,6 +129,9 @@ public static class CardKinds
 
     /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
     public const string AutopilotRan = "autopilot-ran";
+
+    /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
+    public const string PersonsWord = "persons-word";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>

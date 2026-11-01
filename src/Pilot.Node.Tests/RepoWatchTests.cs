@@ -25,6 +25,8 @@ public sealed class RepoWatchTests : IDisposable
     {
         var git = Directory.CreateDirectory(Path.Combine(_root, "tianwen", ".git")).FullName;
         File.WriteAllText(Path.Combine(git, "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/tianwen.git\n");
+        // A repo pilot works in, so the read asks GitHub of it whether or not a flight is there (RepoCatalog.Tracked).
+        File.WriteAllText(Path.Combine(_root, "tianwen", RepoCatalog.MarkerFile), "# PILOT.md\n");
         return Path.Combine(_root, "tianwen");
     }
 
@@ -50,6 +52,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThisNodesLabelOnAnOpenIssueNoFlightOfItsIsOnIsTakenOffAndNothingElseIs()
     {
         var repo = Clone();
@@ -76,6 +79,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightOfThisNodeWhoseIssueOrPrLacksTheLabelGetsItAndAnotherNodesLabelIsLeft()
     {
         var repo = Clone();
@@ -100,6 +104,7 @@ public sealed class RepoWatchTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASweepGitHubRefusesIsTheRepoStatusErrorNotAStop()
     {
         var repo = Clone();

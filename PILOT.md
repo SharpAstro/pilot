@@ -26,6 +26,30 @@ is neither built nor tested by CI.
   test runs go through `pilot run -- <command>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
 
+## How a flight merges
+
+- main is protected by a merge queue that **squashes** each PR into one commit (the ruleset's `merge_method` is
+  `SQUASH`). So a branch's own history never matters here: merge commits on it, a merge of main that resolved
+  conflicts, many small commits, all land as one commit. A rebase that would conflict is no reason to hold a PR.
+- Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
+  `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
+
+## Sessions and the watchtower
+
+- A watchtower the node started is known by its **session id**, whatever it is called now. Any other role is read from
+  the name when the node first sees the session, and kept by row after that, so a later rename does not lose it. Claude
+  Code retitles a session after its work, and a resume or a compaction can continue it under a new id; a rename or a
+  retitle is never a reason to stop or replace a session (#560). A name still counts at first sight, so do not name
+  something `*-watchtower` that is not one.
+- A resume keeps the name and model the node started the session with. Resumes and messages go through the node's own path
+  (`SessionMessenger`, which builds them with `ClaudeCliDelivery`), never a bare `claude --resume`.
+- Only the node stops a session, and it records why in its session ledger. The reason starts with a `SessionEndReasons`
+  constant (`pilot session end` stores `<by>: <why>`): a replaced watchtower, a duplicate, a flight that landed or merged,
+  or `pilot session end` from a person or the watchtower. A session that finishes or crashes on its own is out of scope;
+  the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
+- One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
+  `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading
@@ -38,6 +62,7 @@ dotnet test Pilot.Node.Tests -c Release --no-build
 dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
+- A `Pilot.Node.Tests` test over 5 s fails, naming itself, unless it is tagged `[Trait("Category", "Slow")]`; CI runs the slow ones in their own step.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with
   `--filter FullyQualifiedName~<Name>`.

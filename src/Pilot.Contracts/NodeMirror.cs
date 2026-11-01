@@ -38,8 +38,17 @@ public sealed class NodeMirror
     /// <summary>The node's machine as last sampled; null before any, and from an older node.</summary>
     public MachineRow? Machine { get; private set; }
 
+    /// <summary>The admission as last said; null before any.</summary>
+    public AdmissionRow? Admission { get; private set; }
+
     /// <summary>Every open PR of the repos pilot works in as the node last read them; null before any.</summary>
     public PullRequestsRow? PullRequests { get; private set; }
+
+    /// <summary>Where every repo the node knows stands, as last read or marked not read yet; null before any.</summary>
+    public ReposRow? Repos { get; private set; }
+
+    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before any.</summary>
+    public NodeRow? Node { get; private set; }
 
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);
 
@@ -116,7 +125,10 @@ public sealed class NodeMirror
             }
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
+            Admission = snapshot.Admission;
             PullRequests = snapshot.PullRequests;
+            Repos = snapshot.Repos;
+            Node = snapshot.Node;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -229,11 +241,20 @@ public sealed class NodeMirror
             case UsageChangedEvent usage:
                 Usage = usage.Usage;
                 break;
+            case AdmissionChangedEvent admission:
+                Admission = admission.Admission;
+                break;
             case MachineChangedEvent machine:
                 Machine = machine.Machine;
                 break;
             case PullRequestsChangedEvent pullRequests:
                 PullRequests = pullRequests.Row;
+                break;
+            case ReposChangedEvent repos:
+                Repos = repos.Row;
+                break;
+            case NodeChangedEvent node:
+                Node = node.Row;
                 break;
             case CommandResultEvent:
                 // A result changes no state; the deltas the command made carry that.

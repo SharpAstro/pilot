@@ -42,9 +42,30 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     }
 
     /// <summary>
+    /// The latest line that fed the session's turn (<see cref="TurnPrompt"/>), whatever a person reads of it; null when there is
+    /// no such transcript or nothing has been said to it yet.
+    /// </summary>
+    public TurnPrompt? LastPrompt(string sessionId)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null)?.LastPrompt;
+        }
+    }
+
+    /// <summary>How many person messages the session's transcript holds: prompts that are no note and come from no other session (the node's says, hand-backs and tool output are not counted).</summary>
+    public int PersonMessages(string sessionId)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null) is { } reader ? reader.Entries.Count(e => e is { Kind: TranscriptKind.User, Note: false, From: null }) : 0;
+        }
+    }
+
+    /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.
-    /// This is how the watchtower's chat reads each of its sessions, whole, where <see cref="Read"/> pages by <c>after</c>.
+    /// This is how the watchtower's chat reads each of its sessions, whole, where <see cref="Read(string, int, string?)"/> pages by <c>after</c>.
     /// </summary>
     public TranscriptWindow? Window(string sessionId, int from, int take)
     {
@@ -89,6 +110,22 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     /// <summary>A question a reply asked in an <c>&lt;ask&gt;</c> block that nothing has answered: the question and its choices' labels.</summary>
     public sealed record PendingAsk(string Question, string[] Choices);
 
+    /// <summary>
+    /// A line that fed a session's turn, as Claude Code recorded where it came from: <paramref name="Origin"/> is its
+    /// <c>origin.kind</c> (<c>human</c> for typed or resumed text, <c>peer</c> for a cross-session message), or what the node
+    /// makes of a line without one (<c>scheduled</c> for a wake, <c>compact</c> for a summary, <c>command</c> for a slash
+    /// command, <c>agent</c> for a subagent's hand-back); <paramref name="From"/> the sender a peer message names, and
+    /// <paramref name="Text"/> its words without the envelope, the reminders or the relay's footer.
+    /// </summary>
+    public sealed record TurnPrompt(string Origin, string? From, string Text)
+    {
+        /// <summary>
+        /// Whether it is the first line that fed the session: the prompt it was started with (a worker's or the watchtower's
+        /// brief), which Claude Code records as typed text though the node wrote it.
+        /// </summary>
+        public bool First { get; init; }
+    }
+
     /// <summary>What <see cref="Window"/> reads of a transcript.</summary>
     public sealed record TranscriptWindow(TranscriptEntry[] Entries, int Total, PendingAsk? Pending, string[] Queued);
 
@@ -99,8 +136,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         private readonly List<byte> _partial = [];
         private string? _askedIn;
         private bool _nodeSpoke;
+        private bool _fedBefore;
 
         public List<TranscriptEntry> Entries { get; } = [];
+
+        /// <summary>The latest line that fed the session's turn, read before the entries drop the meta lines.</summary>
+        public TurnPrompt? LastPrompt { get; private set; }
 
         /// <summary>The messages queued for the session that it has not taken yet, oldest first.</summary>
         public List<string> Queued { get; } = [];
@@ -123,6 +164,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     Pending = null;
                     _askedIn = null;
                     _nodeSpoke = false;
+                    LastPrompt = null;
+                    _fedBefore = false;
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
                 var buffer = new byte[64 * 1024];
@@ -160,6 +203,11 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                 using var doc = JsonDocument.Parse(line);
                 Queue(doc.RootElement);
                 Ask(doc.RootElement);
+                if (Fed(doc.RootElement) is { } fed)
+                {
+                    LastPrompt = _fedBefore ? fed : fed with { First = true };
+                    _fedBefore = true;
+                }
                 var at = doc.RootElement.TryGetProperty("timestamp", out var t) && t.TryGetDateTimeOffset(out var when) ? when : (DateTimeOffset?)null;
                 foreach (var read in Read(doc.RootElement))
                 {
@@ -173,7 +221,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
 
         /// <summary>
-        /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked"/> block is pending until the person says something
+        /// Keeps <see cref="Pending"/>: a reply that holds an <see cref="Asked(string)"/> block is pending until the person says something
         /// (their answer: a choice's label, or their own words) or the session's next message begins in the same turn (it moved
         /// on without the answer). What the node says in its own name (a card, a nudge) is not an answer, and it resumes the
         /// session, whose reply to it is not a move on either: after one, the question stays pending until the person says
@@ -186,7 +234,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             // A message taken mid-turn (the person's tell while the session is working) is an attachment, not a user line.
             if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
             {
-                Said(PromptText(attachment));
+                var origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+                Said(Relayed(PromptText(attachment), origin) ?? PromptText(attachment));
                 return;
             }
             if (type is not ("assistant" or "user") || !line.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
@@ -196,8 +245,18 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
             if (type == "user")
             {
-                if (Pending is null || line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
+                if (Pending is null)
                 {
+                    return;
+                }
+                if (line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
+                {
+                    // A meta line is Claude Code's own, except a relay that began a turn: a say to a session between turns.
+                    if (line.TryGetProperty("origin", out var metaOrigin)
+                        && Relayed(content.ValueKind == JsonValueKind.String ? content.GetString() ?? "" : "", metaOrigin) is { } relayed)
+                    {
+                        Said(relayed);
+                    }
                     return;
                 }
                 Said(content.ValueKind switch
@@ -311,8 +370,10 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             };
             if (taken is { Length: > 0 })
             {
-                // Compared on the first of the queued text: a long message can come back with more round it.
-                var i = Queued.FindIndex(q => taken.Contains(q[..Math.Min(200, q.Length)], StringComparison.Ordinal));
+                // Compared on the first of the queued words: a long message can come back with more round it, a resume delivers
+                // the words without the relay's footer, and line endings and runs of spaces are not words.
+                var words = Same(taken);
+                var i = Queued.FindIndex(q => words.Contains(Same(q)[..Math.Min(200, Same(q).Length)], StringComparison.Ordinal));
                 if (i >= 0)
                 {
                     Queued.RemoveAt(i);
@@ -320,7 +381,92 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
         }
 
+        // A message as it is compared: without the relay's footer or the node's prefix, with its line endings and runs of
+        // whitespace as single spaces.
+        internal static string Same(string text)
+        {
+            text = Unrelayed(text);
+            if (text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+            {
+                text = text[NodeVoice.Prefix.Length..];
+            }
+            return WhiteSpace().Replace(text, " ").Trim();
+        }
+
         private static string Clip(string text) => text.Length > TranscriptPage.TextLimit ? text[..TranscriptPage.TextLimit] + "…" : text;
+    }
+
+    /// <summary>
+    /// The line as something that fed the session's turn, or null for one that did not: a tool's result, an assistant's
+    /// reply, a meta line Claude Code adds of its own (a local command's caveat), and a background task finishing mid-turn,
+    /// which is Claude Code's and leaves the turn whose it was. Meta lines that begin a turn are kept (a cross-session
+    /// message, a scheduled wake): the turn is then not the person's, though a person reading the transcript never sees them.
+    /// </summary>
+    internal static TurnPrompt? Fed(JsonElement line)
+    {
+        var type = Str(line, "type");
+        JsonElement origin;
+        string text;
+        var midTurn = false;
+        if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
+        {
+            origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+            text = PromptText(attachment);
+            midTurn = true;
+        }
+        else if (type == "user" && line.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object
+            && message.TryGetProperty("content", out var content))
+        {
+            if (content.ValueKind == JsonValueKind.Array && content.EnumerateArray().Any(p => Str(p, "type") == "tool_result"))
+            {
+                return null;
+            }
+            if (line.TryGetProperty("isCompactSummary", out var summary) && summary.ValueKind == JsonValueKind.True)
+            {
+                return new TurnPrompt("compact", null, "");
+            }
+            origin = line.TryGetProperty("origin", out var o) ? o : default;
+            text = content.ValueKind switch
+            {
+                JsonValueKind.String => content.GetString() ?? "",
+                JsonValueKind.Array => string.Join("\n", content.EnumerateArray().Where(p => Str(p, "type") == "text").Select(p => Str(p, "text")).OfType<string>()),
+                _ => "",
+            };
+        }
+        else
+        {
+            return null;
+        }
+        switch (Str(origin, "kind"))
+        {
+            case "task-notification":
+                return midTurn ? null : new TurnPrompt("task-notification", null, "");
+            case "peer":
+                var said = Str(origin, "body") ?? (Envelope().Match(text) is { Success: true } envelope ? envelope.Groups["body"].Value : text);
+                var handBack = origin.TryGetProperty("handback", out _) || origin.TryGetProperty("senderTaskId", out _);
+                return new TurnPrompt(handBack ? "agent" : "peer", Str(origin, "name"), Unrelayed(said));
+            case { } kind and not "human":
+                return new TurnPrompt(kind, null, Unrelayed(text));
+            case null when !midTurn && line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True:
+                // A wake Claude Code scheduled begins a turn of its own; any other meta line (a local command's caveat) feeds none.
+                return Str(line, "turnOrigin") == "scheduled" || Str(line, "promptSource") == "system" ? new TurnPrompt("scheduled", null, Unrelayed(text)) : null;
+        }
+        text = Unrelayed(Reminder().Replace(text, ""));
+        if (text.Length == 0)
+        {
+            return null;
+        }
+        // An agent-message without a peer origin is still a hand-back; a slash command and its output are not someone's words.
+        return AgentMessage().IsMatch(text) ? new TurnPrompt("agent", null, text)
+            : text.StartsWith("<command-", StringComparison.Ordinal) || text.StartsWith("<local-command-", StringComparison.Ordinal) ? new TurnPrompt("command", null, text)
+            : new TurnPrompt("human", null, text);
+    }
+
+    // Words without the closing line the relay adds.
+    private static string Unrelayed(string text)
+    {
+        text = text.Trim();
+        return text.EndsWith(')') && text.LastIndexOf(ClaudeCliDelivery.RelayMark, StringComparison.Ordinal) is var mark and >= 0 ? text[..mark].TrimEnd() : text;
     }
 
     /// <summary>
@@ -335,7 +481,28 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
         {
             var origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+            if (Relayed(PromptText(attachment), origin) is { } relayed)
+            {
+                foreach (var entry in RelayEntry(relayed, origin))
+                {
+                    yield return entry;
+                }
+                yield break;
+            }
             foreach (var entry in Prompt(PromptText(attachment), origin))
+            {
+                yield return entry;
+            }
+            yield break;
+        }
+        if (type == "user" && line.TryGetProperty("isMeta", out var metaLine) && metaLine.ValueKind == JsonValueKind.True
+            && line.TryGetProperty("origin", out var metaOrigin) && line.TryGetProperty("message", out var metaMessage) && metaMessage.ValueKind == JsonValueKind.Object
+            && metaMessage.TryGetProperty("content", out var metaContent) && metaContent.ValueKind == JsonValueKind.String
+            && Relayed(metaContent.GetString() ?? "", metaOrigin) is { } metaRelayed)
+        {
+            // A relay that reached the session between turns begins one as a meta line, framed "Another Claude session sent a
+            // message:"; it is read as the words inside the envelope, like the same relay taken mid-turn.
+            foreach (var entry in RelayEntry(metaRelayed, metaOrigin))
             {
                 yield return entry;
             }
@@ -393,6 +560,38 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// The words of a cross-session message (a peer origin that is no subagent's hand-back), without the envelope or the frame
+    /// round it: the origin's <c>body</c>, else the envelope's; null for anything else.
+    /// </summary>
+    private static string? Relayed(string text, JsonElement origin)
+    {
+        if (Str(origin, "kind") != "peer" || origin.TryGetProperty("handback", out _) || origin.TryGetProperty("senderTaskId", out _)
+            || AgentMessage().IsMatch(text.Trim()))
+        {
+            return null;
+        }
+        return Str(origin, "body") ?? (Envelope().Match(text) is { Success: true } envelope ? envelope.Groups["body"].Value : null);
+    }
+
+    /// <summary>
+    /// A relayed message as an entry: the person's say (sent as the controller) and the node's own (a card, a nudge, which
+    /// <see cref="Reader"/> makes a note by its prefix) under no name, so the chat stamps the person's and counts it; another
+    /// session's under its name, so it is neither counted nor stamped as the person's.
+    /// </summary>
+    private static IEnumerable<TranscriptEntry> RelayEntry(string body, JsonElement origin)
+    {
+        var text = Reminder().Replace(body, "").Trim();
+        if (text.Length == 0)
+        {
+            yield break;
+        }
+        var name = Str(origin, "name");
+        var from = name is null || string.Equals(name, ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal) ? null : name;
+        yield return new TranscriptEntry { Index = 0, Kind = TranscriptKind.User, Text = text, From = from };
     }
 
     // A user or assistant line's text: the assistant's words as they are, a prompt tidied.
@@ -619,6 +818,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     // A reply as a person reads it: its ask block is the question, and the choices are the buttons under it.
     private static string Plain(string text) => AskBlock().Replace(text, m => Asked(m.Value) is { } ask ? ask.Question : "");
 
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhiteSpace();
+
     [GeneratedRegex(@"<ask>(?<body>.*?)</ask>", RegexOptions.Singleline)]
     private static partial Regex AskBlock();
 
@@ -630,6 +832,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
     [GeneratedRegex(@"<task-notification>(?<body>.*?)(</task-notification>|$)", RegexOptions.Singleline)]
     private static partial Regex TaskNotification();
+
+    [GeneratedRegex(@"<cross-session-message\b[^>]*>(?<body>.*?)(</cross-session-message>|$)", RegexOptions.Singleline)]
+    private static partial Regex Envelope();
 
     [GeneratedRegex(@"^Permission for this action was denied by the Claude Code auto mode classifier\. Reason: (\[[^\]]+\]|[^.\n]{1,120})")]
     private static partial Regex Classifier();

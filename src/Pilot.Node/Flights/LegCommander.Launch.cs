@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -27,7 +28,46 @@ public sealed partial class LegCommander
 
     // What is being started, by reservation: one planner, one leg session (validator, worker, go-around) and one reviewer at a time
     // a flight. The value is the reservation itself, so a start that was replaced meanwhile finds it is no longer the current one.
-    private readonly ConcurrentDictionary<string, object> _starting = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Reservation> _starting = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How long a start reservation may be out before it is given up (PIL530): longer than the launcher's own timeout (two
+    /// minutes) plus <see cref="StartReadyWithin"/>. A start whose task never ends (a launcher that hangs) otherwise holds its
+    /// key, and so the role, for good.
+    /// </summary>
+    public TimeSpan StartBound { get; init; } = TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(15);
+
+    /// <summary>One start's hold on its key: the reservation itself (a replaced start finds it is no longer the current one), when it was made and what it was for.</summary>
+    private sealed class Reservation(DateTimeOffset at, string what, string subject, CardChoice? again)
+    {
+        public DateTimeOffset At { get; } = at;
+        public string What { get; } = what;
+        public string Subject { get; } = subject;
+        public CardChoice? Again { get; } = again;
+    }
+
+    /// <summary>
+    /// Whether a start is out for the key. A reservation out longer than <see cref="StartBound"/> is given up here: its key is
+    /// cleared (its late result, if it ever comes, stops its session quietly) and a card says what was stuck and for how long.
+    /// </summary>
+    private bool IsStarting(string key)
+    {
+        if (!_starting.TryGetValue(key, out var held))
+        {
+            return false;
+        }
+        var outFor = time.GetUtcNow() - held.At;
+        if (outFor < StartBound)
+        {
+            return true;
+        }
+        if (_starting.TryRemove(KeyValuePair.Create(key, held)))
+        {
+            state.RaiseCard(CardBin.Ring, StartFailedKind, held.Subject, $"{held.What} was stuck starting for {(int)outFor.TotalSeconds} s and was given up",
+                $"Its start did not answer within {(int)StartBound.TotalSeconds} s, so it no longer holds its place: the next start is accepted.", held.Again is null ? null : [held.Again]);
+        }
+        return false;
+    }
 
     // The starts the command running on this flow began, for it to wait on; null outside a command.
     private readonly AsyncLocal<List<Launch>?> _launched = new();
@@ -39,12 +79,17 @@ public sealed partial class LegCommander
     private static string ReviewKey(string code) => $"review:{code}";
 
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
-    internal bool Starting(string code) => _starting.ContainsKey(LegsKey(code)) || _starting.ContainsKey(ReviewKey(code));
+    internal bool Starting(string code) => IsStarting(LegsKey(code)) || IsStarting(ReviewKey(code));
 
-    private void RefuseIfStarting(string key, string what)
+    private void RefuseIfStarting(string key, string what, bool coalesce = false)
     {
-        if (_starting.ContainsKey(key))
+        if (IsStarting(key))
         {
+            // A start asked again while it is live (PIL575): in progress, not refused. One out past StuckAfter is refused as before.
+            if (coalesce && _starting.TryGetValue(key, out var held) && time.GetUtcNow() - held.At < StuckAfter)
+            {
+                throw new InProgressException($"{what} is being started");
+            }
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
     }
@@ -75,15 +120,18 @@ public sealed partial class LegCommander
     /// <param name="replacing">Takes the reservation over from a start still out, which then gives itself up silently.</param>
     /// <param name="quietFailure">Says a failure itself (its text), under the lock, where the command is never told it.</param>
     private void Launching(string key, string what, string subject, CardChoice? again, Func<Action, Task<string>> start, Func<string, string?> record,
-        Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null)
+        Func<Task>? after = null, bool replacing = false, Func<string, Task>? quietFailure = null, string? model = null)
     {
         RefuseIfMoving(key, what);
-        var token = new object();
-        if (!replacing && _starting.ContainsKey(key))
+        var token = new Reservation(time.GetUtcNow(), what, subject, again);
+        if (!replacing && IsStarting(key))
         {
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
         _starting[key] = token;
+        // Counted by admission from now, before the tracker lists it: a model it is started with, none leaving it to Claude Code's (Opus).
+        var code = key[(key.IndexOf(':') + 1)..];
+        Slots.Begin(key, token, what.Split(',')[0], code, key.StartsWith("plan:", StringComparison.Ordinal) ? AdmissionRole.Planner : key.StartsWith("review:", StringComparison.Ordinal) ? AdmissionRole.Reviewer : AdmissionRole.Worker, model);
         var launch = new Launch(what, quietFailure is not null);
         launch.Done = Task.Run(async () =>
         {
@@ -111,6 +159,7 @@ public sealed partial class LegCommander
                 finally
                 {
                     _starting.TryRemove(KeyValuePair.Create(key, token));
+                    Slots.End(key, token);
                     _one.Release();
                 }
                 if (!current || failure is not null)
@@ -127,6 +176,7 @@ public sealed partial class LegCommander
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _starting.TryRemove(KeyValuePair.Create(key, token));
+                Slots.End(key, token);
                 failure = ex.Message;
                 if (job is not null)
                 {
@@ -136,6 +186,11 @@ public sealed partial class LegCommander
             if (failure is null || !current)
             {
                 return null;
+            }
+            // A start that failed: the ledger counts the second and later ones of a session as waste.
+            if (Ledger is not null && what.IndexOf(',') is > 0 and var comma)
+            {
+                Ledger.Mark(new WasteMark(WasteKinds.FailedStart, subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? subject[Verbs.FlightTargetPrefix.Length..].Split('/')[0] : null, null, what[..comma], null, 0, failure, time.GetUtcNow()));
             }
             if (quietFailure is not null)
             {
@@ -155,7 +210,9 @@ public sealed partial class LegCommander
             {
                 return failure;
             }
-            state.RaiseCard(CardBin.Ring, StartFailedKind, subject, $"{what} did not start", failure, again is null ? null : [again]);
+            // Needs someone: the start was tried and refused, and nothing retries it by itself.
+            state.RaiseCard(CardBin.Ring, StartFailedKind, subject, $"{what} did not start: {Clip(failure.Split('\n')[0])}",
+                $"The node tried to start it and was refused, and it will not try again by itself: {failure}", again is null ? null : [again]);
             return failure;
         }, CancellationToken.None);
         _launched.Value?.Add(launch);
@@ -210,5 +267,91 @@ public sealed partial class LegCommander
             && now.Validator == seen.Validator && now.ValidatorJob == seen.ValidatorJob && now.GoArounds == seen.GoArounds
             ? now
             : null;
+    }
+
+    /// <summary>The model a worker on <paramref name="leg"/> starts with: the leg's own wins, else the worker role's; none leaves it to Claude Code's.</summary>
+    private string? WorkerModel(LegRow leg) => leg.Model ?? Models.Model(RoleModels.Worker);
+
+    /// <summary>
+    /// Asks admission whether a session of <paramref name="role"/> may start for <paramref name="flight"/> now, beside the 5-hour
+    /// window's <see cref="StartGate"/>. True: it waits, its why recorded on the leg (or the flight, for a planner or reviewer) as
+    /// the queued reason a row carries; no card, no stall, and the sweep asks again. False: it may go, any queued reason cleared;
+    /// admitted to break a wait-for cycle, one card says so naming both flights.
+    /// </summary>
+    private bool AdmissionWaits(AdmissionRole role, string? model, FlightRow flight, LegRow? leg, IReadOnlySet<string>? replacing = null)
+    {
+        string? why = null;
+        switch (Slots.Ask(role, model, flight, replacing))
+        {
+            case AdmissionDecision.Wait wait:
+                why = wait.Why;
+                break;
+            case AdmissionDecision.AdmitToBreakCycle breaking:
+                Slots.SayCycle(Verbs.FlightTarget(flight.Code), breaking.Card);
+                break;
+        }
+        Slots.PublishState();
+        if (leg is not null)
+        {
+            if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { } now && now.Queued != why)
+            {
+                state.PutLeg(now with { Queued = why });
+            }
+        }
+        else
+        {
+            state.UpdateFlight(flight.Code, f => f.Queued == why ? f : f with { Queued = why });
+        }
+        return why is not null;
+    }
+
+    /// <summary>
+    /// An issue that carries the <c>pilot: priority</c> label beside the Priority field: the field is set from the label (High when it is empty,
+    /// its own value kept otherwise) and the label removed, so it happens once. Returns the level the field has after; a refusal leaves it as it
+    /// was (the next start tries again) and never blocks a start.
+    /// </summary>
+    private static async Task<IssuePriority?> MigratePriorityLabelAsync(ITracker tracker, FlightRow flight, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        var now = level;
+        try
+        {
+            if (level is null)
+            {
+                await tracker.SetPriorityAsync(flight.RepoPath, flight.Issue, IssuePriority.High, cancellationToken);
+                now = IssuePriority.High;
+            }
+            await tracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Priority, cancellationToken);
+        }
+        catch (FlightException)
+        {
+        }
+        return now;
+    }
+
+    /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
+    private async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
+            {
+                var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
+                var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
+                var hasLabel = labels.Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase);
+                var level = read.Level;
+                if (read.HasField && hasLabel)
+                {
+                    level = await MigratePriorityLabelAsync(tracker, flight, read.Level, cancellationToken);
+                }
+                // Where the repo has the field it is the only source; the label counts only where there is none.
+                Slots.SetIssuePriority(flight.Code, !read.HasField && hasLabel);
+                var hasField = read.HasField;
+                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level ? f : f with { HasPriorityField = hasField, IssuePriority = level });
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Labels that cannot be read leave the flight as the row says (its PR's label): a start never waits on a tracker.
+        }
     }
 }

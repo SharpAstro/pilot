@@ -88,6 +88,55 @@ public sealed class ClaudeProfile(string root)
     }
 
     /// <summary>
+    /// Whether the respawn flags Claude Code keeps for the session carry the name (<c>-n</c>) and model (<c>--model</c>) that
+    /// <paramref name="arguments"/>, the options the node started it with, gave. Flags on file are not always the start's: a
+    /// bare resume continued SE1's watchtower as a copy whose flags were only <c>--model opus[1m]</c>, so every later resume,
+    /// taken as on file, woke it unnamed on Opus (2026-10-31, 44f74bec to d4ccbfc7). False when the flags are not a list.
+    /// </summary>
+    public bool RespawnFlagsCover(string sessionId, IReadOnlyList<string> arguments)
+    {
+        var job = sessionId.Length > 8 ? sessionId[..8] : sessionId;
+        if (!IsSafeId(job))
+        {
+            return false;
+        }
+        string[] flags;
+        try
+        {
+            using var stream = new FileStream(Path.Combine(Root, "jobs", job, "state.json"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var doc = JsonDocument.Parse(stream);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("respawnFlags", out var list) || list.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+            flags = [.. list.EnumerateArray().Select(f => f.ValueKind == JsonValueKind.String ? f.GetString() ?? "" : "")];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+        // Flags on file from before the lean config carry no MCP config: such a session is resumed with the full options.
+        if (arguments.Contains("--strict-mcp-config") && !flags.Contains("--strict-mcp-config"))
+        {
+            return false;
+        }
+        foreach (var option in (string[])["-n", "--model", "--mcp-config"])
+        {
+            var at = arguments.ToList().IndexOf(option);
+            if (at < 0 || at + 1 >= arguments.Count)
+            {
+                continue;
+            }
+            var value = arguments[at + 1];
+            if (!flags.Where((f, i) => f == option && i + 1 < flags.Length && flags[i + 1] == value).Any())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
     /// The intercom endpoint of the live session <paramref name="sessionId"/>: the record under <c>sessions</c> that names it
     /// and whose process runs (the newest, when a resume left more), with the token of its <c>&lt;pid&gt;.&lt;hash&gt;.key</c>
     /// file. Null when no live process has the session.

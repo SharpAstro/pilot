@@ -60,7 +60,7 @@ public sealed class NightPanelsTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Night.On = true;
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Autopilot.On = true;
         var transcript = Transcript();
         chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);

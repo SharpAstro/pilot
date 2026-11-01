@@ -205,6 +205,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADirectFlightIsFlownFromTheCliAloneUpToItsLanding()
     {
         // The controller, in the repo: a flight and its one leg.
@@ -262,24 +263,28 @@ public sealed class CliTests : IAsyncLifetime
         _node.State.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
 
         // The PR rang: a card with the merge on the head it was opened at; answering it merges and lands the flight.
+        // Repo setup at the create raised its Handled cards first, so the ring is found by kind, not by a fixed number.
+        var ring = _node.State.Cards().Single(c => c.Kind == "pr-ready").Id;
         var (_, cards, _) = await Pilot(_root, "cards");
-        cards.ShouldContain("c1  RING  TIA1611's PR #71 is ready to merge");
-        cards.ShouldContain("1. Merge: pilot answer c1 1");
+        cards.ShouldContain($"{ring}  RING  TIA1611's PR #71 is ready to merge");
+        cards.ShouldContain($"1. Merge: pilot answer {ring} 1");
         var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
-        cardsMarkdown.ShouldContain("## c1 · RING · TIA1611's PR #71 is ready to merge");
-        cardsMarkdown.ShouldContain("`pilot answer c1 1`");
+        cardsMarkdown.ShouldContain($"## {ring} · RING · TIA1611's PR #71 is ready to merge");
+        cardsMarkdown.ShouldContain($"`pilot answer {ring} 1`");
         (await Pilot(_root, "cards", "--output-format", "rich")).Output.ShouldBe(cardsMarkdown);
         (await Pilot(_root, "cards", "--output-format", "auto")).Output.ShouldBe(cards);
-        await Ok(_root, "answer", "c1", "1");
+        await Ok(_root, "answer", ring, "1");
         // By rebase, the node's default merge method, so every commit's subject reaches main (tianwen#1783 was squashed).
         _node.GitHub.Merged.ShouldBe([(71, "cafe0000cafe0000", "rebase")]);
         _node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var after = _node.State.Cards();
-        after.Single(c => c.Id == "c1").Outcome.ShouldBe("Merge");
-        after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.ForYou);
+        after.Single(c => c.Id == ring).Outcome.ShouldBe("Merge");
+        after.Single(c => c.Kind == "landed").Bin.ShouldBe(CardBin.Handled);
 
         // Landed, it leaves status, which says how many it left out; --all shows it with its legs.
         var (_, inTheAir, _) = await Pilot(_root, "status");
+        // The admission line names the Opus sessions counted; the test node's fake reviewer never ends, so it is not a flight in the air.
+        inTheAir = string.Join('\n', inTheAir.Split('\n').Where(l => !l.StartsWith("Opus ", StringComparison.Ordinal)));
         inTheAir.ShouldNotContain("TIA1611");
         inTheAir.ShouldContain("No flights in the air.");
         inTheAir.ShouldContain("1 landed flight not shown: pilot status --all");
@@ -293,6 +298,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OutsideAPlaneALegMustBeNamedAndAPlaneWithoutAFlyingLegSaysSo()
     {
         await Ok(Repo, "flight", "create", "7");
@@ -441,6 +447,18 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "job", "j1")).Output.ShouldContain("j1  paused since ");
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task Leg_finish_accepts_verified_and_the_node_refuses_it_on_a_leg_that_is_not_failed()
+    {
+        var plane = await FlightWithAValidatorFlying("1612");
+
+        var (exit, output, error) = await Pilot(plane, "leg", "finish", "verified", "--leg", "TIA1612/render");
+
+        exit.ShouldNotBe(0);
+        (output + error).ShouldContain("only a failed leg is verified done");
+    }
+
     /// <summary>A flight whose first leg is done and whose second, render, has started: its validator is flying.</summary>
     private async Task<string> FlightWithAValidatorFlying(string number)
     {
@@ -459,6 +477,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringGoFromThePlaneStartsTheLegsWorker()
     {
         var plane = await FlightWithAValidatorFlying("8");
@@ -473,6 +492,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AValidatorAnsweringNoGoFromThePlaneRingsAndTheLegStaysPlanned()
     {
         var plane = await FlightWithAValidatorFlying("9");
@@ -640,6 +660,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StatusWritesMarkdownForOutputFormatMarkdownAndPlainTextWhenNoHostCanRenderAuto()
     {
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
@@ -683,6 +704,7 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StatusHandsAutoAndRichToTheHostsRendererAndWritesPlainTextWhenItSettlesOnPlain()
     {
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");

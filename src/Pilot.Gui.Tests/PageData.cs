@@ -30,6 +30,8 @@ internal sealed class PageData
     public required TranscriptEntry[] Transcript { get; init; }
     public required RepoInfo[] WizardRepos { get; init; }
     public required IssueInfo[] WizardIssues { get; init; }
+    public required SpendScreen Spend { get; init; }
+    public required SpendFlightReport[] FlightSpend { get; init; }
 
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
@@ -59,7 +61,16 @@ internal sealed class PageData
         _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
     };
 
-    private static PageData Empty() => new()
+    /// <summary>
+    /// A handful of every row, fixed at <see cref="Now"/>, as the pages show them at <paramref name="at"/>: the same rows a second
+    /// or a minute on, for a test of what turns over with the clock alone.
+    /// </summary>
+    public static PageData At(DateTimeOffset at) =>
+        Build("moment", sessions: 6, flights: 3, legs: 3, jobs: 6, cards: 3, repos: 3, chat: 4, transcript: 4, wizard: 0, nodes: 2, lengthen: false, at);
+
+    private static PageData Empty() => EmptyOf(SpendFor("empty", [], [], Now));
+
+    private static PageData EmptyOf(SpendSnapshot empty) => new()
     {
         State = "empty",
         Nodes = [Here],
@@ -75,6 +86,8 @@ internal sealed class PageData
         Transcript = [],
         WizardRepos = [],
         WizardIssues = [],
+        Spend = new SpendScreen("today", empty.Reports[0] with { Flights = [], Roles = [], Messages = 0, Tokens = 0, Weighted = 0 }, empty.Waste[0] with { Rows = [], WasteTokens = 0, WasteWeighted = 0, WasteShare = 0 }, "test", Now),
+        FlightSpend = [],
     };
 
     private static PageData Sample()
@@ -100,11 +113,13 @@ internal sealed class PageData
             Transcript = built.Transcript,
             WizardRepos = built.WizardRepos,
             WizardIssues = built.WizardIssues,
+            Spend = SpendScreen.From(snapshot.Spend!, "today", "sample", snapshot.At),
+            FlightSpend = built.FlightSpend,
         };
     }
 
     // Row i of a list, its words stretched when `lengthen` is on: a title past a column, a path with no break to wrap at, a report of a paragraph.
-    private static PageData Build(string state, int sessions, int flights, int legs, int jobs, int cards, int repos, int chat, int transcript, int wizard, int nodes, bool lengthen)
+    private static PageData Build(string state, int sessions, int flights, int legs, int jobs, int cards, int repos, int chat, int transcript, int wizard, int nodes, bool lengthen, DateTimeOffset? at = null)
     {
         string Title(string what, int i) => lengthen ? $"{what} {i}: {LongTitle}" : $"{what} {i}";
         var path = lengthen ? LongPath : @"C:\work\pilot";
@@ -123,7 +138,9 @@ internal sealed class PageData
             ApiError = lengthen && i % 4 == 3 ? "API Error: 529 overloaded_error: " + LongTitle : null,
         }).ToList();
         var now = Now;
-        var sessionsScreen = new SessionsScreen(SessionLine.Build(sessionRows, now), "test", now);
+        // The rows are fixed at Now; the screens are as of `at`, a later moment at which the same rows are shown.
+        var asOf = at ?? Now;
+        var sessionsScreen = new SessionsScreen(SessionLine.Build(sessionRows, asOf), "test", asOf);
 
         var flightRows = Enumerable.Range(0, flights).Select(i => new FlightRow
         {
@@ -141,6 +158,11 @@ internal sealed class PageData
             PullRequest = i % 2 == 0 ? 390 + i : null,
             PullRequestUrl = i % 2 == 0 ? $"https://github.com/SharpAstro/pilot/pull/{390 + i}" : null,
             LandedAt = i % 3 == 2 ? now.AddMinutes(-30) : null,
+            Queued = i % 3 == 0 ? (lengthen ? "waiting for an Opus slot: 3 of 3 flying: " + LongWord + ", " + LongPath : "waiting for an Opus slot: 3 of 3 flying") : null,
+            GitHubLabel = i % 9 == 0 ? "pilot: priority" : null,
+            // Flights of a repo with the Priority field: Urgent (a priority flight, queued), Medium and Low (quieter levels).
+            HasPriorityField = true,
+            IssuePriority = (i % 3) switch { 0 => IssuePriority.Urgent, 1 => IssuePriority.Medium, _ => IssuePriority.Low },
             Review = i % 2 == 0 ? new ReviewRow
             {
                 State = (ReviewState)(i % 3),
@@ -166,7 +188,12 @@ internal sealed class PageData
             Report = j % 4 is 2 or 3 ? (lengthen ? LongReport : "Done.") : null,
             StartedAt = now.AddMinutes(-60),
         })).ToList();
-        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, now, legRows), "test", now);
+        var admission = new AdmissionRow
+        {
+            OpusCount = 3, OpusCap = 3, OneFlightPerRepo = true, Counted = ["pil380 worker", "pil381 reviewer", "pil383 planner on LE1"],
+            PeersNotCounted = lengthen ? "peers not counted: LE1 did not answer: " + LongReport : null,
+        };
+        var flightsScreen = new FlightsScreen(FlightLine.Build(flightRows, sessionRows, asOf, legRows, admission), "test", asOf) { Admission = admission };
 
         var jobRows = Enumerable.Range(0, jobs).Select(i => new JobRow
         {
@@ -186,7 +213,7 @@ internal sealed class PageData
             QueuedAt = now.AddMinutes(-i - 6),
             EndedAt = i % 5 is 1 or 2 or 3 ? now.AddMinutes(-i) : null,
         }).ToList();
-        var jobsScreen = new JobsScreen(JobLine.Build(jobRows, now), "test", now);
+        var jobsScreen = new JobsScreen(JobLine.Build(jobRows, asOf), "test", asOf);
 
         var fleetLines = Enumerable.Range(0, nodes).Select(i => FleetLine.From(i == 0 ? Here.Where : $"10.0.0.{i + 8}:47731", here: i == 0, canCommand: i % 2 == 0, null,
             new NodeSummary
@@ -207,8 +234,8 @@ internal sealed class PageData
                     WireVersion = 1, Version = "2.0.9", MachineName = lengthen ? $"DESKTOP-{LongWord}-{i}" : $"DESKTOP-{i}", MachinePrefix = $"SE{i + 1}", ProcessId = 1, StartedAt = now,
                     DataFolder = path, SocketPath = path, Stream = $"s{i}",
                 },
-            }, now)).ToList();
-        var fleetScreen = new FleetScreen(fleetLines, now);
+            }, asOf)).ToList();
+        var fleetScreen = new FleetScreen(fleetLines, asOf);
 
         var repoStatuses = Enumerable.Range(0, repos).Select(i => new RepoStatus
         {
@@ -227,7 +254,7 @@ internal sealed class PageData
             Errors = lengthen && i % 2 == 0 ? [LongReport] : [],
             UpdatedAt = now,
         }).ToList();
-        var reposScreen = new ReposScreen(RepoLine.Build(repoStatuses, flightRows, sessionRows, [], legRows, now), "test", now);
+        var reposScreen = new ReposScreen(RepoLine.Build(repoStatuses, flightRows, sessionRows, [], legRows, asOf), "test", asOf);
 
         var cardRows = Enumerable.Range(0, cards).Select(i => new CardRow
         {
@@ -244,7 +271,7 @@ internal sealed class PageData
             AskedBy = lengthen ? LongWord : "se1-pil380-worker",
             Why = lengthen ? LongReport : null,
         }).ToList();
-        var cardsScreen = cards == 0 ? CardsScreen.Empty : CardsScreen.From(cardRows, sessionRows, now);
+        var cardsScreen = cards == 0 ? CardsScreen.Empty : CardsScreen.From(cardRows, sessionRows, asOf);
 
         var chatEntries = ChatFeed(chat, lengthen);
         var transcriptEntries = ChatFeed(transcript, lengthen);
@@ -252,6 +279,7 @@ internal sealed class PageData
         var wizardRepos = Enumerable.Range(0, wizard).Select(i => new RepoInfo { Name = lengthen ? $"{LongWord}-{i}" : $"repo-{i}", Path = path + $"\\r{i}", GitHub = $"SharpAstro/repo-{i}", Flights = i }).ToArray();
         var wizardIssues = Enumerable.Range(0, wizard).Select(i => new IssueInfo { Number = 100 + i, Title = lengthen ? $"{LongTitle} {LongTitle}" : $"Issue {i}", Labels = lengthen ? ["enhancement", LongWord] : ["bug"], UpdatedAt = now.AddDays(-i) }).ToArray();
 
+        var spendData = SpendFor(state, flightRows.Select(f => f.Code).ToArray(), legRows.Select(l => l.Name).Distinct().ToArray(), now);
         return new PageData
         {
             State = state,
@@ -261,19 +289,59 @@ internal sealed class PageData
             Jobs = jobsScreen,
             Fleet = fleetScreen,
             Repos = reposScreen,
-            PullRequests = PullRequestsFor(state),
+            PullRequests = PullRequestsFor(state, asOf),
             Cards = cardsScreen,
             Machines = null,
             Chat = chatEntries,
             Transcript = transcriptEntries,
             WizardRepos = wizardRepos,
             WizardIssues = wizardIssues,
+            Spend = SpendScreen.From(spendData, "today", "test", now),
+            FlightSpend = spendData.Flights,
         };
+    }
+
+    // The spend pages' data for the flights and legs a state has: a report for each window with a row a flight (and a "-" for what no flight
+    // owns), the four roles, a waste row a flight, and each flight's spend per leg and round. Words are stretched in "long".
+    private static SpendSnapshot SpendFor(string state, string[] flights, string[] legs, DateTimeOffset now)
+    {
+        var lengthen = state == "long";
+        var codes = flights.Select(f => lengthen ? $"{f}-{LongWord}" : f).Append("-").ToArray();
+        SpendRow[] Rows(string[] keys) => [.. keys.Select((k, i) => new SpendRow { Key = k, Messages = 10 + i, Tokens = 1_234_567_890L / (i + 1), Weighted = 400_000_000L / (i + 1), Share = Math.Round(100.0 / keys.Length, 1) })];
+        var roles = new[] { "planner", "worker", "reviewer", "fixer", "watchtower", "adhoc" };
+        SpendReport Report(string window) => new()
+        {
+            Window = window, From = now.AddHours(-3), To = now, Messages = 420, Tokens = 4_200_000_000L, Weighted = 1_000_000_000L,
+            Flights = Rows(codes), Roles = Rows(roles),
+        };
+        var waste = flights.Select((f, i) => new SpendWasteRow
+        {
+            Kind = i % 2 == 0 ? "round" : "base-merge-review",
+            Reason = lengthen ? LongTitle : i % 2 == 0 ? "findings" : "only a base merge changed the head",
+            Flight = lengthen ? $"{f}-{LongWord}" : f,
+            Leg = legs.Length > 0 ? (lengthen ? $"{legs[0]}-{LongWord}" : legs[0]) : null,
+            Role = "worker", Model = "claude-opus-5-5", Messages = 5, Tokens = 700_000_000L / (i + 1), Weighted = 90_000_000L / (i + 1), Share = 1.5,
+        }).ToArray();
+        SpendWasteReport Waste(string window) => new()
+        {
+            Window = window, From = now.AddHours(-3), To = now, WindowWeighted = 1_000_000_000L, WasteTokens = waste.Sum(w => w.Tokens),
+            WasteWeighted = waste.Sum(w => w.Weighted), WasteShare = 9.0, Rows = waste,
+        };
+        var perFlight = flights.Select(f => new SpendFlightReport
+        {
+            Flight = f, From = now.AddHours(-30), To = now, Messages = 100, Tokens = 3_000_000_000L, Weighted = 700_000_000L,
+            Legs = [.. legs.Select(l => new SpendLegRow
+            {
+                Leg = lengthen ? $"{l}-{LongWord}" : l, Messages = 50, Tokens = 1_000_000_000L, Weighted = 300_000_000L,
+                Rounds = [new SpendRoundRow { Round = 0, Messages = 30, Tokens = 600_000_000L, Weighted = 150_000_000L }, new SpendRoundRow { Round = 1, Messages = 20, Tokens = 400_000_000L, Weighted = 150_000_000L }],
+            })],
+        }).ToArray();
+        return new SpendSnapshot { Reports = [Report("5h"), Report("today"), Report("week")], Waste = [Waste("5h"), Waste("today"), Waste("week")], Flights = perFlight };
     }
 
     // The Pull requests page's read: a handful of every kind (sample), titles, repos and chips far past a column (long), rows enough to
     // scroll across many repos (many), and a read with no open PR (empty).
-    private static PullRequestsScreen PullRequestsFor(string state)
+    private static PullRequestsScreen PullRequestsFor(string state, DateTimeOffset? at = null)
     {
         var lengthen = state == "long";
         var kinds = Enum.GetValues<PullRequestKind>();
@@ -308,7 +376,7 @@ internal sealed class PageData
             }
         }
         var row = new PullRequestsRow { Orgs = ["SharpAstro", "example-org"], ReadAt = Now.AddSeconds(-40), Viewer = "ada", PullRequests = [.. rows] };
-        return new PullRequestsScreen(row, "live from the node on node.sock", Now);
+        return new PullRequestsScreen(row, "live from the node on node.sock", at ?? Now);
     }
 
     // A feed of n entries: replies, a person's messages, tool calls with their results, as the chat and a transcript show them.

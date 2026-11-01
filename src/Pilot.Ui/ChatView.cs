@@ -19,7 +19,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>How often an open page asks for what came after.</summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);
 
-    /// <summary>How many of the messages that were refused the chat keeps showing.</summary>
+    /// <summary>How many notices (a choice that did not go, a refused restart) the chat keeps showing.</summary>
     internal const int NoticesKept = 3;
 
     private const float Gutter = 16f;
@@ -45,9 +45,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     // What the follow has read, as one immutable record swapped whole: the follow appends on the pool, the render thread
     // reads the record it finds, and neither ever waits on the other.
-    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued)
+    private sealed record Held(ImmutableList<TranscriptEntry> Entries, int Total, string? Problem, bool Working, string? Question, string[] Choices, string[] Queued, string?[] QueuedIds)
     {
-        public static readonly Held Empty = new([], 0, null, false, null, [], []);
+        public static readonly Held Empty = new([], 0, null, false, null, [], [], []);
     }
 
     private Held _held = Held.Empty;
@@ -64,13 +64,26 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     private ListScrollController _askScroll = NewAskScroll();
     private string? _askedKey;
 
-    // A message that was refused or a choice that did not go, said in the chat in red until the next one goes; and how many
-    // are on their way. Swapped whole from the pool.
+    // A choice that did not go or a restart that was refused, said in the chat in red until the next one goes (a typed message
+    // that did not go stays in the outbox as a failed line). Swapped whole from the pool.
     private ImmutableList<string> _notices = [];
-    // What the person sent that the feed may not show yet: dimmed and marked sending until the node answers, then kept until the feed carries it.
-    private ImmutableList<Own> _own = [];
-    private sealed record Own(Guid Id, string Text, bool Sending);
-    private int _sending;
+
+    /// <summary>The chat's node-bound buttons and sends: working at once, no second press, a refusal said in the chat (<see cref="Presses"/>).</summary>
+    internal Presses Presses { get; } = new();
+
+    // What the person sent that the feed may not show yet, in the order it was sent: queued behind the ones before it, sending while
+    // the node has it, then kept (sent) until the feed carries it. Each entry holds the send it was made for, resolved at Enter, so
+    // a later switch of node or quote does not redirect it. One drain delivers them one after another.
+    private ImmutableList<Out> _outbox = [];
+    private int _draining;
+
+    private enum OutState { Queued, Sending, Sent, Failed }
+
+    private sealed record Out(Guid Id, string Text, Func<string, Task<string?>> Send, string Key, string Hit, OutState State, TaskCompletionSource Done, Quoted? About = null, string? Reason = null, string? Where = null)
+    {
+        // The id this send goes to the node with (its request id), which the feed's entry and queued line for it carry back.
+        public string SendId => Id.ToString("N");
+    }
 
     private static TaskCompletionSource NewNudge() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -125,7 +138,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Volatile.Write(ref _node, node);
         Volatile.Write(ref _held, Held.Empty);
         Volatile.Write(ref _notices, []);
-        Volatile.Write(ref _own, []);
+        // What was sent for the old node stays in the outbox and is delivered to it; its page draws only its own entries, so a
+        // failed line is back with Retry and Edit when the person returns. Only what is done with (sent) goes.
+        RemoveFromOutbox(m => m.State == OutState.Sent);
         Volatile.Write(ref _about, null);
         _confirmRestart = false;
         if (open)
@@ -144,7 +159,8 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Whether another node's chat can be read from here; null asks <see cref="LoadOn"/>. A node that cannot says so on its pill.</summary>
     public Func<NodeMark, bool>? CanRead { get; set; }
 
-    private bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
+    /// <summary>Whether <paramref name="node"/>'s chat can be shown here: this node's always, another's as <see cref="CanRead"/> says.</summary>
+    public bool Readable(NodeMark node) => node.Here || (CanRead?.Invoke(node) ?? LoadOn is not null);
 
     // The top bar's node pills on this page: one choice of watchtower, the current one lit; none while there is one node.
     private List<Layout.Node> NodePills()
@@ -225,7 +241,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     public Action? Changed
     {
         get => _entries.Changed;
-        set => _entries.Changed = value;
+        set
+        {
+            _entries.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
     /// <summary>Opens a link in a reply. Null leaves links as coloured text.</summary>
@@ -263,7 +283,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The entries it holds now, oldest first.</summary>
     public IReadOnlyList<TranscriptEntry> Entries => Volatile.Read(ref _held).Entries;
 
-    /// <summary>What was refused or did not go, as the chat shows it, oldest first.</summary>
+    /// <summary>What a choice or restart was refused with, as the chat shows it, oldest first.</summary>
     public IReadOnlyList<string> Notices => Volatile.Read(ref _notices);
 
     /// <summary>
@@ -329,7 +349,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 }
                 ImmutableInterlocked.Update(ref _held, held => new Held(
                     renumbered ? ImmutableList.CreateRange(page.Entries) : held.Entries.AddRange(page.Entries.Where(e => held.Entries.Count == 0 || e.Index > held.Entries[^1].Index)),
-                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? []));
+                    page.Total, null, page.Working, page.PendingQuestion, page.Choices ?? [], page.Queued ?? [], page.QueuedIds ?? []));
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -354,8 +374,10 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     /// <summary>
-    /// Sends what is in the box, as Enter does: the box is emptied at once, the message goes through <see cref="OnSend"/>, and
-    /// a refusal is said in the chat. Does nothing with nothing typed or no host to send.
+    /// Sends what is in the box, as Enter does: the message and its quote move out of the box at once into the outbox, which delivers
+    /// them one after another through <see cref="OnSend"/> (<see cref="OnSendAboutCard"/> with a card quoted), each to the target it
+    /// was sent to. A refusal is said in the chat. Does nothing with nothing typed or no host to send. The task ends when this
+    /// message was delivered, refused or dropped.
     /// </summary>
     public Task SendAsync()
     {
@@ -364,56 +386,219 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             return Task.CompletedTask;
         }
         var message = _composer.Message;
-        _composer.Clear();
-        // A message about a card goes through the card's tell, and the card is dropped with it, as the box is emptied.
-        if (!string.IsNullOrWhiteSpace(message) && OnSendAboutCard is { } aboutCard && Interlocked.Exchange(ref _about, null) is { } quoted)
+        var quoted = Volatile.Read(ref _about);
+        Func<string, Task<string?>>? send = null;
+        // A message about a card goes through the card's tell.
+        if (quoted is not null && OnSendAboutCard is { } aboutCard)
         {
-            // Another node's card goes to this node's watchtower as plain words naming the card and its node: it passes the work
-            // on with tell --node. Only this node's card has a tell card/<id> here.
-            if (quoted.Node is { Here: false } other && CurrentSend() is { } send)
+            // Another node's card, asked about in a chat that is not that node's (the fleet chat, when its chat cannot be read
+            // here), goes to the shown watchtower as plain words naming the card and its node: it passes the work on with tell
+            // --node. In the card's own node's chat it is that node's tell card/<id>, as this node's card is here.
+            if (quoted.Node is { Here: false } other && Node?.Where != other.Where && CurrentSend() is { } toWatchtower)
             {
-                return SendAsync(message, words => send(AboutOtherNodesCard(quoted.Card, other, words)));
+                send = words => toWatchtower(AboutOtherNodesCard(quoted.Card, other, words));
             }
-            return SendAsync(message, words => aboutCard(quoted.Card, quoted.Node, words));
+            else
+            {
+                send = words => aboutCard(quoted.Card, quoted.Node, words);
+            }
         }
-        return SendAsync(message);
+        else
+        {
+            quoted = null;
+        }
+        var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted);
+        _composer.Clear();
+        if (quoted is not null)
+        {
+            Interlocked.CompareExchange(ref _about, null, quoted);
+        }
+        return queued;
     }
+
+    private const string SendKey = "chat:send";
+    private const string ChoiceKey = "chat:choice";
+    private const string RestartKey = "chat:restart";
 
     /// <summary>What is told this node's watchtower about a card of another node: the card, its node and its title, and then the words.</summary>
     internal static string AboutOtherNodesCard(CardRow card, NodeMark node, string words) =>
         $"About card {card.Id} of node {node.Name} ({card.Title.ReplaceLineEndings(" ")}): {words}";
 
     /// <summary>Says <paramref name="message"/> to the watchtower: a choice button's label, or what was typed.</summary>
-    public Task SendAsync(string message) => CurrentSend() is { } send ? SendAsync(message, send) : Task.CompletedTask;
+    public Task SendAsync(string message) => CurrentSend() is { } send ? Enqueue(message, send, SendKey, SendKey) : Task.CompletedTask;
 
-    private async Task SendAsync(string message, Func<string, Task<string?>> send)
+    // Puts a message at the back of the outbox and starts the drain when it is not running; ends when this message is done with.
+    private Task Enqueue(string message, Func<string, Task<string?>> send, string key, string hit, string label = "chat send", Quoted? about = null)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
-            return;
+            return Task.CompletedTask;
         }
-        Interlocked.Increment(ref _sending);
-        var own = new Own(Guid.NewGuid(), message, true);
-        ImmutableInterlocked.Update(ref _own, o => o.Add(own));
+        var entry = new Out(Guid.NewGuid(), message, send, key, hit, OutState.Queued, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), about, null, Node?.Where);
+        ImmutableInterlocked.Update(ref _outbox, o => o.Add(entry));
         _scroll.ScrollToEnd();
+        StartDrain(label);
         Changed?.Invoke();
-        string? refused;
+        return entry.Done.Task;
+    }
+
+    private void StartDrain(string label)
+    {
+        if (Interlocked.CompareExchange(ref _draining, 1, 0) == 0)
+        {
+            var run = DrainAsync();
+            Track?.Invoke(() => run, label);
+        }
+    }
+
+    // Delivers the queued messages one after another, each to its own send, until none is left.
+    private async Task DrainAsync()
+    {
+        var finished = false;
         try
         {
-            refused = await send(message);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
-        {
-            refused = $"refused: {ex.Message}";
+            while (true)
+            {
+                var next = Volatile.Read(ref _outbox).FirstOrDefault(m => m.State == OutState.Queued);
+                if (next is null)
+                {
+                    Volatile.Write(ref _draining, 0);
+                    // One queued between the look and the release finds no drain: take the job back.
+                    if (!Volatile.Read(ref _outbox).Any(m => m.State == OutState.Queued) || Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                    {
+                        finished = true;
+                        return;
+                    }
+                    continue;
+                }
+                var going = false;
+                ImmutableInterlocked.Update(ref _outbox, o =>
+                {
+                    going = o.Any(m => m.Id == next.Id && m.State == OutState.Queued);
+                    return going ? Mark(o, next.Id, OutState.Sending) : o;
+                });
+                if (!going)
+                {
+                    continue;
+                }
+                Changed?.Invoke();
+                string? refused;
+                try
+                {
+                    refused = await Presses.PressAsync(next.Key, next.Hit, _ =>
+                    {
+                        // The send reads it before its first await: the request id is the echo's, so the feed's entry for it is the same row.
+                        ChatCommands.SendId.Value = next.SendId;
+                        return next.Send(next.Text);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    // Any throw, a connect timeout (a cancellation) included, is a failed delivery: the drain has no token of its own.
+                    refused = ex.Message;
+                }
+                try
+                {
+                    // A typed message that did not go stays in the conversation, failed, with its reason; a choice's refusal is a notice.
+                    var kept = refused is not null && next.Key == SendKey;
+                    ImmutableInterlocked.Update(ref _outbox, o => refused is null ? Mark(o, next.Id, OutState.Sent)
+                        : kept ? ImmutableList.CreateRange(o.Select(m => m.Id == next.Id ? m with { State = OutState.Failed, Reason = refused } : m))
+                        : o.RemoveAll(m => m.Id == next.Id));
+                    if (!kept)
+                    {
+                        ImmutableInterlocked.Update(ref _notices, notices => refused is null
+                            ? []
+                            : notices.Add($"{refused} · {Clip(next.Text)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+                    }
+                    Refresh();
+                    Changed?.Invoke();
+                }
+                finally
+                {
+                    next.Done.TrySetResult();
+                }
+            }
         }
         finally
         {
-            Interlocked.Decrement(ref _sending);
+            if (!finished)
+            {
+                Volatile.Write(ref _draining, 0);
+            }
         }
-        ImmutableInterlocked.Update(ref _own, o => refused is null ? o.Replace(own, own with { Sending = false }) : o.Remove(own));
-        ImmutableInterlocked.Update(ref _notices, notices => refused is null
-            ? []
-            : notices.Add($"{refused} · {Clip(message)}") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+    }
+
+    private static ImmutableList<Out> Mark(ImmutableList<Out> outbox, Guid id, OutState state) =>
+        ImmutableList.CreateRange(outbox.Select(m => m.Id == id ? m with { State = state } : m));
+
+    private void RemoveFromOutbox(Func<Out, bool> which)
+    {
+        var gone = new List<Out>();
+        ImmutableInterlocked.Update(ref _outbox, o =>
+        {
+            gone.Clear();
+            gone.AddRange(o.Where(which));
+            return o.RemoveAll(m => which(m));
+        });
+        foreach (var m in gone)
+        {
+            m.Done.TrySetResult();
+        }
+    }
+
+    /// <summary>The reasons of the typed messages that did not go and are still shown as failed, oldest first.</summary>
+    internal IReadOnlyList<string> Failures => [.. Volatile.Read(ref _outbox).Where(m => m.State == OutState.Failed).Select(m => m.Reason ?? "")];
+
+    /// <summary>Sends a failed message again, to the same target, at the end of the queue.</summary>
+    internal void Retry(Guid id)
+    {
+        var found = false;
+        ImmutableInterlocked.Update(ref _outbox, o =>
+        {
+            var failed = o.FirstOrDefault(m => m.Id == id && m.State == OutState.Failed);
+            found = failed is not null;
+            return failed is null ? o : o.RemoveAll(m => m.Id == id).Add(failed with { State = OutState.Queued, Reason = null });
+        });
+        if (!found)
+        {
+            return;
+        }
+        _scroll.ScrollToEnd();
+        StartDrain("chat retry");
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Takes a failed message back into the box (after what is typed there, on a new line) and its card back into the quote, and
+    /// removes the failed line.
+    /// </summary>
+    internal void Edit(Guid id)
+    {
+        Out? failed = null;
+        ImmutableInterlocked.Update(ref _outbox, o =>
+        {
+            failed = o.FirstOrDefault(m => m.Id == id && m.State == OutState.Failed);
+            return failed is null ? o : o.RemoveAll(m => m.Id == id);
+        });
+        if (failed is null)
+        {
+            return;
+        }
+        var typed = _composer.IsEmpty ? "" : _composer.Input.Text;
+        _composer.Clear();
+        Input.InsertText(typed.Length == 0 ? failed.Text : typed + "\n" + failed.Text);
+        if (failed.About is not null && Volatile.Read(ref _about) is null)
+        {
+            Volatile.Write(ref _about, failed.About);
+        }
+        Ui.Focus.Focus(Input);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Drops a message still queued, never sent; one the node has or has had stays.</summary>
+    internal void Drop(Guid id)
+    {
+        RemoveFromOutbox(m => m.Id == id && m.State == OutState.Queued);
         Refresh();
         Changed?.Invoke();
     }
@@ -425,21 +610,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             return;
         }
-        Interlocked.Increment(ref _sending);
-        Changed?.Invoke();
-        string? refused;
-        try
+        if (Presses.PendingOf(RestartKey) is not null)
         {
-            refused = await restart();
+            return;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
-        {
-            refused = $"refused: {ex.Message}";
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _sending);
-        }
+        var refused = await Presses.PressAsync(RestartKey, "chat:restart-yes", _ => restart());
+        // The confirm stays up while the node has it, so its working label shows; it goes with the answer.
+        _confirmRestart = false;
         ImmutableInterlocked.Update(ref _notices, notices => refused is null
             ? []
             : notices.Add($"{refused} · a new watchtower") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
@@ -453,6 +630,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var line = message.ReplaceLineEndings(" ");
         return line.Length > 60 ? line[..59] + "…" : line;
     }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
     public void Render(RectF32 bounds)
     {
@@ -486,12 +669,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             if (_confirmRestart)
             {
-                buttons.Add(CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
-                {
-                    _confirmRestart = false;
-                    var restart = RestartAsync();
-                    Track?.Invoke(() => restart, "restart the watchtower");
-                }));
+                buttons.Add(Presses.Button(RestartKey, "chat:restart-yes",
+                    () => CardsView<TSurface>.HeaderPill("Stop it and start fresh", "chat:restart-yes", () =>
+                    {
+                        var restart = RestartAsync();
+                        Track?.Invoke(() => restart, "restart the watchtower");
+                    }),
+                    pressed => CardsView<TSurface>.DeadHeaderPill(pressed ? "Restarting…" : "Stop it and start fresh")));
                 buttons.Add(CardsView<TSurface>.HeaderPill("Keep it", "chat:restart-no", () =>
                 {
                     _confirmRestart = false;
@@ -515,13 +699,31 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
         var rows = _entries.Rows([.. held.Entries.Where(e => e.Kind != TranscriptKind.Thinking).Select(AsQuoted)], held.Working).Select(r => r.WStar()).ToList();
         // What was said and the watchtower has not taken yet: last among the messages, dim, and saying so.
-        rows.AddRange(held.Queued.Select(q => Waiting(q).WStar()));
-        // What the person sent that the feed does not carry yet; once it does (an entry or a queued line with the same words) only the feed's copy shows.
-        var shown = held.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.Text).Concat(held.Queued).ToList();
-        ImmutableInterlocked.Update(ref _own, o => o.RemoveAll(m => !m.Sending && shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))));
-        foreach (var mine in Volatile.Read(ref _own).Where(m => m.Sending || !shown.Any(t => t.Contains(m.Text, StringComparison.Ordinal))))
+        // One send is one row, matched by its id and never by its words, so two sends of the same words are two rows: a queued
+        // line whose id an entry carries is that entry's send already taken (a stale line), and shows no more.
+        var entryIds = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is not null).Select(e => e.SendId!).ToHashSet(StringComparer.Ordinal);
+        var queuedIds = held.Queued.Select((_, i) => i < held.QueuedIds.Length ? held.QueuedIds[i] : null).ToArray();
+        rows.AddRange(held.Queued.Where((_, i) => queuedIds[i] is not { } qid || !entryIds.Contains(qid)).Select(q => Waiting(q).WStar()));
+        // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
+        // shows. The words are compared only with the feed's lines that have no id (an older node's).
+        var carried = entryIds.Concat(queuedIds.OfType<string>()).ToHashSet(StringComparer.Ordinal);
+        var unnamed = held.Entries.Where(e => e.Kind == TranscriptKind.User && e.SendId is null).Select(e => e.Text)
+            .Concat(held.Queued.Where((_, i) => queuedIds[i] is null)).ToList();
+        bool InFeed(Out m) => carried.Contains(m.SendId) || unnamed.Any(t => t.Contains(m.Text, StringComparison.Ordinal));
+        var here = Node?.Where;
+        ImmutableInterlocked.Update(ref _outbox, o => o.RemoveAll(m => m.Where == here && m.State == OutState.Sent && InFeed(m)));
+        var place = 0;
+        foreach (var mine in Volatile.Read(ref _outbox).Where(m => m.Where == here && (m.State != OutState.Sent || !InFeed(m))))
         {
-            rows.Add(Sent(mine.Text, mine.Sending).WStar());
+            var id = mine.Id;
+            var row = mine.State switch
+            {
+                OutState.Sending => Sent(mine.Text, "you · sending…", null),
+                OutState.Queued => Sent(mine.Text, $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
+                OutState.Failed => FailedLine(mine.Text, mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
+                _ => Sent(mine.Text, "you", null),
+            };
+            rows.Add(row.WStar());
         }
         foreach (var notice in Notices)
         {
@@ -546,13 +748,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
             asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
         }
-        var sending = Volatile.Read(ref _sending) > 0;
+        var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.Where == here && m.State is OutState.Queued or OutState.Sending);
         if (held.Working || sending)
         {
-            rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Pad(0f, 4f).WStar());
+            rows.Add(Layout.Builder.Text(sending ? "● sending…" : "● working…", 13f, Running).Selectable().Pad(0f, 4f).WStar());
         }
         var list = rows.Count == 0
-            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Stretch()
+            ? Layout.Builder.Text(held.Problem ?? (CurrentLoad() is null ? "The chat is read from a live node." : "Nothing said yet. Tell the watchtower what you want: “let's launch a flight for issue 12”."), 13f, Dim).Selectable().Stretch()
             : Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WithScroll(_scroll).Stretch();
 
         var page = !canSend
@@ -564,6 +766,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
+        whole = WithSelection(whole);
         return About?.Over(whole) ?? whole;
     }
 
@@ -581,16 +784,37 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         return entry with { Text = $"> card {chat.CardId}: {chat.Title}{quote}\n{chat.Words}" };
     }
 
-    // A message that did not go.
-    private static Layout.Node Sent(string text, bool sending) =>
-        Layout.Builder.HStack(
-                Layout.Builder.Text(sending ? "you · sending…" : "you", 12f, Dim).WFixed(96f),
-                Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim))]).WStar())
+    // A typed message that did not go: its words, the node's reason, and Retry and Edit.
+    private static Layout.Node Sent(string text, string label, Layout.Node? aside)
+    {
+        var parts = new List<Layout.Node>
+        {
+            Layout.Builder.Text(label, 12f, Dim).Selectable().WFixed(96f),
+            Layout.Builder.VStack([.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable())]).WStar(),
+        };
+        if (aside is not null)
+        {
+            parts.Add(aside);
+        }
+        return Layout.Builder.HStack([.. parts]).WithGap(10f);
+    }
+
+    // A typed message the node did not take: its words, the node's reason under them, and the ways to go on.
+    private static Layout.Node FailedLine(string text, string reason, Layout.Node retry, Layout.Node edit)
+    {
+        var body = Layout.Builder.VStack(
+            [.. text.ReplaceLineEndings("\n").Split('\n').Take(6).Select(l => Layout.Builder.Text(l, 13f, Dim).Selectable()),
+                WrappedProse.Of(reason, 12f, Failed, 3)]).WStar();
+        return Layout.Builder.HStack(
+                Layout.Builder.Text("you · failed", 12f, Failed).Selectable().WFixed(96f),
+                body,
+                Layout.Builder.HStack(retry, edit).WithGap(6f))
             .WithGap(10f);
+    }
 
     private static Layout.Node Notice(string text) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text("pilot", 12f, Failed).WFixed(96f),
+                Layout.Builder.Text("pilot", 12f, Failed).Selectable().WFixed(96f),
                 WrappedProse.Of(text, 13f, Failed, 3))
             .WithGap(10f)
             .WStar();
@@ -601,11 +825,11 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var body = new List<Layout.Node>();
         if (saidAlready)
         {
-            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim));
+            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim).Selectable());
         }
         else
         {
-            body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim));
+            body.Add(Layout.Builder.Text("The watchtower asks", 11f, Dim).Selectable());
             // Whole, never cut: a long question scrolls inside the capped card instead.
             body.Add(WrappedProse.Of(question, 14f, Bright));
         }
@@ -624,7 +848,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         if (choices.Length > 0)
         {
             // The choices stay under the text, outside its scroll, so they are always in view and reachable.
-            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(question, choice)))])
+            parts.Add(Layout.Builder.WrapH([.. choices.Select((choice, i) => Presses.Button(ChoiceKey, $"chat:choice:{i + 1}",
+                    () => CardsView<TSurface>.Pill(choice, $"chat:choice:{i + 1}", () => Choose(question, choice, $"chat:choice:{i + 1}")),
+                    pressed => CardsView<TSurface>.Dead(pressed ? $"{choice} …" : choice)))])
                 .WithGap(ChoiceGap).WithLineGap(ChoiceLineGap).WStar());
         }
         var scrolling = Layout.Builder.VStack([.. parts]).WithGap(ChoiceGap).WStar().HStar();
@@ -639,17 +865,15 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     }
 
     // A choice answers the question: said to the watchtower as the person's message, through the same send as a typed one.
-    private void Choose(string question, string choice)
+    private void Choose(string question, string choice, string hit)
     {
-        var answer = Answer(question, choice);
-        if (Track is { } track)
+        // A choice already queued or with the node takes no second press.
+        if (CurrentSend() is not { } send || Presses.PendingOf(ChoiceKey) is not null
+            || Volatile.Read(ref _outbox).Any(m => m.Key == ChoiceKey && m.State != OutState.Sent))
         {
-            track(() => SendAsync(answer), $"chat choice {choice}");
+            return;
         }
-        else
-        {
-            _ = SendAsync(answer);
-        }
+        Enqueue(Answer(question, choice), send, ChoiceKey, hit, $"chat choice {choice}");
     }
 
     /// <summary>

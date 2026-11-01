@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
@@ -108,52 +109,61 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     public Action? Changed
     {
         get => _links.Changed;
-        set => _links.Changed = value;
+        set
+        {
+            _links.Changed = value;
+            Presses.Changed = value;
+        }
     }
 
+    /// <summary>What a press of the page's Sync is doing: working with the node (the button reads "Syncing…" with no hit), or refused in the node's words.</summary>
+    internal Presses Presses { get; } = new();
+
+    private const string SyncKey = "repos:sync";
+
+    /// <summary>The host's tracker; a sync now runs under <see cref="Presses"/>, so the page no longer needs it and keeps the property only so hosts can still set it.</summary>
+    public BackgroundTaskTracker? Tracker { get; set; }
+
     /// <summary>Whether a sync is running now.</summary>
-    public bool Syncing { get; private set; }
+    public bool Syncing => Presses.PendingOf(SyncKey) is not null;
 
     /// <summary>What the last sync did to each repo; empty before one has run.</summary>
     public IReadOnlyList<RepoSyncOutcome> SyncOutcomes { get; private set; } = [];
 
     /// <summary>Why the last sync could not run (the node refused it); null when it ran.</summary>
-    public string? SyncError { get; private set; }
+    public string? SyncError => Presses.RefusedOf(SyncKey);
 
     /// <summary>
-    /// Syncs the repos through <see cref="SyncRepos"/>: one at a time, the button shows it running, and the outcome of each repo
-    /// stays under the header until the next sync or until it is put away.
+    /// Starts a sync through <see cref="SyncRepos"/> as <see cref="SyncKey"/> of the <see cref="Tracker"/>: a press while one runs
+    /// does nothing, the button shows it running, and the outcome of each repo stays under the header until the next sync or until
+    /// it is put away. The repos' new state is not read here: the node sends it as a reposChanged event.
     /// </summary>
-    public async Task SyncAsync()
+    public Task SyncAsync()
     {
-        if (SyncRepos is not { } sync || Syncing)
+        if (SyncRepos is not { } sync)
         {
-            return;
+            return Task.CompletedTask;
         }
-        Syncing = true;
-        SyncError = null;
-        Changed?.Invoke();
-        try
+        return Presses.PressAsync(SyncKey, SyncKey, async ct =>
         {
-            SyncOutcomes = await sync(CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            SyncOutcomes = [];
-            SyncError = ex.Message;
-        }
-        finally
-        {
-            Syncing = false;
-        }
-        Changed?.Invoke();
+            try
+            {
+                SyncOutcomes = await sync(ct);
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                SyncOutcomes = [];
+                throw;
+            }
+        });
     }
 
     /// <summary>Puts away the outcome list.</summary>
     public void ClearSync()
     {
         SyncOutcomes = [];
-        SyncError = null;
+        Presses.NoteRefused(SyncKey, null);
     }
 
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
@@ -185,6 +195,14 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             _open.Add(line.Key);
         }
     }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override LinkMenu? SelectionLinks => _links;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
     public void Render(ReposScreen screen, RectF32 bounds)
     {
@@ -218,7 +236,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             ListCursor.Open(ListId, Math.Clamp(ListCursor.Index, 0, shown.Count - 1), shown.Count);
         }
         _count = shown.Count;
-        var page = Layout.Builder.VStack(Header(screen), Main(shown).HStar()).Bg(Ground).Stretch();
+        var page = Layout.Builder.VStack(Header(screen), Main(shown, screen).HStar()).Bg(Ground).Stretch();
+        page = WithSelection(page);
         return _links.Over(About?.Over(page) ?? page);
     }
 
@@ -275,7 +294,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Sync stays a word for want of a glyph (a refresh mark): SharpAstro/DIR.Lib#151.
             Buttons =
             [
-                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [CardsView<TSurface>.HeaderPill(Syncing ? "Syncing…" : "Sync", "repos:sync", () => _ = SyncAsync(), Syncing ? Lit : null)]),
+                .. (SyncRepos is null ? (IEnumerable<Layout.Node>)[] : [Presses.Button(SyncKey, SyncKey, () => CardsView<TSurface>.HeaderPill("Sync", SyncKey, () => _ = SyncAsync()), _ => CardsView<TSurface>.DeadHeaderPill("Syncing…", Lit))]),
                 CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
             ],
             Lines = lines,
@@ -289,12 +308,17 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return $"sync: {string.Join(", ", counts)}";
     }
 
-    private Layout.Node Main(IReadOnlyList<RepoLine> lines)
+    /// <summary>Why the page has no repo to show: the node has not read them yet (and since when), or it read them and found none.</summary>
+    internal string EmptyText(ReposScreen screen) =>
+        screen.Unread
+            ? $"Not read yet: the node has been reading its repos since {(screen.Since ?? screen.AsOf).ToLocalTime():HH:mm}"
+            : ShowAll ? "No repos under the node's roots" : "No tracked repos yet: a repo with a flight, a worktree or a flight's PR shows here; All repos lists the rest";
+
+    private Layout.Node Main(IReadOnlyList<RepoLine> lines, ReposScreen screen)
     {
         if (lines.Count == 0)
         {
-            return Layout.Builder.Text(ShowAll ? "No repos under the node's roots" : "No tracked repos yet: a repo with a flight, a worktree or a flight's PR shows here; All repos lists the rest",
-                16f, Dim, TextAlign.Center).Stretch();
+            return Layout.Builder.Text(EmptyText(screen), 16f, Dim, TextAlign.Center).Stretch();
         }
         var columns = Table.Fit(Columns());
         var rows = new List<Layout.Node>(lines.Count);
@@ -365,12 +389,13 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private Layout.Node Row(RepoLine line, int index, IReadOnlyList<ListColumn> columns)
     {
         var tracked = line.Status.Tracked;
+        var shownName = line.Status.Unread ? $"{line.Name} (not read)" : line.Name;
         var toggle = line.Worktrees.Count == 0
-            ? Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).Whole(line.Name)
+            ? Layout.Builder.Text(shownName, 15f, tracked ? Bright : Dim).Whole(line.Name)
             : Layout.Builder.HStack(
                     CardsView<TSurface>.IconPill(IsOpen(line) ? Layout.IconKind.CaretDown : Layout.IconKind.CaretRight, IsOpen(line) ? "Hide worktrees" : "Show worktrees",
                         $"repo:{line.Key}:worktrees", () => Toggle(line), bare: true, color: Link, hover: RowHoverBg),
-                    Layout.Builder.Text(line.Name, 15f, tracked ? Bright : Dim).WStar().Whole(line.Name))
+                    Layout.Builder.Text(shownName, 15f, tracked ? Bright : Dim).WStar().Whole(line.Name))
                 .WithGap(6f);
         var pulls = line.Pulls.Take(2).Select(p => PullText(line, p)).ToList();
         if (line.Pulls.Count > 0 && line.Status.GitHub is { } github && OnPullRequests is { } show)
@@ -470,30 +495,30 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var session = worktree.Session is { } line
             ? Layout.Builder.VStack(
                 Layout.Builder.HStack(
-                    Layout.Builder.Text(worktree.Activity, 12f, activityColor).WAuto(),
+                    Layout.Builder.Text(worktree.Activity, 12f, activityColor).WAuto().Selectable(),
                     Layout.Builder.Text(line.Name, 12f, Link).WStar().BgHover(RowHoverBg)
                         .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:session:{line.Key}"), _ => OnSession?.Invoke(line))).WithGap(8f).RowH(20f),
-                Layout.Builder.Text(worktree.LastMessage, 11f, Dim).RowH(18f))
-            : Layout.Builder.VStack(Layout.Builder.Text(worktree.Activity, 12f, activityColor).RowH(20f), Layout.Builder.Spacer().RowH(18f));
+                Layout.Builder.Text(worktree.LastMessage, 11f, Dim).Selectable().RowH(18f))
+            : Layout.Builder.VStack(Layout.Builder.Text(worktree.Activity, 12f, activityColor).Selectable().RowH(20f), Layout.Builder.Spacer().RowH(18f));
         var flight = worktree.FlightCode is { } code
             ? Layout.Builder.Text($"✈ {code}", 12f, Link).BgHover(RowHoverBg)
                 .Follows(new HitResult.ButtonHit($"repo:{repo.Key}:flight:{code}"), _ => OnFlight?.Invoke(worktree))
-            : Layout.Builder.Text("no flight", 12f, Dim);
+            : Layout.Builder.Text("no flight", 12f, Dim).Selectable();
         var pull = worktree.Pull is { } pr
             ? PullRequestLink.Of(_links, $"repo:{repo.Key}:pr:{pr.Pr.Number}", $"PR #{pr.Pr.Number}", $"{repo.Status.GitHub}#{pr.Pr.Number}", pr.Pr.Url, OnOpen,
                 RowRoute(repo.Status.GitHub, pr), "the Pull requests page", Link, RowHoverBg, mayBeCut: false, fill: false)
-            : Layout.Builder.Text("no PR", 12f, Dim);
+            : Layout.Builder.Text("no PR", 12f, Dim).Selectable();
         var cells = new List<Layout.Node>
         {
             Layout.Builder.HStack(
                 Layout.Builder.Spacer().WFixed(IndentWidth),
                 Layout.Builder.VStack(
-                        Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).RowH(22f),
-                        Layout.Builder.Text(worktree.Name, 11f, Dim).RowH(18f))
+                        Layout.Builder.Text($"↳ {worktree.Branch}", 13f, Body).Selectable().RowH(22f),
+                        Layout.Builder.Text(worktree.Name, 11f, Dim).Selectable().RowH(18f))
                     .WStar()),
-            ListTable.Top(Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body)),
+            ListTable.Top(Layout.Builder.Text(worktree.DiffStat, 13f, worktree.Status.Dirty ? Waiting : Body).Selectable()),
             session,
-            ListTable.Top(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim)),
+            ListTable.Top(Layout.Builder.Text(worktree.Action, 12f, worktree.CardWaiting ? Waiting : Dim).Selectable()),
             Layout.Builder.VStack(flight.RowH(20f), pull.RowH(18f)),
         };
         if (_marked)

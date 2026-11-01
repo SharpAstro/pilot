@@ -56,6 +56,12 @@ public sealed record PrReviewRow
     /// <summary>The card that carries the verdict; the worktree goes when it closes.</summary>
     public string? Card { get; init; }
 
+    /// <summary>
+    /// The kinds of card (design question, fix capped, fix offer, fix failed) this review has raised, open or closed since: a
+    /// review raises each once, so a dismissal is never undone from the same review and head (pilot #527).
+    /// </summary>
+    public string[] Raised { get; init => field = value ?? []; } = [];
+
     /// <summary>The review as GitHub will take it, written out when the verdict came in and again just before it is posted.</summary>
     public string? Draft { get; init; }
 
@@ -74,7 +80,10 @@ public sealed record PrReviewRow
     /// <summary>When the node put the PR in its base's merge queue after an approve or comment verdict (#279); a review is decided once.</summary>
     public DateTimeOffset? QueuedAt { get; init; }
 
-    /// <summary>Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue.</summary>
+    /// <summary>
+    /// Why the node did not queue it, and never will for this review: a changes-free PR that moved, failed, closed, or has no queue,
+    /// or whose design answer's fixer ended without a push. An open design question holds the queue with no note (it is looked at again).
+    /// </summary>
     public string? QueueNote { get; init; }
 
     /// <summary>The session fixing what a changes verdict found (#290), <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c>; null while none was started.</summary>
@@ -88,6 +97,12 @@ public sealed record PrReviewRow
 
     /// <summary>Which round of fixing the fixer is on, 1 for the first; null while there is no fixer.</summary>
     public int? FixRound { get; init; }
+
+    /// <summary>
+    /// The answer to the review's design questions (findings starting <c>design:</c>) the fixer was started on: the words given on
+    /// <c>review fix</c> or the author's or controller's comment after the review. Null when there was none; optional on the wire.
+    /// </summary>
+    public string? DesignAnswer { get; init; }
 
     public required DateTimeOffset StartedAt { get; init; }
 

@@ -255,17 +255,20 @@ public sealed class IntercomTests : IDisposable
     }
 
     [Fact]
-    public async Task AConnectThatTimesOutFallsBackToTheCliRelay()
+    public async Task AnEndpointThatIsGoneIsRefusedAtOnceAndFallsBackToTheCliRelay()
     {
-        // Nothing listens at the path: a pipe is waited for until the timeout; a socket file that is not there refuses at once.
+        // Nothing listens at the path: a pipe that is not listed and a socket file that is not there both refuse at once, so the
+        // fallback does not first wait out the connect's timeout.
         var gone = OperatingSystem.IsWindows() ? @"\\.\pipe\pilot-test-" + Guid.NewGuid().ToString("N") : Path.Combine(_profile.Folder, "nobody.sock");
         WriteSession(gone);
         var delivery = new RecordingCliDelivery(_profile.Profile);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
 
         var route = await delivery.RelayAsync(Request(), Ct);
 
+        clock.Elapsed.ShouldBeLessThan(Intercom.Timeout);
         route.ShouldStartWith("cli-relay (direct: ");
-        (route.Contains("timed out", StringComparison.Ordinal) || route.Contains("refused", StringComparison.Ordinal)).ShouldBeTrue(route);
+        route.ShouldContain("refused");
         delivery.CliRelays.Count.ShouldBe(1);
     }
 

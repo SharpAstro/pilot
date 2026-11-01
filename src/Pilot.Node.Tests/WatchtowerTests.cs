@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -21,12 +23,37 @@ public sealed class WatchtowerTests : IDisposable
     private readonly string _data = Path.Combine(Path.GetTempPath(), "pilot-watchtower-" + Guid.NewGuid().ToString("N"));
     private readonly NodeOptions _options;
     private readonly Watchtower _tower;
+    // Claude Code's state.json of each job, by job id.
+    private readonly Dictionary<string, Pilot.Node.Sessions.ClaudeJobRecord> _records = [];
+
+    /// <summary>A look, a failed record for the job it started, and the retry time: one failed start of the fake job <paramref name="job"/>.</summary>
+    private async Task FailedStart(string job, string detail = "ENAMETOOLONG")
+    {
+        await _tower.LookAsync(Ct);
+        _records[job] = new Pilot.Node.Sessions.ClaudeJobRecord("failed", detail);
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(10));
+    }
+
+    /// <summary>Two starts that fail with the same reason: parked, with its one card.</summary>
+    private async Task Park()
+    {
+        await FailedStart("job00001");
+        await FailedStart("job00002");
+        _workers.Started.Count.ShouldBe(2);
+        await _tower.LookAsync(Ct);
+    }
 
     public WatchtowerTests()
     {
         _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
-        _tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
+        _tower = new Watchtower(_state, _workers, Run, _options, _time)
+        {
+            Pilot = "pilot",
+            JobRecord = job => _records.TryGetValue(job, out var record) ? record : null,
+            Version = "2.0.1",
+        };
         // Something to watch: a flight in the air with a leg flying. Tests of a quiet node land it (Quiet).
         _state.PutFlight(new FlightRow
         {
@@ -56,8 +83,18 @@ public sealed class WatchtowerTests : IDisposable
     // A say the intercom does not deliver, as when a session cannot be resumed.
     private bool _refuseSays;
 
+    // The end-session commands it ran (the node's end path), kept apart from what it said.
+    private readonly List<CommandRequest> _ends = [];
+
+    private List<string> Ended() => [.. _ends.Select(c => c.Target[Verbs.SessionTargetPrefix.Length..])];
+
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
     {
+        if (command.Verb == Verbs.EndSession)
+        {
+            _ends.Add(command);
+            return Task.FromResult(_state.Complete(command, null));
+        }
         _said.Add(command);
         return Task.FromResult(_refuseSays && command.Verb == Verbs.Say
             ? new CommandResult { Seq = 0, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = false, Error = "the intercom did not deliver it" }
@@ -85,6 +122,28 @@ public sealed class WatchtowerTests : IDisposable
         });
 
     private CardRow[] Open() => _state.Cards(openOnly: true);
+
+    [Fact]
+    public async Task AWatchtowerStillWaitingForTheTrackersFirstPollStopsAtOnceWithTheNode()
+    {
+        // A node stopped right after its start can stop before the tracker's first poll ever runs (on .NET 10 a hosted service's
+        // ExecuteAsync starts on the thread pool, and a stop that comes first skips it), so the first poll never completes. The
+        // watchtower waited for it without the stopping token and held the node's stop to the host's 30 s timeout (#559's
+        // LanTests.ALocalOnlyNodeAskedForTheLanBindsNoTcpPort on ubuntu).
+        var never = new TaskCompletionSource();
+        var tower = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot", Ready = () => never.Task };
+        await tower.StartAsync(Ct);
+
+        var took = System.Diagnostics.Stopwatch.StartNew();
+        using (var cap = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+        {
+            await tower.StopAsync(cap.Token);
+        }
+
+        tower.ExecuteTask.ShouldNotBeNull().IsCompleted.ShouldBeTrue();
+        took.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+        _workers.Started.ShouldBeEmpty();
+    }
 
     [Fact]
     public async Task UnreadHeadBriefNamesTheShapeAndTheReviewCommand()
@@ -119,18 +178,26 @@ public sealed class WatchtowerTests : IDisposable
         _said.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A say resumes the watchtower as a copy that Claude Code titles after its work: the row the node started is still its
+    /// current watchtower, known by id, so it is neither stopped nor replaced (SE1, 2026-10-31: stopped after every answer).
+    /// </summary>
     [Fact]
-    public async Task ARenamedWatchtowerIsStillTheWatchtowerAndNoSecondOneStarts()
+    public async Task ARenamedWatchtowerIsStillTheCurrentOneSoItIsNeitherStoppedNorReplaced()
     {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Idle);
         _state.PutSession(_state.Sessions().Single() with { Name = "du1-pil269-stale-worktree-duplicate" });
-        Directory.CreateDirectory(_data);
-        File.WriteAllText(_tower.BriefFile, CurrentBrief());
 
         await _tower.LookAsync(Ct);
+        await _tower.LookAsync(Ct);
 
-        _workers.Started.ShouldBeEmpty();
+        _workers.Stopped.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(1);
         _tower.Current()!.Id.ShouldBe("job00001");
+        _tower.TellTarget().Target.ShouldBe(Verbs.SessionTarget("job00001"));
     }
 
     [Fact]
@@ -144,11 +211,11 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00007", SessionState.Idle);
         _time.Advance(TimeSpan.FromMinutes(14));
         await _tower.LookAsync(Ct);
-        _workers.Stopped.ShouldBeEmpty();
+        Ended().ShouldBeEmpty();
         _time.Advance(TimeSpan.FromMinutes(2));
         await _tower.LookAsync(Ct);
-        _workers.Stopped.ShouldBe(["job00007"]);
-        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: nothing to watch");
+        Ended().ShouldBe(["job00007"]);
+        _state.Cards().Single(c => c.Bin == CardBin.Handled).Title.ShouldStartWith("Stopped the watchtower: no flight in the air and no UI connected");
         _said.ShouldBeEmpty();
 
         // The next thing to watch starts a fresh one, and says why.
@@ -170,7 +237,7 @@ public sealed class WatchtowerTests : IDisposable
 
         // The compactor's to compact, not the watchtower's to replace or keep warm.
         _workers.Started.Count.ShouldBe(1);
-        _workers.Stopped.ShouldBeEmpty();
+        Ended().ShouldBeEmpty();
         _said.ShouldBeEmpty();
     }
 
@@ -195,20 +262,17 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task OneThatEndedWithNothingToSayIsLeftNotReplacedEveryTurn()
+    public async Task OneThatEndedWithNothingToSayIsStartedAgainWhileAFlightIsInTheAir()
     {
-        await _tower.LookAsync(Ct);
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
 
-        // Its turn over, the session ended (as SE1's did after every turn): a flight in the air alone wakes nothing.
+        // Its turn over, the session ended: something keeps it (a flight in the air), so a fresh one starts with no card to wait for (PIL584).
         _time.Advance(TimeSpan.FromMinutes(3));
         Row("job00001", SessionState.Ended);
         await _tower.LookAsync(Ct);
-        _time.Advance(TimeSpan.FromHours(2));
-        await _tower.LookAsync(Ct);
 
-        _workers.Started.Count.ShouldBe(1);
+        _workers.Started.Count.ShouldBe(2);
         _said.ShouldBeEmpty();
     }
 
@@ -298,7 +362,7 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
-    public async Task ARowItStartedThatTurnsUpRenamedIsNotedAsSoAndTheFreshStartSaysSo()
+    public async Task ARowItStartedThatTurnsUpRenamedIsTakenAsItIsWithNoEndNotedAndNoFreshStart()
     {
         await _tower.LookAsync(Ct);
         _workers.Started.Count.ShouldBe(1);
@@ -307,9 +371,9 @@ public sealed class WatchtowerTests : IDisposable
         Row("job00001", SessionState.Idle, name: "my-own-name");
         await _tower.LookAsync(Ct);
 
-        _workers.Started.Count.ShouldBe(2);
-        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBe("renamed to my-own-name");
-        _state.Cards().First(c => c.Bin == CardBin.Handled).Title.ShouldContain("the one it started was renamed to my-own-name");
+        _workers.Started.Count.ShouldBe(1);
+        _state.Sessions().Single(s => s.Id == "job00001").EndedBecause.ShouldBeNull();
+        _state.Cards().Where(c => c.Kind == "watchtower-duplicate").ShouldBeEmpty();
     }
 
     [Fact]
@@ -333,13 +397,111 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoStartsFailingForTheSameReasonRingOnceAndAreNotTriedAgainHoweverManyLooksPass()
+    {
+        await Park();
+
+        var card = Open().Single(c => c.Kind == Watchtower.Down);
+        (card.Bin, card.Title).ShouldBe((CardBin.Ring, "The watchtower cannot start"));
+        card.Detail.ShouldNotBeNull().ShouldContain("ENAMETOOLONG");
+        card.Detail.ShouldContain("new node release");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.RestartWatchtower);
+
+        for (var i = 0; i < 20; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(30));
+            await _tower.LookAsync(Ct);
+        }
+        _workers.Started.Count.ShouldBe(2);
+        Open().Count(c => c.Kind == Watchtower.Down).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TwoLauncherRefusalsWithTheSameReasonParkItToo()
+    {
+        _workers.Fail = new FlightException("claude refused it");
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _tower.LookAsync(Ct);
+        _workers.Fail = null;
+        for (var i = 0; i < 10; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(30));
+            await _tower.LookAsync(Ct);
+        }
+
+        _workers.Started.ShouldBeEmpty();
+        var card = Open().ShouldHaveSingleItem();
+        (card.Title, card.Detail.ShouldNotBeNull().Contains("claude refused it")).ShouldBe(("The watchtower cannot start", true));
+    }
+
+    [Fact]
+    public async Task ARestartAskedStartsAParkedWatchtowerAgain()
+    {
+        await Park();
+
+        (await _tower.RestartAsync("tried again from its card", Ct)).ShouldBeNull();
+
+        _workers.Started.Count.ShouldBe(3);
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ANewReleaseStartsAParkedWatchtowerAgain()
+    {
+        await Park();
+
+        _tower.Version = "2.0.2";
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ACardBeingClosedStartsAParkedWatchtowerAgain()
+    {
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA1/parser", "TIA1/parser failed");
+        await Park();
+        _workers.Started.Count.ShouldBe(2);
+
+        _state.CloseCardsAbout("flight/TIA1/parser", "handled", "leg-failed");
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ADifferentReasonCountsAfreshAndASuccessfulStartClearsTheCount()
+    {
+        await FailedStart("job00001", "ENAMETOOLONG");
+        await FailedStart("job00002", "something else");
+        _workers.Started.Count.ShouldBe(2);
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(3);
+        Open().ShouldNotContain(c => c.Title == "The watchtower cannot start");
+
+        // job00003 comes up: the count is gone, so one more failure of the first reason is a first.
+        Row("job00003", SessionState.Idle);
+        await _tower.LookAsync(Ct);
+        Row("job00003", SessionState.Ended);
+        _state.PutSession(_state.Sessions().Single() with { State = SessionState.Failed });
+        _tower.Version = "2.0.1";
+        await FailedStart("job00004", "ENAMETOOLONG");
+        _workers.Started.Count.ShouldBe(4);
+        await _tower.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Title == "The watchtower cannot start");
+    }
+
+    [Fact]
     public async Task OneTheUsageLimitStoppedIsResumedAfterTheReset()
     {
         await _tower.LookAsync(Ct);
         Row("job00001", SessionState.Idle, apiError: "rate_limit", resetsAt: Start.AddHours(1));
 
         await _tower.LookAsync(Ct);
-        Open().ShouldHaveSingleItem().Kind.ShouldBe(Watchtower.Stopped);
+        // A stop with a reset time needs no one: a Handled line, not an open card.
+        Open().ShouldBeEmpty();
+        _state.Cards(openOnly: false).Single(c => c.Kind == Watchtower.Stopped).Bin.ShouldBe(CardBin.Handled);
         _said.ShouldBeEmpty();
 
         _time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromMinutes(2));
@@ -366,7 +528,7 @@ public sealed class WatchtowerTests : IDisposable
         // Told as before: a card that opens later is said to it, on the brief it has.
         _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
         await _tower.LookAsync(Ct);
-        (_workers.Started.Count, _workers.Stopped.Count, _said.Count).ShouldBe((0, 0, 1));
+        (_workers.Started.Count, Ended().Count, _said.Count).ShouldBe((0, 0, 1));
     }
 
     [Fact]
@@ -379,7 +541,7 @@ public sealed class WatchtowerTests : IDisposable
 
         await _tower.LookAsync(Ct);
 
-        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        Ended().ShouldBe(["a1b2c3d4"]);
         var start = _workers.Started.ShouldHaveSingleItem();
         start.Brief.ShouldContain("TIA1/parser failed");
         _said.ShouldBeEmpty();
@@ -400,7 +562,7 @@ public sealed class WatchtowerTests : IDisposable
 
         await _tower.LookAsync(Ct);
 
-        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        Ended().ShouldBe(["a1b2c3d4"]);
         _workers.Started.ShouldHaveSingleItem();
     }
 
@@ -413,7 +575,7 @@ public sealed class WatchtowerTests : IDisposable
         await _tower.LookAsync(Ct);
         await _tower.LookAsync(Ct);
 
-        _workers.Stopped.ShouldBe(["a1b2c3d4"]);
+        Ended().ShouldBe(["a1b2c3d4"]);
         _said.ShouldBeEmpty();
 
         _workers.Fail = null;
@@ -433,12 +595,12 @@ public sealed class WatchtowerTests : IDisposable
         var restarted = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot" };
         _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
         await restarted.LookAsync(Ct);
-        (_workers.Started.Count, _workers.Stopped.Count, _said.Count).ShouldBe((1, 0, 0));
+        (_workers.Started.Count, Ended().Count, _said.Count).ShouldBe((1, 0, 0));
 
         // The node updated to a changed brief (here the command it names to the watchtower): the one left running is replaced.
         var updated = new Watchtower(_state, _workers, Run, _options, _time) { Pilot = "pilot2" };
         await updated.LookAsync(Ct);
-        _workers.Stopped.ShouldBe(["job00001"]);
+        Ended().ShouldBe(["job00001"]);
         _workers.Started.Count.ShouldBe(2);
     }
 
@@ -518,6 +680,265 @@ public sealed class WatchtowerTests : IDisposable
 
         var reloaded = new Watchtower(_state, _workers, Run, _options, _time).Generations().Single();
         (reloaded.EndedBecause, reloaded.EndedAt is not null, reloaded.LastReplyAt is not null).ShouldBe(("SessionEnd: logout", true, true));
+    }
+
+    [Fact]
+    public async Task AFailedSayLeavesItsCardsUntoldAndIsNotRetriedEveryLookOnlyOneDownRingIsRaised()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        _refuseSays = true;
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/lexer", "TIA9/lexer failed");
+        await _tower.LookAsync(Ct);
+        for (var i = 0; i < 5; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(10));
+            await _tower.LookAsync(Ct);
+        }
+
+        _said.Count(s => s.Verb == Verbs.Say).ShouldBe(1);
+        var down = Open().Where(c => c.Kind == Watchtower.Down).ShouldHaveSingleItem();
+        down.Detail!.ShouldContain("2 cards");
+
+        // Past the retry time it is tried once more.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _said.Count(s => s.Verb == Verbs.Say).ShouldBe(2);
+        Open().Count(c => c.Kind == Watchtower.Down).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CardsOpeningWhileTheWatchtowerIsDownStayHeldAndTheNextOneGetsThemAndTheDownRingCloses()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Idle);
+        _refuseSays = true;
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        await _tower.LookAsync(Ct);
+        Open().ShouldContain(c => c.Kind == Watchtower.Down);
+
+        // It is gone: the next one starts fresh with the held card in its brief, and the down ring closes.
+        Row("job00001", SessionState.Failed);
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(2);
+        _workers.Started[1].Brief.ShouldContain("TIA9/parser failed");
+        Open().ShouldNotContain(c => c.Kind == Watchtower.Down);
+        Open().Count(c => c.Bin == CardBin.Ring && c.Kind != Watchtower.RaisedKind).ShouldBe(1);
+    }
+
+    /// <summary>The node's real end path under a watchtower: tracker, ledger and messenger over a fake delivery, the job cancel observed.</summary>
+    private sealed class RealEnd : IDisposable
+    {
+        private readonly TempProfile _profile = new();
+        private readonly string _folder = Path.Combine(Path.GetTempPath(), "pilot-wt-end-" + Guid.NewGuid().ToString("N"));
+        public readonly FakeClaudeAgents Agents = new();
+        public readonly SessionLedger Ledger;
+        public readonly SessionTracker Tracker;
+        public readonly FakeSessionDelivery Delivery;
+        public readonly SessionMessenger Messenger;
+        public readonly List<(string[] Owners, string Who)> Cancelled = [];
+
+        public RealEnd(NodeState state, TimeProvider time)
+        {
+            Ledger = new SessionLedger(SessionLedger.FileIn(_folder), time);
+            Tracker = new SessionTracker(state, Agents, _profile.Options(), () => false, time, NullLogger<SessionTracker>.Instance) { Launched = Ledger };
+            Delivery = new FakeSessionDelivery(Agents);
+            Messenger = new SessionMessenger(state, Tracker, Delivery, new StringWriter(), ledger: Ledger)
+            {
+                CancelJobs = (owners, who) =>
+                {
+                    Cancelled.Add(([.. owners], who));
+                    return 1;
+                },
+            };
+        }
+
+        public void Dispose()
+        {
+            _profile.Dispose();
+            if (Directory.Exists(_folder))
+            {
+                Directory.Delete(_folder, recursive: true);
+            }
+        }
+    }
+
+    private static async Task RunningOldAsync(RealEnd real)
+    {
+        real.Ledger.Started("a1b2c3d4", "du1-watchtower", SessionRoles.Resolve("du1-watchtower", background: true), SessionStartReasons.WatchtowerStart, "claude-sonnet-5-5", null);
+        real.Agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 1, status: "idle"));
+        await real.Tracker.PollAsync(Ct);
+    }
+
+    [Fact]
+    public async Task ReplacingTheWatchtowerForABriefChangeEndsTheOldOneThroughTheEndPathWithItsJobsCancelled()
+    {
+        using var real = new RealEnd(_state, _time);
+        await RunningOldAsync(real);
+        var tower = new Watchtower(_state, _workers, (c, ct) => c.Verb == Verbs.EndSession ? real.Messenger.EndAsync(c, ct) : Run(c, ct), _options, _time) { Pilot = "pilot" };
+
+        // No record of the brief it was started with: a fresh one replaces it.
+        await tower.LookAsync(Ct);
+
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
+        real.Delivery.Calls.ShouldBe([$"stop {AgentRows.SessionA}"]);
+        var entry = real.Ledger.Find(["a1b2c3d4"]).ShouldNotBeNull();
+        entry.EndReason.ShouldStartWith(SessionEndReasons.Watchtower);
+        entry.EndReason.ShouldContain("replaced by a fresh watchtower");
+        var (owners, who) = real.Cancelled.ShouldHaveSingleItem();
+        owners.ShouldContain("a1b2c3d4");
+        who.ShouldBe(LegWatch.Who);
+    }
+
+    [Fact]
+    public async Task AReplacedWatchtowerWhoseStopDidNotTakeIsEndedAgainOnALaterLookAndRaisesTheNotConfirmedCard()
+    {
+        using var real = new RealEnd(_state, _time);
+        await RunningOldAsync(real);
+        real.Delivery.StopFailure = new SessionDeliveryException("a1b2c3d4 was told to stop but its process 1 still runs after 20 s");
+        var tower = new Watchtower(_state, _workers, (c, ct) => c.Verb == Verbs.EndSession ? real.Messenger.EndAsync(c, ct) : Run(c, ct), _options, _time)
+        {
+            Pilot = "pilot",
+            EndRetryAfter = TimeSpan.FromSeconds(10),
+        };
+
+        await tower.LookAsync(Ct);
+
+        // Not taken as stopped: still live, with the card of the stop that did not take.
+        _workers.Started.ShouldHaveSingleItem();
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldNotBe(SessionState.Ended);
+        _state.Cards(openOnly: true).Single(c => c.Kind == SessionMessenger.StopUnconfirmedKind).Detail.ShouldNotBeNull().ShouldContain("process 1");
+
+        // A later look ends it again; it still runs, so the one card stays.
+        _time.Advance(TimeSpan.FromSeconds(15));
+        await tower.LookAsync(Ct);
+        real.Delivery.Calls.Count(c => c.StartsWith("stop ", StringComparison.Ordinal)).ShouldBe(2);
+        _state.Cards(openOnly: true).Count(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldBe(1);
+
+        // Once the stop takes, it is ended and the card closes.
+        real.Delivery.StopFailure = null;
+        _time.Advance(TimeSpan.FromSeconds(15));
+        await tower.LookAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
+        _state.Cards(openOnly: true).Where(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldBeEmpty();
+    }
+
+    // The fresh watchtower as the listing shows it once started: the same name as the old, started a minute later, its row id the job's.
+    private const string FreshSession = "job00001-0000-4000-8000-000000000009";
+
+    private static string OldRow(string state, string status) =>
+        AgentRows.Background(AgentRows.SessionA, "du1-watchtower", state, pid: 1, status: status);
+
+    private static string FreshRow() =>
+        AgentRows.Background(FreshSession, "du1-watchtower", "running", pid: 2, status: "idle", startedAt: 1792000060000);
+
+    /// <summary>
+    /// The old watchtower mid-turn when its brief changes, under the real messenger for both says and ends: the fresh one shows up
+    /// in the listing beside it, so the node's say reaches a session its role has replaced, by the guard that refuses one idle.
+    /// </summary>
+    private async Task<Watchtower> ReplacingAWorkingOldAsync(RealEnd real)
+    {
+        real.Ledger.Started("a1b2c3d4", "du1-watchtower", SessionRoles.Resolve("du1-watchtower", background: true), SessionStartReasons.WatchtowerStart, "claude-sonnet-5-5", null);
+        real.Agents.Json = AgentRows.List(OldRow("running", "busy"));
+        await real.Tracker.PollAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Working);
+        _workers.OnStart = _ => real.Agents.Json = AgentRows.List(OldRow("running", "busy"), FreshRow());
+        var tower = new Watchtower(_state, _workers, (c, ct) => c.Verb switch
+        {
+            Verbs.EndSession => real.Messenger.EndAsync(c, ct),
+            Verbs.Say when c.Target == Verbs.SessionTarget("a1b2c3d4") => real.Messenger.SayAsync(c, ct),
+            _ => Run(c, ct),
+        }, _options, _time) { Pilot = "pilot" };
+
+        // No record of the brief it was started with: a fresh one replaces it, and the old one, mid-turn, is told and kept.
+        await tower.LookAsync(Ct);
+
+        _workers.Started.ShouldHaveSingleItem();
+        var relay = real.Delivery.Relays.ShouldHaveSingleItem();
+        relay.SessionId.ShouldBe(AgentRows.SessionA);
+        relay.DirectOnly.ShouldBeTrue();
+        relay.Text.ShouldStartWith(NodeVoice.Prefix);
+        relay.Text.ShouldContain("You are replaced by session job00001");
+        real.Delivery.Calls.ShouldNotContain(c => c.StartsWith("stop ", StringComparison.Ordinal));
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Working);
+        return tower;
+    }
+
+    [Fact]
+    public async Task AReplacedWatchtowerMidTurnIsToldOnceKeptWhileItWorksAndEndedOnceIdle()
+    {
+        using var real = new RealEnd(_state, _time);
+        var tower = await ReplacingAWorkingOldAsync(real);
+
+        // Still mid-turn inside the grace: neither told again nor ended.
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await tower.LookAsync(Ct);
+        real.Delivery.Relays.Count.ShouldBe(1);
+        real.Delivery.Calls.ShouldNotContain(c => c.StartsWith("stop ", StringComparison.Ordinal));
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Working);
+
+        // Its turn over: the next look ends it through the end path, its jobs cancelled and the reason the watchtower's.
+        real.Agents.Json = AgentRows.List(OldRow("running", "idle"), FreshRow());
+        await real.Tracker.PollAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Idle);
+        _time.Advance(TimeSpan.FromSeconds(30));
+        await tower.LookAsync(Ct);
+
+        real.Delivery.Calls.Count(c => c == $"stop {AgentRows.SessionA}").ShouldBe(1);
+        real.Delivery.Calls.ShouldNotContain($"stop {FreshSession}");
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
+        real.Ledger.Find(["a1b2c3d4"]).ShouldNotBeNull().EndReason.ShouldBe($"{SessionEndReasons.Watchtower}: replaced by job00001");
+        real.Cancelled.ShouldHaveSingleItem().Owners.ShouldContain("a1b2c3d4");
+    }
+
+    [Fact]
+    public async Task AReplacedWatchtowerStillMidTurnAfterTheGraceIsEndedAllTheSame()
+    {
+        using var real = new RealEnd(_state, _time);
+        var tower = await ReplacingAWorkingOldAsync(real);
+
+        _time.Advance(tower.ReplacedGrace - TimeSpan.FromSeconds(1));
+        await tower.LookAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Working);
+
+        _time.Advance(TimeSpan.FromSeconds(2));
+        await tower.LookAsync(Ct);
+
+        real.Delivery.Calls.Count(c => c == $"stop {AgentRows.SessionA}").ShouldBe(1);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
+        real.Cancelled.ShouldHaveSingleItem().Owners.ShouldContain("a1b2c3d4");
+        real.Delivery.Relays.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ATellThatIsNotDeliveredIsTriedAgainAndTheGraceStillEnds()
+    {
+        using var real = new RealEnd(_state, _time);
+        real.Delivery.RelayFailure = new SessionDeliveryException("no live process has its session record");
+        real.Ledger.Started("a1b2c3d4", "du1-watchtower", SessionRoles.Resolve("du1-watchtower", background: true), SessionStartReasons.WatchtowerStart, "claude-sonnet-5-5", null);
+        real.Agents.Json = AgentRows.List(OldRow("running", "busy"));
+        await real.Tracker.PollAsync(Ct);
+        _workers.OnStart = _ => real.Agents.Json = AgentRows.List(OldRow("running", "busy"), FreshRow());
+        var tower = new Watchtower(_state, _workers, (c, ct) => c.Verb switch
+        {
+            Verbs.EndSession => real.Messenger.EndAsync(c, ct),
+            Verbs.Say when c.Target == Verbs.SessionTarget("a1b2c3d4") => real.Messenger.SayAsync(c, ct),
+            _ => Run(c, ct),
+        }, _options, _time) { Pilot = "pilot" };
+
+        await tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await tower.LookAsync(Ct);
+
+        // Not taken as told: tried again on the next look.
+        real.Delivery.Relays.Count.ShouldBe(2);
+
+        _time.Advance(tower.ReplacedGrace);
+        await tower.LookAsync(Ct);
+        _state.Sessions().Single(r => r.Id == "a1b2c3d4").State.ShouldBe(SessionState.Ended);
     }
 }
 

@@ -17,6 +17,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
 
     public List<string> Stopped { get; } = [];
 
+    /// <summary>Run with the job id once a start is made, as the session showing up in the listing.</summary>
+    public Action<string>? OnStart { get; set; }
+
     /// <summary>What the next start throws, as the claude CLI refusing it; null to start it.</summary>
     public Exception? Fail { get; set; }
 
@@ -35,7 +38,9 @@ internal sealed class FakeWorkers : IWorkerLauncher
             await hold;
         }
         Started.Add(start);
-        return $"job{++_next:D5}";
+        var job = $"job{++_next:D5}";
+        OnStart?.Invoke(job);
+        return job;
     }
 
     public Task StopAsync(string job, CancellationToken cancellationToken)
@@ -43,25 +48,51 @@ internal sealed class FakeWorkers : IWorkerLauncher
         Stopped.Add(job);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// A command runner for a watchtower under test whose <c>end-session</c> (the node's end path) lands the session's row id in
+    /// <see cref="Stopped"/>, as the stop that path performs; every command completes ok.
+    /// </summary>
+    public Func<CommandRequest, CancellationToken, Task<CommandResult>> EndingRun(NodeState state) => (command, _) =>
+    {
+        if (command.Verb == Verbs.EndSession)
+        {
+            Stopped.Add(command.Target[Verbs.SessionTargetPrefix.Length..]);
+        }
+        return Task.FromResult(state.Complete(command, null));
+    };
+}
+
+/// <summary>The system clock moved on by <see cref="Advance"/>; its timers are the system's.</summary>
+internal sealed class ShiftedClock : TimeProvider
+{
+    private long _shiftTicks;
+
+    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + TimeSpan.FromTicks(Interlocked.Read(ref _shiftTicks));
+
+    public void Advance(TimeSpan span) => Interlocked.Add(ref _shiftTicks, span.Ticks);
 }
 
 internal sealed class FakeChecks : ICheckRunner
 {
     public CheckRun Next { get; set; } = new(0, "all green");
 
+    /// <summary>Answered one per run before <see cref="Next"/> is: a first run stopped by its budget, then what the rerun says.</summary>
+    public Queue<CheckRun> Script { get; } = new();
+
     public List<(string Command, string Cwd)> Runs { get; } = [];
 
     /// <summary>Awaited as each run begins: a check that takes as long as the test says. Null answers at once.</summary>
     public Func<Task>? OnRun { get; set; }
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         Runs.Add((command, cwd));
         if (OnRun is { } wait)
         {
             await wait();
         }
-        return Next;
+        return Script.Count > 0 ? Script.Dequeue() : Next;
     }
 }
 
@@ -92,12 +123,19 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many PR listings were asked for.</summary>
     public int OpenPrCalls;
 
-    public Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
+    /// <summary>Awaited by each PR listing as it begins: a gh that takes as long as the test says. Null answers at once.</summary>
+    public Func<Task>? OnOpenPrs { get; set; }
+
+    public async Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref OpenPrCalls);
+        if (OnOpenPrs is { } gate)
+        {
+            await gate();
+        }
         return OpenPrsFail.Contains(repoPath)
-            ? Task.FromException<PullRequestStatus[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs) ? prs : []);
+            ? throw new FlightException("gh could not list the PRs: offline")
+            : OpenPrs.TryGetValue(repoPath, out var prs) ? prs : [];
     }
 
     /// <summary>The files each open PR changes, by number; a PR with none listed changes none.</summary>
@@ -110,13 +148,6 @@ internal sealed class FakeGitHub : IGitHub
         PrFilesFail.Contains(number)
             ? Task.FromException<string[]>(new FlightException($"gh could not list the files of PR #{number}: offline"))
             : Task.FromResult(PrFiles.TryGetValue(number, out var files) ? files : []);
-
-    public Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken) =>
-        OpenPrsFail.Contains(repoPath)
-            ? Task.FromException<int[]>(new FlightException("gh could not list the PRs: offline"))
-            : Task.FromResult(OpenPrs.TryGetValue(repoPath, out var prs)
-                ? (int[])[.. prs.Where(p => Labels.TryGetValue(p.Number, out var set) && set.Contains(label)).Select(p => p.Number)]
-                : []);
 
     /// <summary>Every open PR GitHub holds, as the search reads them: a search answers those of the repos it names.</summary>
     public List<PullRequestRow> PullRequestsOnGitHub { get; } = [];
@@ -283,7 +314,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
         Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
-            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number)]
+            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
@@ -293,7 +324,17 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.FirstOrDefault(i => i.Number == number) : null);
+        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.Where(i => i.Number == number).Select(Labelled).FirstOrDefault() : null);
+
+    /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
+    private MilestoneIssue Labelled(MilestoneIssue issue)
+    {
+        if (HasPriorityField && IssuePriorities.TryGetValue(issue.Number, out var level))
+        {
+            issue = issue with { Priority = level };
+        }
+        return IssueLabels.TryGetValue(issue.Number, out var labels) ? issue with { Labels = [.. labels] } : issue;
+    }
 
     /// <summary>Run once, just before the next guarded write compares updated_at: a change landing on GitHub between the node's read and its save.</summary>
     public Action? BeforeNextWrite { get; set; }
@@ -321,7 +362,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     public Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number)] : []);
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
 
     public Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
     {
@@ -430,9 +471,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
     public bool Queues { get; set; }
 
+    /// <summary>When set, MergeAsync refuses any head other than the first it took, as a queue does a PR pushed since, whose checks have not run.</summary>
+    public bool MergeRefusesLaid { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefusesLaid && Pr is { } shown && head != shown.Head)
+        {
+            throw new FlightException("the merge queue takes no PR whose required checks have not passed");
+        }
         Merged.Add((number, head, method));
         return Queues;
     }
@@ -474,6 +522,11 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
     public List<string> ProtectionAsked { get; } = [];
+
+    /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
+    public string? MergeQueueMethod { get; set; }
+
+    public Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(MergeQueueMethod);
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -613,6 +666,17 @@ internal sealed class FakeGitHub : IGitHub
             throw new FlightException(why);
         }
         DraftCalls.Add((number, draft));
+        if (Pr is { } held && held.Number == number)
+        {
+            Pr = held with { Draft = draft };
+        }
+        foreach (var (key, pr) in Prs.ToList())
+        {
+            if (pr.Number == number)
+            {
+                Prs[key] = pr with { Draft = draft };
+            }
+        }
     }
 
     public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
@@ -757,6 +821,62 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>Every label asked to be made in a repo with no item, by repo path, in order.</summary>
+    public List<(string Repo, string Label)> LabelsEnsured { get; } = [];
+
+    /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
+    public string? EnsureFails { get; set; }
+
+    /// <summary>The labels the repo has, as setup lists them; a label made by <see cref="EnsureLabelAsync"/> joins it.</summary>
+    public HashSet<string> RepoLabels { get; } = [];
+
+    public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        LabelsEnsured.Add((repoPath, label));
+        if (EnsureFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        RepoLabels.Add(label);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>How many times the Priority field was made in the org.</summary>
+    public int FieldsCreated { get; private set; }
+
+    /// <summary>When set, making the Priority field fails with it, as a token that cannot create fields; by default an org the token cannot make fields in.</summary>
+    public string? FieldCreateFails { get; set; } = "the token cannot make issue fields";
+
+    public Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (HasPriorityField)
+        {
+            return Task.FromResult(false);
+        }
+        if (FieldCreateFails is { } why)
+        {
+            return Task.FromException<bool>(new FlightException(why));
+        }
+        HasPriorityField = true;
+        FieldsCreated++;
+        return Task.FromResult(true);
+    }
+
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.ToArray());
+
+    /// <summary>Every repo label deleted, in order.</summary>
+    public List<string> LabelsDeleted { get; } = [];
+
+    public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        LabelsDeleted.Add(label);
+        RepoLabels.Remove(label);
+        return Task.CompletedTask;
+    }
+
+    public Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken) =>
+        Task.FromResult(IssueLabels.Values.Count(l => l.Contains(label)));
+
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
         if (IssueLabelFails is { } why)
@@ -770,11 +890,51 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>When on, the repo has the Priority field; off (the default) is a repo or org without one.</summary>
+    public bool HasPriorityField { get; set; }
+
+    /// <summary>The Priority field's value of each issue, by number; one not listed is unset.</summary>
+    public Dictionary<int, IssuePriority> IssuePriorities { get; } = [];
+
+    /// <summary>Every write of the Priority field, as (number, level), in order.</summary>
+    public List<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
+
+    /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
+    public string? PrioritySetFails { get; set; }
+
+    public Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(HasPriorityField ? new PriorityRead(true, IssuePriorities.TryGetValue(number, out var level) ? level : null) : PriorityRead.NoField);
+
+    public Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        if (PrioritySetFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        PrioritySets.Add((number, level));
+        if (level is { } set)
+        {
+            IssuePriorities[number] = set;
+        }
+        else
+        {
+            IssuePriorities.Remove(number);
+        }
+        return Task.CompletedTask;
+    }
+
     public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {
         IssueComments.Add((number, body));
+        PrConversation.Add((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
         return Task.CompletedTask;
     }
+
+    /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
+    public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+
+    public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
 
     /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
     public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];
@@ -861,6 +1021,8 @@ public abstract class LegCommanderTestsBase : IDisposable
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeChecks _checks = new();
     private protected readonly FakeGitHub _github = new();
+    /// <summary>The commander's clock: the system's, moved on by what a test advances it (#564's sweep guard outliving a long check).</summary>
+    private protected readonly ShiftedClock _clock = new();
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
@@ -876,7 +1038,7 @@ public abstract class LegCommanderTestsBase : IDisposable
         var git = new GitCli();
         _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, TimeProvider.System);
+        _legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _flights, options, _clock);
     }
 
     private protected string Repo => Path.Combine(_root, "tianwen");
@@ -1020,9 +1182,11 @@ public abstract class LegCommanderTestsBase : IDisposable
 }
 
 /// <summary>Part 1 of LegCommanderTests: the class is split so its tests run side by side, not one after another.</summary>
+[Trait("Category", "Slow")]
 public sealed class LegCommanderTests1 : LegCommanderTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightMadeWithoutATitleTakesItsIssuesAndItsResultNamesTheCode()
     {
         _github.Issues[7] = "Moons of Jupiter";
@@ -1035,6 +1199,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg()
     {
         var flight = await FlightWithTwoLegs();
@@ -1060,6 +1225,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerAskedForOverASpentWindowWaitsSaysUntilWhenAndStartsByItselfOnceItHasReset()
     {
         await FlightWithTwoLegs();
@@ -1087,6 +1253,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APriorityReposPlannerUsesItsOwnLimitAndOneWithNoFiguresIsStartedAtOnce()
     {
         await FlightWithTwoLegs();
@@ -1102,6 +1269,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannerWithNoFiguresForTheWindowIsStartedAtOnce()
     {
         await FlightWithTwoLegs();
@@ -1113,6 +1281,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlannedWithNoLegToStartIsRefusedAndNoLegIsNamedPlan()
     {
         (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
@@ -1123,6 +1292,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LegsArePlannedInOrderWithTheirChecklistAndBudget()
     {
         await FlightWithTwoLegs();
@@ -1147,6 +1317,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy()
     {
         await FlightWithTwoLegs();
@@ -1168,6 +1339,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnlyAPlannedLegIsRemovedAFlyingDoneOrFailedOneIsRefusedWithWhy()
     {
         await FlightWithTwoLegs();
@@ -1186,6 +1358,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFlightGoesOnPastARemovedLegToTheOneAfterIt()
     {
         await FlightWithTwoLegs();
@@ -1234,6 +1407,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
         SiblingDirLib(behind: 3);
@@ -1251,6 +1425,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
     {
         SiblingDirLib(behind: 3);
@@ -1267,6 +1442,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
     {
         SiblingDirLib(behind: 3);
@@ -1283,6 +1459,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
     {
         SiblingDirLib(behind: 3);
@@ -1300,6 +1477,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
     {
         SiblingDirLib(behind: 3);
@@ -1316,6 +1494,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
     {
         SiblingDirLib(behind: 2);
@@ -1332,6 +1511,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {
         SiblingDirLib(behind: 0);
@@ -1343,6 +1523,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartedInARepoWithoutUseLocalSiblingsRaisesNoCard()
     {
         await FlightWithTwoLegs();
@@ -1370,6 +1551,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegStartsAFreshWorkerInThePlaneBriefedFromItAndOnlyInOrder()
     {
         var flight = await FlightWithTwoLegs();
@@ -1413,6 +1595,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
 public sealed class LegCommanderTests2 : LegCommanderTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegIsDoneOnlyWithEveryStepTickedAndItsCheckPassingOnARerun()
     {
         var flight = await FlightWithTwoLegs();
@@ -1437,7 +1620,73 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Ok.ShouldBeTrue();
     }
 
+    private static CheckRun Stopped(double saturation) =>
+        new(-1, "the check ran past 30 minutes of running and was stopped") { StoppedByBudget = true, Saturation = saturation };
+
+    private async Task<FlightRow> TickedLegs()
+    {
+        var flight = await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        return flight;
+    }
+
     [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ACheckStoppedByItsBudgetOnASaturatedMachineIsRunOnceMoreAndAPassFinishesTheLeg()
+    {
+        await TickedLegs();
+        _checks.Script.Enqueue(Stopped(0.9));
+        _checks.Next = new CheckRun(0, "Passed: 42");
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Ok.ShouldBeTrue();
+
+        _checks.Runs.Count.ShouldBe(2);
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ASecondBudgetStopFailsTheLegAndSaysItWasRetriedOnceOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.9);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(2);
+        failed.Error.ShouldNotBeNull().ShouldContain("stopped by its budget twice; the machine was saturated the first time, so it was retried once");
+        L("parser").State.ShouldBe(LegState.Flying);
+        L("parser").Report.ShouldNotBeNull().ShouldContain("retried once");
+    }
+
+    [Fact]
+    public async Task ACheckStoppedByItsBudgetOnAQuietMachineIsNotRunAgain()
+    {
+        await TickedLegs();
+        _checks.Next = Stopped(0.1);
+
+        var failed = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+
+        _checks.Runs.Count.ShouldBe(1);
+        failed.Error.ShouldNotBeNull().ShouldNotContain("retried");
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryFailingExitIsNeverRunAgainEvenOnASaturatedMachine()
+    {
+        await TickedLegs();
+        _checks.Next = new CheckRun(1, "Failed: 2") { Saturation = 1 };
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldNotBeNull().ShouldContain("failed (1)");
+
+        _checks.Runs.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegsCheckRunsWithoutTheLockSoOtherCommandsAreAnsweredAndARetriedFinishDoesNotRunItAgain()
     {
         await FlightWithTwoLegs();
@@ -1477,6 +1726,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegsRecheckIsClearedWhenItsCheckFailsTheLegChangesOrTheCheckThrows()
     {
         await FlightWithTwoLegs();
@@ -1550,6 +1800,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedCheckThatOutlastedTheReplyDeadlineLeavesItsOutcomeOnTheLegForTheWatchToTell()
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50));
@@ -1563,6 +1814,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFailedCheckDuringWhichARetryWasRefusedLeavesItsOutcomeOnTheLegEvenWithinTheDeadline()
     {
         var result = await FailingFinishAsync(TimeSpan.Zero, TimeSpan.FromMinutes(5), retried: true);
@@ -1572,6 +1824,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AShortFailedCheckAnsweredInTimeLeavesNoOutcomeSoTheWorkerIsNotToldTwice()
     {
         var result = await FailingFinishAsync(TimeSpan.FromMilliseconds(20), TimeSpan.FromMinutes(5));
@@ -1581,6 +1834,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALateCheckWhoseLegChangedOrThatThrewLeavesAnOutcomeAndALateCheckThatPassesLeavesTheLegDoneWithNone()
     {
         await FlightWithTwoLegs();
@@ -1634,6 +1888,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkerThatFinishedItsOwnLegIsStoppedAfterAGrace()
     {
         await FlightWithTwoLegs();
@@ -1646,7 +1901,10 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "failed", "no ephemeris here")).Ok.ShouldBeTrue();
         var failed = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (failed.Bin, failed.Kind, failed.Subject, failed.Detail).ShouldBe((CardBin.Ring, "leg-failed", "flight/TIA1/parser", "no ephemeris here"));
-        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Redo leg parser", Verbs.GoAround), ("Mark done anyway", Verbs.FinishLeg)]);
+        failed.Title.ShouldBe("TIA1/parser stopped: no ephemeris here");
+        failed.Title.ShouldNotContain("gave up");
+        failed.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Send parser round again to no ephemeris here", Verbs.GoAround), ("Accept parser as it stands, the failure kept in its report", Verbs.FinishLeg)]);
+        failed.Choices.ShouldNotContain(c => c.Label.Contains("Mark done anyway"));
 
         _workers.Stopped.ShouldBeEmpty();
         for (var i = 0; i < 100 && _workers.Stopped.Count == 0; i++)
@@ -1667,6 +1925,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundStopsTheWorkerAndStartsAFreshOneToldWhyAndWhatThePlaneHolds()
     {
         var flight = await FlightWithTwoLegs();
@@ -1691,6 +1950,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightMergesOnlyWithEveryLegDoneAndOnTheHeadReviewedThenLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -1737,6 +1997,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeThatOnlyJoinsTheMergeQueueLeavesTheFlightFlyingUntilGitHubMergesIt()
     {
         var tip = await ReadyToMerge();
@@ -1751,6 +2012,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergePressedWhileChecksRunWaitsForThemAndTheNodeMergesOnceTheyPass()
     {
         var tip = await ReadyToMerge();
@@ -1777,6 +2039,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain()
     {
         var tip = await ReadyToMerge();
@@ -1794,6 +2057,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneClaudeCodeToreDownIsCheckedOutAgainOnItsBranchBeforeTheNextWorker()
     {
         var flight = await FlightWithTwoLegs();
@@ -1813,6 +2077,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFolderGitLeavesAfterRemovingThePlaneGoesToo()
     {
         var flight = await FlightWithTwoLegs();
@@ -1823,6 +2088,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACleanPlaneWithASubmoduleIsRemoved()
     {
         // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
@@ -1843,6 +2109,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingStopsEveryLiveSessionOfTheFlightNotOnlyItsCurrentWorkers()
     {
         // TIA368 landed with its planner and an earlier reviewer idle in its plane: they held the folder and could still push.
@@ -1862,6 +2129,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task WorkNotInMainLandsOnlyOnceAPassedReviewHasReadItsHead()
     {
         // TIA368 was landed by hand with a leg added after its pass: two pushed commits no reviewer had seen.
@@ -1886,6 +2154,30 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await _flights.RunAsync(land, Ct)).Ok.ShouldBeTrue();
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APlaneWhoseOldCommitsMainHoldsAsOneRebasedCommitLandsByContent()
+    {
+        // A laid PR merged through the rebase queue: main holds its change as one commit, the plane still its two older ones.
+        var flight = await FlightWithTwoLegs();
+        var origin = Path.Combine(_root, "origin.git");
+        Git(_root, "init", "-q", "--bare", origin);
+        Git(Repo, "remote", "add", "origin", origin);
+        Git(Repo, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser 1");
+        File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser { int X; }\n");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "parser 2");
+        Git(flight.Worktree, "push", "-q", "origin", "HEAD:" + flight.Branch);
+        File.WriteAllText(Path.Combine(Repo, "parser.cs"), "class Parser { int X; }\n");
+        Git(Repo, "add", ".");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "parser, laid");
+        Git(Repo, "push", "-q", "origin", "main");
+
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA1"), Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+    }
+
     private void Session(string id, string name, SessionRole role, string flight, SessionState state) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "/r/w", Role = role, Flight = flight,
@@ -1893,6 +2185,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     });
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -1905,6 +2198,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task NoLegFinishesAndNoFlightLandsWithItsWorkLeftWhereNobodyLooks()
     {
         var flight = await FlightWithTwoLegs();
@@ -1930,6 +2224,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALegDoneStartsTheNextAndTheLastOpensThePrHeldOnlyByASpentWindow()
     {
         await FlightWithTwoLegs();
@@ -1961,9 +2256,14 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
 
         // The last leg done: its PR is opened by itself. This repo has no origin to push to, so the step fails: it rings once,
         // offering the step by hand, and the next sweep does not ring again. (ReviewTests opens one for real, on a bare origin.)
+        // One refused attempt rings nothing (PIL575): the next sweep retries, and a second miss rings.
         (await Leg(Verbs.FinishLeg, "flight/TIA1/render", "done")).Ok.ShouldBeTrue();
+        _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.NextStepKind).ShouldBeEmpty();
+        await _legs.AdvanceAllAsync(Ct);
         var rung = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.NextStepKind);
-        (rung.Bin, rung.Title).ShouldBe((CardBin.Ring, "TIA1 could not open its PR by itself"));
+        rung.Title.ShouldStartWith("TIA1 could not open its PR: ");
+        rung.Bin.ShouldBe(CardBin.Ring);
+        rung.Choices.Single().Label.ShouldBe("Open TIA1's PR now, asking the node again");
         rung.Choices.Single().Verb.ShouldBe(Verbs.OpenPr);
         await _legs.AdvanceAllAsync(Ct);
         _state.Cards(openOnly: true).Count(c => c.Kind == LegCommander.NextStepKind).ShouldBe(1);
@@ -1971,6 +2271,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASweepWhileAValidatorsGoStartsTheLegRingsNothing()
     {
         await FlightWithTwoLegs();
@@ -2002,6 +2303,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APlaneAlreadyTornDownStillLands()
     {
         var flight = await FlightWithTwoLegs();
@@ -2056,6 +2358,7 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWorkersRowIsMeasuredAgainstItsLegsBudget()
     {
         await FlightWithTwoLegs();
@@ -2072,10 +2375,10 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Fact]
     public void AWorkerStartsInTheBackgroundInAutoModeWithItsModelAndEffort() =>
         ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-tia1-parser", "/r/tianwen", "tia1", "brief", "sonnet", "high"))
-            .ShouldBe(["--bg", "-w", "tia1", "-n", "du1-tia1-parser", "--permission-mode", "auto", "--strict-mcp-config", "--model", "sonnet", "--effort", "high"]);
+            .ShouldBe(["--bg", "-w", "tia1", "-n", "du1-tia1-parser", "--permission-mode", "auto", "--strict-mcp-config", "--autocompact", "auto", "--model", "sonnet", "--effort", "high"]);
 
     [Fact]
     public void TheWatchtowerStartsInItsOwnFolderWithRemoteControlOn() =>
         ClaudeWorkerLauncher.Arguments(new WorkerStart("du1-watchtower", "/data/watchtower", null, "brief", null, null, RemoteControl: true))
-            .ShouldBe(["--bg", "--remote-control", "-n", "du1-watchtower", "--permission-mode", "auto", "--strict-mcp-config"]);
+            .ShouldBe(["--bg", "--remote-control", "-n", "du1-watchtower", "--permission-mode", "auto", "--strict-mcp-config", "--autocompact", "auto"]);
 }

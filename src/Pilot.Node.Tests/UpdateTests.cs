@@ -138,6 +138,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotFinishPutsBackWhatItReplaced()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
@@ -243,6 +244,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotMoveAsideAnOldOnlyFilePutsEverythingBackAndNamesTheHolder()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
@@ -265,6 +267,7 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASwapThatCannotReplaceAHeldFileNamesTheProcessHoldingIt()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a file held without FileShare.Delete cannot be renamed on Windows only");
@@ -298,9 +301,10 @@ public sealed class UpdateTests : IDisposable
         await ask.CheckAsync(Ct);
 
         var card = state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Kind.ShouldBe(NodeUpdater.Kind);
         card.Title.ShouldBe("pilot 2.0.2 is out (this is 2.0.1)");
         card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
-            c => c.Label.ShouldBe("Update"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
+            c => c.Label.ShouldBe("Install pilot 2.0.2 and restart the node"), c => c.Verb.ShouldBe(Verbs.Update), c => c.Args.ShouldBe([UpdateArgs.Install]));
 
         Read(node).ShouldBe("old " + node);
     }

@@ -13,6 +13,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The recheck, told of a flight's own PR as this reads it: the read shows its labels, so the label is seen at once and at no call of its own. Null for one built without.</summary>
+    public PrRecheck? Recheck { get; set; }
+
+    // The PR as read by branch carries its labels (gh's pr view): the recheck label on it starts the recheck now.
+    private void HandOver(FlightRow flight, PullRequest? pr)
+    {
+        if (Recheck is not null && pr is { Labels: { } labels } && pr.Number == flight.PullRequest && PrMarks.RepoOf(pr.Url) is { } repo)
+        {
+            Recheck.Noticed(repo, flight.RepoPath, pr.Number, labels.Contains(PilotMarks.Recheck, StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
     // A PR head the node has tried to bring up to date (the base merged in): tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
@@ -40,26 +52,44 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
     public const string QueueDropped = "queue-dropped";
 
+    private readonly TaskCompletionSource _firstLook = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes once the first look the loop makes at start is over (it found something, failed, or the node stopped).
+    /// A test node awaits it before it hands out its state, so that look never runs against a test's half-made state
+    /// (MergedUnderLegTests on windows, run 40817578891: it landed a flight before the leg that should have kept it flying).
+    /// </summary>
+    public Task FirstLook => _firstLook.Task;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         // Merge entries a node that went away left open have no command behind them: they end before anything else is looked at.
         legs?.EndLeftMerges("the node restarted while it waited: merge again");
-        while (!stopping.IsCancellationRequested)
+        try
         {
-            try
+            while (!stopping.IsCancellationRequested)
             {
-                await LookAsync(stopping);
-                await Task.Delay(Interval, time, stopping);
+                try
+                {
+                    await LookAsync(stopping);
+                    _firstLook.TrySetResult();
+                    await Task.Delay(Interval, time, stopping);
+                }
+                catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _firstLook.TrySetResult();
+                    await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
+                    await Task.Delay(Interval, time, stopping);
+                }
             }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
-                await Task.Delay(Interval, time, stopping);
-            }
+        }
+        finally
+        {
+            _firstLook.TrySetResult();
         }
     }
 
@@ -84,6 +114,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            HandOver(flight, pr);
             if (pr is { State: "CLOSED" } && pr.Number == flight.PullRequest)
             {
                 await ClosedUnmergedAsync(flight, pr.Number, cancellationToken);
@@ -103,7 +134,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     continue;
                 }
-                state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{pr.Number} merged on GitHub, but the flight did not land", ex.Message);
+                state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{pr.Number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
+                    $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed by hand, then dismiss this.");
             }
         }
     }
@@ -209,6 +241,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 if (_rebased.Add($"{flight.Code} {queue.Head}"))
                 {
+                    // Nothing to merge in: found out why before anything is queued again (laid on its base, or rung once).
+                    if (await legs.HandleConflictDropAsync(flight.Code, queue.Head, removedAt, cancellationToken))
+                    {
+                        continue;
+                    }
                     if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } notUpdated)
                     {
                         // Resolved by the watchtower in the plane, not by a worker the node sends: a conflict is a merge (#344 rang for one, 2026-10-27).
@@ -222,9 +259,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var why = queue.RemovedReason is { Length: > 0 } reason ? reason : "no reason given";
-            state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged",
-                $"GitHub took it out of the queue: {why}. The PR page says which check failed, or what the queue met. Merge queues it again once that is fixed.",
-                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl);
+            state.RaiseCard(CardBin.ForYou, QueueDropped, subject, $"{flight.Code}'s PR #{number} left the merge queue unmerged: {LegCommander.OneLine(why)}",
+                $"GitHub took it out of the queue ({why}) after the node queued it. The PR page says which check failed, or what the queue met.",
+                [new CardChoice { Label = $"Queue {flight.Code}'s PR #{number} for merging again", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl);
         }
     }
 
@@ -436,8 +473,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 legs.DropMerge(flight.Code, $"#{number}'s checks failed on {head[..Math.Min(8, head.Length)]}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
-                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{flight.Code}'s PR #{number} fails its checks", why + autoMergeNote, link: pr!.Url,
-                        summary: $"The PR #{number} of {flight.Code} fails its checks. The node could not send the last leg back to fix them (the detail says why). Redo the last leg from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.");
+                    var failChoices = legs.ChecksFailedChoices(flight.Code, head, number);
+                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, LegCommander.ChecksFailedTitle(flight.Code, number, checks?.FailedName, why), why + autoMergeNote, failChoices, link: pr!.Url,
+                        summary: legs.ChecksFailedSummary(flight.Code, number, why, failChoices));
                 }
                 continue;
             }
@@ -466,6 +504,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was brought up to date and is reviewed afresh", result.Made);
                     continue;
                 }
+                else if (result.Ok && result.Way == MergeWays.InProgress)
+                {
+                    // Another merge of this flight is already running: not merged yet, so the flight stays armed and the
+                    // running merge reports its own result.
+                    continue;
+                }
                 else if (result.Ok)
                 {
                     // Joined the merge queue instead: the flight keeps flying, and its card says so (LegCommander.RunAsync).
@@ -484,12 +528,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
                 ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
-                : ($"{flight.Code}'s merge did not go through", dropped + autoMergeNote, null);
+                : ($"{flight.Code}'s merge did not go through: {(dropped.Split('\n')[0].Length > 70 ? dropped.Split('\n')[0][..67].TrimEnd() + "..." : dropped.Split('\n')[0])}", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {
-                state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through", dropped,
-                    [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
+                state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(dropped)}", dropped,
+                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {headNow[..Math.Min(8, headNow.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -563,8 +607,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
                 _ => $"GitHub shows it as {merge.Kind}",
             };
-            state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through", $"{why}. Merge again once that is dealt with.",
-                [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
+            state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(why)}", $"{why}. Merge again once that is dealt with.",
+                [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {pr.Head[..Math.Min(8, pr.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
         }
         return true;
     }
@@ -602,6 +646,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            HandOver(flight, pr);
             if (pr is not null && pr.Number == number && pr.State is "MERGED" or "CLOSED")
             {
                 var merged = pr.State == "MERGED";
@@ -627,7 +672,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                             continue;
                         }
                         // Merged, but something of the flight's would be left behind: said on a ring, never left in a log.
-                        state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land", ex.Message);
+                        state.RaiseCard(CardBin.Ring, "not-landed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} merged on GitHub, but the flight did not land: {LegCommander.OneLine(ex.Message)}",
+                        $"{ex.Message}. The PR is merged, so its branch is in the base; the flight stays flying until it is landed by hand, then dismiss this.");
                     }
                 }
                 continue;
@@ -701,8 +747,9 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 if (await legs.ChecksFailedAsync(flight.Code, failed.Head, cancellationToken) is { } why)
                 {
-                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number} fails its checks", why, link: failed.Url,
-                        summary: $"The PR #{number} of {flight.Code} fails its checks. The node could not send the last leg back to fix them (the detail says why). Redo the last leg from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.");
+                    var failChoices = legs.ChecksFailedChoices(flight.Code, failed.Head, number);
+                    state.RaiseCard(CardBin.Ring, "pr-checks-failed", Verbs.FlightTarget(flight.Code), LegCommander.ChecksFailedTitle(flight.Code, number, null, why), why, failChoices, link: failed.Url,
+                        summary: legs.ChecksFailedSummary(flight.Code, number, why, failChoices));
                 }
                 continue;
             }
@@ -745,6 +792,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
+            || merge.Args is [{ } droppedHead, ..] && legs.DroppedForConflict(flight.Code, droppedHead)
             || !_autoMerged.Add($"{flight.Code} {string.Join(' ', merge.Args ?? [])}"))
         {
             return;
@@ -757,6 +805,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} was brought up to date on autopilot and is reviewed afresh", result.Made);
             return;
         }
+        if (result.Ok && result.Way == MergeWays.InProgress)
+        {
+            // Another merge of this flight is running: the card stays open, and that first merge's own result updates it. This
+            // head is already in _autoMerged, so the autopilot does not ask again for it.
+            return;
+        }
         if (result.Ok)
         {
             state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");
@@ -764,7 +818,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
             return;
         }
-        state.RaiseCard(CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused",
-            result.Error, [merge with { Status = null }], link: flight.PullRequestUrl);
+        state.RaiseCard(CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
+            result.Error, [merge with { Status = null, Label = $"Merge {flight.Code}'s PR #{flight.PullRequest} once more" }], link: flight.PullRequestUrl);
     }
 }

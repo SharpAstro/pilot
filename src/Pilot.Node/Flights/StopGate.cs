@@ -49,8 +49,8 @@ public sealed class StopGate(NodeState state, Planes planes)
         // Claude Code sets stop_hook_active on a stop that a Stop hook already sent back to work: told once this turn.
         if (hook.TryGetProperty("stop_hook_active", out var active) && active.ValueKind == JsonValueKind.True)
         {
-            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with files not committed", $"{uncommitted}, told once to commit them",
-                [new CardChoice { Label = "Tell it again", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }]);
+            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit or drop them and stopped again, so the node will not tell it a third time by itself",
+                [new CardChoice { Label = $"Tell the session to commit or drop those files in {flight.Code}'s plane", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }]);
             return null;
         }
         return Decision(reason);

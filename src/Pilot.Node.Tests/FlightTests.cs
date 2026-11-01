@@ -71,6 +71,7 @@ public sealed class FlightCodeTests
 }
 
 /// <summary>Planes and the flight verbs over a real git repo of the test's own.</summary>
+[Trait("Category", "Slow")]
 public sealed class FlightCommanderTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -153,6 +154,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACreateLabelsTheIssueAndTheStoryWithThisNodesCode()
     {
         var (github, shortcut) = Trackered();
@@ -164,6 +166,39 @@ public sealed class FlightCommanderTests : IDisposable
         github.LabelsCreated.ShouldBe(["pilot node: DE1"]);
         shortcut.Labels[12].ShouldBe(["pilot node: DE1"]);
         PilotMarks.NodeLabelPrefix.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ACreateEnsuresTheLabelsTheNodeReadsOncePerRepo()
+    {
+        var (github, shortcut) = Trackered();
+        github.FieldCreateFails = null;
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "51", "one")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "52", "two")).Ok.ShouldBeTrue();
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-53", "story")).Ok.ShouldBeTrue();
+
+        // The fake's org gets the Priority field at setup, so only the recheck label is made; 'pilot: priority' is made only without the field.
+        github.FieldsCreated.ShouldBe(1);
+        github.LabelsEnsured.Select(e => e.Label).ShouldBe([PilotMarks.Recheck]);
+        github.LabelsEnsured.Select(e => e.Repo).Distinct().Count().ShouldBe(1);
+        PilotMarks.LabelStyle(PilotMarks.Priority).Description.ShouldContain("Opus cap");
+        PilotMarks.LabelStyle(PilotMarks.Priority).Color.ShouldNotBe(PilotMarks.LabelStyle("pilot: other").Color);
+    }
+
+    [Fact]
+    public async Task ARefusedReadLabelRaisesNoRingAndLosesNoFlight()
+    {
+        var (github, _) = Trackered();
+        github.EnsureFails = "label refused";
+
+        (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "61", "kept")).Ok.ShouldBeTrue();
+
+        Flight("TIA61").State.ShouldBe(FlightState.Flying);
+        github.IssueLabels[61].ShouldBe(["pilot node: DE1"]);
+        // The fake org cannot make the field either, so that refusal is a card of its own beside the label's.
+        var card = _state.Cards(openOnly: false).Single(c => c.Kind == "node-label-refused" && c.Title.StartsWith("The label", StringComparison.Ordinal));
+        card.Bin.ShouldBe(CardBin.Handled);
     }
 
     [Fact]
@@ -196,6 +231,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnywayCreatesOverAnotherNodesLabelAndCommentsOnTheIssue()
     {
         var (github, shortcut) = Trackered();
@@ -216,6 +252,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAFlightTakesThisNodesLabelOffItsIssueOrStoryAndLeavesOthers()
     {
         var (github, shortcut) = Trackered();
@@ -232,6 +269,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheLabelStaysWhileASecondFlightOfThisNodeIsStillOnTheItem()
     {
         var (github, _) = Trackered();
@@ -247,6 +285,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingAfterAMergeAndRetiringAFoldedFlightTakeTheLabelOffToo()
     {
         var (github, _) = Trackered();
@@ -263,6 +302,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALabelGitHubWillNotTakeOffIsSaidOnTheLandedCardAndTheFlightLandsAnyway()
     {
         var (github, _) = Trackered();
@@ -276,6 +316,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASecondFlightOnTheIssueGetsASuffixAndItsOwnPlaneFromAWorktreeToo()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1611");
@@ -299,6 +340,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AConnectedFlightHoldsUntilTheOneItWaitsForLandsAndACycleIsRefused()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1");
@@ -316,6 +358,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task LandingRemovesACleanWorktreeKeepsTheBranchAndRefusesOneWithChanges()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "7");
@@ -339,6 +382,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALockedCleanWorktreeIsUnlockedAndLands()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "8");
@@ -351,6 +395,7 @@ public sealed class FlightCommanderTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALandedCodeIsNeverGivenAgain()
     {
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "3");

@@ -46,8 +46,9 @@ public sealed record CommandRequest
     /// <summary>
     /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
     /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
-    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). Null for a
-    /// client that does not retry (the GUI, a card's button): every send runs.
+    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). The GUI gives
+    /// every chat send a fresh id, and a say carries it on to the session's delivery, so a retried send reaches the
+    /// session once. Null for a client that does not retry (a card's button): every send runs.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestId { get; init; }
@@ -58,6 +59,14 @@ public sealed record CommandRequest
     /// </summary>
     [JsonIgnore]
     public bool Autopilot { get; init; }
+
+    /// <summary>
+    /// Set by the node when it took the watchtower's answer or dismissal of a card as the person's word in its chat: the words
+    /// of their message it matched. The checks keyed on the watchtower's name let such a command through. Never read from the
+    /// wire: a client cannot claim it.
+    /// </summary>
+    [JsonIgnore]
+    public string? PersonsWord { get; init; }
 }
 
 /// <summary>What became of a command: the response to its post, and a <see cref="CommandResultEvent"/> on the stream.</summary>
@@ -176,12 +185,39 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// <c>flight-priority flight/&lt;code&gt; &lt;urgent|high|medium|low|none&gt;</c>: writes the Priority field of the flight's issue
+    /// (<c>none</c> clears it) and puts the level on the flight's row. Refused, naming the <c>pilot: priority</c> label, where the repo has no field.
+    /// </summary>
+    public const string FlightPriority = "flight-priority";
+
+    /// <summary>
     /// <c>receive-flight flight/&lt;code&gt; &lt;FlightMove as JSON&gt;</c> (#376): another node of the fleet hands this one a flight, with its whole
     /// record (<see cref="FlightMove"/>). Only under a LAN grant, and only by a node that is not in maintenance and has
     /// <c>accept-fleet-flights</c> on. The node makes the plane from the pushed branch, puts the flight, its legs and its open
     /// cards, records where it came from (<see cref="FlightRow.MovedFrom"/>), and the flight goes on with its next leg.
     /// </summary>
     public const string ReceiveFlight = "receive-flight";
+
+    /// <summary>
+    /// <c>admission-claim node &lt;node&gt; &lt;key&gt; &lt;label&gt; &lt;model&gt; &lt;role&gt; [flight]</c>: a node of the fleet asks the node that holds the Opus count for a slot
+    /// (a lease, kept while the sender renews it with <see cref="AdmissionSync"/>). Answered ok when the lease is taken, else refused with the wait's reason.
+    /// </summary>
+    public const string AdmissionClaim = "admission-claim";
+
+    /// <summary>
+    /// <c>admission-sync node &lt;node&gt; [key|label|model]…</c>: a node tells the holder of the count which Opus sessions it has now; its leases become
+    /// exactly those, renewed, so a session that ended frees its slot at once.
+    /// </summary>
+    public const string AdmissionSync = "admission-sync";
+
+    /// <summary>
+    /// <c>admission-setting node &lt;key&gt; [value…]</c>: a node of the fleet sets <c>opus-cap</c> or <c>one-flight-per-repo</c> on the node that holds
+    /// them for the fleet (<c>set</c> itself is this machine's alone).
+    /// </summary>
+    public const string AdmissionSetting = "admission-setting";
+
+    /// <summary>Whether <paramref name="verb"/> is one of the fleet admission verbs.</summary>
+    public static bool IsAdmission(string verb) => verb is AdmissionClaim or AdmissionSync or AdmissionSetting;
 
     /// <summary>
     /// <c>move-flight flight/&lt;code&gt;</c> (#376): hand the flight to the best willing node of the fleet now, as a node in maintenance does
@@ -232,9 +268,15 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
-    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on.
+    /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
+    /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and
+    /// its check passes there; the node refuses it otherwise, naming what did not hold.
+    /// Pushed-with-lease and merged-with-origin are the controller's too, for a failed leg whose push-blocked card says its rebased
+    /// branch cannot go up plain: the first (given the sha origin held, <c>pushed-with-lease &lt;sha&gt;</c>) reruns the check and pushes with
+    /// <c>--force-with-lease=&lt;branch&gt;:&lt;sha&gt;</c>; the second merges origin's branch into the plane, reruns the check and pushes plain
+    /// (a conflict sends the leg round again). Each marks the leg done and the flight goes on; both are refused to workers and the watchtower.
     /// </summary>
     public const string FinishLeg = "finish-leg";
 
@@ -320,6 +362,12 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
+    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// </summary>
+    public const string AllowRound = "allow-round";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>
@@ -370,6 +418,14 @@ public static class Verbs
     /// with no call and nothing kept: it is what a node answers when another gathers the fleet's records for <see cref="Summarise"/>.
     /// </summary>
     public const string Records = "records";
+
+    /// <summary>
+    /// <c>review-cost node [--since &lt;date&gt;] [--until &lt;date&gt;] [--repo &lt;repo&gt;]</c> (#433): a read of what reviews cost, in the result's
+    /// <see cref="CommandResult.Made"/>: per landed flight, its reviewer sessions (round, model, head) and their tokens as the transcripts
+    /// hold them (input, cache creation, cache read, output, the weighted spend of <see cref="SessionRow.SpendWeighted"/>), with totals and
+    /// a per-flight average. Nothing is changed or called.
+    /// </summary>
+    public const string ReviewCost = "review-cost";
 
     /// <summary>
     /// <c>update node [check|install] [--adopt]</c>: whether a newer release of pilot is out (<c>check</c>), or installs it
@@ -489,6 +545,21 @@ public static class Verbs
     /// <summary>The milestone of <see cref="SetMilestone"/> that takes the issue out of every milestone.</summary>
     public const string NoMilestone = "none";
 
+    /// <summary>
+    /// <c>pin-issue issue/&lt;repo&gt;/#&lt;n&gt; [off]</c> (an idea target works too): puts the pin label on the issue (made in the repo when it has none), or with the
+    /// argument <see cref="PinOff"/> takes it off. The pin lives on GitHub, so every node sees it; the rows are read again and say it (<see cref="IssueRow.Pinned"/>).
+    /// </summary>
+    public const string PinIssue = "pin-issue";
+
+    /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
+    public const string PinOff = "off";
+
+    /// <summary>
+    /// <c>set-priority issue/&lt;repo&gt;/#&lt;n&gt; &lt;urgent|high|medium|low|none&gt;</c> (an idea target works too): writes the Priority issue field of the
+    /// open issue (<c>none</c> clears it) and reads the rows again (<see cref="IssueRow.Priority"/>). The field is never made; refused where the repo has none.
+    /// </summary>
+    public const string SetPriority = "set-priority";
+
     /// <summary>What an issue target starts with: <c>issue/&lt;repo&gt;/#12</c> (see <see cref="IssueIds.Target"/>).</summary>
     public const string IssueTargetPrefix = "issue/";
 
@@ -597,6 +668,13 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
+    /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
+    /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
+    /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.
+    /// </summary>
+    public const string EndSession = "end-session";
+
+    /// <summary>
     /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does
     /// it to every ended one. <c>undo</c> brings it (or them) back.
     /// </summary>
@@ -643,6 +721,13 @@ public static class Verbs
 
     /// <summary>The words every button that sends leg <paramref name="leg"/> around again carries; the verb stays <see cref="GoAround"/>.</summary>
     public static string RedoLeg(string leg) => $"Redo leg {leg}";
+
+    /// <summary>
+    /// The button that sends leg <paramref name="leg"/> round with a fresh worker, said as what it does in this case: <c>Start a fresh worker on x
+    /// (the last one went idle)</c>, with the round and the model from the second redo on, as <see cref="RedoLeg(string, int, string?, string?)"/> has it.
+    /// </summary>
+    public static string FreshWorker(string leg, string why, int redo, string? model, string? effort = null) =>
+        $"Start a fresh worker on {leg} (the last one {why}{(redo >= 2 && model is not null ? $"; redo {redo}, {OnModel(model, effort)}" : "")})";
 
     /// <summary>The redo choice naming what the next worker runs on, once it is a second redo or later (<paramref name="redo"/> is go-arounds + 1): <c>Redo leg x (redo 3, on Opus)</c>.</summary>
     public static string RedoLeg(string leg, int redo, string? model, string? effort = null) =>
@@ -710,6 +795,12 @@ public static class MergeWays
     /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
     /// </summary>
     public const string Updated = "updated";
+
+    /// <summary>
+    /// A merge of this flight is already running and this ask was a repeat of it: answered ok and left alone. Not merged, and no
+    /// news about where the first one stands, so a caller leaves its card open and looks again later.
+    /// </summary>
+    public const string InProgress = "in-progress";
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>

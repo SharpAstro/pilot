@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// denies and the asking session is told which; on, it runs at once, recorded with the session and the message it acted on,
 /// and said on a Handled card. A worker's is refused either way, and the person's own commands are as they were.
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class AutopilotTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -62,7 +63,7 @@ public sealed class AutopilotTests
     /// <summary>The one assistant's ask among the open cards, with other cards (a ring) open beside it.</summary>
     private static CardRow AskAmong(NodeHarness node) => node.State.Cards(openOnly: true).Single(c => c.Kind == CardKinds.AssistantAsk);
 
-    private static BlackBoxLine[] BlackBox(NodeHarness node)
+    internal static BlackBoxLine[] BlackBox(NodeHarness node)
     {
         using var box = new StreamReader(new FileStream(Path.Combine(node.Options.DataFolder, "store", FileJournal.BlackBoxFile), FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
         return [.. box.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => System.Text.Json.JsonSerializer.Deserialize(l, PilotJsonContext.Default.BlackBoxLine)!)];
@@ -277,6 +278,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANoAutoMergeReposFlightIsAskedNotMergedByAnAssistantEvenWithAutopilotOnButThePersonsOwnMergeWorks()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

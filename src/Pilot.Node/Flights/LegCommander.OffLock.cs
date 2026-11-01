@@ -15,8 +15,23 @@ public sealed partial class LegCommander
     // What each flight has calls out for, by code; the value says what, and is freed when its command is done.
     private readonly ConcurrentDictionary<string, FlightCall> _calling = new(StringComparer.Ordinal);
 
-    private sealed class FlightCall(LegCommander owner, string code, string what, string advice) : IDisposable
+    /// <summary>
+    /// How long a step (a merge, a PR open, a reviewer start) may be in progress without moving before a repeat of it is refused again
+    /// instead of coalesced (PIL575): a repeat of a live step answers ok "already in progress"; a stuck one is refused, so it rings.
+    /// </summary>
+    public TimeSpan StuckAfter { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>What a coalesced repeat answers with.</summary>
+    public const string AlreadyInProgress = "already in progress";
+
+    /// <summary>A repeat of a step that is live: not a refusal, the command's answer is ok with this text.</summary>
+    private sealed class InProgressException(string what) : FlightException($"{AlreadyInProgress}: {what}");
+
+    private sealed class FlightCall(LegCommander owner, string code, string what, string advice, DateTimeOffset at) : IDisposable
     {
+        /// <summary>When the calls began: a call out longer than <see cref="StuckAfter"/> is stuck.</summary>
+        public DateTimeOffset At { get; } = at;
+
         public string What { get; } = what;
 
         /// <summary>What a command refused for it is told to do instead.</summary>
@@ -39,20 +54,29 @@ public sealed partial class LegCommander
     /// Takes the flight for the calls a command is about to make, to be called under the lock: refused, saying what has it, while
     /// another command has calls out for the flight. Disposed when the command is done with them, under the lock.
     /// </summary>
-    private FlightCall Calling(string code, string what, string advice = "wait for its answer, then ask again")
+    private FlightCall Calling(string code, string what, string advice = "wait for its answer, then ask again", bool coalesce = false)
     {
-        var call = new FlightCall(this, code, what, advice);
+        var call = new FlightCall(this, code, what, advice, time.GetUtcNow());
         if (!_calling.TryAdd(code, call))
         {
             if (!_calling.TryGetValue(code, out var busy))
             {
                 throw new FlightException($"{code} is being changed already: wait for its answer, then ask again");
             }
+            // The same step asked again while it is live: told it is in progress, nothing refused and nothing touched.
+            if (coalesce && busy.What == what && call.At - busy.At < StuckAfter)
+            {
+                throw new InProgressException($"{code} is {what}");
+            }
             busy.Refused = true;
             throw new FlightException($"{code} is {busy.What} already: {busy.Advice}");
         }
         return call;
     }
+
+    /// <summary>True while the flight has a call of <paramref name="what"/> out that is live: out for less than <see cref="StuckAfter"/>. A stuck one is not live, so it is refused and rung as before.</summary>
+    internal bool IsCalling(string code, string what) =>
+        _calling.TryGetValue(code, out var busy) && busy.What == what && time.GetUtcNow() - busy.At < StuckAfter;
 
     /// <summary>
     /// Takes the lock and the flight, as <see cref="Calling"/> does, for a call of the node's own (a rebase, a send back for changes):

@@ -7,6 +7,9 @@ namespace Pilot.Ui;
 internal interface INodeEvents : IAsyncDisposable
 {
     ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken);
+
+    /// <summary>Tells the node which page this client shows (<see cref="ClientPages"/>); a stream that cannot say it ignores it.</summary>
+    ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
 
 /// <summary>
@@ -34,11 +37,6 @@ internal sealed class NodeFeed : IAsyncDisposable
     private bool _everConnected;
     private readonly Func<CancellationToken, Task<string?>>? _nodeVersion;
     private readonly Func<CancellationToken, Task<NodeInfo>>? _nodeInfo;
-    // The repos the node last read (GET /api/v1/repos/status), fetched only while the Repos page is shown or recently was.
-    private readonly Func<CancellationToken, Task<RepoStatus[]?>>? _repoLoader;
-    private long _reposAtTicks = DateTimeOffset.MinValue.UtcTicks;
-    private long _reposWantedUntilTicks = DateTimeOffset.MinValue.UtcTicks;
-    private int _reposLoading;
     // What stamps DownSince: the wall clock, a test's own where it says when a node went down.
     private readonly Func<DateTimeOffset> _clock;
 
@@ -50,22 +48,13 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// </summary>
     private sealed record View(
         SessionRow[] Sessions, FlightRow[] Flights, LegRow[] Legs, CardRow[] Cards, JobRow[] Jobs, UsageRow? Usage, string? Stream,
-        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, RepoStatus[] Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
-        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null);
+        string Status, bool Connected, NodeInfo? Node, string? NodeVersion, ReposRow? Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
+        IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null, AdmissionRow? Admission = null);
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
         typeof(NodeFeed).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             is [System.Reflection.AssemblyInformationalVersionAttribute info, ..] ? info.InformationalVersion : "0.0.0");
-
-    /// <summary>How often the repos are read again while the Repos page is wanted: the node caches them and refreshes by itself, so slow.</summary>
-    public static readonly TimeSpan RepoRefresh = TimeSpan.FromSeconds(15);
-
-    /// <summary>How often what the node says it is (maintenance included) is read again while its stream is open.</summary>
-    public static readonly TimeSpan NodeRefresh = TimeSpan.FromSeconds(3);
-
-    /// <summary>How long after the Repos page was last shown the repos are still kept fresh.</summary>
-    public static readonly TimeSpan RepoLinger = TimeSpan.FromSeconds(60);
 
     /// <param name="open">Opens the event stream, resuming after <c>since</c> on <c>stream</c> when given.</param>
     /// <param name="socketPath">The node's socket, as the header names the source.</param>
@@ -73,29 +62,36 @@ internal sealed class NodeFeed : IAsyncDisposable
     /// <param name="nodeInfo">Asks the node what it is, on each connection, its version included (null: never asked).</param>
     public NodeFeed(Func<long?, string?, CancellationToken, Task<INodeEvents>> open, string socketPath, TimeSpan? retry = null,
         Func<CancellationToken, Task<string?>>? nodeVersion = null, Func<CancellationToken, Task<NodeInfo>>? nodeInfo = null,
-        Func<CancellationToken, Task<RepoStatus[]?>>? repoLoader = null, Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null)
     {
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
-        _repoLoader = repoLoader;
         _open = open;
         _nodeVersion = nodeVersion;
         _nodeInfo = nodeInfo;
         _socketPath = socketPath;
         _retry = retry ?? RetryDelay;
-        _view = new View([], [], [], [], [], null, null, $"connecting to the node on {socketPath}", false, null, null, [], []);
+        _view = new View([], [], [], [], [], null, null, $"connecting to the node on {socketPath}", false, null, null, null, []);
     }
 
     /// <summary>A feed on the node's own client.</summary>
     public static NodeFeed For(NodeClient client) =>
         new(async (since, stream, ct) => new ClientEvents(await client.OpenEventsAsync(since, stream, ct).ConfigureAwait(false)), client.SocketPath,
-            nodeInfo: client.GetNodeAsync,
-            repoLoader: async ct => await client.GetRepoStatusAsync(ct).ConfigureAwait(false) is { Success: true, Response: { } repos } ? repos : null);
+            nodeInfo: client.GetNodeAsync);
 
-    /// <summary>The node's machine as it last sampled it (as <see cref="Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
+    /// <summary>The node's machine as it last sampled it (as <see cref="View.Usage"/> is carried); null from a node that sends none, and until its snapshot is in.</summary>
     public MachineRow? Machine => Volatile.Read(ref _view).Machine;
 
-    /// <summary>What the node said it is, as of its last connection; null until it has.</summary>
-    public NodeInfo? Node => Volatile.Read(ref _view).Node;
+    /// <summary>
+    /// What the node says it is: the fixed fields (version, process, folders) as of its last connection, and what changes
+    /// (maintenance, autopilot, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
+    /// </summary>
+    public NodeInfo? Node => NodeOf(Volatile.Read(ref _view));
+
+    // The changing fields come from the stream's node row, over the fixed ones asked once per connection.
+    private static NodeInfo? NodeOf(View view) =>
+        view.Node is { } info && view.Said is { } said
+            ? info with { Maintenance = said.Maintenance, Autopilot = said.Autopilot, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
+            : view.Node;
 
     /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>
     public NodeSummary Summary(DateTimeOffset now)
@@ -108,7 +104,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             DownSince = view.DownSince,
             RetryEvery = _retry,
             Status = view.Status,
-            Node = view.Node,
+            Node = NodeOf(view),
             Stream = view.Stream,
             Account = usage?.Account?.Line(),
             Usage = usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null,
@@ -160,6 +156,33 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     public void Start() => _run ??= Task.Run(() => RunAsync(_stop.Token));
 
+    // The page this window shows (ClientPages) and the stream it is said over now, if one is open: the node forgets a page when
+    // its stream closes, so every new stream is told it again.
+    private string? _page;
+    private INodeEvents? _live;
+
+    /// <summary>Tells the node which page this window shows, or none with null: now over the open stream, and again on every reconnect.</summary>
+    public void SayPage(string? page)
+    {
+        Volatile.Write(ref _page, page);
+        if (Volatile.Read(ref _live) is { } live)
+        {
+            _ = SayAsync(live, page, _stop.Token);
+        }
+    }
+
+    private async Task SayAsync(INodeEvents events, string? page, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await events.SayPageAsync(page, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException or System.Net.WebSockets.WebSocketException or IOException)
+        {
+            // The stream went first; the next one is told the page when it opens.
+        }
+    }
+
     /// <summary>The node's jobs.</summary>
     public IReadOnlyList<JobRow> Jobs() => Volatile.Read(ref _view).Jobs;
 
@@ -190,39 +213,32 @@ internal sealed class NodeFeed : IAsyncDisposable
     public FlightsScreen Flights(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs), view.Status + UpdateNoteOf(view), now);
+        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission };
     }
 
     /// <summary>
-    /// The Repos page as of <paramref name="now"/>: the repos the node last read, joined with the flights, sessions, legs and
-    /// cards this feed holds. With <paramref name="wanted"/> (the page is shown) the repos are read again when they are older
-    /// than <see cref="RepoRefresh"/>, and for <see cref="RepoLinger"/> after it stops being; never otherwise.
+    /// The Repos page as of <paramref name="now"/>: the repos the node streams as a row, joined with the flights, sessions, legs and
+    /// cards this feed holds. Before the node's first read the repos are the seeded ones, marked unread.
     /// </summary>
-    public ReposScreen Repos(DateTimeOffset now, bool wanted)
+    public ReposScreen Repos(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        if (wanted)
+        var row = view.Repos;
+        return new ReposScreen(RepoLine.Build(row?.Repos ?? [], view.Flights, view.Sessions, view.Cards, view.Legs, now), view.Status + UpdateNoteOf(view), now)
         {
-            Interlocked.Exchange(ref _reposWantedUntilTicks, (now + RepoLinger).UtcTicks);
-        }
-        var due = _repoLoader is not null && view.Connected && now.UtcTicks <= Interlocked.Read(ref _reposWantedUntilTicks)
-            && now.UtcTicks - Interlocked.Read(ref _reposAtTicks) >= RepoRefresh.Ticks;
-        // One read at a time: the flag is taken by whoever turns it on.
-        if (due && Interlocked.CompareExchange(ref _reposLoading, 1, 0) == 0)
-        {
-            Interlocked.Exchange(ref _reposAtTicks, now.UtcTicks);
-            _ = Task.Run(() => LoadReposAsync(_stop.Token));
-        }
-        return new ReposScreen(RepoLine.Build(view.Repos, view.Flights, view.Sessions, view.Cards, view.Legs, now), view.Status + UpdateNoteOf(view), now);
+            ReadAt = row?.ReadAt,
+            Since = row?.Since,
+            Unread = row is null || row.ReadAt is null,
+        };
     }
 
     /// <summary>
-    /// The Ideas page: the ideas the node reads, the open cards that ask about them, and the repos an idea can move to. Moving
-    /// needs the repos the node tracks, so with <paramref name="wanted"/> (the page is shown) they are kept fresh as the Repos page's are.
+    /// The Ideas page: the ideas the node reads, the open cards that ask about them, and the repos an idea can move to (the
+    /// tracked ones of the repos row).
     /// </summary>
-    public IdeasScreen Ideas(DateTimeOffset now, bool wanted)
+    public IdeasScreen Ideas(DateTimeOffset now)
     {
-        var repos = Repos(now, wanted);
+        var repos = Repos(now);
         var view = Volatile.Read(ref _view);
         return new IdeasScreen(view.Ideas ?? [], [.. view.Cards.Where(IdeasScreen.IsAsk)],
             [.. repos.Lines.Where(l => l.Status.Tracked).Select(l => l.Status.Name).Distinct(StringComparer.OrdinalIgnoreCase)], view.Status + UpdateNoteOf(view), now)
@@ -236,34 +252,6 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>How many ideas wait to be planned, for the rail.</summary>
     public int NotedIdeas => Volatile.Read(ref _view).Ideas?.Count(i => i.State == IdeaState.Noted) ?? 0;
-
-    /// <summary>Makes the next <see cref="Repos"/> read the repos again at once, without waiting for <see cref="RepoRefresh"/>: a sync just changed them.</summary>
-    public void RefreshRepos()
-    {
-        Interlocked.Exchange(ref _reposAtTicks, DateTimeOffset.MinValue.UtcTicks);
-        Interlocked.Increment(ref _version);
-    }
-
-    private async Task LoadReposAsync(CancellationToken cancellationToken)
-    {
-        RepoStatus[]? read = null;
-        try
-        {
-            read = await _repoLoader!(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException or OperationCanceledException)
-        {
-        }
-        if (read is not null)
-        {
-            ImmutableInterlocked.Update(ref _view, view => view with { Repos = read });
-        }
-        Interlocked.Exchange(ref _reposLoading, 0);
-        if (read is not null)
-        {
-            Interlocked.Increment(ref _version);
-        }
-    }
 
     /// <summary>The rows as of <paramref name="now"/>, and where they come from, for the header.</summary>
     public SessionsScreen Screen(DateTimeOffset now)
@@ -288,9 +276,11 @@ internal sealed class NodeFeed : IAsyncDisposable
             {
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                // What the node says it is can change while the stream stays open (maintenance), so it is read again meanwhile.
-                using var polling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                _ = PollNodeAsync(polling.Token);
+                Volatile.Write(ref _live, events);
+                if (Volatile.Read(ref _page) is { } shown)
+                {
+                    await SayAsync(events, shown, cancellationToken).ConfigureAwait(false);
+                }
                 try
                 {
                     while (await events.ReadAsync(cancellationToken).ConfigureAwait(false) is { } next)
@@ -300,7 +290,7 @@ internal sealed class NodeFeed : IAsyncDisposable
                 }
                 finally
                 {
-                    await polling.CancelAsync().ConfigureAwait(false);
+                    Interlocked.CompareExchange(ref _live, null, events);
                 }
 
                 SetStatus($"the node on {_socketPath} closed the stream; reconnecting", connected: false);
@@ -335,36 +325,8 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
-    // Asks the node what it is again every NodeRefresh while the stream is open, and draws again when it went into or out of
-    // maintenance, or began or stopped taking fleet flights.
-    private async Task PollNodeAsync(CancellationToken cancellationToken)
-    {
-        if (_nodeInfo is null)
-        {
-            return;
-        }
-        try
-        {
-            while (true)
-            {
-                await Task.Delay(NodeRefresh, cancellationToken).ConfigureAwait(false);
-                // The node as the immutable view holds it: no lock to take (the feed never waits on a reader).
-                // The watchtower's words are in it, so its starts and its churning mark move on the Fleet page.
-                (bool, bool, string?) Seen() => (Node?.Maintenance ?? false, Node?.AcceptsFleetFlights ?? false, Pilot.Commands.WatchtowerWords.Line(Node?.Watchtower, DateTimeOffset.UtcNow));
-                var before = Seen();
-                await AskVersionAsync(cancellationToken).ConfigureAwait(false);
-                if (Seen() != before)
-                {
-                    Interlocked.Increment(ref _version);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
-    // The node's version for UpdateNote, and what it is for the fleet; a node that does not say leaves the last answer.
+    // Once per connection: the node's version for UpdateNote and the fixed fields of what it is; what changes comes down the stream (NodeRow).
+    // A node that does not say leaves the last answer.
     private async Task AskVersionAsync(CancellationToken cancellationToken)
     {
         if (_nodeVersion is null && _nodeInfo is null)
@@ -444,6 +406,7 @@ internal sealed class NodeFeed : IAsyncDisposable
         SummaryRow[] summaries = [.. _mirror.Summaries.Values];
         var usage = _mirror.Usage;
         var machine = _mirror.Machine;
+        var admission = _mirror.Admission;
         var stream = _mirror.Stream;
         var wasDown = !Volatile.Read(ref _view).Connected;
         if (wasDown)
@@ -452,6 +415,8 @@ internal sealed class NodeFeed : IAsyncDisposable
             _everConnected = true;
         }
         var pullRequests = _mirror.PullRequests;
+        var repos = _mirror.Repos;
+        var said = _mirror.Node;
         var ideas = _mirror.Ideas.ToArray();
         var ideaMoves = _mirror.IdeaMoves.ToArray();
         var milestones = _mirror.Milestones.ToArray();
@@ -459,6 +424,8 @@ internal sealed class NodeFeed : IAsyncDisposable
         ImmutableInterlocked.Update(ref _view, view => view with
         {
             PullRequests = pullRequests,
+            Repos = repos,
+            Said = said,
             Ideas = ideas,
             IdeaMoves = ideaMoves,
             Milestones = milestones,
@@ -471,6 +438,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             Summaries = summaries,
             Usage = usage,
             Machine = machine,
+            Admission = admission,
             Stream = stream,
             Status = snapshot || !view.Connected ? $"live from the node on {_socketPath}" : view.Status,
             Connected = true,
@@ -511,6 +479,8 @@ internal sealed class NodeFeed : IAsyncDisposable
     private sealed class ClientEvents(NodeEventStream stream) : INodeEvents
     {
         public ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken) => stream.ReadAsync(cancellationToken);
+
+        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => stream.SayPageAsync(page, cancellationToken);
 
         public ValueTask DisposeAsync() => stream.DisposeAsync();
     }

@@ -126,7 +126,13 @@ internal sealed class NewFlightWizard
     public Func<IReadOnlyList<NewFlightPick>, Task<string>>? Create { get; set; }
 
     /// <summary>Called when something it loaded or did changes what it shows, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
+
+    /// <summary>What a press of Create or Create issue is doing: working with the node (the button reads its working word, dimmed, no second press), or refused in its words.</summary>
+    internal Presses Presses { get; } = new();
+
+    private const string CreateKey = "wizard:create";
+    private const string IssueKey = "wizard:create-issue";
 
     /// <summary>The repos chosen, in the order their flights land.</summary>
     public IReadOnlyList<RepoInfo> Chosen => _chosen;
@@ -180,7 +186,7 @@ internal sealed class NewFlightWizard
     public async Task CreateIssueAsync()
     {
         var title = IssueTitle.Text.Trim();
-        if (!NewIssueOpen || CreateIssue is not { } create || _issueFor >= _chosen.Count)
+        if (!NewIssueOpen || CreateIssue is not { } create || _issueFor >= _chosen.Count || Presses.PendingOf(IssueKey) is not null)
         {
             return;
         }
@@ -193,18 +199,22 @@ internal sealed class NewFlightWizard
         var repo = _chosen[_issueFor];
         var body = IssueBody.Text.Trim();
         IssueStatus = "creating the issue…";
-        Changed?.Invoke();
-        try
+        IssueInfo? made = null;
+        var refused = await Presses.PressAsync(IssueKey, IssueKey, async _ =>
         {
-            var issue = await create(repo.Path, title, body.Length > 0 ? body : null);
+            made = await create(repo.Path, title, body.Length > 0 ? body : null);
+            return null;
+        }, say: why => $"failed: {why}");
+        if (made is { } issue)
+        {
             _issues[repo.Path] = [issue, .. _issues.TryGetValue(repo.Path, out var known) ? known.Where(i => i.Number != issue.Number) : []];
             NewIssueOpen = false;
             IssueStatus = null;
             Pick(issue);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        else if (refused is not null)
         {
-            IssueStatus = $"failed: {ex.Message}";
+            IssueStatus = refused;
         }
         Changed?.Invoke();
     }
@@ -299,21 +309,27 @@ internal sealed class NewFlightWizard
     /// <summary>Makes the flights, then closes: they show in the list, with their planners at work.</summary>
     public async Task CreateAsync()
     {
-        if (Create is not { } create || Picks is not { Count: > 0 } picks)
+        if (Create is not { } create || Picks is not { Count: > 0 } picks || Presses.PendingOf(CreateKey) is not null)
         {
             return;
         }
         Current = Step.Creating;
         Status = $"making {picks.Count} {(picks.Count == 1 ? "flight" : "flights")}…";
         Changed?.Invoke();
-        try
+        var said = "";
+        var refused = await Presses.PressAsync(CreateKey, CreateKey, async _ =>
         {
-            Status = await create(picks);
+            said = await create(picks);
+            return null;
+        }, say: why => $"failed: {why}");
+        if (refused is null)
+        {
+            Status = said;
             IsOpen = false;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+        else
         {
-            Status = $"failed: {ex.Message}";
+            Status = refused;
             Current = Step.Review;
         }
         Changed?.Invoke();
@@ -545,7 +561,7 @@ internal sealed class NewFlightWizard
         if (Current == Step.Issues && CreateIssue is not null)
         {
             buttons.Add(NewIssueOpen
-                ? Pill("Create issue and pick it", "wizard:create-issue", () => _ = CreateIssueAsync(), go: true).WithShortcut(NextShortcut)
+                ? Presses.Button(IssueKey, IssueKey, () => Pill("Create issue and pick it", IssueKey, () => _ = CreateIssueAsync(), go: true).WithShortcut(NextShortcut), _ => DeadPill("Creating the issue…"))
                 : Pill("New issue", "wizard:new-issue", BeginNewIssue));
         }
         if (Current == Step.Repos && _chosen.Count > 0)
@@ -553,10 +569,11 @@ internal sealed class NewFlightWizard
             buttons.Add(Pill($"Next: {(_chosen.Count == 1 ? "its issue" : $"their issues ({_chosen.Count} repos)")}", "wizard:next", ToIssues, go: true)
                 .WithShortcut(NextShortcut));
         }
-        if (Current == Step.Review)
+        if (Current is Step.Review or Step.Creating)
         {
-            buttons.Add(Pill(Picks.Count == 1 ? "Create and plan" : $"Create {Picks.Count} flights and plan them", "wizard:create", () => _ = CreateAsync(), go: true)
-                .WithShortcut(NextShortcut));
+            buttons.Add(Presses.Button(CreateKey, CreateKey,
+                () => Pill(Picks.Count == 1 ? "Create and plan" : $"Create {Picks.Count} flights and plan them", CreateKey, () => _ = CreateAsync(), go: true).WithShortcut(NextShortcut),
+                _ => DeadPill("Creating…")));
         }
         if (Current == Step.Creating)
         {
@@ -564,6 +581,10 @@ internal sealed class NewFlightWizard
         }
         return FlowRow.Of(30f, 8f, buttons);
     }
+
+    // A button whose press is with the node: its working word, dimmed, with no hit.
+    private static Layout.Node DeadPill(string label) =>
+        Layout.Builder.Text(label, 13f, Dim, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button);
 
     private static Layout.Node Pill(string label, string action, Action onClick, bool go = false) =>
         Layout.Builder.Text(label, 13f, Bright, TextAlign.Center)

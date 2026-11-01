@@ -10,7 +10,7 @@ internal sealed record SelectionPlace(string ListId, int Index, int? Rows, strin
 /// Where the window is, as far as Back needs to bring it back: the page, the nodes picked, the page's selection, the open
 /// transcript and the open flight page. The new-flight wizard is not part of it. Two places are the same place when they
 /// differ in nothing but the selection, which moving in a list is not a move. The order of places is DIR.Lib's
-/// <see cref="NavigationHistory{TPlace}"/>.
+/// <see cref="DIR.Lib.NavigationHistory{TPlace}"/>.
 /// </summary>
 internal sealed record NavPlace(PilotPage Page, IReadOnlyList<string> Picked, SelectionPlace? Selection, TranscriptPlace? Transcript, string? FlightCode)
 {

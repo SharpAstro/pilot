@@ -1,18 +1,42 @@
+using Microsoft.Extensions.Hosting;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The <see cref="PilotMarks.Recheck"/> label (#286): a person puts it on any open PR of a repo the node tracks to have pilot
-/// look at it again, whoever worked on it. Every <see cref="Interval"/> the node lists each tracked GitHub repo's open PRs,
-/// and a labelled one is this node's when it holds the flight on the PR's branch, else its own review of the PR, else no peer
-/// node of the LAN does (a peer that does not answer holds nothing: whichever node sees the label first takes it).
-/// One recheck of a PR runs at a time. A label seen again after the recheck consumed it runs it once more, and one put back
-/// while it runs runs it once more after it, never two at once. A recheck that leaves the label on (it could not run, or a peer
-/// has the PR) is not run again until the label has been seen gone, so a PR that cannot be rechecked is not tried every look.
+/// look at it again, whoever worked on it. The node does not list PRs for it: it looks at what <see cref="PullRequestWatch"/> reads
+/// (its batched search returns each PR's labels), as often as the watch reads, at no GitHub call of its own, and at a flight's own
+/// PR when <see cref="PrChecks"/> reads it (<see cref="Noticed"/>). A labelled PR is this node's when it holds the flight on the
+/// PR's branch, else its own review of the PR, else no peer node of the LAN does (a peer that does not answer holds nothing:
+/// whichever node sees the label first takes it). One recheck of a PR runs at a time. A label seen again after the recheck
+/// consumed it runs it once more, and one put back while it runs runs it once more after it, never two at once. A recheck that
+/// leaves the label on (it could not run, or a peer has the PR) is not run again until the label has been seen gone, so a PR
+/// that cannot be rechecked is not tried every look. A repo the watch did not read (its batch failed or was rate-limited) is
+/// not looked at: what the recheck knew of its labels stands.
 /// </summary>
-public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews, RepoCatalog repos, TimeProvider time, LegCommander? legs = null) : BackgroundService
+public sealed class PrRecheck : IHostedService
 {
+    private readonly NodeState state;
+    private readonly IGitHub github;
+    private readonly PrReviews reviews;
+    private readonly RepoCatalog repos;
+    private readonly LegCommander? legs;
+    private readonly CancellationTokenSource _stopping = new();
+
+    public PrRecheck(NodeState state, IGitHub github, PrReviews reviews, RepoCatalog repos, LegCommander? legs = null, PullRequestWatch? watch = null)
+    {
+        this.state = state;
+        this.github = github;
+        this.reviews = reviews;
+        this.repos = repos;
+        this.legs = legs;
+        if (watch is not null)
+        {
+            watch.Looked += Looked;
+        }
+    }
+
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
@@ -22,10 +46,16 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
     /// <summary>The For-you card said when a recheck could not run; its label is kept.</summary>
     public const string FailedKind = "pr-recheck-failed";
 
-    public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(60);
-
     /// <summary>The nodes this one reaches; null, or none held, leaves the PR to this node.</summary>
     public IFleet? Fleet { get; set; }
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _stopping.Cancel();
+        return Task.CompletedTask;
+    }
 
     private enum Outcome
     {
@@ -62,60 +92,94 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
     /// <summary>A PR as the Handled line says it: <c>pilot#253</c>.</summary>
     private static string Short(string repo, int number) => $"{repo[(repo.IndexOf('/') + 1)..]}#{number}";
 
-    /// <summary>One look at the open PRs of every tracked repo; a recheck it starts runs on, see <see cref="WhenIdleAsync"/>.</summary>
-    public async Task LookAsync(CancellationToken cancellationToken)
+    private static bool HasLabel(IEnumerable<string> labels) => labels.Contains(PilotMarks.Recheck, StringComparer.OrdinalIgnoreCase);
+
+    private string? PathOf(string repo) =>
+        repos.Repos().FirstOrDefault(r => string.Equals(r.GitHub, repo, StringComparison.OrdinalIgnoreCase))?.Path;
+
+    /// <summary>
+    /// One read of the watch: <paramref name="readRepos"/> are the repos it answered for and <paramref name="prs"/> their open PRs.
+    /// A labelled PR of a read repo is present, an entry of a read repo that is not labelled is gone, and a repo not read is left as
+    /// it was. A recheck this starts runs on, see <see cref="WhenIdleAsync"/>. Costs no GitHub call.
+    /// </summary>
+    public void Looked(string[] readRepos, PullRequestRow[] prs)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var repo in repos.Repos().Where(r => r.GitHub is not null))
+        var read = new HashSet<string>(readRepos, StringComparer.OrdinalIgnoreCase);
+        var mine = prs.Where(p => read.Contains(p.Repo)).ToArray();
+        var labelled = mine.Where(p => HasLabel(p.Labels)).ToArray();
+        var start = new List<Entry>();
+        // A repo with no clone here has no path to act from and is not this node's to recheck.
+        var paths = labelled.Select(p => p.Repo).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(r => r, PathOf, StringComparer.OrdinalIgnoreCase);
+        lock (_gate)
         {
-            // Two clones of one repo are one look.
-            if (!seen.Add(repo.GitHub!))
+            foreach (var gone in _entries.Values.Where(e => read.Contains(e.Repo) && !labelled.Any(p => p.Number == e.Number && string.Equals(p.Repo, e.Repo, StringComparison.OrdinalIgnoreCase))).ToList())
             {
-                continue;
+                Seen(gone, present: false);
+                if (!gone.Running)
+                {
+                    _entries.Remove(Key(gone.Repo, gone.Number));
+                }
             }
-            int[] listed;
-            try
+            foreach (var pr in labelled)
             {
-                listed = await github.OpenPullRequestsLabelledAsync(repo.Path, PilotMarks.Recheck, cancellationToken);
+                if (paths[pr.Repo] is not { } path)
+                {
+                    continue;
+                }
+                var key = Key(pr.Repo, pr.Number);
+                if (!_entries.TryGetValue(key, out var entry))
+                {
+                    _entries[key] = entry = new Entry(pr.Repo, path, pr.Number);
+                }
+                if (Seen(entry, present: true))
+                {
+                    start.Add(entry);
+                }
             }
-            catch (FlightException ex)
+        }
+        Start(start);
+        Error.WriteLine($"pr recheck: looked at {mine.Length} PRs of {read.Count} repos, {labelled.Length} labelled '{PilotMarks.Recheck}', 0 GitHub calls");
+    }
+
+    /// <summary>
+    /// A read of one flight's own PR by another part of the node (it shows its labels at no call of its own): a PR that carries the
+    /// label starts its recheck at once, one that does not is seen gone.
+    /// </summary>
+    public void Noticed(string repo, string path, int number, bool labelled)
+    {
+        var start = new List<Entry>();
+        lock (_gate)
+        {
+            var key = Key(repo, number);
+            if (!_entries.TryGetValue(key, out var entry))
             {
-                // Not listed is not unlabelled: what a recheck knows of its label stays as it was.
-                await Error.WriteLineAsync($"pr recheck: {repo.GitHub}'s PRs could not be listed: {ex.Message}");
-                continue;
+                if (!labelled)
+                {
+                    return;
+                }
+                _entries[key] = entry = new Entry(repo, path, number);
             }
-            var labelled = listed.ToHashSet();
-            var start = new List<Entry>();
+            if (Seen(entry, labelled))
+            {
+                start.Add(entry);
+            }
+            else if (!labelled && !entry.Running)
+            {
+                _entries.Remove(key);
+            }
+        }
+        Start(start);
+    }
+
+    private void Start(List<Entry> start)
+    {
+        foreach (var entry in start)
+        {
+            var token = _stopping.Token;
+            var task = Task.Run(() => RunAsync(entry, token), CancellationToken.None);
             lock (_gate)
             {
-                foreach (var gone in _entries.Values.Where(e => string.Equals(e.Repo, repo.GitHub, StringComparison.OrdinalIgnoreCase) && !labelled.Contains(e.Number)).ToList())
-                {
-                    Seen(gone, present: false);
-                    if (!gone.Running)
-                    {
-                        _entries.Remove(Key(gone.Repo, gone.Number));
-                    }
-                }
-                foreach (var number in labelled)
-                {
-                    var key = Key(repo.GitHub!, number);
-                    if (!_entries.TryGetValue(key, out var entry))
-                    {
-                        _entries[key] = entry = new Entry(repo.GitHub!, repo.Path, number);
-                    }
-                    if (Seen(entry, present: true))
-                    {
-                        start.Add(entry);
-                    }
-                }
-            }
-            foreach (var entry in start)
-            {
-                var task = Task.Run(() => RunAsync(entry, cancellationToken), CancellationToken.None);
-                lock (_gate)
-                {
-                    entry.Task = task;
-                }
+                entry.Task = task;
             }
         }
     }
@@ -245,7 +309,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
 
         // A PR pilot never touched: reviewed as 'pilot review pr' does.
         var subject = Verbs.PrTarget(entry.Repo, entry.Number);
-        var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+        var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
         if (!started.Ok)
         {
             Fail(entry, started.Error ?? "the review did not start", pr.Url);
@@ -254,6 +318,20 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         await github.SetPilotLabelAsync(entry.Path, entry.Number, PilotMarks.Reviewing, cancellationToken);
         Handled(entry, "review started", pr.Url);
         return Done(entry);
+    }
+
+    /// <summary>
+    /// Starts the review of a PR the recheck found: a flight's PR has one review, the flight's, so it is started the way
+    /// <c>flight review</c> starts it (PIL483); any other PR is reviewed by <c>review-pr</c>.
+    /// </summary>
+    private Task<CommandResult> StartReviewOfAsync(Entry entry, PullRequest pr, string subject, CancellationToken cancellationToken)
+    {
+        var parts = entry.Repo.Split('/');
+        if (legs is not null && reviews.FlightOwner(new PrRef(parts[0], parts[1], entry.Number), pr.HeadRef, pr.Fork) is { } owner)
+        {
+            return legs.RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(owner.Code), Who = "node" }, cancellationToken);
+        }
+        return reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
     }
 
     private static string Short8(string sha) => sha[..Math.Min(8, sha.Length)];
@@ -347,7 +425,9 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             var why = await legs.ChecksFailedAsync(code, pr.Head, cancellationToken);
             if (why is not null)
             {
-                state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, $"{code}'s PR #{entry.Number} fails its checks", why, link: pr.Url);
+                var failChoices = legs.ChecksFailedChoices(code, pr.Head, entry.Number);
+                state.RaiseCard(CardBin.Ring, "pr-checks-failed", subject, LegCommander.ChecksFailedTitle(code, entry.Number, null, why), why, failChoices, link: pr.Url,
+                    summary: legs.ChecksFailedSummary(code, entry.Number, why, failChoices));
             }
             return await FinishAsync(entry, pr, why is null ? $"checks failed at {head}, sent back as changes" : $"checks failed at {head}, not sent back ({why}), rung", LabelOf(code), cancellationToken);
         }
@@ -380,6 +460,12 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             if (merged.Way == MergeWays.Updated)
             {
                 return await FinishAsync(entry, pr, $"passed and green, but behind its base: brought up to date and reviewed afresh", null, cancellationToken);
+            }
+            if (merged.Way == MergeWays.InProgress)
+            {
+                // A merge of this flight is already running: not merged yet. The recheck ends here with the label taken off and a
+                // Handled line that says so; the running merge reports its own result on the flight's card.
+                return await FinishAsync(entry, pr, $"a merge is already running at {head}", null, cancellationToken);
             }
             return merged.Way is null
                 ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
@@ -420,7 +506,11 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
         var stands = review.State == PrReviewState.Reviewing ? PilotMarks.Reviewing : review.Verdict == "changes" ? PilotMarks.Changes : PilotMarks.Passed;
         if (pr.Head.Length > 0 && !string.Equals(review.Head, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
-            var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+            if (review.Fixer is null)
+            {
+                reviews.CloseCardsPastHead(review, pr.Head);
+            }
+            var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
             if (!started.Ok)
             {
                 Fail(entry, started.Error ?? "the review did not start", pr.Url);
@@ -443,7 +533,7 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 switch (await reviews.MergeBaseIntoOwnBranchAsync(new PrRef(parts[0], parts[1], entry.Number), pr, cancellationToken))
                 {
                     case null:
-                        var started = await reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
+                        var started = await StartReviewOfAsync(entry, pr, subject, cancellationToken);
                         if (!started.Ok)
                         {
                             Fail(entry, $"{pr.Base} merged in, but the review did not start: {started.Error}", pr.Url);
@@ -491,6 +581,10 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
                 return Outcome.Kept;
             }
             return await FinishAsync(entry, pr, $"its review asks for changes at {head}, fixer started", PilotMarks.Changes, cancellationToken);
+        }
+        if (noFixer is not null && review.State != PrReviewState.Reviewing && review.Verdict == "changes" && review.Fixer is null)
+        {
+            reviews.RingNoFixer(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number), review, noFixer);
         }
         var standing = review.State == PrReviewState.Reviewing ? "its review is still reading it"
             : review.Verdict == "changes" ? (noFixer is null ? "its review asks for changes, and its fixer is on it" : $"its review asks for changes, and no fixer starts: {noFixer}")
@@ -552,26 +646,5 @@ public sealed class PrRecheck(NodeState state, IGitHub github, PrReviews reviews
             }
         }
         return null;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stopping)
-    {
-        while (!stopping.IsCancellationRequested)
-        {
-            try
-            {
-                await LookAsync(stopping);
-                await Task.Delay(Interval, time, stopping);
-            }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                await Error.WriteLineAsync($"pr recheck: one look failed, looking again: {ex.Message}");
-                await Task.Delay(Interval, time, stopping);
-            }
-        }
     }
 }

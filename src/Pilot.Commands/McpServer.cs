@@ -24,20 +24,28 @@ namespace Pilot.Commands;
 /// CLI command is, so the watchtower's own merge or land is still refused when it comes this way.
 /// <para>A server lives as long as its host session, so it outlives an update, and a host never restarts a stdio server
 /// it lost (Claude Code does not), so ending on an update would drop pilot's tools from the session until it is
-/// restarted by hand. It therefore watches the version installed beside it, after each message and on a quiet timer
-/// between them, and when that is no longer the one it runs as it hands the session over instead: it starts the new
-/// binary's <c>pilot mcp</c> (same node, no window), replays the client's <c>initialize</c> to it, tells the client
+/// restarted by hand. The server the client started therefore watches the version installed beside it, after each message
+/// and on a quiet timer between them, and when that is newer than the one it (or its current child) runs it hands the
+/// session over: it starts the new binary's <c>pilot mcp --handed-over</c> (same node, no window), replays the client's
+/// <c>initialize</c> to it (discarding the reply) and <c>notifications/initialized</c>, tells the client
 /// <c>notifications/tools/list_changed</c> once, and relays every line both ways until either end closes, so
-/// <see cref="RunAsync"/> ends only when the client or the new server does. An install moves running binaries aside, so
-/// this process staying alive blocks nothing. If the new binary cannot be started it logs why and keeps serving as it is.</para>
+/// <see cref="RunAsync"/> ends only when the client or the child does.</para>
+/// <para>The relay is one level deep, however many updates there are: a server started as a hand-over child never looks at
+/// the installed version nor hands over, and the client-started server stays the only relay. On a later update it swaps: it
+/// starts the newest binary's server the same way, sends the client's lines to it from then on, still passes on the old
+/// child's replies to requests already sent to it (for a bounded wait), then disposes the old child. A swap that fails (the
+/// binary cannot start, or the new child ends or does not answer <c>initialize</c>) disposes the half-started child, keeps
+/// the current one serving and logs why once; the same version is not tried again, a later one is. An install moves running
+/// binaries aside, so a process staying alive blocks nothing.</para>
 /// </remarks>
 /// <param name="installed">The version installed now (null: unknown); by default the <c>VERSION</c> marker of the folder this runs from.</param>
 /// <param name="watch">How long a quiet input waits before the installed version is looked at again.</param>
 /// <param name="log">Where the line saying what it did about a new version goes (default: standard error, as stdout is the protocol's).</param>
 /// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
+/// <param name="handedOver">True for a server started by another one's hand-over: it never looks at the installed version nor hands over.</param>
 internal sealed class McpServer(string cwd, string? node, string? socket,
     Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
-    Func<string[], McpChild>? startChild = null)
+    Func<string[], McpChild>? startChild = null, bool handedOver = false)
 {
     /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
     internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
@@ -73,8 +81,20 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     /// <summary>The client's <c>initialize</c> request as it came, to replay to a server it is handed over to.</summary>
     private string? _initialize;
 
-    /// <summary>Set when a handover failed: this server serves on as it is and does not try again.</summary>
-    private bool _stays;
+    /// <summary>The version a swap to failed: not tried again (a later version is).</summary>
+    private string? _failed;
+
+    private static readonly TimeSpan InitializeWait = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DrainWait = TimeSpan.FromSeconds(3);
+
+    /// <summary>A hand-over child: its stdio ends, its pending requests, and the version it runs.</summary>
+    private sealed class Link(McpChild child, string version)
+    {
+        public McpChild Child { get; } = child;
+        public string Version { get; } = version;
+        public HashSet<string> Pending { get; } = [];
+        public Task<string?> Reading { get; set; } = Task.FromResult<string?>(null);
+    }
 
     private const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
     private const string ToolsChanged = """{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}""";
@@ -83,63 +103,123 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     internal string Who { get; private set; } = "mcp";
 
     /// <summary>
-    /// Answers each line of <paramref name="input"/> on <paramref name="output"/> until the input ends, or until the installed
-    /// version is not the one this runs as (checked after the reply in hand, and while the input is quiet) and the session is
-    /// handed over to the new binary, which then runs until either end closes.
+    /// Answers each line of <paramref name="input"/> on <paramref name="output"/> until the input ends, or hands the session
+    /// over to the installed binary's server when that is newer (checked after the reply in hand, and while the input is
+    /// quiet), relaying to it, and swapping it for a newer one on a later update, until either end closes.
     /// </summary>
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken cancellationToken)
     {
         var source = installed ?? InstalledMarkerAsync;
         var every = watch ?? DefaultWatch;
         var reading = input.ReadLineAsync(cancellationToken).AsTask();
-        while (true)
+        Link? link = null;
+        try
         {
-            using var tick = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var quietFor = Task.Delay(every, tick.Token);
-            var arrived = await Task.WhenAny(reading, quietFor) == reading;
-            await tick.CancelAsync();
-            if (!arrived)
+            while (true)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!_stays && await ReplacedAsync(source, cancellationToken) is { } quiet)
+                using var tick = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var quietFor = Task.Delay(every, tick.Token);
+                var first = await Task.WhenAny(link is null ? [reading, quietFor] : [reading, link.Reading, quietFor]);
+                await tick.CancelAsync();
+                if (first == quietFor)
                 {
-                    if (await HandOverAsync(quiet, reading, input, output, cancellationToken))
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+                else if (first == reading)
+                {
+                    if (await reading is not { } line)
                     {
                         return;
                     }
-                    _stays = true;
+                    reading = input.ReadLineAsync(cancellationToken).AsTask();
+                    if (link is not null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                        {
+                            if (Ids(line) is { Id: { } id, HasMethod: true })
+                            {
+                                link.Pending.Add(id);
+                            }
+                            await link.Child.Input.WriteLineAsync(line);
+                            await link.Child.Input.FlushAsync(cancellationToken);
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(line) && await AnswerAsync(line, cancellationToken) is { } reply)
+                    {
+                        await output.WriteLineAsync(reply);
+                        await output.FlushAsync(cancellationToken);
+                    }
                 }
-                continue;
-            }
-            if (await reading is not { } line)
-            {
-                return;
-            }
-            if (!string.IsNullOrWhiteSpace(line) && await AnswerAsync(line, cancellationToken) is { } reply)
-            {
-                await output.WriteLineAsync(reply);
-                await output.FlushAsync(cancellationToken);
-            }
-            reading = input.ReadLineAsync(cancellationToken).AsTask();
-            if (!_stays && await ReplacedAsync(source, cancellationToken) is { } now)
-            {
-                if (await HandOverAsync(now, reading, input, output, cancellationToken))
+                else
                 {
-                    return;
+                    if (await link!.Reading is not { } line)
+                    {
+                        return;
+                    }
+                    await PassOnAsync(link, line, output, cancellationToken);
+                    link.Reading = link.Child.Output.ReadLineAsync(cancellationToken).AsTask();
                 }
-                _stays = true;
+                if (!handedOver && await ReplacedAsync(source, link?.Version ?? Running, cancellationToken) is { } now && now != _failed)
+                {
+                    if (await SwapAsync(now, link, output, cancellationToken) is { } swapped)
+                    {
+                        link = swapped;
+                    }
+                    else
+                    {
+                        _failed = now;
+                    }
+                }
             }
+        }
+        finally
+        {
+            link?.Child.Dispose();
         }
     }
 
     private void Say(string message) => (log ?? Console.Error).WriteLine($"pilot mcp: {message}");
 
-    /// <summary>
-    /// Starts the new binary's server and relays the session to it. False when it could not be brought up (nothing was
-    /// relayed, the client has heard nothing), true once the relay has run its course.
-    /// </summary>
-    private async Task<bool> HandOverAsync(string now, Task<string?> reading, TextReader input, TextWriter output, CancellationToken cancellationToken)
+    /// <summary>Writes a line of a child's to the client, and settles the request it answers.</summary>
+    private static async Task PassOnAsync(Link link, string line, TextWriter output, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+        if (Ids(line) is { Id: { } id, HasMethod: false })
+        {
+            link.Pending.Remove(id);
+        }
+        await output.WriteLineAsync(line);
+        await output.FlushAsync(cancellationToken);
+    }
+
+    /// <summary>The id of a message (its raw JSON) and whether it names a method (a request, not a reply); null id for a notification or anything unreadable.</summary>
+    private static (string? Id, bool HasMethod) Ids(string line)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("id", out var id) && id.ValueKind != JsonValueKind.Null
+                ? (id.GetRawText(), root.TryGetProperty("method", out _))
+                : (null, false);
+        }
+        catch (JsonException)
+        {
+            return (null, false);
+        }
+    }
+
+    /// <summary>
+    /// Starts the newest binary's server and makes it the one the client talks to, the previous child (if any) drained of the
+    /// replies it still owes, then disposed. Null when it could not be brought up: the current server keeps serving, the
+    /// client has heard nothing.
+    /// </summary>
+    private async Task<Link?> SwapAsync(string now, Link? old, TextWriter output, CancellationToken cancellationToken)
+    {
+        var running = old?.Version ?? Running;
         McpChild child;
         try
         {
@@ -147,68 +227,72 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Say($"pilot {now} is installed and this server runs {Running}, but its pilot mcp cannot start ({ex.Message}): serving on as {Running}");
-            return false;
+            Say($"pilot {now} is installed and this server runs {running}, but its pilot mcp cannot start ({ex.Message}): serving on as {running}");
+            return null;
         }
-        using (child)
+        try
         {
-            try
+            if (_initialize is { } hello)
             {
-                if (_initialize is { } hello)
+                await child.Input.WriteLineAsync(hello);
+                await child.Input.FlushAsync(cancellationToken);
+                using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                wait.CancelAfter(InitializeWait);
+                if (await child.Output.ReadLineAsync(wait.Token) is null)
                 {
-                    await child.Input.WriteLineAsync(hello);
-                    await child.Input.FlushAsync(cancellationToken);
-                    if (await child.Output.ReadLineAsync(cancellationToken) is null)
-                    {
-                        throw new IOException("it ended before it answered initialize");
-                    }
-                    await child.Input.WriteLineAsync(Initialized);
-                    await child.Input.FlushAsync(cancellationToken);
+                    throw new IOException("it ended before it answered initialize");
                 }
-            }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
-            {
-                Say($"pilot {now} is installed and this server runs {Running}, but its pilot mcp did not come up ({ex.Message}): serving on as {Running}");
-                return false;
-            }
-            Say($"pilot {now} is installed and this server runs {Running}: handing the session over to its pilot mcp");
-            await output.WriteLineAsync(ToolsChanged);
-            await output.FlushAsync(cancellationToken);
-
-            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var up = PumpAsync(reading, input, child.Input, stop.Token);
-            var down = PumpAsync(child.Output.ReadLineAsync(stop.Token).AsTask(), child.Output, output, stop.Token);
-            await Task.WhenAny(up, down);
-            await stop.CancelAsync();
-            try
-            {
-                await Task.WhenAll(up, down);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
-            {
+                await child.Input.WriteLineAsync(Initialized);
+                await child.Input.FlushAsync(cancellationToken);
             }
         }
-        return true;
-    }
-
-    /// <summary>Copies lines from <paramref name="from"/> to <paramref name="to"/>, the first being the read already in flight, until one ends.</summary>
-    private static async Task PumpAsync(Task<string?> first, TextReader from, TextWriter to, CancellationToken cancellationToken)
-    {
-        var next = first;
-        while (await next.WaitAsync(cancellationToken) is { } line)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            if (!string.IsNullOrWhiteSpace(line))
+            child.Dispose();
+            Say($"pilot {now} is installed and this server runs {running}, but its pilot mcp did not come up ({ex.Message}): serving on as {running}");
+            return null;
+        }
+        catch
+        {
+            child.Dispose();
+            throw;
+        }
+        Say($"pilot {now} is installed and this server runs {running}: handing the session over to its pilot mcp");
+        var link = new Link(child, now);
+        link.Reading = child.Output.ReadLineAsync(cancellationToken).AsTask();
+        await output.WriteLineAsync(ToolsChanged);
+        await output.FlushAsync(cancellationToken);
+        if (old is not null)
+        {
+            await DrainAsync(old, output, cancellationToken);
+            old.Child.Dispose();
+        }
+        return link;
+    }
+
+    /// <summary>Passes on the replies the old child still owes to requests already sent to it, for a bounded wait.</summary>
+    private static async Task DrainAsync(Link old, TextWriter output, CancellationToken cancellationToken)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(DrainWait);
+        try
+        {
+            while (old.Pending.Count > 0 && await old.Reading.WaitAsync(limit.Token) is { } line)
             {
-                await to.WriteLineAsync(line);
-                await to.FlushAsync(cancellationToken);
+                await PassOnAsync(old, line, output, cancellationToken);
+                old.Reading = old.Child.Output.ReadLineAsync(cancellationToken).AsTask();
             }
-            next = from.ReadLineAsync(cancellationToken).AsTask();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
         }
     }
 
-    /// <summary>The root options that name the node, then <c>mcp</c>: what the new server is started with.</summary>
+    /// <summary>The root options that name the node, then <c>mcp</c> marked as a hand-over child: what the new server is started with.</summary>
     private string[] ChildArgs() =>
-        [.. node is null ? [] : new[] { "--node", node }, .. socket is null ? [] : new[] { "--node-socket", socket }, "mcp"];
+        [.. node is null ? [] : new[] { "--node", node }, .. socket is null ? [] : new[] { "--node-socket", socket }, "mcp", "--handed-over"];
 
     /// <summary>The <c>pilot</c> beside this process, not <see cref="Environment.ProcessPath"/>: an install moves the running binary aside under another name.</summary>
     private McpChild StartBinary(string[] args)
@@ -246,8 +330,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         });
     }
 
-    /// <summary>The installed version when it is another one than <see cref="Running"/>, else null (also when it cannot be told).</summary>
-    private static async Task<string?> ReplacedAsync(Func<CancellationToken, Task<string?>> source, CancellationToken cancellationToken)
+    /// <summary>The installed version when it is another one than <paramref name="current"/>, else null (also when it cannot be told).</summary>
+    private static async Task<string?> ReplacedAsync(Func<CancellationToken, Task<string?>> source, string current, CancellationToken cancellationToken)
     {
         string? now;
         try
@@ -258,7 +342,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             return null;
         }
-        return now is { Length: > 0 } && Plain(now) != Running ? Plain(now) : null;
+        return now is { Length: > 0 } && Plain(now) != current ? Plain(now) : null;
     }
 
     /// <summary>The version the <c>VERSION</c> marker of this binary's folder says (its first line: version, then runtime); null for a build that has none.</summary>

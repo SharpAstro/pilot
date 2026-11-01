@@ -145,7 +145,19 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // setting is the person's to change.
         // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
         var watchtower = Get<Watchtower>();
-        var standing = Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
+        // The person's own word in the watchtower's chat, on a card it answers or dismisses, is theirs to have done: the node
+        // sorts it as the person's and carries that on the command (PersonsWord, never from the wire), so the choice the answer
+        // runs passes the checks keyed on the watchtower's name too. Without that word the watchtower is fenced as ever.
+        var wordRecord = default((CardRow Card, string Chosen, string Words)?);
+        if (command.PersonsWord is null && command.Who == watchtower.Name && command.Verb is Verbs.Answer or Verbs.Dismiss
+            && command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal)
+            && state.Cards().FirstOrDefault(c => c.Id == command.Target[Verbs.CardTargetPrefix.Length..]) is { State: CardState.Open } named
+            && watchtower.PersonsWord(command) is { } words)
+        {
+            command = command with { PersonsWord = words };
+            wordRecord = (named, ChosenOf(command, named), words);
+        }
+        var standing = command.PersonsWord is not null ? Standing.Person : Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
         // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
         // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
         // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
@@ -163,9 +175,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return state.Complete(command, refused);
         }
         // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
-        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row && command.Target == Verbs.SessionTarget(row.Id))
+        // A say finds its session as the messenger does, by row id or by name, so a say to the watchtower by name is noted too.
+        if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row
+            && command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal)
+            && SessionMessenger.Find(state.Sessions(), command.Target[Verbs.SessionTargetPrefix.Length..])?.Id == row.Id)
         {
-            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who);
+            watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who, string.Join(' ', command.Args));
         }
         // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
         // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.
@@ -180,6 +195,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             command = command with { Autopilot = true };
         }
         var result = await RouteAsync(command, cancellationToken);
+        if (wordRecord is var (answered, chosen, said) && result.Ok)
+        {
+            state.RaiseCard(CardBin.Handled, CardKinds.PersonsWord, Verbs.CardTarget(answered.Id),
+                $"{command.Who} answered {answered.Id} ({chosen}) at the person's word in the chat", said);
+        }
         if (onAutopilot && result.Ok)
         {
             // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
@@ -193,6 +213,23 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             }
         }
         return result;
+    }
+
+    // The label of the choice an answer names (by number or label), or "dismissed" for a dismissal; what it was, as the person's word is recorded.
+    private static string ChosenOf(CommandRequest command, CardRow card)
+    {
+        var which = string.Join(' ', command.Args ?? []).Trim();
+        // A choice that asks for words carries them after its label: the choice is the first word.
+        var first = (command.Args ?? []).FirstOrDefault()?.Trim() ?? "";
+        if (command.Verb != Verbs.Dismiss && first.Length > 0 && first != which
+            && card.Choices.FirstOrDefault(c => c.AsksFor is not null && string.Equals(c.Label, first, StringComparison.OrdinalIgnoreCase)) is { } asking)
+        {
+            return asking.Label;
+        }
+        return command.Verb == Verbs.Dismiss ? "dismissed"
+            : (int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
+                ? card.Choices[number - 1]
+                : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase)))?.Label ?? which;
     }
 
     private async Task HandledWhenDoneAsync(CommandRequest command, Task<CommandResult> later)
@@ -310,13 +347,33 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<Summaries>().Records(command);
         }
+        if (command.Verb == Verbs.ReviewCost)
+        {
+            if (command.Target != Verbs.NodeTarget)
+            {
+                return state.Complete(command, $"review-cost takes the target {Verbs.NodeTarget}, not {command.Target}");
+            }
+            var (report, error) = ReviewCost.Run(command.Args ?? [], state, Get<SessionTrackerOptions>().Profile);
+            return state.Complete(command, error, made: report);
+        }
         if (command.Verb == Verbs.Stop)
         {
             return await Get<SessionMessenger>().StopAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.EndSession)
+        {
+            return await Get<SessionMessenger>().EndAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);
+        }
+        if (Verbs.IsAdmission(command.Verb))
+        {
+            // Another node's claim for an Opus slot, its list of sessions, or a setting held here for the fleet: only under a grant.
+            return command.Grant is null
+                ? state.Complete(command, $"{command.Verb} is taken from another node of the fleet, under its grant")
+                : Get<AdmissionGate>().Handle(command);
         }
         if (command.Verb == Verbs.Set)
         {
@@ -382,6 +439,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         return state.Execute(command);
     }
 
+    private static CardChoice? FindChoice(CardRow card, string which) =>
+        int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
+            ? card.Choices[number - 1]
+            : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// <c>answer</c> runs the chosen button's command as the one answering, and closes the card when it was done; a
     /// refused command leaves the card open, its reason in the answer's error. <c>dismiss</c> closes it with nothing done.
@@ -412,15 +474,28 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             // An assistant's ask dismissed is denied: the session that asked is told, as with Deny.
             if (card.Kind == CardKinds.AssistantAsk)
             {
-                await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+                await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             }
             return state.Complete(command, null);
         }
 
         var which = string.Join(' ', args).Trim();
-        var choice = int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
-            ? card.Choices[number - 1]
-            : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
+        var choice = FindChoice(card, which);
+        // A choice that asks for words: the first arg is the choice, the rest are its words.
+        if (choice is null && args.Length > 1 && FindChoice(card, args[0].Trim()) is { AsksFor: not null } asking)
+        {
+            choice = asking;
+            var words = string.Join(' ', args.Skip(1)).Trim();
+            if (words.Length == 0)
+            {
+                return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}); the card stays open");
+            }
+            choice = choice with { Args = [.. choice.Args, words] };
+        }
+        else if (choice is { AsksFor: not null })
+        {
+            return state.Complete(command, $"{choice.Label} needs words ({choice.AsksFor}): pilot answer {card.Id} {choice.Label} --words <text>; the card stays open");
+        }
         if (choice is null)
         {
             return state.Complete(command, card.Choices.Length == 0
@@ -433,7 +508,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (card.Kind == CardKinds.AssistantAsk && choice.Verb == Verbs.Dismiss && choice.Target == Verbs.CardTarget(card.Id))
         {
             state.CloseCard(card.Id, choice.Label, command.Who);
-            await Get<Autopilot>().TellAsync(card, allowed: false, command.Who, cancellationToken);
+            await Get<Autopilot>().TellAsync(card, allowed: false, AnsweredBy(command), cancellationToken);
             return state.Complete(command, null);
         }
 
@@ -477,6 +552,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             {
                 Get<LegCommander>().ShowMerge(choice.Target, result.Made, result.Way);
             }
+            else if (result.Way == MergeWays.InProgress)
+            {
+                // A repeat of a merge already running: the card stays open, and the first merge's result updates or closes it.
+            }
             else if (!state.CloseCard(card.Id, choice.Label, command.Who))
             {
                 // Closed by the landing already, as landed: it says too which answer it was.
@@ -491,10 +570,14 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // An assistant's ask allowed and done: the session that asked is told.
         if (card.Kind == CardKinds.AssistantAsk)
         {
-            await Get<Autopilot>().TellAsync(card, allowed: true, command.Who, cancellationToken);
+            await Get<Autopilot>().TellAsync(card, allowed: true, AnsweredBy(command), cancellationToken);
         }
         return state.Complete(command, null);
     }
+
+    // Who an asking session is told answered its ask: the person when the watchtower acted at their word in its chat.
+    private static string AnsweredBy(CommandRequest command) =>
+        command.PersonsWord is not null ? "the person (by their word in the watchtower's chat)" : command.Who;
 
     /// <summary><c>add-artifact session/&lt;id&gt; &lt;path or URL&gt; [title…]</c>: something to look at on a session in no flight.</summary>
     private CommandResult AddSessionArtifact(CommandRequest command)

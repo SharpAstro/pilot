@@ -37,7 +37,7 @@ public sealed class TerminalTests
         flights.CanvasAvailable = false; // as pilot-tui sets it: cells keep the list
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
 
         var arranged = Layout.Engine.Arrange(flights.Tree(Screen()), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored);
         var described = CellLayout.Describe(arranged);
@@ -65,7 +65,7 @@ public sealed class TerminalTests
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
         var copied = new List<string>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
         flights.OnOpen = _ => { };
         flights.CopyText = copied.Add;
         var screen = Screen();
@@ -99,7 +99,7 @@ public sealed class TerminalTests
         flights.CanvasAvailable = false;
         flights.CanCommand = true;
         var acted = new List<FlightAction>();
-        flights.OnAction = acted.Add;
+        flights.OnAction = Taken.By<FlightAction>(acted.Add);
         var screen = Screen();
         flights.Tree(screen);
 

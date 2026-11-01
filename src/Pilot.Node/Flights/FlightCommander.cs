@@ -26,6 +26,18 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
+    /// <summary>Says text to a session row (a node say), true when it was delivered; null where there is none (a test that tells no one).</summary>
+    public Func<string, string, CancellationToken, Task<bool>>? Say { get; set; }
+
+    /// <summary>Cancels the queued and running jobs of a flight and of its sessions (flight, session row ids, who); null where there is no job runner.</summary>
+    public Func<string, IReadOnlyCollection<string>, string, int>? CancelJobs { get; set; }
+
+    /// <summary>The node's ledger of launched sessions, whose live entries of a flight are wound down with it; null in a test with none.</summary>
+    public Sessions.SessionLedger? Ledger { get; set; }
+
+    /// <summary>How long the sessions of a landing flight are given to finish and report after being told, before they are stopped.</summary>
+    public TimeSpan FinishGrace { get; set; } = TimeSpan.FromSeconds(10);
+
     /// <summary>The settings in force: whether the node is in maintenance. A test's commander takes every flight.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
@@ -69,7 +81,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -100,6 +112,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                         break;
                     case Verbs.FlyAnyway:
                         FlyAnyway(command);
+                        break;
+                    case Verbs.FlightPriority:
+                        made = await SetPriorityAsync(command, cancellationToken);
                         break;
                 }
             }
@@ -168,7 +183,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
             catch (Exception ex)
             {
                 // The sweep takes the step again every minute; the flight is taken, so this is a card, not a failed receive.
-                state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} could not go on by itself after it came here", ex.Message);
+                state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} came here, but its next step was refused: {LegCommander.OneLine(ex.Message)}", ex.Message);
             }
         }, CancellationToken.None);
         _advancing[task] = true;
@@ -462,6 +477,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             return;
         }
+        await _setup.EnsureAsync(tracker, repoPath, code, cancellationToken);
         try
         {
             await tracker.AddLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(Machine), cancellationToken);
@@ -474,9 +490,11 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label", ex.Message);
+            state.RaiseCard(CardBin.ForYou, "node-label-refused", $"flight/{code}", $"{code} is flying, but {item.Noun} has no {PilotMarks.NodeLabel(Machine)} label: {LegCommander.OneLine(ex.Message)}", ex.Message);
         }
     }
+
+    private readonly RepoSetup _setup = new(state);
 
     /// <summary>
     /// A create-flight this node, in maintenance, does not take itself: made on the best willing node of the fleet instead
@@ -799,25 +817,52 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
         // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
         // and still able to push. A session's job is its row id.
-        var sessions = state.Sessions().Where(s => s.State != SessionState.Ended && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id);
+        // Found by the ledger's flight too, not only by name: a session the node launched for the flight whose row is renamed or gone.
+        var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
+        var sessions = live.Concat(Ledger?.All().Where(e => e.EndReason is null && string.Equals(e.Flight, flight.Code, StringComparison.Ordinal)).Select(e => e.JobId) ?? []).Distinct().ToList();
         var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
+        var endBy = mergedHead is not null ? "merge" : "land";
         var (released, consumed, leftover) = await OffLockAsync(async () =>
         {
             // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
             // open is not removed. Seen live: a flight landed a minute after its worker finished kept its plane.
             if (workers is not null)
             {
+                // Told to finish and report first, with a short grace, so what a reviewer found is not lost with it.
+                var told = false;
+                if (Say is not null)
+                {
+                    var text = $"{flight.Code} has {(mergedHead is not null ? "merged" : "landed")}. Finish now: report what you have (any finding on code already in main goes in your last message), and stop. The node stops you in a moment.";
+                    foreach (var id in live)
+                    {
+                        try
+                        {
+                            told |= await Say(id, text, cancellationToken);
+                        }
+                        catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                        {
+                            // Not reachable: stopped below all the same.
+                        }
+                    }
+                }
+                if (told && FinishGrace > TimeSpan.Zero)
+                {
+                    await Task.Delay(FinishGrace, time, cancellationToken);
+                }
                 foreach (var job in jobs)
                 {
                     try
                     {
-                        await workers.StopAsync(job, cancellationToken);
+                        await workers.StopAsync(job, endReason, endBy, cancellationToken);
                     }
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
                         // Gone already.
                     }
                 }
+                // Nothing of its own is left queued or running: its jobs, and those of its sessions.
+                CancelJobs?.Invoke(flight.Code, jobs, endBy);
             }
             // Nothing of the flight's is left where nobody looks: no commit that is on no remote and not in main (TIA1658's
             // last read was one, until it was landed by hand). Such a plane is not landed; it says which commits.
@@ -897,6 +942,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             State = FlightState.Landed,
             LandedAt = landedAt,
+            // Its review ends with it: nothing resumes or nudges a reviewer of a landed flight.
+            Review = f.Review is { State: ReviewState.Reviewing } ? null : f.Review,
             FoldedInto = foldedInto ?? f.FoldedInto,
             Overlaps = foldedInto is null ? f.Overlaps : flight.Overlaps,
         }) ?? flight;
@@ -932,7 +979,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
         if (foldedInto is null)
         {
-            state.RaiseCard(CardBin.ForYou, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
+            // Landed needs no one: a Handled line.
+            state.RaiseCard(CardBin.Handled, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
                 $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
         }
         else
@@ -978,7 +1026,61 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                 var uses = released.Where(r => !waiting.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer) && consumed.Contains((waiting.Code, r.Id, r.Producer))).ToList();
                 waiting = waiting with { PackageWaits = [.. waiting.PackageWaits, .. uses] };
             }
+            if (foldedInto is null)
+            {
+                ReleaseConnection(waiting, flight.Code);
+                continue;
+            }
             state.PutFlight(Settle(waiting));
+        }
+    }
+
+    /// <summary>
+    /// Drops the landed flight <paramref name="landed"/> from the connections of <paramref name="waiting"/> (its package waits stay), settles it
+    /// and raises a Handled card on the waiting flight saying what it still waits for (pilot #590).
+    /// </summary>
+    private void ReleaseConnection(FlightRow waiting, string landed)
+    {
+        var settled = Settle(waiting with { Connections = [.. waiting.Connections.Where(c => c != landed)] });
+        state.PutFlight(settled);
+        var made = settled.State == FlightState.Flying
+            ? $"{landed} landed: {waiting.Code} no longer waits for it and flies now"
+            : $"{landed} landed: {waiting.Code} no longer waits for it, but still waits for {FlightWaiting.For(settled)}";
+        state.RaiseCard(CardBin.Handled, ConnectionReleasedKind, Verbs.FlightTarget(waiting.Code), $"{landed} landed: {waiting.Code} no longer waits for it", made);
+    }
+
+    /// <summary>The kind of the Handled card raised when a connection to a landed flight is released.</summary>
+    public const string ConnectionReleasedKind = "connection-released";
+
+    /// <summary>
+    /// Releases every connection of a flight in the air to a flight of this node that has landed here (not folded, not moved to another node),
+    /// for rows stuck that way before the release existed and for a node restarted between a land and its release. Returns how many ended.
+    /// </summary>
+    public async Task<int> ReleaseLandedConnectionsAsync(CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            var released = 0;
+            foreach (var waitingRow in state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Length > 0).ToList())
+            {
+                var waiting = waitingRow;
+                foreach (var code in waitingRow.Connections)
+                {
+                    var other = state.Flights().FirstOrDefault(f => f.Code == code);
+                    if (other is { State: FlightState.Landed, MovedTo: null, FoldedInto: null })
+                    {
+                        ReleaseConnection(waiting, code);
+                        waiting = state.Flights().First(f => f.Code == waiting.Code);
+                        released++;
+                    }
+                }
+            }
+            return released;
+        }
+        finally
+        {
+            _one.Release();
         }
     }
 
@@ -1015,11 +1117,38 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
     }
 
-    /// <summary>
-    /// <c>fly-anyway flight/&lt;code&gt;</c>: the way out of a wait for a package that is not coming (its publish failed, or the
-    /// connection never needed it). Every package wait of the flight is dropped, its late card closed, and the flight flies when
-    /// nothing else holds it.
-    /// </summary>
+    /// <summary><c>flight-priority flight/&lt;code&gt; &lt;level&gt;</c>: writes the issue's Priority field (or clears it with <c>none</c>); refused where the repo has no field.</summary>
+    private async Task<string> SetPriorityAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = Find(command.Target);
+        var word = command.Args.FirstOrDefault()?.Trim();
+        IssuePriority? level;
+        if (string.Equals(word, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            level = null;
+        }
+        else if (IssuePriorities.TryParse(word, out var parsed))
+        {
+            level = parsed;
+        }
+        else
+        {
+            throw new FlightException("priority is one of urgent, high, medium, low or none");
+        }
+        if (Trackers?.Of(flight.Tracker) is not { } tracker)
+        {
+            throw new FlightException($"{flight.Code} has no tracker to set a priority on");
+        }
+        var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
+        if (!read.HasField)
+        {
+            throw new FlightException($"{flight.Code}'s repo has no Priority field (or the token cannot read it); mark a priority flight with the '{IssuePriorities.Label}' label instead");
+        }
+        await tracker.SetPriorityAsync(flight.RepoPath, flight.Issue, level, cancellationToken);
+        state.UpdateFlight(flight.Code, f => f with { HasPriorityField = true, IssuePriority = level });
+        return $"{flight.Code} priority {(level is { } l ? IssuePriorities.Name(l) : "cleared")}";
+    }
+
     private void FlyAnyway(CommandRequest command)
     {
         var flight = Find(command.Target);

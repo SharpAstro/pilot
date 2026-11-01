@@ -10,7 +10,11 @@ public sealed record Milestone(int Number, string Title, DateTimeOffset? DueOn =
 /// <param name="Open">Open; false for a closed one.</param>
 /// <param name="Milestone">The title of the milestone it is in; null for none.</param>
 /// <param name="Author">The login that opened it.</param>
-public sealed record MilestoneIssue(int Number, string Title, string Body, bool Open, string? Milestone, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string Author, string Url);
+public sealed record MilestoneIssue(int Number, string Title, string Body, bool Open, string? Milestone, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string Author, string Url, string[]? Labels = null, IssuePriority? Priority = null)
+{
+    /// <summary>Whether it carries <see cref="PilotMarks.Pinned"/>.</summary>
+    public bool Pinned => PilotMarks.IsPinned(Labels);
+}
 
 /// <summary>An idea's row, from the issue it is.</summary>
 public static class IdeaRows
@@ -38,6 +42,8 @@ public static class IdeaRows
                 Age = IdeaIds.Age(issue.CreatedAt, now),
                 Origin = issue.Author,
                 Url = issue.Url,
+                Pinned = issue.Pinned,
+                Priority = issue.Priority,
             };
         }).ToList();
 
@@ -129,7 +135,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         return IdeaImages.ReplaceMarkers(body, (alt, id, _) => $"![{alt}]({filed[id]})");
     }
 
-    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone
+    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone or Verbs.PinIssue or Verbs.SetPriority
         or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -163,6 +169,8 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
                 Verbs.MoveIdea => await MoveAsync(command, cancellationToken),
                 Verbs.FoldIdea => await FoldAsync(command, cancellationToken),
                 Verbs.SetMilestone => await SetMilestoneAsync(command, cancellationToken),
+                Verbs.PinIssue => await PinAsync(command, cancellationToken),
+                Verbs.SetPriority => await SetPriorityAsync(command, cancellationToken),
                 Verbs.AcceptMilestones => await AcceptMilestonesAsync(command, cancellationToken),
                 _ => await DropAsync(command, cancellationToken),
             };
@@ -261,7 +269,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// </summary>
     private async Task<RepoOption[]> ChooseAsync(IdeaText idea, string context, CancellationToken cancellationToken)
     {
-        var options = repos.Repos().Where(r => r.GitHub is not null).Select(r => new RepoOption(r.Name, RepoTypes.Of(r.Path), r.Path)).ToArray();
+        var options = repos.Tracked().Select(r => new RepoOption(r.Name, RepoTypes.Of(r.Path), r.Path)).ToArray();
         if (options.Length == 0)
         {
             throw new FlightException("the node tracks no repo on GitHub to file the idea in: name one with --repo");
@@ -665,6 +673,104 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
                 ?? throw new FlightException($"{name} has no open milestone {wanted} ({(open.Length > 0 ? $"it has {string.Join(", ", open.Select(m => m.Title))}" : "it has no open milestone")})");
         }
         await MoveToMilestoneAsync(name, path, number, target, seen, refresh: true, cancellationToken);
+        return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// <c>pin-issue issue/&lt;repo&gt;/#&lt;n&gt; [off]</c>: the open issue gets <see cref="PilotMarks.Pinned"/> (the label is made in the repo when it
+    /// has none), or loses it with <c>off</c>. An idea target (<c>idea/&lt;repo&gt;/I&lt;n&gt;</c>) names the same issue. The board and ideas are read again.
+    /// </summary>
+    private async Task<CommandResult> PinAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        string given;
+        int number;
+        if (IssueIds.ReadTarget(command.Target) is { } issueTarget)
+        {
+            (given, number) = issueTarget;
+        }
+        else if (IdeaIds.ReadTarget(command.Target) is { } ideaTarget)
+        {
+            (given, number) = ideaTarget;
+        }
+        else
+        {
+            throw new FlightException($"pin-issue takes an issue target, {Verbs.IssueTargetPrefix}<repo>/#<issue number>, not {command.Target}");
+        }
+        var args = command.Args ?? [];
+        var off = args.Length > 0 && string.Equals(args[0].Trim(), Verbs.PinOff, StringComparison.OrdinalIgnoreCase);
+        if (args.Length > 0 && !off)
+        {
+            throw new FlightException($"pin-issue takes no argument but {Verbs.PinOff} (to unpin), not {args[0]}");
+        }
+        var (name, path) = await RepoOfAsync(given, cancellationToken);
+        var now = await github.IssueNowAsync(path, number, cancellationToken)
+            ?? throw new FlightException($"{name} has no issue #{number}");
+        if (!now.Open)
+        {
+            throw new FlightException($"#{number} of {name} is closed, so it is neither pinned nor unpinned");
+        }
+        if (now.Pinned != !off)
+        {
+            if (off)
+            {
+                await github.RemoveIssueLabelAsync(path, number, PilotMarks.Pinned, cancellationToken);
+            }
+            else
+            {
+                await github.AddIssueLabelAsync(path, number, PilotMarks.Pinned, cancellationToken);
+            }
+        }
+        await RefreshBoardAsync(name, path, cancellationToken);
+        return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// <c>set-priority issue/&lt;repo&gt;/#&lt;n&gt; &lt;urgent|high|medium|low|none&gt;</c>: the open issue's Priority field is set, or cleared with <c>none</c>,
+    /// through the same writer <c>flight-priority</c> uses. The field is never made: a repo without it refuses. The board and ideas are read again.
+    /// </summary>
+    private async Task<CommandResult> SetPriorityAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        string given;
+        int number;
+        if (IssueIds.ReadTarget(command.Target) is { } issueTarget)
+        {
+            (given, number) = issueTarget;
+        }
+        else if (IdeaIds.ReadTarget(command.Target) is { } ideaTarget)
+        {
+            (given, number) = ideaTarget;
+        }
+        else
+        {
+            throw new FlightException($"set-priority takes an issue target, {Verbs.IssueTargetPrefix}<repo>/#<issue number>, not {command.Target}");
+        }
+        var word = (command.Args ?? []).FirstOrDefault()?.Trim();
+        IssuePriority? level;
+        if (string.Equals(word, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            level = null;
+        }
+        else if (IssuePriorities.TryParse(word, out var parsed))
+        {
+            level = parsed;
+        }
+        else
+        {
+            throw new FlightException("priority is one of urgent, high, medium, low or none");
+        }
+        var (name, path) = await RepoOfAsync(given, cancellationToken);
+        var now = await github.IssueNowAsync(path, number, cancellationToken)
+            ?? throw new FlightException($"{name} has no issue #{number}");
+        if (!now.Open)
+        {
+            throw new FlightException($"#{number} of {name} is closed, so its priority is not set");
+        }
+        if (!(await github.IssuePriorityAsync(path, number, cancellationToken)).HasField)
+        {
+            throw new FlightException($"{name} has no Priority field (or the token cannot read it), so #{number} has none to set");
+        }
+        await github.SetIssuePriorityAsync(path, number, level, cancellationToken);
+        await RefreshBoardAsync(name, path, cancellationToken);
         return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
     }
 

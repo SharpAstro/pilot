@@ -39,14 +39,41 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     }
 
     /// <summary>
+    /// Why the 7-day window holds a start: it is spent faster than an even pace, used % above elapsed % plus <paramref name="margin"/>
+    /// points. Null when the margin is null (off or exempt), the figures are missing or stale, or the pace has been caught up with.
+    /// <see cref="StartHeld.Resets"/> is the window's reset (what a hold says itself once per); the words say when an idle account catches up.
+    /// </summary>
+    public StartHeld? CheckPace(double? margin)
+    {
+        var now = time.GetUtcNow();
+        if (margin is not { } points || state.Usage() is not { SevenDay: { } week } usage || now - usage.ReadAt >= FreshFor
+            || week.ResetsAt is not { } resets || resets <= now)
+        {
+            return null;
+        }
+        var length = TimeSpan.FromDays(7);
+        var begun = resets - length;
+        var elapsed = Math.Clamp((now - begun) / length * 100, 0, 100);
+        if (week.UsedPercent <= elapsed + points)
+        {
+            return null;
+        }
+        var lifts = begun + length * ((week.UsedPercent - points) / 100);
+        // Resets is the window's own reset, not the lift time: the lift moves with every point spent, and a hold says itself once.
+        return new StartHeld(
+            string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent but only {elapsed:0} % elapsed (the pace margin is {points:0} points); it goes on once the pace catches up, about {lifts.ToLocalTime():ddd HH:mm}"),
+            resets);
+    }
+
+    /// <summary>
     /// Whether a start waits: false lets it go. Held, one Handled card of <paramref name="kind"/> says
     /// <paramref name="what"/> (<c>TIA1 waits to start its reviewer</c>) and why, with until when, once per window however
     /// often it is asked; the start is the caller's to take again once the window has reset. The week's ring is rung either way.
     /// </summary>
-    public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what)
+    public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null)
     {
         RingWeek(weekLimit);
-        if (Check(limit) is not { } held)
+        if ((Check(limit) ?? CheckPace(paceMargin)) is not { } held)
         {
             _said.TryRemove(key, out _);
             return false;

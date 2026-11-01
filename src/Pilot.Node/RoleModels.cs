@@ -44,11 +44,28 @@ public sealed partial class RoleModels
     /// <summary>A role's model when the settings name none: Opus where judgement decides what follows, Sonnet elsewhere.</summary>
     public static string DefaultModel(string role) => role is Planner or Reviewer or ReviewerDeep ? "opus" : "sonnet";
 
+    /// <summary>Raised after <see cref="Apply"/>, for what runs on a setting it must not wait to be asked again (the pull request watch's pace).</summary>
+    public event Action? Applied;
+
     public void Apply(NodeSettings settings)
     {
         lock (_lock)
         {
             _settings = settings;
+        }
+        Applied?.Invoke();
+    }
+
+    /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page
+    /// (<see cref="NodeSettings.PrWatchIdleKey"/>); <see cref="NodeSettings.DefaultPrWatchIdle"/> unless the settings say otherwise.</summary>
+    public TimeSpan PrWatchIdle
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.PrWatchIdle ?? NodeSettings.DefaultPrWatchIdle;
+            }
         }
     }
 
@@ -117,6 +134,28 @@ public sealed partial class RoleModels
     /// stronger <c>reviewer-deep-model</c> when the settings name one (<c>none</c> there passes no flag).</summary>
     public string? ReviewerModel(ReviewDepth depth) =>
         depth == ReviewDepth.Deep && Raw(ModelKey(ReviewerDeep)) is { } deep ? Named(deep) : Model(Reviewer);
+
+    /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="NodeSettings.ReviewDeepFirstKey"/>); on unless the settings say off.</summary>
+    public bool ReviewDeepFirst
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ReviewDeepFirst ?? true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The model a reviewer starts on in <paramref name="round"/> (1 for the first review of a flight): a re-review runs on the leg
+    /// model <paramref name="legModel"/> (the worker's, Sonnet by default), as it only reads what changed; the first review is
+    /// <see cref="ReviewerModel"/>, its deep model only when the diff is deep-sized and <see cref="ReviewDeepFirst"/> is on.
+    /// </summary>
+    public string? ReviewerModelFor(ReviewDepth depth, int round, string? legModel) =>
+        round > 1 ? legModel ?? Model(Worker)
+        : depth == ReviewDepth.Deep && !ReviewDeepFirst ? Model(Reviewer)
+        : ReviewerModel(depth);
 
     /// <summary>The effort a reviewer of <paramref name="depth"/> starts at: the reviewer's own for standard, a step below it for
     /// light (low when none is set), and for deep <c>reviewer-deep-effort</c>, else a step above it (high when none is set).
@@ -194,11 +233,15 @@ public sealed partial class RoleModels
         return (model, effort);
     }
 
-    /// <summary>The redo choice for <paramref name="leg"/> (its next fresh worker is attempt go-arounds + 2), numbered as the redo it orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.</summary>
-    public string RedoLabel(LegRow leg)
+    /// <summary>
+    /// The choice that starts a fresh worker on <paramref name="leg"/>, naming why the last one is let go (<paramref name="why"/> completes
+    /// "the last one ...": <c>went idle</c>, <c>never showed up</c>); its next worker is attempt go-arounds + 2, numbered as the redo it
+    /// orders (go-arounds + 1) and naming that attempt's model once it is a second redo or later.
+    /// </summary>
+    public string RedoLabel(LegRow leg, string why)
     {
         var (model, effort) = WorkerFor(leg.Model, leg.Effort, leg.GoArounds + 2);
-        return Verbs.RedoLeg(leg.Name, leg.GoArounds + 1, model, effort);
+        return Verbs.FreshWorker(leg.Name, why, leg.GoArounds + 1, model, effort);
     }
 
     /// <summary>A send-back button for <paramref name="leg"/> in <paramref name="words"/>, naming the next worker's round and model as <see cref="RedoLabel"/> does.</summary>
@@ -320,6 +363,76 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.WeekLimit ?? 90;
+            }
+        }
+    }
+
+    /// <summary>The week-pace margin in points that holds a start of <paramref name="repo"/>; null when the setting is off or the repo is
+    /// a priority repo (<see cref="NodeSettings.WeekPaceKey"/>).</summary>
+    public double? WeekPaceFor(string repo)
+    {
+        lock (_lock)
+        {
+            return IsPriority(repo) ? null : _settings.WeekPace;
+        }
+    }
+
+    /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
+    public double SpendAlert
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.SpendAlert ?? 3;
+            }
+        }
+    }
+
+    /// <summary>The share of its window, in percent, past which an idle live watchtower is compacted (<see cref="NodeSettings.WatchtowerCompactShareKey"/>); 60 by default.</summary>
+    public double WatchtowerCompactShare
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WatchtowerCompactShare ?? 60;
+            }
+        }
+    }
+
+    /// <summary>The person messages in a watchtower chat after which it is compacted once idle (<see cref="NodeSettings.WatchtowerChatMessagesKey"/>); 40 by default, 0 is off.</summary>
+    public int WatchtowerChatMessages
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WatchtowerChatMessages ?? 40;
+            }
+        }
+    }
+
+    /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
+    public int OpusCap
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OpusCap ?? 3;
+            }
+        }
+    }
+
+    /// <summary>Whether only one flight per repo flies at a time (<see cref="NodeSettings.OneFlightPerRepoKey"/>); off unless set.</summary>
+    public bool OneFlightPerRepo
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.OneFlightPerRepo ?? false;
             }
         }
     }

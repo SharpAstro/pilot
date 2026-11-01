@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -27,6 +27,10 @@ internal static class StatusMarkdown
                 ? "**autopilot** on (only the person changes it: `pilot settings set autopilot off`)"
                 : "**autopilot** off (only the person changes it: `pilot settings set autopilot on`)");
         }
+        if (sendTimings is not null)
+        {
+            facts.Add($"**sends** {Text(SendTimingRow.Summary(sendTimings))}");
+        }
         if (snapshot.Usage?.Account is { } account)
         {
             facts.Add($"**account** {Text(account.Line())}");
@@ -38,6 +42,14 @@ internal static class StatusMarkdown
         if (snapshot.Machine is { } machine)
         {
             facts.Add($"**machine** {Text(machine.Line())}");
+        }
+        if (snapshot.Admission is { } admission)
+        {
+            facts.Add($"**{Text(admission.Line())}**{(admission.Counted.Length > 0 ? ": " + Text(string.Join(", ", admission.Counted)) : "")}");
+        }
+        foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
+        {
+            facts.Add($"**queued** {queued.Code}{(queued is { FromField: true, Level: { } level } ? $" ({IssuePriorities.Name(level).ToLowerInvariant()})" : queued.Priority ? " (priority)" : "")} {Text(queued.Title ?? "")}: {Text(queued.Why)}");
         }
         if (facts.Count > 0)
         {

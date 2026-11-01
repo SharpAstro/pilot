@@ -26,7 +26,7 @@ public sealed class OneWatchtowerTests : IDisposable
     {
         _options = new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1");
         _state = new NodeState(new InMemoryJournal(), _time);
-        _tower = new Watchtower(_state, _workers, (c, _) => Task.FromResult(_state.Complete(c, null)), _options, _time) { Pilot = "pilot" };
+        _tower = new Watchtower(_state, _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",
@@ -96,6 +96,56 @@ public sealed class OneWatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedWatchtowerThenAFreshStartLeavesOneLiveAndNoSayReachesTheOldId()
+    {
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        var oldId = _tower.Generations().ShouldHaveSingleItem().Job;
+
+        // The node's own watchtower turns up renamed, its role gone, and is live: still the current one, until it is replaced.
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row(oldId, SessionState.Idle, Start, name: "de1-pil455-pr498-merge-ready", role: SessionRole.AdHoc);
+        await _tower.LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(1);
+        _tower.Current()!.Id.ShouldBe(oldId);
+        await _tower.RestartAsync("test", Ct);
+        _workers.Started.Count.ShouldBe(2);
+        var freshId = _tower.Generations().Last().Job;
+        freshId.ShouldNotBe(oldId);
+        Row(freshId, SessionState.Idle, _time.GetUtcNow());
+
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _tower.LookAsync(Ct);
+
+        _workers.Stopped.ShouldContain(oldId);
+        _workers.Stopped.ShouldNotContain(freshId);
+        _tower.Current()!.Id.ShouldBe(freshId);
+        _tower.TellTarget().Target.ShouldBe(Verbs.SessionTarget(freshId));
+    }
+
+    [Fact]
+    public async Task ARenamedOldWatchtowerStillLiveIsStoppedByAPlainLook()
+    {
+        await _tower.LookAsync(Ct);
+        var oldId = _tower.Generations().ShouldHaveSingleItem().Job;
+        _time.Advance(TimeSpan.FromMinutes(3));
+        Row(oldId, SessionState.Idle, Start, name: "my-own-name", role: SessionRole.AdHoc);
+        Row("new00001", SessionState.Idle, _time.GetUtcNow());
+        RecordCurrentBrief();
+        _tower.Generations();
+
+        // The node restarts: the new one is its watchtower by name, the old by id (the generations it kept), and the newest live
+        // one is adopted.
+        var restarted = new Watchtower(_state, _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
+        await restarted.LookAsync(Ct);
+        await restarted.LookAsync(Ct);
+
+        _workers.Stopped.ShouldBe([oldId]);
+        _state.Cards().Single(c => c.Kind == "watchtower-duplicate").Title.ShouldContain($"my-own-name ({oldId})");
+    }
+
+    [Fact]
     public async Task AnInteractiveSessionNamedLikeTheWatchtowerIsNeverStopped()
     {
         Row("mine0001", SessionState.Idle, Start.AddHours(-2), SessionKind.Interactive, role: SessionRole.AdHoc);
@@ -145,5 +195,45 @@ public sealed class OneWatchtowerTests : IDisposable
         await tracker.PollAsync(Ct);
 
         _state.Sessions().Length.ShouldBe(2);
+    }
+
+    private const string Renamed = "du1-pil455-pr498-merge-ready";
+
+    [Fact]
+    public async Task ARenamedWatchtowerKeepsItsRoleAndHasNoFlight()
+    {
+        using var profile = new TempProfile();
+        var agents = new FakeClaudeAgents();
+        var tracker = new SessionTracker(_state, agents, profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance);
+
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "du1-watchtower", "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, Renamed, "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        row.Role.ShouldBe(SessionRole.Watchtower);
+        row.Flight.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARestartedNodeKnowsARenamedWatchtowerByItsSessionId()
+    {
+        using var profile = new TempProfile();
+        var agents = new FakeClaudeAgents();
+        var tracker = new SessionTracker(_state, agents, profile.Options(), () => false, _time, NullLogger<SessionTracker>.Instance)
+        {
+            IsWatchtowerId = id => id == AgentRows.SessionA,
+        };
+
+        agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, Renamed, "running", pid: 4242, status: "idle"));
+        await tracker.PollAsync(Ct);
+
+        var row = _state.Sessions().ShouldHaveSingleItem();
+        row.Role.ShouldBe(SessionRole.Watchtower);
+        row.Flight.ShouldBeNull();
+
+        var command = new CommandRequest { Verb = Verbs.Say, Target = "x", Who = row.Name, Agent = true };
+        Standing.Of(command, _state, "du1-watchtower").Flight.ShouldBeNull();
     }
 }

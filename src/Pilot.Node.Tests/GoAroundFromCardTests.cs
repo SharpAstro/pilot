@@ -96,6 +96,7 @@ public sealed class GoAroundFromCardTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromTheMergeFailedCardRunsAndTheLegFliesAgainUnderAChangesReview()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -107,7 +108,7 @@ public sealed class GoAroundFromCardTests : IDisposable
         var failed = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         failed.Kind.ShouldBe(LegCommander.MergeFailed);
 
-        var result = await Answer(node, failed, "Redo leg parser");
+        var result = await Answer(node, failed, failed.Choices.Single(c => c.Verb == Verbs.GoAround).Label);
 
         result.Error.ShouldBeNull();
         ShouldHaveGoneAround(node, failed, "build (linux)");
@@ -116,6 +117,7 @@ public sealed class GoAroundFromCardTests : IDisposable
     [Theory]
     [InlineData("conflicts with its base")]
     [InlineData("is behind its base")]
+    [Trait("Category", "Slow")]
     public async Task AGoAroundAnsweredFromAConflictsOrBehindCardRunsAndTheLegFliesAgainUnderAChangesReview(string what)
     {
         await using var node = await NodeHarness.StartAsync(Ct);

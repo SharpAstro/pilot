@@ -72,7 +72,7 @@ public sealed class PullRequestLinksTests
     private static PilotChrome<RgbaImage> Window(RgbaImageRenderer renderer, List<string>? opened = null)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => { };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.LinkPullRequests();
         chrome.LinkRepos();
         if (opened is not null)

@@ -82,7 +82,7 @@ internal sealed record GuiOptions
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
         var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, prs, jobs or chat" };
-        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat");
+        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat", "spend");
         var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
         var hover = new Option<string?>("--hover") { Description = "With --capture: show this region's hover text as due; a button's id (home:flight:PIL258) or a list row (flights:3)" };
         var view = new Option<string?>("--view") { Description = "With --page flights: the view the capture draws" };
@@ -137,7 +137,7 @@ internal sealed record GuiOptions
             Layers = parsed.GetValue(layers),
             Night = parsed.GetValue(night),
             Fold = parsed.GetValue(fold),
-            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, _ => PilotPage.Home },
+            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, "spend" => PilotPage.Spend, _ => PilotPage.Home },
         };
         if (parsed.GetValue(size) is { } sizeText)
         {

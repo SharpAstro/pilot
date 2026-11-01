@@ -49,6 +49,7 @@ public sealed class ConnectTests : OverlapTestsBase
         Leg(Verbs.Overlap, "flight/TIA2", other, $"file={files}", "both edit it");
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectingToAFlightOnAPeerHoldsItAndNamesTheNodeUntilThatNodeSaysItLanded()
     {
         await TwoFlights();
@@ -78,6 +79,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerFlightWhosePrMergedReleasesTheFlightBeforeItsNodeSaysLanded()
     {
         await TwoFlights();
@@ -94,6 +96,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUnreachablePeerKeepsTheFlightHeldAndTheWaitSaysWhyUntilItAnswers()
     {
         await TwoFlights();
@@ -120,6 +123,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerThatListsNoSuchFlightAnymoreKeepsItHeldAndSaysSo()
     {
         await TwoFlights();
@@ -134,6 +138,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightFoldedIntoAnotherOnTheNodeIsWaitedForAsThatOne()
     {
         await TwoFlights();
@@ -149,6 +154,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightThatMovedToAnotherNodeIsWaitedForThereAndOneThatMovedHereAsAFlightOfThisNode()
     {
         await TwoFlights();
@@ -177,6 +183,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectToAFlightNoNodeListsOrAnUnreachableNodeIsRefusedWithTheReason()
     {
         await TwoFlights();
@@ -194,6 +201,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectToAPeerFlightThatWaitsForThisOneOrHasLandedIsRefusedOrNothingToWaitFor()
     {
         await TwoFlights();
@@ -209,6 +217,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectToAPeerFlightThatWaitsForThisOneOnThisNodeIsRefusedWhereItsWaitIsAPeerConnection()
     {
         await TwoFlights();
@@ -225,6 +234,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerToAPeerFlightThatWaitsForThisOneIsRefusedAndTheCardStaysOpen()
     {
         await TwoFlights();
@@ -241,6 +251,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerToAPeerFlightThatHasLandedSaysThereIsNothingToWaitFor()
     {
         await TwoFlights();
@@ -260,6 +271,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OverlapWithAPeerFlightRingsACardOfConnectAndPlanInParallelOnlyAndNamesTheNode()
     {
         await TwoFlights();
@@ -269,7 +281,7 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var card = Cards().ShouldHaveSingleItem();
         card.Title.ShouldBe("Connect TIA2 to PIL294 on DE1 (both change DetachedShell.cs)");
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan in parallel", Verbs.Separate)]);
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Connect to PIL294", Verbs.ConnectOverlap), ("Plan TIA2 in parallel with PIL294", Verbs.Separate)]);
         card.Detail.ShouldNotBeNull().ShouldContain("which flies on DE1");
         card.Detail.ShouldContain("cannot be folded into it from here");
         var recorded = F("TIA2").Overlaps.ShouldHaveSingleItem();
@@ -277,6 +289,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFoldPickForAPeerFlightIsStillTitledAConnect()
     {
         await TwoFlights();
@@ -289,6 +302,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task FoldIntoAFlightOfAnotherNodeIsRefusedWithAReasonAndNothingChanges()
     {
         await TwoFlights();
@@ -307,6 +321,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerAcrossNodesHoldsTheFlightUntilThePeerLandsAndTheFreshPlannerIsToldTheNode()
     {
         await TwoFlights();
@@ -336,6 +351,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ConnectAnswerWhileThePeerIsUnreachableHoldsTheFlightWithTheReasonShown()
     {
         await TwoFlights();
@@ -355,6 +371,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnAnsweredPairWithAPeerFlightIsAnsweredFromTheRecordEvenWhenThePeerCannotBeAsked()
     {
         await TwoFlights();
@@ -371,6 +388,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OverlapWithAFlightNoNodeFliesIsRefusedAsBefore()
     {
         await TwoFlights();
@@ -381,6 +399,7 @@ public sealed class ConnectTests : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePeerWaitSurvivesAReplayOfTheJournalAndAFlightJournaledBeforeItReadsBackWithNone()
     {
         var folder = Path.Combine(_root, "journal-peer");

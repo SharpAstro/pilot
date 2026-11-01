@@ -56,6 +56,33 @@ public sealed record RepoStatus
 
     /// <summary>When the node read it.</summary>
     public DateTimeOffset UpdatedAt { get; init; }
+
+    /// <summary>
+    /// Whether the node has not read this repo yet: it knows the repo (from flights, worktrees and PRs) and nothing more, so
+    /// every other field but the name, path, GitHub, flights and tracked ones is empty rather than read.
+    /// </summary>
+    public bool Unread { get; init; }
+}
+
+/// <summary>
+/// Where every repo the node knows stands, as the node last read them (the same statuses <c>GET /api/v1/repos/status</c> answers
+/// with): a node row on the stream, so a client never asks for them and the Repos page is never empty while the node knows repos.
+/// </summary>
+public sealed record ReposRow
+{
+    public RepoStatus[] Repos { get; init => field = value ?? []; } = [];
+
+    /// <summary>When the node read them; null while it has not read them yet (the repos are then marked <see cref="RepoStatus.Unread"/>).</summary>
+    public DateTimeOffset? ReadAt { get; init; }
+
+    /// <summary>Since when the node has waited for a read: when it started, for a row not read yet; null once read.</summary>
+    public DateTimeOffset? Since { get; init; }
+}
+
+/// <summary>The repos were read again and differ from the last read, or the last read is a while old.</summary>
+public sealed record ReposChangedEvent : NodeEvent
+{
+    public required ReposRow Row { get; init; }
 }
 
 /// <summary>A worktree of a repo other than its main checkout.</summary>

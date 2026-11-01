@@ -11,16 +11,23 @@ namespace Pilot.Node.Flights;
 /// A session to start in the background: its name, the folder it starts from (a repo's main checkout), the plane
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
-public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null);
+public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
+    string? Reason = null, int? Pr = null, string? McpConfig = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
 {
-    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id).</summary>
+    /// <summary>Starts a fresh background session; returns its job id (the first eight of its session id). <see cref="WorkerStart.Reason"/> is what the session ledger records as the start reason.</summary>
     Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken);
 
     /// <summary>Stops a worker's job; nothing happens when it has gone already.</summary>
     Task StopAsync(string job, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stops a worker's job for <paramref name="reason"/> (<see cref="SessionEndReasons"/>) by <paramref name="by"/>, which the session
+    /// ledger records. A launcher with no ledger just stops it.
+    /// </summary>
+    Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken) => StopAsync(job, cancellationToken);
 }
 
 /// <summary>
@@ -33,8 +40,18 @@ public interface IWorkerLauncher
 /// whose trust was never accepted, and a plane git made is such a folder, while <c>-w</c> enters an existing worktree of a
 /// trusted repo under the repo's trust (it locks it while there; landing unlocks it).
 /// </remarks>
-public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptionsBook? starts = null) : IWorkerLauncher
+public sealed partial class ClaudeWorkerLauncher(
+    ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null) : IWorkerLauncher
 {
+    /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
+    public WorkerStart WithMcp(WorkerStart start) =>
+        options is null
+            ? start
+            : start with
+            {
+                McpConfig = SessionMcpConfig.Ensure(options.DataFolder, Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"), options.SocketPath, start.RepoPath),
+            };
+
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     [GeneratedRegex(@"(?:backgrounded\s*\S\s*|claude stop\s+)([0-9a-f]{8})", RegexOptions.CultureInvariant)]
@@ -67,7 +84,14 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         }
         // --strict-mcp-config: a repo's own .mcp.json (tianwen's debug inspectors) needs its servers approved, which a
         // background session has no one to ask, so it sat "blocked" before its first turn. Workers need none of them.
+        // (Finding, see SessionMcpConfig: --strict-mcp-config loads only --mcp-config's servers, so the file names pilot's own
+        // and the repo's declared extras. --autocompact auto pins the auto-compact window to Claude Code's default, as a kept start option.)
         args.AddRange(["-n", start.Name, "--permission-mode", "auto", "--strict-mcp-config"]);
+        if (start.McpConfig is { Length: > 0 } mcp)
+        {
+            args.AddRange(["--mcp-config", mcp]);
+        }
+        args.AddRange(["--autocompact", "auto"]);
         if (start.Model is { Length: > 0 } model)
         {
             args.AddRange(["--model", model]);
@@ -88,10 +112,21 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         // A background session has no one to accept Claude Code's trust prompt: the folder it starts from (the repo's main
         // checkout, or the watchtower's) is trusted first. A trust that cannot be recorded is left for claude to refuse.
         trust.Ensure(start.RepoPath);
-        ClaudeRun run;
+        start = WithMcp(start);
+        string prompt;
         try
         {
-            run = await ClaudeCli.RunAsync(Arguments(start), start.Brief, start.RepoPath, Timeout, cancellationToken);
+            prompt = Inline(start.Name, start.Brief, briefFolder ?? DefaultBriefFolder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new FlightException($"the brief of {start.Name} is {start.Brief.Length:N0} characters, too long to pass on a command line, and its file could not be written: {ex.Message}");
+        }
+        ClaudeRun run;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            run = await ClaudeCli.RunAsync(Arguments(start), prompt, start.RepoPath, Timeout, cancellationToken);
         }
         catch (Exception ex) when (ex is FileNotFoundException or System.ComponentModel.Win32Exception or TimeoutException)
         {
@@ -103,12 +138,80 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
         {
             throw new FlightException($"claude --bg did not start {start.Name} ({run.ExitCode}): {Clip(run.Output + run.Error)}");
         }
+        timings?.Record(SendTimings.Start, clock.Elapsed, $"name={start.Name} job={job.Groups[1].Value}");
         starts?.Record(new SessionStartOptions(start.Name, job.Groups[1].Value, [.. SessionArguments(start)]));
+        ledger?.Started(job.Groups[1].Value, start.Name, SessionRoles.Resolve(start.Name, background: true), start.Reason ?? SessionStartReasons.Other, start.Model, start.Pr);
         return job.Groups[1].Value;
+    }
+
+    /// <summary>The longest brief passed as it is. <c>claude --bg</c> hands the prompt to the session it spawns on its command
+    /// line, which Windows caps at 32,767 characters: PIL584's 35,509-character review brief failed three starts with
+    /// <c>ENAMETOOLONG: name too long, uv_spawn</c> and rang as a reviewer that never took a turn.</summary>
+    public const int MaxInlineBrief = 24_000;
+
+    /// <summary>How long a brief file is kept: as long as a session may need to read it again after it compacts.</summary>
+    public static readonly TimeSpan BriefFileLife = TimeSpan.FromDays(5);
+
+    private static string DefaultBriefFolder => Path.Combine(Path.GetTempPath(), "pilot-briefs");
+
+    /// <summary>The folder brief files go in under the node's data folder.</summary>
+    public static string BriefFolderIn(string dataFolder) => Path.Combine(dataFolder, "briefs");
+
+    /// <summary>Deletes the brief files in <paramref name="folder"/> not written within <paramref name="life"/>; returns how many. Never throws.</summary>
+    public static int SweepBriefs(string folder, TimeSpan life, DateTime now)
+    {
+        var removed = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(folder, "*.md"))
+            {
+                try
+                {
+                    if (now - File.GetLastWriteTimeUtc(file) > life)
+                    {
+                        File.Delete(file);
+                        removed++;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A file in use stays for the next start.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No folder yet, or not readable: nothing to sweep.
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// The brief to pass: <paramref name="brief"/> itself when it fits, else a short one naming a file in
+    /// <paramref name="folder"/> that holds it whole, for the session to read before anything else.
+    /// </summary>
+    public static string Inline(string name, string brief, string folder)
+    {
+        if (brief.Length <= MaxInlineBrief)
+        {
+            return brief;
+        }
+        Directory.CreateDirectory(folder);
+        var file = Path.Combine(folder, $"{name}-{Guid.NewGuid():N}.md");
+        File.WriteAllText(file, brief);
+        return $"Your brief is {brief.Length:N0} characters, too long to pass on a command line, so it is in {file}. " +
+            "Read that whole file first and follow it as your brief; it is everything you were started to do.";
     }
 
     public async Task StopAsync(string job, CancellationToken cancellationToken) =>
         await ClaudeCli.RunAsync(["stop", job], stdin: null, cwd: null, Timeout, cancellationToken);
+
+    public async Task StopAsync(string job, string reason, string by, CancellationToken cancellationToken)
+    {
+        // Recorded before the stop, so the poll that sees it end finds the node's reason and does not call it finished.
+        ledger?.Stopped([job], reason, by);
+        await StopAsync(job, cancellationToken);
+    }
 
     private static string Clip(string text) => text.Trim() is { Length: > 400 } long_ ? long_[..400] + "…" : text.Trim();
 }
@@ -117,12 +220,34 @@ public sealed partial class ClaudeWorkerLauncher(ClaudeTrust trust, StartOptions
 public sealed record CheckRun(int ExitCode, string Tail)
 {
     public bool Passed => ExitCode == 0;
+
+    /// <summary>Stopped by its running-time budget, not by its own exit.</summary>
+    public bool StoppedByBudget { get; init; }
+
+    /// <summary>The share (0 to 1) of the check's running time the machine's CPU was above 90%.</summary>
+    public double Saturation { get; init; }
+
+    /// <summary>Stopped by its budget while the machine was saturated for most of the run: worth one more try.</summary>
+    public bool StoppedSaturated => StoppedByBudget && Saturation > JobRunner.SaturatedShare;
 }
 
 /// <summary>Running a leg's check command in its plane, so a test decides what it says.</summary>
 public interface ICheckRunner
 {
-    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken);
+    /// <param name="flight">The flight whose leg's check this is, for the job that runs it; null for a check that is no leg's.</param>
+    /// <param name="leg">The leg whose check it is.</param>
+    Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null);
+}
+
+/// <summary>
+/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.RunCheckAsync"/>): it
+/// waits its turn with the other jobs, counts against max-jobs and the job-memory floor, and its
+/// <see cref="ShellCheckRunner.Timeout"/> counts from when it starts running.
+/// </summary>
+public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
+{
+    public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, ShellCheckRunner.Timeout, cancellationToken);
 }
 
 /// <summary>
@@ -136,7 +261,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     private const int TailLines = 30;
 
-    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken)
+    public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
         using var shell = ShellScript.For(command, cwd);
         var start = shell.Start;
@@ -146,6 +271,8 @@ public sealed class ShellCheckRunner : ICheckRunner
         start.CreateNoWindow = true;
 
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
+        // Held in a job that ends with the node, so a restart or crash mid-check leaves no test host holding the plane.
+        using var hold = KillOnCloseJob.Hold(process);
         var lines = new Queue<string>();
         void Keep(string? line)
         {
@@ -173,14 +300,32 @@ public sealed class ShellCheckRunner : ICheckRunner
         {
             await process.WaitForExitAsync(budget.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            // A check given up for any reason ends with its whole tree: only the time budget's was killed before, and a
+            // cancelled one went on running its tests behind the node.
+            Stop(process);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             return new CheckRun(-1, $"the check ran past {Timeout.TotalMinutes:0} minutes and was stopped");
         }
         lock (lines)
         {
             return new CheckRun(process.ExitCode, string.Join('\n', lines));
+        }
+    }
+
+    private static void Stop(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // It ended on its own between the cancel and the kill.
         }
     }
 }
@@ -278,9 +423,41 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
 internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
     IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
 
+/// <summary>What GitHub's Priority field says of an issue: whether the repo has the field (and the token reads it), and the level, null when unset.</summary>
+public sealed record PriorityRead(bool HasField, IssuePriority? Level)
+{
+    /// <summary>The repo or org has no Priority field, or the token cannot read it: the <c>pilot: priority</c> label stands in.</summary>
+    public static PriorityRead NoField { get; } = new(false, null);
+}
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
+    /// <summary>The Priority field of issue <paramref name="number"/>: <see cref="PriorityRead.NoField"/> where the repo has none or gh cannot read it, a null level where it is unset.</summary>
+    Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Makes the org's Priority issue field (single select: Urgent, High, Medium, Low) when it has none; an existing one is never renamed or
+    /// added to. True when it was made, false when it was there.
+    /// </summary>
+    /// <exception cref="FlightException">The owner is no organization, or GitHub or the token refused it.</exception>
+    Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>The names of the labels the repo has; empty when gh cannot say.</summary>
+    Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>Deletes <paramref name="label"/> from the repo (gone already counts as deleted).</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>How many open issues carry <paramref name="label"/>.</summary>
+    /// <exception cref="FlightException">gh could not say.</exception>
+    Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>Sets the Priority field of issue <paramref name="number"/> to <paramref name="level"/>; null clears it.</summary>
+    /// <exception cref="FlightException">The repo has no such field or GitHub refused it.</exception>
+    Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken);
+
     /// <summary>
     /// Where PR <paramref name="number"/>'s merge stands on GitHub (<see cref="MergeState"/>); null when GitHub would not say
     /// (<c>UNKNOWN</c> while it works the PR out, or no answer).
@@ -352,6 +529,13 @@ public interface IGitHub
     Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
+    /// The method (<c>REBASE</c>, <c>SQUASH</c> or <c>MERGE</c>) of the merge queue of <paramref name="branch"/> in the repo at
+    /// <paramref name="repoPath"/>: the <c>merge_queue</c> rule's <c>parameters.merge_method</c> of <c>rules/branches/{branch}</c>.
+    /// Null when no such rule applies or GitHub would not say.
+    /// </summary>
+    Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks
     /// pass, refused unless its head is still <paramref name="head"/>. Never merges: a PR GitHub would merge now (CLEAN, HAS_HOOKS,
     /// UNSTABLE: its running checks are not required) is refused, and the caller waits for it itself.
@@ -394,10 +578,6 @@ public interface IGitHub
     /// <summary>The paths PR <paramref name="number"/> changes, all of them (not the first page): what a planner's overlap check compares its own files with.</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken);
-
-    /// <summary>The numbers of the repo's open PRs that carry <paramref name="label"/>: a light ask (no checks), for a look made often.</summary>
-    /// <exception cref="FlightException">gh could not list them.</exception>
-    Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken);
 
     /// <summary>
     /// The open PRs of <paramref name="repos"/> (<c>owner/name</c>), from one paged GraphQL search for all of them, each with its
@@ -465,6 +645,10 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
 
+    /// <summary>Makes <paramref name="label"/> in the repo when it has none like it (already there counts as made).</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
     /// <summary>Takes <paramref name="label"/> off issue <paramref name="number"/>.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken);
@@ -472,6 +656,11 @@ public interface IGitHub
     /// <summary>Comments on issue <paramref name="number"/> in the controller's name.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
 
     /// <summary>
     /// Opens an issue in the repo and links it as a sub-issue of issue <paramref name="parent"/> (the sub-issues REST API, with the
@@ -583,8 +772,14 @@ public static class PilotMarks
 
     public const string Queued = LabelPrefix + "queued";
 
+    /// <summary>Put on a flight's issue or PR by a person: its starts bypass the Opus cap and the repo hold (still counted as Opus).</summary>
+    public const string Priority = LabelPrefix + "priority";
+
     /// <summary>Put on any open PR by a person to have pilot look at it again, whoever worked on it; the node takes it off once it has.</summary>
     public const string Recheck = LabelPrefix + "recheck";
+
+    /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
+    public static readonly string[] ReadFromPeople = [Priority, Recheck];
 
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
@@ -592,6 +787,16 @@ public static class PilotMarks
     /// survive a review's label change.
     /// </summary>
     public const string NodeLabelPrefix = "pilot node: ";
+
+    /// <summary>
+    /// Put on an issue (or idea) from the Ideas pane to keep it at the top of its section. It is a GitHub label, not node state, so every
+    /// node and machine sees it. Deliberately plain, not starting with <see cref="LabelPrefix"/> (<c>pilot: </c>), whose labels are a
+    /// PR's and are replaced as a set by a review's label change: a pin must survive that.
+    /// </summary>
+    public const string Pinned = "pinned";
+
+    /// <summary>Whether <paramref name="labels"/> hold <see cref="Pinned"/> (any case).</summary>
+    public static bool IsPinned(IEnumerable<string>? labels) => labels is not null && labels.Contains(Pinned, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The label for the node with machine prefix <paramref name="code"/>.</summary>
     public static string NodeLabel(string code) => NodeLabelPrefix + code;
@@ -609,12 +814,17 @@ public static class PilotMarks
         Conflicts => ("b60205", "this PR conflicts with its base"),
         Queued => ("5319e7", "this PR waits in the merge queue"),
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
+        Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
+        Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
         _ => ("ededed", "set by pilot"),
     };
 }
 
 /// <summary>A review GitHub made: its id, its state (<c>APPROVED</c>, <c>CHANGES_REQUESTED</c>, <c>COMMENTED</c>) and its page.</summary>
 public sealed record PostedReview(long Id, string State, string Url);
+
+/// <summary>A conversation comment on a PR: who wrote it, what it says, when.</summary>
+public sealed record PrComment(string Author, string Body, DateTimeOffset CreatedAt);
 
 /// <summary><see cref="IGitHub"/> by the gh CLI, as v1's dashboard merged (<c>gh pr merge --match-head-commit</c>).</summary>
 public sealed partial class GhCli : IGitHub
@@ -957,6 +1167,39 @@ public sealed partial class GhCli : IGitHub
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    public async Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        return exit == 0 ? ParseMergeQueueMethod(rules) : null;
+    }
+
+    /// <summary><c>gh api repos/{owner}/{repo}/rules/branches/{branch}</c>'s output: the <c>merge_queue</c> rule's <c>parameters.merge_method</c>, upper-cased; null with no such rule, no method, or no JSON.</summary>
+    internal static string? ParseMergeQueueMethod(string rulesJson)
+    {
+        try
+        {
+            using var rules = JsonDocument.Parse(rulesJson);
+            if (rules.RootElement is not { ValueKind: JsonValueKind.Array } array)
+            {
+                return null;
+            }
+            foreach (var rule in array.EnumerateArray())
+            {
+                if (rule.ValueKind == JsonValueKind.Object && TextOf(rule, "type") == "merge_queue"
+                    && rule.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.Object
+                    && TextOf(parameters, "merge_method") is { Length: > 0 } method)
+                {
+                    return method.ToUpperInvariant();
+                }
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
@@ -1346,17 +1589,6 @@ public sealed partial class GhCli : IGitHub
         return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
 
-    public async Task<int[]> OpenPullRequestsLabelledAsync(string repoPath, string label, CancellationToken cancellationToken)
-    {
-        var (exit, output, error) = await RunAsync(["pr", "list", "--state", "open", "--label", label, "--limit", "100", "--json", "number"], repoPath, cancellationToken);
-        if (exit != 0)
-        {
-            throw new FlightException($"gh could not list the PRs labelled {label}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
-        using var doc = JsonDocument.Parse(output);
-        return [.. doc.RootElement.EnumerateArray().Select(p => p.GetProperty("number").GetInt32())];
-    }
-
     /// <summary>
     /// Where a PR's <c>statusCheckRollup</c> stands: a check run carries a status and a conclusion, a commit status a
     /// state. <see cref="ChoiceStatus.Failing"/> when any failed, <see cref="ChoiceStatus.Pending"/> while any runs,
@@ -1553,7 +1785,7 @@ public sealed partial class GhCli : IGitHub
         return exit != 0 ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    public async Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    public async Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         var (color, description) = PilotMarks.LabelStyle(label);
         var (made, madeOutput, madeError) = await RunAsync(["label", "create", label, "--color", color, "--description", description], repoPath, cancellationToken);
@@ -1561,6 +1793,11 @@ public sealed partial class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the label {label} on the repo: {(madeError.Trim().Length > 0 ? madeError : madeOutput).Trim()}");
         }
+    }
+
+    public async Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
+    {
+        await EnsureLabelAsync(repoPath, label, cancellationToken);
         await EditIssueAsync(repoPath, number, ["--add-label", label], label, cancellationToken);
     }
 
@@ -1583,6 +1820,30 @@ public sealed partial class GhCli : IGitHub
         {
             throw new FlightException($"GitHub refused the comment on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
+    }
+
+    public async Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "comments"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not read the comments of #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+        var found = new List<PrComment>();
+        using var doc = System.Text.Json.JsonDocument.Parse(output);
+        if (doc.RootElement.TryGetProperty("comments", out var comments) && comments.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var c in comments.EnumerateArray())
+            {
+                var login = c.TryGetProperty("author", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Object && a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
+                var body = c.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+                if (c.TryGetProperty("createdAt", out var t) && DateTimeOffset.TryParse(t.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at))
+                {
+                    found.Add(new PrComment(login, body, at));
+                }
+            }
+        }
+        return found;
     }
 
     private static string Clip(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";

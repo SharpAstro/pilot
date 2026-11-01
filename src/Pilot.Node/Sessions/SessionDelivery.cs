@@ -19,7 +19,8 @@ public sealed record ResumeRequest(string SessionId, string? Name, string Cwd, s
 /// <param name="From">The name the message comes from, as the recipient reads it: <see cref="ClaudeCliDelivery.RelayFrom"/> of the command's sender.</param>
 /// <param name="ReplyTo">The sender's session row, when it is one on this node: the recipient is told to answer with a say to it.</param>
 /// <param name="SessionId">The recipient's session id, which finds its intercom endpoint; null when not known (the CLI relay then).</param>
-public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null, string? SessionId = null);
+/// <param name="DirectOnly">Reached by its session id only, never by the CLI relay that finds it by name: set for a replaced session, whose successor has its name.</param>
+public sealed record RelayRequest(string Name, SessionKind Kind, string Text, string From, string? ReplyTo = null, string? SessionId = null, bool DirectOnly = false);
 
 /// <summary>A delivery that did not happen, with why: the say's error.</summary>
 public sealed class SessionDeliveryException(string message) : Exception(message);
@@ -110,7 +111,13 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
         {
             // A background session whose process outlived its job record: claude stop cannot reach it, though it runs
             // (PIL5's sessions worker, idle 13 hours, had none). Its process is the session, so it is ended by its pid.
-            if (!TryEndOrphan(await FindAsync(r => r.SessionId == sessionId, cancellationToken)))
+            var listed = await FindAsync(r => r.SessionId == sessionId, cancellationToken);
+            if (listed is { Pid: null })
+            {
+                // Listed with no process: it is not running, so there was nothing to stop and the stop is confirmed.
+                return;
+            }
+            if (!TryEndOrphan(listed))
             {
                 throw new SessionDeliveryException($"claude stop {job} failed ({run.ExitCode}): {Clip(run.Output + run.Error)}");
             }
@@ -144,7 +151,14 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
         }
 
         var args = ResumeArguments(request);
-        var run = await ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
+        var run = await RunResumeAsync(args, request, cancellationToken);
+        for (var attempt = 1; run.ExitCode != 0 && IsTransientConfigRead(run.Output + run.Error) && attempt <= ConfigRetries; attempt++)
+        {
+            // claude read ~/.claude.json while something else was writing it: the session is fine, so wait and ask again
+            // rather than let the caller take up another session for the role (#542).
+            await ConfigRetryDelay(ConfigRetryWait, cancellationToken);
+            run = await RunResumeAsync(args, request, cancellationToken);
+        }
         var job = Backgrounded().Match(run.Output);
         if (run.ExitCode != 0 || !job.Success)
         {
@@ -184,6 +198,25 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
             await Task.Delay(Step, cancellationToken);
         }
     }
+
+    /// <summary>How many times a resume refused for a transient read of the config file is asked again.</summary>
+    public int ConfigRetries { get; init; } = 4;
+
+    /// <summary>How long between those tries.</summary>
+    public TimeSpan ConfigRetryWait { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>The wait between tries; a test replaces it so it does not sleep.</summary>
+    public Func<TimeSpan, CancellationToken, Task> ConfigRetryDelay { get; init; } = Task.Delay;
+
+    /// <summary>Runs <c>claude --bg --resume</c>; a test overrides it to give the output it wants.</summary>
+    protected virtual Task<ClaudeRun> RunResumeAsync(IReadOnlyList<string> args, ResumeRequest request, CancellationToken cancellationToken) =>
+        ClaudeCli.RunAsync(args, request.Text, request.Cwd, ResumeTimeout, cancellationToken);
+
+    /// <summary>Whether claude's output says it read its config file (~/.claude.json) mid-write: corrupted, a JSON parse error, an unexpected end.</summary>
+    public static bool IsTransientConfigRead(string output) =>
+        output.Contains("corrupted", StringComparison.OrdinalIgnoreCase)
+        || output.Contains("JSON Parse error", StringComparison.OrdinalIgnoreCase)
+        || output.Contains("Unexpected EOF", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string> ListOrEmptyAsync(CancellationToken cancellationToken)
     {
@@ -283,9 +316,14 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
             await Intercom.SendAsync(endpoint, request.From, RelayText(request.Text, request.ReplyTo), cancellationToken);
             return RouteDirect;
         }
-        catch (SessionDeliveryException ex)
+        catch (SessionDeliveryException ex) when (!request.DirectOnly)
         {
             why = ex.Message;
+        }
+        catch (SessionDeliveryException ex)
+        {
+            // The fallback finds the recipient by its name, which another live session has too: not relayed at all rather than to it.
+            throw new SessionDeliveryException($"{request.Name} ({request.SessionId}) is reached by its session id only, and that failed: {ex.Message}");
         }
 
         await RelayViaCliAsync(request, cancellationToken);

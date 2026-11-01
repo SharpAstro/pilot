@@ -21,6 +21,9 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The ledger of launched sessions, which says which were stopped on a land or merge; null in a test with none.</summary>
+    public Sessions.SessionLedger? Ledger { get; set; }
+
     /// <summary>What its Handled lines are.</summary>
     public const string Kind = "session-compacted";
 
@@ -29,6 +32,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
 
     /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the watchtower.</summary>
     public StartGate Gate { get; set; } = new(state, time);
+
+    /// <summary>
+    /// How many person messages a session's transcript holds (node says are not counted); the long-chat trigger compares it with what it was at
+    /// the last compaction. Null in a test with none, which switches the trigger off.
+    /// </summary>
+    public Func<SessionRow, int>? PersonMessages { get; set; }
 
     /// <summary>How often it looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
@@ -60,6 +69,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private readonly Dictionary<string, DateTimeOffset?> _compactedAt = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _retryAt = new(StringComparer.Ordinal);
 
+    // By watchtower row: what it was at its last compaction. Pending until the compaction has answered; the first look after it
+    // finds the watchtower still past its share (then it is replaced, as a worker is, never nudged or compacted again) or below it.
+    private readonly Dictionary<string, WatchtowerMark> _marks = new(StringComparer.Ordinal);
+
+    private sealed record WatchtowerMark(DateTimeOffset? Response, int Persons, bool Pending);
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
@@ -85,9 +100,20 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     public IEnumerable<(SessionRow Row, string Focus)> Kept()
     {
         var waiting = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && j.Owner is not null).Select(j => j.Owner!).ToHashSet(StringComparer.Ordinal);
-        var watching = watchtower.Watching() is not null;
+        var watching = watchtower.Keeping() is not null;
+        var current = watchtower.Current()?.Id;
         foreach (var row in state.Sessions().Where(r => r is { Kind: SessionKind.Background, State: SessionState.Idle }))
         {
+            if (row.Name == watchtower.Name && row.Id != current)
+            {
+                // A replaced watchtower is never compacted or resumed: the role's current session is the only one the node wakes (#542).
+                continue;
+            }
+            if (WindDown.Why(state, Ledger, row) is not null)
+            {
+                // A session of a landed flight, or one stopped on land or merge, is never compacted: it is to be gone.
+                continue;
+            }
             if (waiting.Contains(row.Id))
             {
                 yield return (row, row.Name == watchtower.Name ? WatchtowerFocus : JobFocus);
@@ -111,16 +137,58 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             {
                 continue;
             }
-            var full = row.ContextWindow > 0 && row.ContextTokens > WindowShare * row.ContextWindow;
+            var isTower = row.Name == watchtower.Name;
+            var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
+            var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
             var cooling = now - last >= IdleFor && row.ContextTokens > Above;
-            if (!full && !cooling)
+            string? chatty = null;
+            if (isTower)
+            {
+                _marks.TryGetValue(row.Id, out var mark);
+                if (mark is { Pending: true } && mark.Response != row.LastResponseAt)
+                {
+                    // The compaction has answered: this is the first look at what it left.
+                    _marks[row.Id] = mark with { Pending = false };
+                    if (full)
+                    {
+                        await ReplaceAsync(row, cancellationToken);
+                        continue;
+                    }
+                }
+                var limit = Models.WatchtowerChatMessages;
+                if (limit > 0 && PersonMessages is not null)
+                {
+                    var persons = PersonMessages(row);
+                    if (mark is null)
+                    {
+                        // First sight (after a node restart too): the count runs from here, not from the transcript's whole history.
+                        _marks[row.Id] = mark = new WatchtowerMark(row.LastResponseAt, persons, Pending: false);
+                    }
+                    var since = persons >= mark.Persons ? persons - mark.Persons : persons;
+                    if (since >= limit)
+                    {
+                        chatty = $"the chat has {since} person messages since its last compaction";
+                    }
+                }
+            }
+            if (!full && !cooling && chatty is null)
             {
                 continue;
             }
             await CompactAsync(row, focus, full
                 ? string.Create(CultureInfo.InvariantCulture, $"its context reached {100.0 * row.ContextTokens / row.ContextWindow:0}% of its window")
-                : $"idle {Minutes(now - last)} with {Tokens(row.ContextTokens)} of context, before its prompt cache went cold", cancellationToken);
+                : cooling ? $"idle {Minutes(now - last)} with {Tokens(row.ContextTokens)} of context, before its prompt cache went cold" : chatty!, cancellationToken);
         }
+    }
+
+    // A watchtower still past its share after a compaction: a fresh one in its place, from the node's state, as a full worker is sent round (pilot #578).
+    private async Task ReplaceAsync(SessionRow row, CancellationToken cancellationToken)
+    {
+        var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
+        var why = $"still at {share} of its window after a compaction";
+        var error = await watchtower.RestartAsync(why, cancellationToken);
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, error is null ? $"Replaced {row.Name}: {why}" : $"Could not replace {row.Name} ({why}): {error}");
+        await Error.WriteLineAsync($"compactor: {(error is null ? "replaced" : "could not replace")} {row.Name} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
     }
 
     private async Task CompactAsync(SessionRow row, string focus, string why, CancellationToken cancellationToken)
@@ -139,6 +207,18 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         {
             _compactedAt[row.Id] = row.LastResponseAt;
             _retryAt.Remove(row.Id);
+            var at = time.GetUtcNow();
+            if (row.Name == watchtower.Name)
+            {
+                _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true);
+            }
+            // The compaction took seconds: stamp the row as the state holds it now, not the copy read before it ran.
+            var stamped = (state.Sessions().FirstOrDefault(r => r.Id == row.Id) ?? row) with { LastCompactedAt = at, CompactedBecause = why };
+            if (Ledger?.Compacted([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], at, why) is not null)
+            {
+                state.PutSession(stamped);
+            }
+            await Error.WriteLineAsync($"compactor: compacted {row.Name} ({row.Id}): {why}");
             state.RaiseCard(CardBin.Handled, Kind, subject, $"Compacted {row.Name}: {why}");
         }
         else

@@ -80,6 +80,20 @@ public sealed partial class LegCommander
         {
             return KnownAnswer(flight, known);
         }
+        if (node is null && AnswerOnPair(flight, other.Code, null) is { Reverse: true } reverse)
+        {
+            // Answered on the other's card (PIL589): mirrored onto this flight so the next ask finds it on its own side. Connecting back would cycle.
+            var mirrored = new OverlapRow
+            {
+                Other = other.Code, Node = null, Files = files.Length > 0 ? files : reverse.Row.Files, Pick = Verbs.OverlapPickConnect,
+                Why = $"answered from {other.Code}'s card ({reverse.Answer.ToString().ToLowerInvariant()})", Answer = OverlapAnswer.Separate, At = time.GetUtcNow(),
+            };
+            state.PutFlight(flight with { Overlaps = [.. flight.Overlaps, mirrored] });
+            var how = reverse.Answer == OverlapAnswer.Connect
+                ? $"{other.Code} was connected to {flight.Code} on its card, so {flight.Code} cannot connect back"
+                : $"{flight.Code} and {other.Code} were answered on {other.Code}'s card";
+            return $"{how}: plan {flight.Code} in parallel with {other.Code}, and connect it (flight connect) only if it still depends on it; no card rings again";
+        }
         if (why.Length == 0)
         {
             throw new FlightException($"overlap needs why {flight.Code} overlaps {other.Code}, as in overlap flight/{flight.Code} {other.Code} file=src/Parser.cs <why>");
@@ -108,7 +122,7 @@ public sealed partial class LegCommander
             choices.Add(new CardChoice { Label = $"Fold into {other.Code}", Verb = Verbs.Fold, Target = target, Args = [other.Code] });
         }
         choices.Add(new CardChoice { Label = $"Connect to {other.Code}", Verb = Verbs.ConnectOverlap, Target = target, Args = [other.Code] });
-        choices.Add(new CardChoice { Label = "Plan in parallel", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
+        choices.Add(new CardChoice { Label = $"Plan {flight.Code} in parallel with {other.Code}", Verb = Verbs.Separate, Target = target, Args = [other.Code] });
 
         // The title names the choice the planner leans to: a fold reads "Fold PIL365 into PIL294", a connect "Connect PIL365 to PIL294".
         var title = fold ? $"Fold {flight.Code} into {at} ({shared})" : $"Connect {flight.Code} to {at} ({shared})";
@@ -133,7 +147,7 @@ public sealed partial class LegCommander
         var text = new System.Text.StringBuilder();
         text.Append($"{Named(flight)} overlaps {Named(other)}{(node is null ? "" : $", which flies on {node}")}.");
         text.Append($" The planner says: {why}.");
-        text.Append($" Connect holds {flight.Code} until {other.Code} has landed.");
+        text.Append($" Connect holds {flight.Code} until {other.Code} has landed (a card raised at a leg's end holds the next leg, never the one finished).");
         text.Append(" Plan in parallel flies both; the second to land resolves the conflicts.");
         text.Append(node is null
             ? $" Fold takes {flight.Code}'s issue into {other.Code}."
@@ -199,6 +213,11 @@ public sealed partial class LegCommander
         state.PutFlight(flight);
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"connect {flight.Code} to {at}", OverlapKind);
 
+        // A question raised at a leg's end (#564) has no planner waiting: the flight goes on at the node's next sweep, no session is started.
+        if (known.AfterLeg is not null)
+        {
+            return await GoOnAfterLegEndAnswerAsync(flight, $"{told ?? $"{flight.Code} is connected to {at}: it waits for it to land"}; no planner is started, as {known.AfterLeg} had finished and stays done; the next leg is held until {at} lands", cancellationToken);
+        }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
         // What the connect said stands: for a flight that landed already it is "nothing to wait for", not "waits".
@@ -237,10 +256,83 @@ public sealed partial class LegCommander
 
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
+        if (known.AfterLeg is not null)
+        {
+            return await GoOnAfterLegEndAnswerAsync(flight, $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on", cancellationToken);
+        }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
         return $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer";
     }
+
+    /// <summary>
+    /// After the answer to a card raised at a leg's end: the check runs again (a second other flight with unforeseen files rings its own card,
+    /// one at a time) and the flight advances, off the lock as the finish path does. A connect leaves the next leg held by <see cref="Due"/>
+    /// until the other lands; a parallel answer lets it start. No planner is stopped or started.
+    /// </summary>
+    private async Task<string> GoOnAfterLegEndAnswerAsync(FlightRow flight, string told, CancellationToken cancellationToken)
+    {
+        // Marked from here, under the lock, so a sweep in the gap starts nothing before the re-check has rung or decided not to.
+        MarkLegEndChecking(flight.Code);
+        await OffLockAsync(null, async () =>
+        {
+            var last = state.Legs(flight.Code).Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name ?? "the last leg";
+            try
+            {
+                await CheckOverlapAsync(flight.Code, last, cancellationToken);
+            }
+            finally
+            {
+                ClearLegEndChecking(flight.Code);
+            }
+            await AdvanceAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+        });
+        return told;
+    }
+
+    /// <summary>The planner this node started for the flight and when, if it still holds one.</summary>
+    internal (string Job, DateTimeOffset At)? StartedPlanner(string code) =>
+        _plannerJobs.TryGetValue(code, out var job) && _plannersStarted.TryGetValue(code, out var at) ? (job, at) : null;
+
+    /// <summary>Stops the flight's planner and starts a fresh one in its place.</summary>
+    internal async Task RestartPlannerAsync(string code, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(Verbs.FlightTarget(code));
+        await StopPlannerAsync(flight, cancellationToken);
+        StartPlanner(flight, replacing: true);
+    }
+
+    /// <summary>
+    /// Stops a flying leg's worker that took no first turn and starts a fresh one in its place. Not a go-around: the leg's count,
+    /// brief and model are as they were, as nothing was done by the first.
+    /// </summary>
+    internal async Task RestartWorkerAsync(string code, string legName, CancellationToken cancellationToken)
+    {
+        var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
+        if (leg.WorkerJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        StartWorker(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>Stops a leg's validator that took no first turn and starts a fresh one in its place.</summary>
+    internal async Task RestartValidatorAsync(string code, string legName, CancellationToken cancellationToken)
+    {
+        var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
+        if (leg.ValidatorJob is { } job)
+        {
+            await StopQuietly(job, cancellationToken);
+        }
+        StartValidator(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>Stops a session by its job, whatever it is (claude stop); one already gone is no error.</summary>
+    internal Task StopSessionAsync(string job, CancellationToken cancellationToken) => StopQuietly(job, cancellationToken);
+
+    /// <summary>Stops the flight's planner and forgets it.</summary>
+    internal Task StopPlannerAsync(string code, CancellationToken cancellationToken) =>
+        StopPlannerAsync(FlightOf(Verbs.FlightTarget(code)), cancellationToken);
 
     /// <summary>Stops the flight's planner, by its row or the job this node started, and forgets it was started.</summary>
     private async Task StopPlannerAsync(FlightRow flight, CancellationToken cancellationToken)

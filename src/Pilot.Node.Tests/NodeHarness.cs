@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Pilot.Contracts;
 using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
+using Xunit;
 
 namespace Pilot.Node.Tests;
 
@@ -68,14 +71,17 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="lanPort">Listens on the LAN too, on this port, announcing nothing, and on loopback only (no firewall prompt): a client on loopback stands in for one on another machine.</param>
     /// <param name="localOnly">Starts the node local-only, as <c>--local-only</c> does, whatever <paramref name="lanPort"/> asks for.</param>
     /// <param name="folder">A folder to start on (a disposed node's, to start its successor on the same socket path and data); default a new temp one.</param>
+    /// <param name="machine">The node's machine prefix (two harness nodes of one fleet need two); default the one this machine has.</param>
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
-    /// <param name="machine">The node's machine prefix (<c>SE1</c>), for two nodes that must not share one; default this machine's.</param>
     /// <param name="journal">The node's store in place of its files in the data folder: one the test can make fail.</param>
     public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
-        folder ??= Path.Combine(Path.GetTempPath(), "p2t-" + Guid.NewGuid().ToString("N")[..8]);
+        // In a folder of its own under the temp folder, never in it: a flight whose RepoPath is this folder makes its parent a
+        // repo root (RepoCatalog), and the node's repo watch then ran git in every clone the other tests had in the temp folder,
+        // outlasting the node's stop (MergeFixtureCardTests, 30 s on windows, #559).
+        folder ??= Path.Combine(Path.GetTempPath(), "p2t", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
             Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false);
@@ -103,6 +109,11 @@ internal sealed class NodeHarness : IAsyncDisposable
                 // The node's file logger stays: logs/node.log in the temp data folder.
 
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
+                // A stop that hangs takes the host's 30 s default and fails the test that disposed the node, whichever it was
+                // (LanTests on ubuntu and MergeFixtureCardTests on windows, #559's runs, both exactly 30 s). Both causes are fixed
+                // (the watchtower's wait for a first poll a quick stop had skipped; the repo watch's git in the temp folder's
+                // clones), and the cap stays: StopNodeAsync names what was still running, so a new hang shows as a warning.
+                builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = StopCap);
                 // A test node never runs the claude CLI or reads this machine's sessions: it tracks what the test gives it.
                 builder.Services.AddSingleton<IClaudeAgents>(agents);
                 builder.Services.AddSingleton<ISessionDelivery>(delivery);
@@ -128,6 +139,10 @@ internal sealed class NodeHarness : IAsyncDisposable
                     SessionTrackerOptions.DefaultEndedRetention));
             });
             await app.StartAsync(cancellationToken);
+            // The PR loop's first look happens at start; a test's state is put only after it, so it never lands a half-made flight.
+            await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);
+            // So is the flight sweep's: it tells the keeper of the Opus count what this node runs, and would free a slot a test had just taken.
+            await app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().FirstSweep.WaitAsync(cancellationToken);
             return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner };
         }
         catch
@@ -141,15 +156,31 @@ internal sealed class NodeHarness : IAsyncDisposable
     public async Task StopKeepingFolderAsync()
     {
         Client.Dispose();
-        await App.StopAsync();
+        await StopNodeAsync();
         await App.DisposeAsync();
         _held.Dispose();
+    }
+
+    /// <summary>How long the test node's stop may take before its hosted services are told to give up.</summary>
+    internal static readonly TimeSpan StopCap = TimeSpan.FromSeconds(3);
+
+    private async Task StopNodeAsync()
+    {
+        var took = Stopwatch.StartNew();
+        await App.StopAsync();
+        if (took.Elapsed >= StopCap)
+        {
+            var running = App.Services.GetServices<IHostedService>().OfType<BackgroundService>()
+                .Where(s => s.ExecuteTask is { IsCompleted: false }).Select(s => s.GetType().Name).ToList();
+            TestContext.Current.AddWarning($"The test node's stop took {took.Elapsed.TotalSeconds:0.0} s, its {StopCap.TotalSeconds:0} s cap; " +
+                (running.Count > 0 ? $"still running: {string.Join(", ", running)}" : "no background service was still running (a request or a hosted service's own StopAsync held it)"));
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        await App.StopAsync();
+        await StopNodeAsync();
         await App.DisposeAsync();
         _held.Dispose();
         try

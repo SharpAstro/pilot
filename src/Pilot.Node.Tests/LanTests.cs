@@ -90,11 +90,11 @@ public sealed class LanTests
         (await remote.AskGrantAsync("se3-gui", Ct)).Error.ShouldNotBeNull().ShouldContain("Another ask is waiting");
         var card = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Title).ShouldBe((CardBin.Ring, NodeLan.AskedKind, "se2-gui asks to fly flights on this node"));
-        card.Choices.Select(c => c.Label).ShouldBe(["Allow", "Deny"]);
+        card.Choices.Select(c => c.Label).ShouldBe(["Allow se2-gui to run commands here until revoked", "Refuse se2-gui"]);
         (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!.Token.ShouldBeNull();
 
         // This machine's person allows it; the token comes back once.
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var allowed = (await remote.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull();
         (allowed.Outcome, allowed.Token).ShouldSatisfyAllConditions(t => t.Outcome.ShouldBe("accepted"), t => t.Token.ShouldNotBeNullOrEmpty());
         (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!.Token.ShouldBeNull();
@@ -131,7 +131,7 @@ public sealed class LanTests
         var ticket = (await remote.AskGrantAsync("se2-gui", Ct)).Response!;
         var card = node.State.Cards(openOnly: true).Single();
 
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Deny"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[1].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
 
         var read = (await remote.GrantTicketAsync(ticket.Id, Ct)).Response!;
         (read.Outcome, read.Token).ShouldBe(("declined", (string?)null));
@@ -166,7 +166,7 @@ public sealed class LanTests
                 card = node.State.Cards(openOnly: true).FirstOrDefault(c => c.Kind == NodeLan.AskedKind);
             }
             card.ShouldNotBeNull().Title.ShouldStartWith("se2-cli asks");
-            await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct);
+            await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct);
             (await connecting).ShouldBe(0);
             NodeTargets.TokenFor($"127.0.0.1:{port}", tokens).ShouldNotBeNullOrEmpty();
 
@@ -187,7 +187,7 @@ public sealed class LanTests
         using var asking = NodeClient.Remote($"127.0.0.1:{port}");
         var ticket = (await asking.AskGrantAsync(label, Ct)).Response.ShouldNotBeNull();
         var card = node.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["Allow"], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
         var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
         token.ShouldNotBeNullOrEmpty();
         return token!;

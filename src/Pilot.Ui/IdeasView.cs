@@ -80,7 +80,10 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private string? _editFrom;
     private string _said = "";
     private bool _saidRefusal;
-    private int _working;
+    // What each idea's press says it is doing (planning, moving, saving...), by the idea's key, for the row while the node has it.
+    private System.Collections.Immutable.ImmutableDictionary<string, string> _doing =
+        System.Collections.Immutable.ImmutableDictionary.Create<string, string>(StringComparer.Ordinal);
+    private int _notes;
     // The ideas sent to be noted whose answer has not come back, oldest first: the box is emptied at once and the next one may be
     // noted beside them, so the line under it names them rather than only saying it is working (the owner, 2026-10-29).
     private System.Collections.Immutable.ImmutableList<string> _noting = [];
@@ -98,6 +101,9 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     /// </summary>
     public Func<string, string, string[], CancellationToken, Task<IdeaReply>>? Send { get; set; }
 
+    /// <summary>The node's repos with their checkout paths: Make flight needs the path of an issue's repo, which the page's rows know only by name.</summary>
+    public Func<CancellationToken, Task<RepoInfo[]>>? LoadRepos { get; set; }
+
     /// <summary>Answers an idea card's choice (its number, from 1): the node's answer verb.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 
@@ -108,7 +114,10 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     public Action<Func<Task>, string>? Track { get; set; }
 
     /// <summary>Called when what it shows changed, from whichever thread: the host redraws.</summary>
-    public Action? Changed { get; set; }
+    public Action? Changed { get => Presses.Changed; set => Presses.Changed = value; }
+
+    /// <summary>What a press of an idea's button is doing, by the idea's key: working with the node, or refused in its words beside the row.</summary>
+    internal Presses Presses { get; } = new();
 
     /// <summary>The image on the clipboard as PNG (or whatever it is) bytes and its extension, or null when it holds none; null leaves Ctrl+V to text.</summary>
     public Func<(byte[] Bytes, string Ext)?>? GetClipboardImage { get; set; }
@@ -158,7 +167,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     internal (string Key, Mode Mode)? OpenAction => _open is { } o ? (o.Key, o.Mode) : null;
 
     /// <summary>Whether an action is with the node now.</summary>
-    public bool Working => Volatile.Read(ref _working) > 0;
+    public bool Working => Presses.AnyPending;
 
     /// <summary>The idea as the page names it: <c>I381</c> in the shown repo, <c>tianwen I1829</c> outside it.</summary>
     public string Name(IdeaRow idea) => string.Equals(idea.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? idea.Id : idea.Qualified;
@@ -194,7 +203,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var parts = new List<Layout.Node>
         {
             Layout.Builder.HStack(
-                Layout.Builder.Text("ideating…", 13f, P.Held).WithTooltip("Claude is choosing its repo and the node is filing it in that repo's Ideas milestone").WAuto(),
+                Layout.Builder.Text("ideating…", 13f, P.Held).Selectable().WithTooltip("Claude is choosing its repo and the node is filing it in that repo's Ideas milestone").WAuto(),
                 WrappedProse.Of(lines[0], 14f, P.Bright).WStar()).WithGap(10f).WStar(),
         };
         if (lines.Length > 1 && lines[1].Trim().Length > 0)
@@ -218,7 +227,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         IdeaReply? reply;
         try
         {
-            reply = await RunAsync(Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
+            reply = await RunAsync($"note:{Interlocked.Increment(ref _notes)}", "ideas:note", "noting", Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
         }
         finally
         {
@@ -254,28 +263,37 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         return parts.Length == 2 && !string.Equals(parts[0], ShownRepo, StringComparison.OrdinalIgnoreCase) ? made : parts[^1];
     }
 
-    private async Task<IdeaReply?> RunAsync(string verb, string target, string[] args)
+    // One verb through the press helper, under the idea's key (a note's own): working at once, a second press of the idea does nothing,
+    // and a refusal is kept beside the idea's row in the node's words as well as said at the top. Null when nothing was sent.
+    private async Task<IdeaReply?> RunAsync(string key, string hit, string word, string verb, string target, string[] args)
     {
         if (Send is not { } send)
         {
             return null;
         }
-        Interlocked.Increment(ref _working);
-        Changed?.Invoke();
-        try
+        IdeaReply? reply = null;
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _doing, d => d.SetItem(key, word));
+        await Presses.PressAsync(key, hit, async ct =>
         {
-            return await send(verb, target, args, CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            return new IdeaReply(false, ex.Message);
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _working);
-            Changed?.Invoke();
-        }
+            try
+            {
+                reply = await send(verb, target, args, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                reply = new IdeaReply(false, ex.Message);
+            }
+            return reply.Ok ? null : reply.Error;
+        }, CancellationToken.None);
+        return reply;
     }
+
+    // A board action on a target (a repo or an item): the same helper, keyed by the target, so it works at once and takes no second press.
+    private Task<IdeaReply?> RunAsync(string verb, string target, string[] args) =>
+        RunAsync($"board:{target}", $"ideas:board:{verb}:{target}", "working", verb, target, args);
+
+    private Task<IdeaReply?> RunAsync(IdeaRow idea, string hit, string word, string verb, string[] args) =>
+        RunAsync(KeyOf(idea), hit, word, verb, TargetOf(idea), args);
 
     private void Say(string text, bool refusal)
     {
@@ -476,7 +494,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private async Task PlanAsync(IdeaRow idea, string[] args)
     {
         Close();
-        var reply = await RunAsync(Verbs.PlanIdea, TargetOf(idea), args);
+        var reply = await RunAsync(idea, $"ideas:plan-go:{KeyOf(idea)}", "planning", Verbs.PlanIdea, args);
         if (reply is not null)
         {
             Say(reply.Ok ? $"planned {Name(idea)}{(reply.Made is { Length: > 0 } flight ? $" as flight {flight}" : "")}" : $"{Name(idea)} not planned: {reply.Error}", !reply.Ok);
@@ -492,7 +510,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             return;
         }
         Close();
-        var reply = await RunAsync(Verbs.DropIdea, TargetOf(idea), [why.Trim()]);
+        var reply = await RunAsync(idea, $"ideas:drop-send:{KeyOf(idea)}", "dropping", Verbs.DropIdea, [why.Trim()]);
         if (reply is not null)
         {
             Say(reply.Ok ? $"dropped {Name(idea)}" : $"{Name(idea)} not dropped: {reply.Error}", !reply.Ok);
@@ -514,7 +532,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private async Task SaveAsync(string verb, IdeaRow idea, DateTimeOffset from, string text, string ok, string failed)
     {
         Close();
-        var reply = await RunAsync(verb, TargetOf(idea), [from.ToString("O", CultureInfo.InvariantCulture), text]);
+        var reply = await RunAsync(idea, $"ideas:{(verb == Verbs.EditIdea ? "edit-send" : "tidy-save")}:{KeyOf(idea)}", verb == Verbs.EditIdea ? "saving" : "saving the tidy", verb, [from.ToString("O", CultureInfo.InvariantCulture), text]);
         if (reply is null)
         {
             return;
@@ -535,7 +553,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
 
     private async Task TidyAsync(IdeaRow idea)
     {
-        var reply = await RunAsync(Verbs.TidyIdea, TargetOf(idea), []);
+        var reply = await RunAsync(idea, $"ideas:tidy:{KeyOf(idea)}", "tidying", Verbs.TidyIdea, []);
         if (reply is null)
         {
             return;
@@ -594,12 +612,21 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     public async Task MoveAsync(IdeaRow idea, string repo)
     {
         Close();
-        var reply = await RunAsync(Verbs.MoveIdea, TargetOf(idea), [repo]);
+        var reply = await RunAsync(idea, $"ideas:move:{KeyOf(idea)}:{repo}", "moving", Verbs.MoveIdea, [repo]);
         if (reply is not null)
         {
             Say(reply.Ok ? $"moved {Name(idea)} to {Filed(reply.Made ?? repo)}" : $"{Name(idea)} not moved: {reply.Error}", !reply.Ok);
         }
     }
+
+    /// <summary>Puts text on the clipboard: Ctrl+C on selected text. Null where the host has no clipboard, and the page then selects nothing.</summary>
+    public Action<string>? CopyText { get; set; }
+
+    internal override Action<string>? SelectionCopy => CopyText;
+
+    internal override RectF32 SelectionViewport => _scroll.Viewport;
+
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
 
     public void Render(IdeasScreen screen, RectF32 bounds)
     {
@@ -751,11 +778,12 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var planned = folded.Count(i => i.State == IdeaState.Planned);
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
+        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
         // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
         var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
-            Buttons = [ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            Buttons = [.. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
             {
                 ViewMode = mode;
                 Changed?.Invoke();
@@ -771,7 +799,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             // The box takes the next idea while one is noted: each goes on its own, and shows in the list below until the node files it.
             var working = Working && _noting.IsEmpty;
             var hint = Hint(NoteInput, working ? "● working…" : "Ctrl+Enter notes it · Enter starts a line · Claude picks the repo" + (Upload is null ? "" : " · Ctrl+V pastes an image"), out var hintColor);
-            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).RowH(16f));
+            head.Add(Layout.Builder.Text(hint, 11f, working && hintColor == P.Dim ? P.Held : hintColor).Selectable().RowH(16f));
         }
         if (_said.Length > 0)
         {
@@ -783,7 +811,6 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         }
         var ideating = Volatile.Read(ref _noting);
         var empty = UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
-        var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
 
         Layout.Node body;
         switch (ViewMode)
@@ -799,6 +826,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 break;
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
+        whole = WithSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
 
@@ -903,7 +931,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     {
         var parts = new List<Layout.Node>
         {
-            Layout.Builder.Text(card.Kind == CardKinds.IdeaRepo ? "Where does it belong?" : "Two versions of an idea", 11f, P.Dim).WStar(),
+            Layout.Builder.Text(card.Kind == CardKinds.IdeaRepo ? "Where does it belong?" : "Two versions of an idea", 11f, P.Dim).Selectable().WStar(),
             WrappedProse.Of(card.Title, 14f, P.Bright),
         };
         if (!string.IsNullOrWhiteSpace(card.Detail))
@@ -922,7 +950,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
 
     private Layout.Node Header(IdeaRow idea) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(Name(idea), 13f, Link).WAuto(),
+                Layout.Builder.Text(Name(idea), 13f, Link).Selectable().WAuto(),
                 WrappedProse.Of(idea.Title, 15f, P.Bright))
             .WithGap(10f).WStar().HAuto();
 
@@ -939,7 +967,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         var key = (KeyOf(idea), idea.Body, IsNight);
         if (!_markdown.TryGetValue(key, out var document))
         {
-            _markdown[key] = document = Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) });
+            _markdown[key] = document = SelectableTree.Of(Layout.Builder.Markdown(Soften(WithoutImages(idea.Body)), Style with { OnLink = OnOpen is null ? null : (url => OnOpen(url)) }));
         }
         return document;
     }
@@ -1016,6 +1044,25 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         CardsView<TSurface>.Pill(label, $"ideas:{mode.ToString().ToLowerInvariant()}:{KeyOf(idea)}", () => OpenOn(idea, mode),
             _open is { } o && o.Key == KeyOf(idea) && o.Mode == mode ? Lit : Tint, P.Bright);
 
+    // A button that asks the node, through the press helper: its working word while any press of the idea is with the node (the others
+    // dimmed, no hit). <paramref name="kind"/> is the hit's tail after "ideas:" and the idea's key, unless <paramref name="idOf"/> is false (then all of it).
+    private Layout.Node NodeButton(IdeaRow idea, string label, string kind, string word, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover) tint, bool idOf = true)
+    {
+        var hit = idOf ? $"ideas:{kind}:{KeyOf(idea)}" : $"ideas:{kind}";
+        return Presses.Button(KeyOf(idea), hit, () => CardsView<TSurface>.Pill(label, hit, onClick, tint, P.Bright), pressed => CardsView<TSurface>.Dead(pressed ? word + "…" : label));
+    }
+
+    // What the node is doing with an idea, or refused it, under its buttons.
+    private Layout.Node? PressLine(IdeaRow idea)
+    {
+        var key = KeyOf(idea);
+        if (Presses.PendingOf(key) is not null)
+        {
+            return Layout.Builder.Text($"● {_doing.GetValueOrDefault(key, "working")}…", 12f, P.Held).RowH(18f);
+        }
+        return Presses.RefusalLine(key, 12f, P.Failed, 3);
+    }
+
     private Layout.Node OpenPill(IdeaRow idea) =>
         CardsView<TSurface>.Pill("Open on GitHub ↗", $"ideas:open:{KeyOf(idea)}", () => { if (idea.Url.Length > 0) { OnOpen?.Invoke(idea.Url); } }, Tint, Link);
 
@@ -1038,7 +1085,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                         yield return WrappedProse.Of($"Plan makes {Name(idea)} a flight: its issue goes into a milestone and a planner starts on it. Pick the milestone to put it in.", 12f, P.Body).WStar();
                     }
                     yield return Layout.Builder.HStack(
-                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).WAuto(),
+                            Layout.Builder.Text(mode == Mode.Plan ? "milestone" : "why?", 12f, P.Dim).Selectable().WAuto(),
                             Layout.Builder.TextInput(RowInput, 14f, InputColors, focusOnOpen: true).WStar())
                         .WithGap(10f).RowH(30f);
                 }
@@ -1047,7 +1094,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 {
                     if (_choices is { Done: false })
                     {
-                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).RowH(18f);
+                        yield return Layout.Builder.Text("● Claude is choosing a milestone…", 12f, P.Held).Selectable().RowH(18f);
                     }
                     var items = Items(RowInput.Text);
                     chosen = Chosen(items);
@@ -1083,7 +1130,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                 {
                     buttons.Add(chosen is null
                         ? Layout.Builder.Text("Plan", 12f, P.Faint, TextAlign.Center).Pad(10f, 4f).Bg(P.GhostBg).WAuto()
-                        : CardsView<TSurface>.Pill("Plan", $"ideas:plan-go:{KeyOf(idea)}", () => Run(() => PlanChosenAsync(idea), $"plan {idea.Id}"), Lit, P.Bright));
+                        : NodeButton(idea, "Plan", "plan-go", "planning", () => Run(() => PlanChosenAsync(idea), $"plan {idea.Id}"), Lit));
                 }
                 if (mode == Mode.Edit)
                 {
@@ -1096,7 +1143,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                     var editHint = Hint(EditInput, "", out var editColor);
                     if (editHint.Length > 0)
                     {
-                        yield return Layout.Builder.Text(editHint, 11f, editColor).RowH(16f);
+                        yield return Layout.Builder.Text(editHint, 11f, editColor).Selectable().RowH(16f);
                     }
                 }
                 yield return Layout.Builder.Text(mode switch
@@ -1104,7 +1151,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
                     Mode.Plan => "Type to filter · Enter plans the chosen milestone · Esc cancels",
                     Mode.Edit => "First line is the title · Ctrl+Enter saves · Esc cancels" + (Upload is null ? "" : " · Ctrl+V pastes an image"),
                     _ => "Enter sends · Esc cancels",
-                }, 11f, P.Faint).RowH(16f);
+                }, 11f, P.Faint).Selectable().RowH(16f);
                 break;
             case Mode.Tidy:
                 foreach (var node in TidyRows(idea))
@@ -1115,8 +1162,8 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             case Mode.Move:
                 var repos = _screen.Repos.Where(r => !string.Equals(r, idea.Repo, StringComparison.OrdinalIgnoreCase)).ToList();
                 yield return repos.Count == 0
-                    ? Layout.Builder.Text("The node tracks no other repo.", 12f, P.Dim).RowH(18f)
-                    : Layout.Builder.WrapH([.. repos.Select(r => CardsView<TSurface>.Pill(r, $"ideas:move:{KeyOf(idea)}:{r}", () => Run(() => MoveAsync(idea, r), $"move {idea.Id}"), Tint, P.Bright))])
+                    ? Layout.Builder.Text("The node tracks no other repo.", 12f, P.Dim).Selectable().RowH(18f)
+                    : Layout.Builder.WrapH([.. repos.Select(r => NodeButton(idea, r, $"move:{KeyOf(idea)}:{r}", "moving", () => Run(() => MoveAsync(idea, r), $"move {idea.Id}"), Tint, idOf: false))])
                         .WithGap(8f).WithLineGap(4f).WStar();
                 yield return CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body);
                 break;
@@ -1128,7 +1175,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     {
         if (_proposal is not { } proposal || proposal.Key != KeyOf(idea))
         {
-            yield return Layout.Builder.Text("● Claude is tidying it…", 12f, P.Held).RowH(18f);
+            yield return Layout.Builder.Text("● Claude is tidying it…", 12f, P.Held).Selectable().RowH(18f);
             yield break;
         }
         var tidy = proposal.Tidy;
@@ -1136,7 +1183,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         {
             var (mark, color) = kind switch { '+' => ("+ ", P.Flying), '-' => ("- ", P.Failed), _ => ("  ", P.Dim) };
             yield return Layout.Builder.HStack(
-                    Layout.Builder.Text(mark, 13f, color).WFixed(16f),
+                    Layout.Builder.Text(mark, 13f, color).Selectable().WFixed(16f),
                     line.Length == 0 ? Layout.Builder.Spacer().WStar() : WrappedProse.Of(line, 13f, color))
                 .WStar().HAuto();
         }
@@ -1145,7 +1192,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
             yield return WrappedProse.Of($"Plan it in: {(Proposed(plan) is null ? "new milestone " : "")}{where}" + (plan.Reason is { Length: > 0 } why ? $" ({why})" : ""), 12f, P.Dim).WStar();
         }
         yield return Layout.Builder.WrapH(
-                CardsView<TSurface>.Pill("Save", $"ideas:tidy-save:{KeyOf(idea)}", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit, P.Bright),
+                NodeButton(idea, "Save", "tidy-save", "saving the tidy", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit),
                 CardsView<TSurface>.Pill("Discard", $"ideas:tidy-discard:{KeyOf(idea)}", Close, Tint, P.Body),
                 CardsView<TSurface>.Pill("Edit", $"ideas:tidy-edit:{KeyOf(idea)}", () => EditProposal(idea), Tint, P.Bright))
             .WithGap(8f).WithLineGap(4f).WStar();
@@ -1199,8 +1246,8 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     // A planned or dropped idea: one line, still found by its id, its page one click away.
     private Layout.Node Folded(IdeaRow idea) =>
         Layout.Builder.HStack(
-                Layout.Builder.Text(Name(idea), 12f, Link).WAuto(),
-                Layout.Builder.Text(idea.State == IdeaState.Planned ? "planned" : "dropped", 11f, P.Dim).WAuto(),
+                Layout.Builder.Text(Name(idea), 12f, Link).Selectable().WAuto(),
+                Layout.Builder.Text(idea.State == IdeaState.Planned ? "planned" : "dropped", 11f, P.Dim).Selectable().WAuto(),
                 idea.State == IdeaState.Planned && IdeaIds.FlightOf(_screen.Flights, _screen.Moves, idea.Repo, idea.Number) is { } flight
                     ? Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
                         .Follows(new HitResult.ButtonHit($"ideas:flight:{KeyOf(idea)}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto()

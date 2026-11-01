@@ -54,6 +54,7 @@ internal sealed partial class FlightsView<TSurface>
         _detailScroll.AtomOffset = 0;
         // A leg link that never resolved must not scroll the next page opened.
         _revealLeg = null;
+        OnSpend?.Invoke(code);
     }
 
     public void CloseDetail()
@@ -176,6 +177,14 @@ internal sealed partial class FlightsView<TSurface>
             facts.Add(Layout.Builder.Text($"review {review.State.ToString().ToLowerInvariant()}", 12f,
                 review.State == ReviewState.Passed ? Flying : review.State == ReviewState.Changes ? Held : Dim).WAuto().Selectable());
         }
+        if (line.PriorityMark is not null)
+        {
+            facts.Add(Layout.Builder.Text($"{line.ShownPriority}: skips the Opus cap and the repo hold", 12f, Held).WAuto().Selectable());
+        }
+        else if (line.LevelMark is { } quiet)
+        {
+            facts.Add(Layout.Builder.Text($"priority {quiet}: queues after the urgent and high flights", 12f, Dim).WAuto().Selectable());
+        }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
@@ -197,7 +206,7 @@ internal sealed partial class FlightsView<TSurface>
         _legBlocks.Clear();
         var legs = detail.Legs.Count == 0
             ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
-            : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
+            : detail.Legs.Select(l => LegBlock(line, l)).ToList();
         // The flight's own summary leads what scrolls: the legs are the detail under it.
         if (Summary is { } board && _summaryCard.Build(board, board.Shelf.Flight(line.Code, line.Node), P, _screen.AsOf) is { } summary)
         {
@@ -208,7 +217,7 @@ internal sealed partial class FlightsView<TSurface>
         [
             FlowRow.Of(32f, 10f, head),
         ];
-        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line)) is { } band)
+        if (MoveFailureBand.Build<TSurface>(line, P, RetryOf(line), presses: Presses) is { } band)
         {
             page.Add(band);
         }
@@ -220,7 +229,8 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(Layout.Builder.WrapH([.. buttons]).WithGap(10f).WithLineGap(6f).WStar());
         }
-        // A why asked for sits under the buttons it was asked by.
+        // What the node said to the last of them, when it refused, and a why asked for, sit under the buttons they were asked by.
+        page.AddRange(RefusalOf(line));
         page.AddRange(WhyRow(line));
         if (line.StaleMark is { } stale)
         {
@@ -240,10 +250,15 @@ internal sealed partial class FlightsView<TSurface>
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
         // above the scroll they pushed the page's foot past the window's.
         List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        scrolled.AddRange(SessionRows(line, detail.Sessions, null));
         // The checklist leads the legs' detail: one line a leg, each opening its block below, then what a person added in the tracker.
         if (Checklist(line.Code, detail) is { } checklist)
         {
             scrolled.Add(checklist);
+        }
+        if (detail.Spend is { } spend)
+        {
+            scrolled.Add(SpendBlock(spend));
         }
         if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
         {
@@ -255,6 +270,16 @@ internal sealed partial class FlightsView<TSurface>
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Stretch()])
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    // What the flight has spent so far, said with its timeframe: the total, then each leg and each of its rounds, indented.
+    private Layout.Node SpendBlock(SpendFlightReport spend)
+    {
+        var lines = SpendText.FlightLines(spend);
+        return Layout.Builder.VStack(
+                [Label("spend").RowH(20f),
+                .. lines.Select(l => Layout.Builder.Text(l.Text, l.Indent == 0 ? 13f : 12f, l.Indent == 0 ? Bright : Dim).Selectable().Whole(l.Text).RowH(20f).Pad(l.Indent switch { 0 => 0f, 1 => 16f, _ => 32f }, 0f))])
+            .WithGap(0f);
     }
 
     // The PR's state in the palette's own colours, the word always beside it: green while it is open for review, amber in the queue, blue once merged, dim as a draft.
@@ -269,8 +294,10 @@ internal sealed partial class FlightsView<TSurface>
         // A label long past a narrow page (a leg's name in "Redo leg ...") ends in an ellipsis, with the whole of it on hover.
         var label = CardsView<TSurface>.Ellipsize(action.Label, ActionFits);
         var whole = label == action.Label ? null : action.Label;
+        // Pressed, the node not yet answered: the button reads "…" and takes no second press, as the cards' do.
+        Layout.Node Idle() => whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole);
         return line.Stale is null
-            ? whole is null ? Pill(label, id, () => Choose(action, line.Code)) : Pill(label, id, () => Choose(action, line.Code)).WithTooltip(whole)
+            ? Presses.Button(line.Code, id, Idle, pressed => CardsView<TSurface>.Dead(pressed ? $"{label} …" : label))
             : CardsView<TSurface>.Dead(label).WithTooltip(whole is null ? StaleWhy(line) : $"{whole}: {StaleWhy(line)}");
     }
 
@@ -379,11 +406,14 @@ internal sealed partial class FlightsView<TSurface>
         else if (line.Row.State == FlightState.Flying && line.LegRows.Count == 0)
         {
             yield return WrappedProse.Of("not planned yet: no planner is running", 12f, Held).WAuto();
-            if (CanCommand && OnAction is { } act)
+            if (CanCommand && OnAction is not null)
             {
+                var planHit = $"flight:{line.Code}:plan";
                 yield return line.Stale is null
-                    ? Pill("Plan it", $"flight:{line.Code}:plan", () =>
-                        act(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }))
+                    ? Presses.Button(line.Code, planHit,
+                        () => Pill("Plan it", planHit, () =>
+                            _ = Run(new FlightAction($"plan {line.Code}", Verbs.PlanFlight, Verbs.FlightTarget(line.Code), []) { Node = line.Node }, line.Code, planHit)),
+                        pressed => CardsView<TSurface>.Dead(pressed ? "Plan it …" : "Plan it"))
                     : CardsView<TSurface>.Dead("Plan it").WithTooltip(StaleWhy(line));
             }
         }
@@ -495,8 +525,42 @@ internal sealed partial class FlightsView<TSurface>
         return Layout.Builder.HStack([.. cells]).WithGap(ChecklistGap).RowH(ChecklistRowH);
     }
 
-    private Layout.Node LegBlock(string code, LegDetail leg)
+    // A session as a link: name, model and effort, state (or how it ended and when), coloured by state; dead with the stale tooltip while its node is unreachable.
+    private Layout.Node SessionLink(FlightLine line, string? leg, LegSessionLine s, bool earlier)
     {
+        var text = $"{s.Name} · {s.Model} · {s.Ended ?? s.State}";
+        var hit = leg is null ? $"flight:{line.Code}:flight-session:{s.Row.Id}" : $"flight:{line.Code}:leg:{leg}:session:{s.Row.Id}";
+        if (OnSession is not { } open)
+        {
+            return Layout.Builder.Text(text, 12f, earlier ? Dim : Body).WAuto().Selectable();
+        }
+        var row = s.Row;
+        if (line.Stale is not null)
+        {
+            return CardsView<TSurface>.Dead(text).WithTooltip(StaleWhy(line));
+        }
+        var color = earlier ? Dim : s.State == "waiting" ? Held : s.IsLive ? Flying : Dim;
+        return Layout.Builder.Text(text, 12f, color)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .Follows(new HitResult.ButtonHit(hit), _ => open(row, line.Node));
+    }
+
+    // The sessions of a leg (leg set) or of the flight (planner and reviewer), one line each, labelled with the role; the current one first, earlier ones dim.
+    private IEnumerable<Layout.Node> SessionRows(FlightLine line, IReadOnlyList<LegSessionLine> sessions, string? leg)
+    {
+        foreach (var s in sessions)
+        {
+            var label = char.ToUpperInvariant(s.Role[0]) + s.Role[1..];
+            yield return FlowRow.Of(28f, 10f, [Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg, s, false)]);
+        }
+    }
+
+    private Layout.Node LegBlock(FlightLine line, LegDetail leg)
+    {
+        var code = line.Code;
         var color = LegColor(leg.Row);
         var head = new List<Layout.Node>
         {
@@ -517,6 +581,14 @@ internal sealed partial class FlightsView<TSurface>
         }
 
         var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
+        if (leg.Session is { } current)
+        {
+            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("session", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, current, false)]));
+        }
+        foreach (var old in leg.Earlier)
+        {
+            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("earlier", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, old, true)]));
+        }
         rows.Add(Field("Goal", leg.Goal));
         rows.Add(Field("Done when", leg.DoneWhen));
         if (leg.Check is { } check)
@@ -681,7 +753,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             // The page cannot tell why it was sent back (findings, checks, a conflict), so it names no button: the card has the right one.
             yield return Prose($"{capped.Name} has been sent back {capped.Row.ReviewGoArounds} times, so the next round is yours: "
-                + "send it back once more from its card, or Ready anyway if what was found should not hold it up.", 12f, Held);
+                + "send it back once more from its card, or land it with the findings unfixed if what was found should not hold it up.", 12f, Held);
         }
     }
 

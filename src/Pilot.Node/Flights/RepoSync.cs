@@ -28,7 +28,7 @@ public sealed class RepoSync(IGit git, Planes planes, RepoWatch watch)
         await _one.WaitAsync(cancellationToken);
         try
         {
-            var tracked = (await watch.StatusAsync(refresh: false, cancellationToken)).Where(r => r.Tracked).ToArray();
+            var tracked = (await watch.StatusAsync(refresh: true, cancellationToken)).Where(r => r.Tracked).ToArray();
             var outcomes = new List<RepoSyncOutcome>();
             foreach (var repo in tracked)
             {

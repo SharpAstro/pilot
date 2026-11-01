@@ -200,6 +200,15 @@ internal sealed record RepoLine
 /// <summary>What the Repos page shows: the repos (every one under the roots; the view shows the tracked unless asked), and where they come from.</summary>
 internal sealed record ReposScreen(IReadOnlyList<RepoLine> Lines, string Source, DateTimeOffset AsOf)
 {
+    /// <summary>When the node read the repos; null while it has not.</summary>
+    public DateTimeOffset? ReadAt { get; init; }
+
+    /// <summary>Since when the node has waited for its first read; null once read.</summary>
+    public DateTimeOffset? Since { get; init; }
+
+    /// <summary>Whether the node has not read the repos yet: the lines are the ones it knows, and nothing more.</summary>
+    public bool Unread { get; init; }
+
     public string Summary
     {
         get

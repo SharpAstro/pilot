@@ -27,9 +27,16 @@ public interface IGit
 }
 
 /// <summary><see cref="IGit"/> by the git CLI on <c>PATH</c>.</summary>
-public sealed class GitCli(NodeTraffic? traffic = null) : IGit
+public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null) : IGit
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(2);
+
+    private readonly TimeSpan _budget = budget ?? DefaultBudget;
+
+    /// <summary>A git CLI whose runs get <paramref name="budget"/> before they are killed (a test's seam; the node uses the default).</summary>
+    public GitCli(TimeSpan budget) : this(null, budget)
+    {
+    }
 
     // A command line over 32767 characters fails to start on Windows; stay well under it.
     private const int MaxPathChars = 24000;
@@ -133,6 +140,7 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = cwd,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -162,20 +170,62 @@ public sealed class GitCli(NodeTraffic? traffic = null) : IGit
         var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
         using var _ = process;
         using var __ = counted;
+        // Git never waits on a handle it inherited: its stdin is closed at once.
+        process.StandardInput.Close();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(budget.Token);
-        var error = process.StandardError.ReadToEndAsync(budget.Token);
+        budget.CancelAfter(_budget);
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        // Read by line into builders, so what git said survives a cancel.
+        var reads = Task.WhenAll(Pump(process.StandardOutput, output), Pump(process.StandardError, error));
+        var exited = false;
         try
         {
             await process.WaitForExitAsync(budget.Token);
+            exited = true;
+            // Git gone does not close its pipes when a child it left keeps them: that read is on the budget too.
+            await reads.WaitAsync(budget.Token);
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
-            throw;
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Git had already exited; only a descendant holds its pipes.
+            }
+            await Task.WhenAny(reads, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            var why = cancellationToken.IsCancellationRequested ? "was cancelled" : $"ran past its budget of {_budget.TotalSeconds:0.###}s";
+            var state = exited ? "git had exited but its output never closed" : "git had not exited";
+            throw new OperationCanceledException(
+                $"git {string.Join(' ', args)} in {cwd} {why} ({state}) and was killed. stderr so far: [{Snapshot(error)}] stdout so far: [{Snapshot(output)}]",
+                null,
+                cancellationToken.IsCancellationRequested ? cancellationToken : budget.Token);
         }
-        return new GitRun(process.ExitCode, await output, await error);
+        return new GitRun(process.ExitCode, output.ToString(), error.ToString());
+    }
+
+    private static async Task Pump(StreamReader reader, StringBuilder into)
+    {
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer, CancellationToken.None)) > 0)
+        {
+            lock (into)
+            {
+                into.Append(buffer, 0, read);
+            }
+        }
+    }
+
+    private static string Snapshot(StringBuilder text)
+    {
+        lock (text)
+        {
+            return text.ToString().Trim();
+        }
     }
 }
 
@@ -515,6 +565,10 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var notInMain = cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var loose = new List<string>();
+        if (notInMain.Count > 0 && await ContentInMainAsync(worktree, mainRef, cancellationToken))
+        {
+            return loose;
+        }
         foreach (var sha in unpushed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(notInMain.Contains))
         {
             var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
@@ -540,12 +594,42 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             return (null, []);
         }
         var commits = new List<string>();
-        foreach (var sha in cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()))
+        var notIn = cherry.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => l.StartsWith('+')).Select(l => l[1..].Trim()).ToList();
+        if (notIn.Count > 0 && await ContentInMainAsync(worktree, mainRef, cancellationToken))
+        {
+            return (head.Output.Trim(), commits);
+        }
+        foreach (var sha in notIn)
         {
             var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], worktree, cancellationToken);
             commits.Add(subject.Ok ? subject.Output.Trim() : sha[..Math.Min(9, sha.Length)]);
         }
         return (head.Output.Trim(), commits);
+    }
+
+    /// <summary>
+    /// Whether everything the plane changed since it left <paramref name="mainRef"/> is in it by content: the files it touched are
+    /// the same in both. A PR laid on its base and rebase-merged is in main as one commit under another id, so <c>git cherry</c>
+    /// cannot match the plane's older commits one by one; its content is what says it landed. False when git cannot say.
+    /// </summary>
+    private async Task<bool> ContentInMainAsync(string worktree, string mainRef, CancellationToken cancellationToken)
+    {
+        var mergeBase = await git.RunAsync(["merge-base", mainRef, "HEAD"], worktree, cancellationToken);
+        if (!mergeBase.Ok)
+        {
+            return false;
+        }
+        var names = await git.RunAsync(["diff", "--name-only", mergeBase.Output.Trim(), "HEAD"], worktree, cancellationToken);
+        if (!names.Ok)
+        {
+            return false;
+        }
+        var files = names.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (files.Length == 0)
+        {
+            return true;
+        }
+        return (await git.RunAsync(["diff", "--quiet", mainRef, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
     }
 
     /// <summary>The plane's commits past <paramref name="head"/> (subjects, oldest first): what a merge at that head left out.</summary>

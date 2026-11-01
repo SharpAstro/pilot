@@ -62,6 +62,24 @@ public sealed partial class RepoCatalog(NodeState state, NodeOptions options)
         return [.. repos.Values.OrderByDescending(r => r.Flights).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)];
     }
 
+    /// <summary>The page of a repo's short rules for pilot (#443): a repo that carries one is one pilot works in, before it has flown.</summary>
+    public const string MarkerFile = "PILOT.md";
+
+    /// <summary>
+    /// The repos pilot works in, of <see cref="Repos"/>: on GitHub, and flown in (landed flights too) or reviewed in
+    /// (<see cref="PullRequestWatch.TrackedRepos"/>), holding an idea the node has read, or carrying a <see cref="MarkerFile"/>. Only
+    /// these are read on GitHub and offered for an idea: every other clone under a root (WebAssembly's wabt and wasi-libc, a work org's
+    /// repos) cost four gh calls each read and filled the Ideas pane's milestone lists with repos pilot never touched (the owner,
+    /// 2026-10-30, as #463 had found for the PR watch).
+    /// </summary>
+    public RepoInfo[] Tracked()
+    {
+        var worked = new HashSet<string>(PullRequestWatch.TrackedRepos(state.Flights(), state.PrReviews()), StringComparer.OrdinalIgnoreCase);
+        var withIdeas = new HashSet<string>(state.Ideas().Select(i => i.Repo), StringComparer.OrdinalIgnoreCase);
+        return [.. Repos().Where(r => r.GitHub is { } gitHub
+            && (worked.Contains(gitHub) || withIdeas.Contains(r.Name) || File.Exists(Path.Combine(r.Path, MarkerFile))))];
+    }
+
     /// <summary>The repo's GitHub <c>owner/name</c>, from its origin's URL; null for one not on GitHub.</summary>
     internal static string? GitHubOf(string gitFolder)
     {

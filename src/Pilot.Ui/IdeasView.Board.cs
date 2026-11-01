@@ -83,7 +83,24 @@ internal sealed partial class IdeasView<TSurface>
         item.Idea is { } idea ? Name(idea)
         : string.Equals(item.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? $"#{item.Number}" : $"{item.Repo}#{item.Number}";
 
-    internal static string ChatAboutText(BoardItem item, string lead = "About") => $"{lead} {item.Repo} #{item.Number.ToString(CultureInfo.InvariantCulture)}: {item.Title}\n{item.Url}\n";
+    // The label of a row as it is drawn: a pinned item is marked, in every view.
+    private string Marked(BoardItem item) => item.Pinned ? PinMark + " " + Label(item) : Label(item);
+
+    internal const string PinMark = "★";
+
+    /// <summary>The label of the choice that clears the Priority field.</summary>
+    internal const string NoPriorityLabel = "No priority";
+
+    /// <summary>What a chip for the level says on a row.</summary>
+    internal static string PriorityChip(IssuePriority level) => "[" + IssuePriorities.Name(level) + "]";
+
+    private RGBAColor32 PriorityColour(IssuePriority level) => level is IssuePriority.Urgent or IssuePriority.High ? P.Failed : level == IssuePriority.Medium ? P.Body : P.Dim;
+
+    internal const string PinLabel = "Pin";
+
+    internal const string UnpinLabel = "Unpin";
+
+    internal static string ChatAboutText(BoardItem item) => $"About {item.Repo} #{item.Number.ToString(CultureInfo.InvariantCulture)}: {item.Title}\n{item.Url}\n";
 
     // A suggestion belongs to the issue as it was read: one the board no longer holds, or that GitHub changed since, is gone.
     private void Prune(IdeasBoard board)
@@ -116,6 +133,47 @@ internal sealed partial class IdeasView<TSurface>
 
     // ---- Sections ----
 
+    /// <summary>The label of the pill that folds every group, and the one it turns into once they are folded.</summary>
+    internal const string CollapseAllLabel = "Collapse all";
+
+    /// <summary>The label of the pill that unfolds every group.</summary>
+    internal const string ExpandAllLabel = "Expand all";
+
+    // The sections a fold applies to: those with a mark in the current view (the list pins Unsorted; the canvas folds nothing).
+    private List<BoardSection> Collapsible(List<BoardSection> shown) =>
+        ViewMode switch
+        {
+            IdeasViewMode.List => shown,
+            IdeasViewMode.Tree => [_board.Unsorted, .. shown],
+            _ => [],
+        };
+
+    // One pill beside the view switch: Collapse all, which becomes Expand all once every collapsible section is folded.
+    private IEnumerable<Layout.Node> FoldAllPill(List<BoardSection> shown)
+    {
+        var sections = Collapsible(shown);
+        if (sections.Count == 0)
+        {
+            yield break;
+        }
+        var all = sections.All(s => _collapsed.Contains(s.Key));
+        yield return CardsView<TSurface>.Pill(all ? ExpandAllLabel : CollapseAllLabel, "ideas:fold-all", () =>
+        {
+            foreach (var section in sections)
+            {
+                if (all)
+                {
+                    _collapsed.Remove(section.Key);
+                }
+                else
+                {
+                    _collapsed.Add(section.Key);
+                }
+            }
+            Changed?.Invoke();
+        }, Tint, P.Bright);
+    }
+
     // A section's header, then what the node suggested for its items: the new milestones and Accept all. A header that is
     // collapsible shows its mark and folds the section on a press; one that is a target answers a drop (its region is what
     // SectionAt finds). In the list the pinned section is neither; the tree grid has every section both; a canvas column is a
@@ -129,7 +187,7 @@ internal sealed partial class IdeasView<TSurface>
         var where = section.Kind == BoardSectionKind.Milestone && !string.Equals(section.Repo, ShownRepo, StringComparison.OrdinalIgnoreCase) ? $" · {section.Repo}" : "";
         if (hint)
         {
-            parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+            parts.Add(Layout.Builder.Text(mark + section.Title, 14f, P.Bright).Selectable().WAuto().HFixed(HeadHeight));
         }
         else
         {
@@ -138,7 +196,7 @@ internal sealed partial class IdeasView<TSurface>
             // rows under the pointer.
             var slot = dropping && section.Accepts ? "→" : mark.Trim();
             parts.Add(Layout.Builder.Text(slot, 14f, P.Bright, TextAlign.Center).WFixed(MarkWidth).HFixed(HeadHeight));
-            parts.Add(Layout.Builder.Text(section.Title, 14f, P.Bright).WAuto().HFixed(HeadHeight));
+            parts.Add(Layout.Builder.Text(section.Title, 14f, P.Bright).Selectable().WAuto().HFixed(HeadHeight));
         }
         var facts = new List<string>
         {
@@ -153,7 +211,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             facts.Add("due " + due.ToString("d MMM yyyy", CultureInfo.InvariantCulture));
         }
-        parts.Add(Layout.Builder.Text(string.Join(" · ", facts), 12f, P.Dim).WAuto().HFixed(HeadHeight));
+        parts.Add(Layout.Builder.Text(string.Join(" · ", facts), 12f, P.Dim).Selectable().WAuto().HFixed(HeadHeight));
         if (section.Kind == BoardSectionKind.Milestone && section.Open + section.Closed > 0)
         {
             parts.Add(Layout.Builder.VStack(
@@ -226,13 +284,12 @@ internal sealed partial class IdeasView<TSurface>
 
     private Layout.Node ItemRow(BoardItem item, BoardSection section, bool compact = false)
     {
-        _ = section;
         var idea = item.Idea;
         var parts = new List<Layout.Node> { ItemHead(item, compact) };
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
         if (meta.Length > 0)
         {
-            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).RowH(16f));
+            parts.Add(Layout.Builder.Text(meta, 11f, P.Dim).Selectable().RowH(16f));
         }
         if (idea is not null && idea.Body.Trim().Length > 0)
         {
@@ -244,7 +301,11 @@ internal sealed partial class IdeasView<TSurface>
         }
         parts.AddRange(ReadinessRows(item));
         parts.AddRange(SuggestionOf(item));
-        parts.Add(Layout.Builder.WrapH([.. Buttons(item)]).WithGap(8f).WithLineGap(4f).WStar());
+        parts.Add(Layout.Builder.WrapH([.. Buttons(item, section)]).WithGap(8f).WithLineGap(4f).WStar());
+        if (idea is not null && PressLine(idea) is { } pressed)
+        {
+            parts.Add(pressed);
+        }
         if (idea is not null && _open is { } open && open.Key == KeyOf(idea))
         {
             parts.AddRange(OpenRows(idea, open.Mode));
@@ -261,12 +322,16 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(grip);
         }
-        parts.Add(Layout.Builder.Text(Label(item), 13f, Link).WAuto());
+        parts.Add(Layout.Builder.Text(Marked(item), 13f, Link).Selectable().WAuto());
+        if (item.Priority is { } level)
+        {
+            parts.Add(Layout.Builder.Text(PriorityChip(level), 12f, PriorityColour(level)).Selectable().WAuto().WithTooltip("The issue's Priority field on GitHub"));
+        }
         if (!compact)
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
         }
-        if (item.Flight is { } flight)
+        if (FlightCodeOf(item) is { } flight)
         {
             parts.Add(Layout.Builder.Text(flight, 12f, Link).BgHover(Tint.Hover)
                 .Follows(new HitResult.ButtonHit($"ideas:flight:{item.Key}"), _ => OnFlight?.Invoke(flight)).Pad(4f, 0f).WAuto().WithTooltip($"Open the flight {flight}"));
@@ -283,10 +348,10 @@ internal sealed partial class IdeasView<TSurface>
                 .Pressable(new HitResult.ButtonHit(hit + item.Key), press => BeginDrag(item, press), CursorKind.Move)
             : null;
 
-    private IEnumerable<Layout.Node> Buttons(BoardItem item)
+    private IEnumerable<Layout.Node> Buttons(BoardItem item, BoardSection? section = null)
     {
         var idea = item.Idea;
-        var flown = item.Flight is not null;
+        var flown = FlightCodeOf(item) is not null;
         var ready = !flown && ReadinessOf(item) is { Ready: true };
         if (OnChatAbout is { } chat)
         {
@@ -302,16 +367,41 @@ internal sealed partial class IdeasView<TSurface>
             yield return ActionPill("Edit", idea, Mode.Edit);
             yield return ActionPill("Tidy", idea, Mode.Tidy);
         }
-        else if (ready && OnChatAbout is { } planning)
+        else if (!flown && Send is not null)
         {
-            // An issue is no idea, so there is no verb that plans it: the chat starts with the request, for Claude to carry out.
-            yield return CardsView<TSurface>.Pill("Plan flight", $"ideas:plan-flight:{item.Key}", () => planning(ChatAboutText(item, "Plan a flight for")), Lit, P.Bright);
+            yield return IsBusy("flight:" + item.Key)
+                ? CardsView<TSurface>.Dead("Making flight…")
+                : CardsView<TSurface>.Pill(MakeFlightLabel, $"ideas:make-flight:{item.Key}", () => Run(() => MakeFlightAsync(item), $"make a flight of {Label(item)}"), ready ? Lit : Tint, P.Bright);
         }
         if (Send is not null)
         {
-            yield return IsBusy("suggest:" + item.Key)
-                ? CardsView<TSurface>.Dead("Suggesting…")
-                : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
+            // An item already in a real milestone has its place; only an idea or an issue with no milestone is asked about.
+            if ((section ?? _board.SectionOf(item.Key)) is not { Kind: BoardSectionKind.Milestone })
+            {
+                yield return IsBusy("suggest:" + item.Key)
+                    ? CardsView<TSurface>.Dead("Suggesting…")
+                    : CardsView<TSurface>.Pill(SuggestLabel, $"ideas:suggest:{item.Key}", () => Run(() => SuggestAsync(item), $"suggest a milestone for {Label(item)}"), Tint, P.Bright);
+            }
+            yield return IsBusy("pin:" + item.Key)
+                ? CardsView<TSurface>.Dead(item.Pinned ? "Unpinning…" : "Pinning…")
+                : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
+            if (IsBusy("priority:" + item.Key))
+            {
+                yield return CardsView<TSurface>.Dead("Setting priority…");
+            }
+            else
+            {
+                var open = _priorityOpen.Contains(item.Key);
+                yield return CardsView<TSurface>.Pill(item.Priority is { } now ? "Priority: " + IssuePriorities.Name(now) + (open ? " ▴" : " ▾") : "Priority…", $"ideas:priority:{item.Key}", () => { TogglePriority(item.Key); }, open ? Lit : Tint, P.Bright);
+                if (open)
+                {
+                    foreach (var level in new IssuePriority?[] { IssuePriority.Urgent, IssuePriority.High, IssuePriority.Medium, IssuePriority.Low, null })
+                    {
+                        var chosen = level;
+                        yield return CardsView<TSurface>.Pill(chosen is { } l ? IssuePriorities.Name(l) : NoPriorityLabel, $"ideas:priority-{(chosen is { } c ? c.ToString().ToLowerInvariant() : "none")}:{item.Key}", () => Run(() => PriorityAsync(item, chosen), $"set the priority of {Label(item)}"), item.Priority == chosen ? Lit : Tint, P.Bright);
+                    }
+                }
+            }
             if (!flown)
             {
                 yield return IsBusy("ready:" + item.Key)
@@ -335,7 +425,7 @@ internal sealed partial class IdeasView<TSurface>
     {
         if (IsBusy("ready:" + item.Key))
         {
-            yield return Layout.Builder.Text("● checking whether it is ready to fly…", 12f, P.Held).RowH(18f);
+            yield return Layout.Builder.Text("● checking whether it is ready to fly…", 12f, P.Held).Selectable().RowH(18f);
         }
         if (ReadinessOf(item) is not { } readiness)
         {
@@ -343,8 +433,8 @@ internal sealed partial class IdeasView<TSurface>
         }
         var age = _screen.AsOf == default ? "" : IdeaIds.Age(readiness.CheckedAt, _screen.AsOf);
         yield return Layout.Builder.HStack(
-                Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 12f, readiness.Ready ? P.Flying : P.Failed).WAuto(),
-                Layout.Builder.Text(age.Length > 0 ? $"checked {age} ago" : "checked", 11f, P.Dim).WAuto())
+                Layout.Builder.Text(readiness.Ready ? "✓ ready" : "✗ not ready", 12f, readiness.Ready ? P.Flying : P.Failed).Selectable().WAuto(),
+                Layout.Builder.Text(age.Length > 0 ? $"checked {age} ago" : "checked", 11f, P.Dim).Selectable().WAuto())
             .WithGap(8f).RowH(18f);
         foreach (var reason in readiness.Reasons)
         {
@@ -403,6 +493,132 @@ internal sealed partial class IdeasView<TSurface>
             else
             {
                 Say(reply.Readiness?.Note ?? $"{Label(item)} was not checked", refusal: true);
+            }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    internal const string MakeFlightLabel = "Make flight";
+
+    /// <summary>
+    /// Makes a flight of an open issue that has none (<c>create-flight</c> on the issue, then <c>plan-flight</c> on the flight made, as
+    /// the New flight wizard does) and says what the node answered. The issue stays open: the flight links it (create-flight records it
+    /// as the flight's work item) and the flight's PR closes it on merge, so nothing here closes it.
+    /// </summary>
+    internal async Task MakeFlightAsync(BoardItem item)
+    {
+        var busy = "flight:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            string? path = null;
+            if (LoadRepos is { } load)
+            {
+                try
+                {
+                    path = (await load(CancellationToken.None)).FirstOrDefault(r => string.Equals(r.Name, item.Repo, StringComparison.OrdinalIgnoreCase))?.Path;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+                {
+                    Say($"no flight made of {Label(item)}: {ex.Message}", refusal: true);
+                    return;
+                }
+            }
+            if (path is null)
+            {
+                Say($"no flight made of {Label(item)}: the node has no checkout of {item.Repo}", refusal: true);
+                return;
+            }
+            var made = await RunAsync("making:" + item.Key, "ideas:board:" + Verbs.CreateFlight + ":" + item.Key, "making a flight", Verbs.CreateFlight, Verbs.RepoTarget(path), ["#" + item.Number.ToString(CultureInfo.InvariantCulture), item.Title]);
+            if (made is not { Ok: true, Made: { Length: > 0 } code })
+            {
+                Say($"no flight made of {Label(item)}: {made?.Error ?? "the node did not answer"}", refusal: true);
+                return;
+            }
+            if (made.Way is { Length: > 0 } way)
+            {
+                // Made on another node of the fleet: this node has no flight of that code to plan.
+                Say($"{Label(item)}: {way}", refusal: false);
+                return;
+            }
+            var planning = await RunAsync("planning:" + item.Key, "ideas:board:" + Verbs.PlanFlight + ":" + code, "planning", Verbs.PlanFlight, Verbs.FlightTarget(code), []);
+            Say(planning is { Ok: true } ? $"made {code} of {Label(item)}; its planner is planning the legs" : $"made {code} of {Label(item)}, but it has no planner: {planning?.Error ?? "the node did not answer"}", planning is not { Ok: true });
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    /// <summary>Pins the item (the node puts the pin label on its issue on GitHub), or unpins it when it is pinned; a press again while it runs sends nothing.</summary>
+    internal async Task PinAsync(BoardItem item)
+    {
+        var busy = "pin:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            var reply = await RunAsync("pinning:" + item.Key, "ideas:board:" + Verbs.PinIssue + ":" + item.Target, "pinning", Verbs.PinIssue, item.Target, item.Pinned ? [Verbs.PinOff] : []);
+            if (reply is null)
+            {
+                Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: the node did not answer", refusal: true);
+            }
+            else if (reply is { Ok: false })
+            {
+                Say($"{Label(item)} not {(item.Pinned ? "unpinned" : "pinned")}: {reply.Error}", refusal: true);
+            }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
+    private readonly HashSet<string> _priorityOpen = [];
+
+    private void TogglePriority(string key)
+    {
+        if (!_priorityOpen.Remove(key))
+        {
+            _priorityOpen.Add(key);
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>The code of the flight that flies the item: the node's own row, or a live flight on this screen that holds its issue (a flight just made shows at once).</summary>
+    private string? FlightCodeOf(BoardItem item) =>
+        item.Flight ?? _screen.Flights.FirstOrDefault(f => f.Tracker == TrackerKind.GitHub && f.Issue == item.Number && f.State != FlightState.Landed
+            && string.Equals(f.Repo, item.Repo, StringComparison.OrdinalIgnoreCase))?.Code;
+
+    /// <summary>Sets the item's Priority field through the node (null clears it); a press again while it runs sends nothing.</summary>
+    internal async Task PriorityAsync(BoardItem item, IssuePriority? level)
+    {
+        var busy = "priority:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            var reply = await RunAsync("prioritising:" + item.Key, "ideas:board:" + Verbs.SetPriority + ":" + item.Target, "setting the priority", Verbs.SetPriority, item.Target, [level is { } set ? set.ToString().ToLowerInvariant() : "none"]);
+            if (reply is null)
+            {
+                Say($"{Label(item)} priority not set: the node did not answer", refusal: true);
+            }
+            else if (reply is { Ok: false })
+            {
+                Say($"{Label(item)} priority not set: {reply.Error}", refusal: true);
             }
         }
         finally
