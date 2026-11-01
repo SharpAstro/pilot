@@ -88,7 +88,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// <summary>The flights waiting for admission and why, priority ones first, then in the order they formed; a stale flight's last known wait is not one.</summary>
     public IReadOnlyList<(FlightLine Line, string Why)> QueueLines =>
         [.. Flights.Lines.Where(l => l.Stale is null && l.Queued is not null)
-            .OrderByDescending(l => l.PriorityMark is not null).ThenBy(l => l.Row.CreatedAt)
+            .OrderBy(l => FlightMarks.Rank(l.Row, Flights.Admission)).ThenBy(l => l.Row.CreatedAt)
             .Select(l => (l, l.Queued!))];
 
     /// <summary>Whether anything is flying or waits: false is the quiet page.</summary>
@@ -361,7 +361,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         }
         foreach (var (line, why) in queue.Take(HomeScreen.MaxChips))
         {
-            var text = $"{(line.PriorityMark is null ? "" : line.PriorityMark + " · ")}{line.Code} · {why}";
+            var text = $"{(line.ShownPriority is null ? "" : line.ShownPriority + " · ")}{line.Code} · {why}";
             blocks.Add(Layout.Builder.Text(text, 13f, Palette.Current.Body)
                 .WithTooltip($"{text}\n{line.Title}")
                 .Follows(new HitResult.ButtonHit($"home:queued:{line.Code}"), _ => OnFlight?.Invoke(line))

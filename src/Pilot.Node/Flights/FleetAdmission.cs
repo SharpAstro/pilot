@@ -138,7 +138,8 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
             yield return new FleetFlight(peer.Name, f.Code, f.Repo, phase)
             {
                 Waits = [.. waits],
-                Priority = (f.GitHubLabel ?? "").Split(',', StringSplitOptions.TrimEntries).Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase),
+                Priority = IssuePriorities.IsPriority(f.HasPriorityField, f.IssuePriority, f.GitHubLabel),
+                Level = f.HasPriorityField ? f.IssuePriority : IssuePriorities.HasLabel(f.GitHubLabel) ? IssuePriority.High : null,
                 Since = f.CreatedAt,
             };
         }

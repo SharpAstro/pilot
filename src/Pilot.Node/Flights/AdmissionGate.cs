@@ -45,8 +45,11 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
 
     /// <summary>Whether the flight's issue or PR carries <c>pilot: priority</c>.</summary>
     public bool IsPriority(FlightRow flight) =>
-        _issuePriority.GetValueOrDefault(flight.Code)
-        || (flight.GitHubLabel ?? "").Split(',', StringSplitOptions.TrimEntries).Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase);
+        IssuePriorities.IsPriority(flight.HasPriorityField, flight.IssuePriority, flight.GitHubLabel, _issuePriority.GetValueOrDefault(flight.Code));
+
+    /// <summary>The flight's place in the queue: its Priority field where the repo has it, else High when the label marks it.</summary>
+    public IssuePriority? LevelOf(FlightRow flight) =>
+        flight.HasPriorityField ? flight.IssuePriority : IsPriority(flight) ? IssuePriority.High : null;
 
     /// <summary>The sessions this node counts, before any peer's: its live sessions, and the starts out or recorded that the tracker has not listed.</summary>
     public IReadOnlyList<FleetSession> OwnSessions(IReadOnlySet<string>? ignoring = null) => Input(null, ignoring, Fleet.Cached, localOnly: true).Sessions;
@@ -98,7 +101,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             {
                 waits = waits.Append(new FlightWait(machine, into, WaitKind.Fold));
             }
-            return new FleetFlight(machine, f.Code, f.Repo, phase) { Waits = [.. waits], Priority = IsPriority(f), Since = f.CreatedAt };
+            return new FleetFlight(machine, f.Code, f.Repo, phase) { Waits = [.. waits], Priority = IsPriority(f), Level = LevelOf(f), Since = f.CreatedAt };
         }).Concat(FleetAdmission.FlightsOf(view)).ToArray();
         var (cap, onePerRepo) = Fleet.Settings(view, settings);
         return new AdmissionInput(sessions, flights, cap, onePerRepo);
