@@ -32,6 +32,14 @@ public class TestTimeLimitTests
     }
 
     [Fact]
+    public void OnCiTheLimitIsThreeTimesLongerSoRunnerJitterDoesNotFailATest()
+    {
+        TestTimeLimitAttribute.Effective(TimeSpan.FromSeconds(5), ci: false).ShouldBe(TimeSpan.FromSeconds(5));
+        TestTimeLimitAttribute.Effective(TimeSpan.FromSeconds(5), ci: true).ShouldBe(TimeSpan.FromSeconds(15));
+        Should.NotThrow(() => TestTimeLimitAttribute.Check("C", "M", false, TimeSpan.FromSeconds(5.1), TestTimeLimitAttribute.Effective(TimeSpan.FromSeconds(5), ci: true)));
+    }
+
+    [Fact]
     public void TheDefaultLimitIsFiveSeconds()
         => TestTimeLimitAttribute.DefaultLimit.ShouldBe(TimeSpan.FromSeconds(5));
 }
