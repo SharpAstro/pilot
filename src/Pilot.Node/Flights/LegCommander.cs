@@ -2713,9 +2713,10 @@ public sealed partial class LegCommander(
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
         // still being started: its start is out and not recorded yet (PIL338).
         if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
-                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
-            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin)
-            || _starting.ContainsKey(PlanKey(flight.Code))))
+                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone)
+            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin
+                && !state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)))
+            || IsStarting(PlanKey(flight.Code))))
         {
             throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }

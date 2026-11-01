@@ -346,6 +346,9 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
         Open().ShouldBeEmpty();
 
+        // The first no-show is a restart (a start that did not take), the second rings.
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(5));
         await _watch.LookAsync(Ct);
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.Missing);
@@ -501,7 +504,7 @@ public sealed class LegWatchTests
         State = FlightState.Flying, CreatedAt = Start,
     });
 
-    private void Planner(SessionState state, DateTimeOffset lastResponse) =>
+    private void Planner(SessionState state, DateTimeOffset lastResponse, bool gone = false) =>
         _state.PutSession(new SessionRow
         {
             Id = "e5f6a7b8",
@@ -516,8 +519,98 @@ public sealed class LegWatchTests
             State = state,
             SpendWeighted = 0,
             LastResponseAt = lastResponse,
+            Gone = gone,
             StartedAt = Start,
         });
+
+    private readonly List<string> _stopped = [];
+    private readonly List<string> _restarted = [];
+    private (string Job, DateTimeOffset At)? _started;
+
+    private void HookPlanners()
+    {
+        _watch.StartedPlanner = _ => _started;
+        _watch.StopPlanner = (code, _) => { _stopped.Add(code); _started = null; return Task.CompletedTask; };
+        _watch.RestartPlanner = (code, _) =>
+        {
+            _restarted.Add(code);
+            _started = ("fresh" + _restarted.Count, _time.GetUtcNow());
+            _state.RemoveSession("e5f6a7b8");
+            return Task.CompletedTask;
+        };
+    }
+
+    private void SilentPlanner() => _state.PutSession(new SessionRow
+    {
+        Id = "e5f6a7b8", SessionId = "e5f6a7b8-0000-4000-8000-000000000000", Name = "du1-pil9-plan", Kind = SessionKind.Background,
+        Cwd = "/r/pil9", Role = SessionRole.Planner, Flight = "PIL9", ContextTokens = 0, ContextWindow = 200_000,
+        State = SessionState.Working, SpendWeighted = 0, LastResponseAt = null, StartedAt = _time.GetUtcNow(),
+    });
+
+    [Fact]
+    public async Task APlannerThatNeverTakesATurnIsStoppedAndStartedOnceMoreThenRungWhenTheSecondAlsoShowsNothing()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        SilentPlanner();
+        _started = ("e5f6a7b8", Start);
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBe(["PIL9"]);
+        var handled = Handled().ShouldHaveSingleItem();
+        (handled.Kind, handled.Title).ShouldBe((LegWatch.PlanStalled, "PIL9's planner (job e5f6a7b8) took no first turn and was started again"));
+
+        // The second one never appears in the listing at all: same ladder, then the ring.
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBe(["PIL9"]);
+        _restarted.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Title).ShouldBe((CardBin.Ring, "PIL9's planner never took a turn, twice"));
+        ring.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Plan PIL9 again", Verbs.PlanFlight)]);
+
+        // A further look does not start a third.
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _watch.LookAsync(Ct);
+        _restarted.Count.ShouldBe(1);
+        Open().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task APlannerThatTakesItsFirstTurnWithinTheGraceIsLeftAlone()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        SilentPlanner();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "e5f6a7b8") with { ContextTokens = 12_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+
+        (_restarted.Count, _stopped.Count, _said.Count, Open().Length).ShouldBe((0, 0, 0, 0));
+    }
+
+    [Fact]
+    public async Task AStartedPlannerThatNeverAppearsInTheListingFollowsTheSameLadder()
+    {
+        HookPlanners();
+        Worker(SessionState.Working);
+        Unplanned();
+        _started = ("job1", Start);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restarted.ShouldBe(["PIL9"]);
+        Handled().ShouldHaveSingleItem().Title.ShouldContain("job1");
+    }
 
     [Fact]
     public async Task AFlightWithNoLegsAndNoPlannerGetsOneAfterTheGraceAndRingsWhenThatFails()
@@ -587,6 +680,21 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AnIdlePlannerWithNoProcessWasStoppedFromOutsideAndIsReplacedNotToldToFinish()
+    {
+        // PIL530: claude stop leaves the row idle with no process; it holds no role, so the next sweep starts a fresh planner.
+        Worker(SessionState.Working);
+        Unplanned();
+        Planner(SessionState.Idle, Start, gone: true);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        var plan = _said.ShouldHaveSingleItem();
+        (plan.Verb, plan.Target).ShouldBe((Verbs.PlanFlight, "flight/PIL9"));
+    }
+
+    [Fact]
     public async Task AFlightWithAnotherCardOpenAboutItIsLeftToThatCard()
     {
         Worker(SessionState.Working);
@@ -652,7 +760,9 @@ public sealed class LegWatchTests
     [Fact]
     public async Task AWaitingFailedMissingAndIdleWorkersRingsSummariesMatchTheirChoices()
     {
-        // No worker at all: the redo alone.
+        // No worker at all: the redo alone (after its one restart).
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _watch.LookAsync(Ct);
         _time.Advance(TimeSpan.FromMinutes(5));
         await _watch.LookAsync(Ct);
         var missing = Open().ShouldHaveSingleItem();
@@ -682,5 +792,156 @@ public sealed class LegWatchTests
         var idle = Open().Single(c => c.Kind == LegWatch.Idle);
         idle.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
         SummaryMatchesChoices(idle);
+    }
+
+    // ---- the first-turn ladder for workers, validators and reviewers (PIL530) ----
+
+    private readonly List<string> _restartedWorkers = [];
+    private int _fresh;
+
+    private void HookWorkers()
+    {
+        _watch.StopSession = (job, _) => { _stopped.Add(job); return Task.CompletedTask; };
+        _watch.RestartWorker = (flight, leg, _) =>
+        {
+            _restartedWorkers.Add($"{flight}/{leg}");
+            var row = _state.Legs(flight).Single(l => l.Name == leg);
+            _stopped.Add(row.WorkerJob!);
+            _state.RemoveSession(row.WorkerJob!);
+            _state.PutLeg(row with { WorkerJob = "fresh" + ++_fresh, StartedAt = _time.GetUtcNow() });
+            return Task.CompletedTask;
+        };
+    }
+
+    private void Silent(string id, SessionState state = SessionState.Working, SessionRole role = SessionRole.Worker) => _state.PutSession(new SessionRow
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background, Cwd = "/work/tia1",
+        Role = role, Flight = "TIA1", Leg = role == SessionRole.Worker ? "parser" : null, ContextTokens = 0, ContextWindow = 200_000, State = state,
+        SpendWeighted = 0, LastResponseAt = null, StartedAt = _time.GetUtcNow(),
+    });
+
+    [Fact]
+    public async Task AWorkerThatNeverTakesATurnIsStoppedAndStartedOnceThenRungWhenTheSecondShowsNothing()
+    {
+        HookWorkers();
+        Silent("a1b2c3d4");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBe(["TIA1/parser"]);
+        _stopped.ShouldBe(["a1b2c3d4"]);
+        var handled = Handled().ShouldHaveSingleItem();
+        (handled.Kind, handled.Title).ShouldBe((LegWatch.NeverTurned, "TIA1/parser's worker (job a1b2c3d4) took no first turn and was started again"));
+        // Not counted as a go-around of the work, and never nudged.
+        _state.Legs("TIA1").Single().GoArounds.ShouldBe(0);
+        _said.ShouldBeEmpty();
+
+        // The fresh one is listed and says nothing either.
+        Silent("fresh1");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        Open().ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        _stopped.ShouldBe(["a1b2c3d4", "fresh1"]);
+        _restartedWorkers.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Bin, ring.Kind, ring.Title).ShouldBe((CardBin.Ring, LegWatch.NeverTurned, "TIA1/parser's worker never took a turn after two starts"));
+        ring.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround]);
+        _said.ShouldBeEmpty();
+
+        // No third start, no repeat.
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await _watch.LookAsync(Ct);
+        (_restartedWorkers.Count, Open().Length, _said.Count).ShouldBe((1, 1, 0));
+    }
+
+    [Fact]
+    public async Task AWorkerThatNeverShowsInTheListingIsRetriedOnceBeforeTheMissingRing()
+    {
+        HookWorkers();
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.ShouldBe(["TIA1/parser"]);
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe(LegWatch.NeverTurned);
+
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _restartedWorkers.Count.ShouldBe(1);
+        var ring = Open().ShouldHaveSingleItem();
+        (ring.Kind, ring.Title).ShouldBe((LegWatch.Missing, "TIA1/parser's worker du1-tia1-parser never showed up, 4 min after it started"));
+        ring.Detail!.ShouldContain("job fresh1");
+    }
+
+    [Fact]
+    public async Task AWorkerThatTakesATurnWithinTheGraceIsLeftAloneAndTheIdleLadderIsAsBefore()
+    {
+        HookWorkers();
+        Silent("a1b2c3d4");
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 9_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        (_restartedWorkers.Count, _stopped.Count, _said.Count, Open().Length).ShouldBe((0, 0, 0, 0));
+
+        // It goes idle after that: nudged, as before.
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+        _restartedWorkers.ShouldBeEmpty();
+    }
+
+    private void Reviewing(string job) => _state.PutFlight(new FlightRow
+    {
+        Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 1, Branch = "flight/tia1", Worktree = "/r/w", Base = "origin/main",
+        State = FlightState.Flying, CreatedAt = Start,
+        Review = new ReviewRow { State = ReviewState.Reviewing, Reviewer = "du1-tia1-review", ReviewerJob = job, StartedAt = _time.GetUtcNow() },
+    });
+
+    [Fact]
+    public async Task AReviewerThatNeverTakesATurnIsRestartedOnceThenRung()
+    {
+        HookWorkers();
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        Reviewing("rev1");
+        Silent("rev1", role: SessionRole.Reviewer);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        // Started afresh through the existing review path, never told to finish a verdict it has not begun.
+        (_said.ShouldHaveSingleItem().Verb, _said[0].Target).ShouldBe((Verbs.StartReview, "flight/TIA1"));
+        Handled().ShouldHaveSingleItem().Title.ShouldBe("TIA1's reviewer (job rev1) took no first turn and was started again");
+        Open().ShouldNotContain(c => c.Bin != CardBin.Handled);
+
+        // The fresh reviewer is in place and shows nothing either.
+        _state.RemoveSession("rev1");
+        Reviewing("rev2");
+        Silent("rev2", role: SessionRole.Reviewer);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _stopped.ShouldBe(["rev2"]);
+        var ring = Open().Single(c => c.Bin == CardBin.Ring);
+        (ring.Kind, ring.Title).ShouldBe((LegWatch.ReviewStalled, "TIA1's reviewer never took a turn after two starts"));
+        ring.Choices.Select(c => c.Verb).ShouldBe([Verbs.StartReview]);
+    }
+
+    [Fact]
+    public async Task AReviewerThatTakesATurnWithinTheGraceIsUntouched()
+    {
+        HookWorkers();
+        _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
+        Reviewing("rev1");
+        Silent("rev1", role: SessionRole.Reviewer);
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 5_000, LastResponseAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+        (_said.Count, _stopped.Count, Open().Length, Handled().Length).ShouldBe((0, 0, 0, 0));
     }
 }

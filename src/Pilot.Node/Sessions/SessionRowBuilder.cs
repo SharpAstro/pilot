@@ -97,7 +97,8 @@ public static class SessionRowBuilder
             WaitingSince = waiting ? hookWaitingAt ?? pending?.At : null,
             Asking = asking,
             // The listing keeps saying waiting for a session whose process died at the prompt; nobody is there to answer.
-            Gone = waiting && agent.Pid is null,
+            // The same for an idle one: a session stopped from outside (claude stop) still lists idle, with no process (PIL530).
+            Gone = state is SessionState.Waiting or SessionState.Idle && agent.Pid is null,
             SpendWeighted = transcripts.SpendWeighted,
             Subagents = transcripts.Subagents is { Count: > 0 } subagents ? [.. subagents] : null,
             ApiError = apiError,
