@@ -46,18 +46,18 @@ public sealed class LegWatchTests
         return Task.FromResult(_state.Complete(command, _refuse));
     }
 
-    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null) =>
+    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
         _state.PutSession(new SessionRow
         {
-            Id = "a1b2c3d4",
-            SessionId = "a1b2c3d4-0000-4000-8000-000000000000",
+            Id = id,
+            SessionId = id + "-0000-4000-8000-000000000000",
             Name = "du1-tia1-parser",
             Kind = SessionKind.Background,
             Cwd = "/work/tia1",
             Role = SessionRole.Worker,
             Flight = "TIA1",
             Leg = "parser",
-            ContextTokens = 0,
+            ContextTokens = context,
             ContextWindow = 200_000,
             State = state,
             WaitingFor = waitingFor,
@@ -304,6 +304,73 @@ public sealed class LegWatchTests
         var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
         card.Choices.Select(c => c.Label).ShouldBe(["Nudge du1-tia1-parser to finish parser or say why not", "Start a fresh worker on parser (the last one went idle with the leg unfinished)"]);
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        var compact = _said.ShouldHaveSingleItem();
+        (compact.Verb, compact.Target, compact.Who).ShouldBe((Verbs.Compact, "session/a1b2c3d4", "node"));
+        compact.Args[0].ShouldContain("job summaries");
+        _said.Any(c => c.Verb == Verbs.Say).ShouldBeFalse();
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-compacted");
+
+        // Idle on and not yet answered: neither nudged nor compacted twice.
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerStillFullAfterItsCompactionIsReplacedByAGoAroundAndAReplacementThatFillsAgainRings()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Single().Verb.ShouldBe(Verbs.Compact);
+
+        // It answered the compaction and is idle, still full.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 192_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        var around = _said[1];
+        (around.Verb, around.Target, around.Who).ShouldBe((Verbs.GoAround, "flight/TIA1/parser", "node"));
+        around.Args[0].ShouldContain("context was full");
+        around.Args[0].ShouldContain("96%");
+        Open().ShouldBeEmpty();
+        Handled().Select(c => c.Kind).ShouldContain("worker-replaced");
+
+        // The go-around gave the leg a fresh worker, which fills and stalls too: rung, naming the full context.
+        _state.PutLeg(_state.Legs("TIA1").Single() with { WorkerJob = "e5f6a7b8" });
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 185_000, id: "e5f6a7b8");
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        var card = Open().ShouldHaveSingleItem();
+        (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
+        card.Title.ShouldContain("filled its context again");
+        card.Title.ShouldNotContain("nudged");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerUnderNinetyPercentIsNudgedAsBefore()
+    {
+        Worker(SessionState.Idle, context: 170_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-nudged");
     }
 
     [Fact]

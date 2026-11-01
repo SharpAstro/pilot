@@ -63,6 +63,8 @@ public static partial class CardSummaries
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused (the title says why). The branch is in the base; land the flight by hand, then dismiss this.",
             "worker-nudged" => $"The worker of {what} went idle with its leg unfinished and the node nudged it. Nothing to do unless it goes idle again.",
+            "worker-compacted" => $"The worker of {what} went idle with its context nearly full, so the node compacted it instead of nudging it. Nothing to do.",
+            "worker-replaced" => $"The worker of {what} was still nearly full after its compaction, so the node sent the leg round with a fresh worker. Nothing to do.",
             "worker-resumed" => $"The worker of {what} was resumed after its usage limit reset. Nothing to do.",
             LegWatch.PlanStalled => $"The planner of {what} stalled before it handed in legs. The card's choice tells it to finish, or plans the flight again.",
             LegCommander.HoldKind => $"{what} is held until a package a sibling repo is publishing reaches nuget.org. The node starts it again by itself; nothing to do.",

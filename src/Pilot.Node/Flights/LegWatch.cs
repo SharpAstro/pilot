@@ -116,6 +116,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>How a worker runs the CLI, socket and all, for the nudge: <see cref="Briefs.Run"/>, as its brief says it.</summary>
     public string Pilot { get; init; } = "pilot";
 
+    /// <summary>The share of its window past which an idle worker is compacted, then replaced, never nudged.</summary>
+    public double FullShare { get; init; } = 0.9;
+
+    /// <summary>What holds a compaction while the 5-hour window is spent: the node's one gate; null in a test with none.</summary>
+    public StartGate? Gate { get; set; }
+
+    // By worker job: the response it had when it was compacted for a full context; by leg subject: the worker job the leg was sent round from for one.
+    private readonly Dictionary<string, DateTimeOffset?> _compactedFull = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _replacedFull = new(StringComparer.Ordinal);
+
     // By worker job: the reset each was resumed after, and how often it was nudged.
     private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     // By worker job: the reset a usage-limit stop was said to be waiting for, so the Handled line is written once, not every look.
@@ -374,6 +384,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         var job = leg.WorkerJob!;
+        // A worker whose context is near full is never nudged: a nudge is a turn it has no room for. It is compacted once, then
+        // the leg goes round with a fresh worker (pilot #578).
+        if (worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow)
+        {
+            await FullAsync(leg, worker, since, now, cancellationToken);
+            return;
+        }
         var nudges = _nudges.GetValueOrDefault(job);
         if (nudges >= MaxNudges)
         {
@@ -407,6 +424,63 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         else
         {
             Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"the node tried to nudge it: {result.Error}", worker);
+        }
+    }
+
+    /// <summary>What a full worker's summary keeps: the leg, and a way of reading that does not fill the window again.</summary>
+    public const string FullFocus = "Keep your leg: its goal, the steps done and left, and what you were doing when this was cut. "
+        + "From here read job summaries (`pilot jobs`, the end of a log), not whole logs.";
+
+    private async Task FullAsync(LegRow leg, SessionRow worker, DateTimeOffset since, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var job = leg.WorkerJob!;
+        var subject = Subject(leg);
+        var share = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{100.0 * worker.ContextTokens / worker.ContextWindow:0}%");
+        if (_replacedFull.TryGetValue(subject, out var older) && older != job)
+        {
+            // The fresh worker filled and stalled too: another one would do the same, so a person decides.
+            Ring(leg, Idle, $"{Name(leg)}'s worker has filled its context again ({share}) and stopped, after a replacement for a full context",
+                $"the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {Steps(leg)}, so the node nudges and replaces no more",
+                worker, redoWhy: "filled its context twice");
+            return;
+        }
+        var compacted = _compactedFull.TryGetValue(job, out var at);
+        if (compacted && !(worker.LastResponseAt > (at ?? DateTimeOffset.MinValue)))
+        {
+            // Compacted and the compaction has not answered yet: nothing to nudge, nothing to replace.
+            return;
+        }
+        if (!compacted)
+        {
+            var limit = Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Repo);
+            if (Gate?.Hold($"{Verbs.Compact} {worker.Id}", limit, Models.WeekLimit, "worker-compacted", subject, $"Compaction of {worker.Name} waits (its context is {share} of its window)") == true)
+            {
+                return;
+            }
+            var result = await run(new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(worker.Id), Args = [FullFocus], Who = Who }, cancellationToken);
+            _compactedFull[job] = worker.LastResponseAt;
+            if (result.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compacted, not nudged");
+                return;
+            }
+            // A compaction refused is a compaction spent: the next look sends the leg round instead of trying again.
+            state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compaction refused: {result.Error}");
+            return;
+        }
+        // Idle and still near full after its compaction: a fresh worker, the go-around's own reason naming the share.
+        var reason = $"the last worker's context was full ({share} of its window) after a compaction";
+        // LegCommander.GoAroundAsync takes a go-around on a flying leg from any caller, this watch's Who included.
+        var around = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+        if (around.Ok)
+        {
+            _replacedFull[subject] = job;
+            state.RaiseCard(CardBin.Handled, "worker-replaced", subject, $"{Name(leg)}'s worker was still at {share} of its context window after a compaction; sent round with a fresh worker");
+        }
+        else
+        {
+            Ring(leg, Idle, $"{Name(leg)}'s worker is at {share} of its context window and could not be replaced: {Clip(around.Error ?? "no reason given")}",
+                $"the node compacted it, and it is still full; the go-around was refused: {around.Error}", worker);
         }
     }
 
