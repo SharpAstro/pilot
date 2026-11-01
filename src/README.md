@@ -831,6 +831,15 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 `pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
 `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
 
+**Updates.** A server lives as long as its session and a host does not restart a stdio server it lost, so the server the
+client started watches the installed version (after each message and on a quiet timer) and, on a newer one, starts the
+newest binary's `pilot mcp --handed-over` (a hidden option), replays `initialize` to it, sends `tools/list_changed` once
+and relays both ways. It stays at most two processes deep however many updates there are: a hand-over child never looks
+at the installed version nor hands over, and the client-started server swaps its child on each later update, passing on
+the old child's replies still owed (for a bounded wait) before disposing it. A swap that fails (the binary cannot start,
+or the new child ends or does not answer `initialize`) keeps the current child serving, logs why once, and is not
+retried for that version.
+
 ## The GUI
 
 A button that asks the node something is made through `Presses` (`Pilot.Ui/Presses.cs`): it reads its working label on the frame it

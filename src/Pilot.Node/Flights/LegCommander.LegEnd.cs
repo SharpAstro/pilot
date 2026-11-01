@@ -108,15 +108,26 @@ public sealed partial class LegCommander
             var (others, _) = await GatherOthersAsync(flight, cancellationToken);
             Touched? best = null;
             string[] bestFiles = [];
+            // A pair answered parallel is never rung again: its new shared files are recorded on its row (PIL589).
+            var quiet = new List<(Touched Other, string[] Files)>();
             foreach (var other in others.Where(o => o.Files is not null))
             {
                 var unforeseen = Unforeseen(flight, own, other);
-                if (unforeseen.Length > bestFiles.Length)
+                if (unforeseen.Length == 0)
+                {
+                    continue;
+                }
+                var otherCode = OtherCode(other);
+                if (flight.Overlaps.Any(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, otherCode, StringComparison.OrdinalIgnoreCase)))
+                {
+                    quiet.Add((other, unforeseen));
+                }
+                else if (unforeseen.Length > bestFiles.Length)
                 {
                     (best, bestFiles) = (other, unforeseen);
                 }
             }
-            if (best is null)
+            if (best is null && quiet.Count == 0)
             {
                 return;
             }
@@ -129,7 +140,14 @@ public sealed partial class LegCommander
                 {
                     return;
                 }
-                RingLegEnd(now, leg.Name, best, bestFiles);
+                foreach (var (other, files) in quiet)
+                {
+                    now = RecordParallelFiles(now, leg.Name, other, files);
+                }
+                if (best is not null)
+                {
+                    RingLegEnd(now, leg.Name, best, bestFiles);
+                }
             }
             finally
             {
@@ -159,6 +177,26 @@ public sealed partial class LegCommander
             .Concat(OverlapChoice.Normalise(flight.Overlaps.Where(o => o.Answer != OverlapAnswer.Pending && string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)).SelectMany(o => o.Files ?? [])))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return [.. OverlapChoice.Judge(own, theirs).Shared.Where(f => !covered.Contains(f))];
+    }
+
+    /// <summary>
+    /// Adds the new shared files to the row of a pair answered parallel, which stays <see cref="OverlapAnswer.Separate"/>: no card rings
+    /// and <see cref="Due"/> holds nothing. One console line says so.
+    /// </summary>
+    private FlightRow RecordParallelFiles(FlightRow flight, string leg, Touched other, string[] files)
+    {
+        var code = OtherCode(other);
+        var existing = flight.Overlaps.FirstOrDefault(o => o.Answer == OverlapAnswer.Separate && string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase));
+        if (existing is null)
+        {
+            return flight;
+        }
+        var union = OverlapChoice.Normalise([.. existing.Files ?? [], .. files]).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var row = existing with { Files = union, AfterLeg = leg, Why = $"after {leg} the plane also changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too; answered parallel before, so no card rang" };
+        var updated = flight with { Overlaps = [.. flight.Overlaps.Select(o => ReferenceEquals(o, existing) ? row : o)] };
+        state.PutFlight(updated);
+        Error.WriteLine($"leg-end overlap: {flight.Code} and {code} were answered parallel; after {leg} {string.Join(", ", files)} is recorded on that pair, no card rung");
+        return updated;
     }
 
     /// <summary>Records the pending overlap (added, or an answered pair's row made pending again with the new files) and raises its card.</summary>
