@@ -191,6 +191,34 @@ public sealed class IdeasPaneTests
     }
 
     [Fact]
+    public async Task ANotedIdeaIsShownFromTheAnswerBeforeTheScreenHoldsItAndOnceWhenItDoes()
+    {
+        // Pilot #552: the node's answer carries the filed row; the page shows it under Unsorted without waiting for a read.
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var filed = Idea(550, "Show a noted idea at once");
+        var (chrome, _, _) = Chrome(renderer, new IdeaReply(true, Made: "pilot I550", Idea: filed));
+        var screen = Sample();
+        Draw(chrome, screen);
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain("Show a noted idea at once");
+
+        chrome.Ideas.NoteInput.InsertText("Show a noted idea at once");
+        await chrome.Ideas.NoteInput.OnCommit!("");
+
+        chrome.Ideas.Said.ShouldBe("noted I550");
+        var spoken = Spoken(renderer, chrome, screen, 1280);
+        var title = spoken.IndexOf("Show a noted idea at once", StringComparison.Ordinal);
+        title.ShouldBeGreaterThan(spoken.IndexOf("Unsorted (Ideas)", StringComparison.Ordinal));
+        spoken.ShouldContain("4 noted");
+
+        // The screen the node sends holds it now: listed once, not twice.
+        var later = Screen([filed, .. screen.Ideas]);
+        var again = Spoken(renderer, chrome, later, 1280);
+        again.Split("Show a noted idea at once").Length.ShouldBe(2);
+        again.ShouldContain("4 noted");
+        Spoken(renderer, chrome, screen, 1280).ShouldNotContain("Show a noted idea at once");
+    }
+
+    [Fact]
     public async Task AMultiLineIdeaIsNotedWhole()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
