@@ -34,6 +34,16 @@ public class WatchtowerBriefTests
     }
 
     [Fact]
+    public void TheBriefTellsItToRelayADesignCardWithItsQuestionAndOptions()
+    {
+        var brief = Brief();
+        brief.ShouldContain("A design card (kind pr-review-design) you relay: read it with `pilot cards`, quote its question as the card has it (with its file and line)");
+        brief.ShouldContain("make the card's choices the ask block's lines in the card's order");
+        brief.ShouldContain("pressed with `pilot answer <card> <choice> --why`");
+        brief.ShouldContain("a card with only the free-text choice asks for their words");
+    }
+
+    [Fact]
     public void ThePersonOnlyCardsStayFencedWithoutTheirMessage()
     {
         var brief = Brief();

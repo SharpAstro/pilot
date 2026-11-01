@@ -975,6 +975,7 @@ public sealed class PrReviews(
             {
                 await TendFixerAsync(fixing, cancellationToken);
             }
+            await SettleDesignCardsAsync(cancellationToken);
             await CloseCardsOfOvertakenReviewsAsync(cancellationToken);
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             // A review the node posted itself has no card to close: posted, it is over all the same.
@@ -1230,6 +1231,73 @@ public sealed class PrReviews(
         return true;
     }
 
+    /// <summary>The Handled notice a settled design question leaves in place of its ringing card.</summary>
+    public const string DesignSettledKind = "pr-review-design-settled";
+
+    /// <summary>
+    /// Downgrades the open design card of a PR to a Handled notice naming what settled it (the PR merged or closed, the question
+    /// answered, a flight that follows it landed); false when no design card is open. A settled question rings no more, and the
+    /// watchtower, which reads the open cards, never asks about it.
+    /// </summary>
+    private bool SettleDesign(string repo, int number, string cause, string? link)
+    {
+        var subject = Verbs.PrTarget(repo, number);
+        if (!state.Cards(openOnly: true).Any(c => c.Kind == DesignKind && c.Subject == subject))
+        {
+            return false;
+        }
+        state.CloseCardsAbout(subject, $"settled: {cause}", DesignKind);
+        state.RaiseCard(CardBin.Handled, DesignSettledKind, subject, $"{repo}#{number}: the design question is settled, {cause}",
+            "The card stopped ringing; nothing is left to answer.", link: link);
+        return true;
+    }
+
+    /// <summary>
+    /// Looks at each PR with a design card open and downgrades it when the PR is merged or closed, when a flight that names it as its
+    /// follow-up has landed, or when the PR's conversation holds the answer. An open PR nobody has answered keeps ringing.
+    /// </summary>
+    private async Task SettleDesignCardsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == DesignKind).ToList())
+        {
+            if (PrRef.Parse(card.Subject) is not { } pr || Of(pr) is not { } review)
+            {
+                continue;
+            }
+            try
+            {
+                var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+                if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    SettleDesign(pr.Repo, pr.Number, $"{pr} is {read.State.ToLowerInvariant()}", review.Url);
+                    continue;
+                }
+                if (LandedFollowUp(pr) is { } landed)
+                {
+                    SettleDesign(pr.Repo, pr.Number, $"{landed.Code} landed as its follow-up", review.Url);
+                    continue;
+                }
+                if (await AnswerCommentAsync(pr, review, cancellationToken) is { Length: > 0 })
+                {
+                    SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url);
+                }
+            }
+            catch (FlightException)
+            {
+                // GitHub not answering settles nothing: the next sweep looks again.
+            }
+        }
+    }
+
+    /// <summary>A landed flight in the PR's repo whose title names the PR (<c>#n</c>) and that is not the PR's own flight, or null.</summary>
+    private FlightRow? LandedFollowUp(PrRef pr)
+    {
+        var own = FlightOf(pr);
+        var named = new System.Text.RegularExpressions.Regex($@"#{pr.Number}\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return state.Flights().FirstOrDefault(f => f.State == FlightState.Landed && f.Code != own?.Code
+            && f.Repo.EndsWith(pr.Name, StringComparison.OrdinalIgnoreCase) && named.IsMatch(f.Title ?? ""));
+    }
+
     /// <summary>The prefix that marks a finding as a question of design, not a defect to fix.</summary>
     public const string DesignPrefix = "design:";
 
@@ -1276,16 +1344,19 @@ public sealed class PrReviews(
         }
         if (asksDesign)
         {
-            var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
+            var design = DesignDetail(questions);
+            var asked = questions.Count == 1 ? $": {Cut(questions[0].Question, 80)}" : "";
+            var choices = DesignChoices(subject, questions);
             if (flight is not null)
             {
-                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
                     $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
-                    [AnswerChoice(subject)]);
+                    choices);
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide. Answer posts what you type on the PR and starts the fixer.",
-                [AnswerChoice(subject)]);
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
+                choices);
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -1416,7 +1487,7 @@ public sealed class PrReviews(
                 throw new FlightException(refused);
             }
             state.PutPrReview(review);
-            state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"{flight.Code}'s last leg went round with the answer", DesignKind);
+            SettleDesign(pr.Repo, pr.Number, $"answered by {command.Who}: {flight.Code}'s last leg went round with it", review.Url);
             return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
@@ -1517,6 +1588,7 @@ public sealed class PrReviews(
             Slots.End("fix-pr:" + fixer, counting);
         }
         state.PutPrReview(fixing with { FixerJob = job });
+        SettleDesign(pr.Repo, pr.Number, "answered: the fixer started on it", review.Url);
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
@@ -1585,7 +1657,30 @@ public sealed class PrReviews(
     private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
 
     /// <summary>The label of the design card's Answer choice.</summary>
-    public const string AnswerLabel = "Answer";
+    public const string AnswerLabel = "Answer in your own words";
+
+    /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
+    private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
+        string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
+            + string.Concat(q.Options.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+
+    /// <summary>
+    /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
+    /// as the answer, then the free-text Answer. Options are offered only when there is one question: with several, which option
+    /// answers which question would be a guess, so each is answered in words.
+    /// </summary>
+    private static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
+    {
+        var choices = new List<CardChoice>();
+        if (questions.Count == 1)
+        {
+            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = o.Text, Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+        }
+        choices.Add(AnswerChoice(subject));
+        return choices;
+    }
+
+    private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
 
     /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
     internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
