@@ -61,7 +61,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
     /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
-    public SessionLedger? Ledger { get; set; }
+    public Sessions.SessionLedger? Ledger { get; set; }
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
