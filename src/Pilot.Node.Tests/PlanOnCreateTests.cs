@@ -102,6 +102,6 @@ public sealed class PlanOnCreateTests : LegCommanderTestsBase
         public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(new FleetLoad(null, []));
 
         public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) =>
-            Task.FromResult(new CommandResult { Ok = true, Made = "TIA1" });
+            Task.FromResult(new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 1, Ok = true, Made = "TIA1" });
     }
 }
