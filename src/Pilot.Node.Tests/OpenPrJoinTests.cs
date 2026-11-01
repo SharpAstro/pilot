@@ -42,6 +42,7 @@ public sealed class OpenPrJoinTests : ReviewTestsBase
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
+        _legs.Models = new RoleModels(null);
         var (open, reached) = HoldCreate(fail: false);
 
         var first = _legs.AdvanceAllAsync(Ct);
@@ -61,6 +62,7 @@ public sealed class OpenPrJoinTests : ReviewTestsBase
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
+        _legs.Models = new RoleModels(null);
         var (open, reached) = HoldCreate(fail: true);
 
         var first = _legs.AdvanceAllAsync(Ct);
