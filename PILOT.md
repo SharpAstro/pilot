@@ -34,6 +34,22 @@ is neither built nor tested by CI.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
   `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
 
+## Sessions and the watchtower
+
+- A watchtower the node started is known by its **session id**, whatever it is called now. Any other role is read from
+  the name when the node first sees the session, and kept by row after that, so a later rename does not lose it. Claude
+  Code retitles a session after its work, and a resume or a compaction can continue it under a new id; a rename or a
+  retitle is never a reason to stop or replace a session (#560). A name still counts at first sight, so do not name
+  something `*-watchtower` that is not one.
+- A resume keeps the name and model the node started the session with. Resumes and messages go through the node's own path
+  (`SessionMessenger`, which builds them with `ClaudeCliDelivery`), never a bare `claude --resume`.
+- Only the node stops a session, and it records why in its session ledger. The reason starts with a `SessionEndReasons`
+  constant (`pilot session end` stores `<by>: <why>`): a replaced watchtower, a duplicate, a flight that landed or merged,
+  or `pilot session end` from a person or the watchtower. A session that finishes or crashes on its own is out of scope;
+  the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
+- One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
+  `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading

@@ -206,13 +206,15 @@ internal sealed class PilotChrome<TSurface>
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
         // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the
-        // chat of the node the card was raised on (its watchtower, not this node's).
+        // chat of the node the card was raised on (its watchtower, not this node's) where this window can read it, so the answer
+        // shows where it was asked; else the fleet chat, whose watchtower passes it on.
         Cards.OnChatAbout = card =>
         {
             var node = Cards.NodeOf(card);
+            var chat = node is { Here: false } && Chat.Readable(node) ? node : null;
             Navigate(() =>
             {
-                Chat.SwitchTo(null);
+                Chat.SwitchTo(chat);
                 Switch(PilotPage.Chat, _show);
             });
             Chat.Attach(card, node);
