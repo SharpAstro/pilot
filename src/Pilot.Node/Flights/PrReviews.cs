@@ -1276,16 +1276,19 @@ public sealed class PrReviews(
         }
         if (asksDesign)
         {
-            var design = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
+            var design = DesignDetail(questions);
+            var asked = questions.Count == 1 ? $": {Cut(questions[0].Question, 80)}" : "";
+            var choices = DesignChoices(subject, questions);
             if (flight is not null)
             {
-                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design",
+                RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr} ({flight.Code}'s PR): the review asks a question of design{asked}",
                     $"{design}\nNo fixer started: {flight.Code}'s own legs make changes. review fix {pr} <answer> sends its last leg round with the answer, as the card's Answer does.",
-                    [AnswerChoice(subject)]);
+                    choices);
                 return;
             }
-            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}\nNo fixer started: this is the author's to decide. Answer posts what you type on the PR and starts the fixer.",
-                [AnswerChoice(subject)]);
+            RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design{asked}", $"{design}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
+                choices);
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -1585,7 +1588,30 @@ public sealed class PrReviews(
     private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
 
     /// <summary>The label of the design card's Answer choice.</summary>
-    public const string AnswerLabel = "Answer";
+    public const string AnswerLabel = "Answer in your own words";
+
+    /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
+    private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
+        string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
+            + string.Concat(q.Options.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+
+    /// <summary>
+    /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
+    /// as the answer, then the free-text Answer. Options are offered only when there is one question: with several, which option
+    /// answers which question would be a guess, so each is answered in words.
+    /// </summary>
+    private static List<CardChoice> DesignChoices(string subject, IReadOnlyList<DesignQuestion> questions)
+    {
+        var choices = new List<CardChoice>();
+        if (questions.Count == 1)
+        {
+            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = o.Text, Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+        }
+        choices.Add(AnswerChoice(subject));
+        return choices;
+    }
+
+    private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
 
     /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
     internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };

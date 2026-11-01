@@ -110,7 +110,7 @@ public static partial class CardSummaries
             PrReviews.QueuedKind => "A PR reviewed clean with green checks was queued for merging. Nothing to do; the queue merges it.",
             PrReviews.MergeKind => "A PR is reviewed and green but the node does not merge it by itself. Merge it when you are ready.",
             PrReviews.QueueRefusedKind => "GitHub refused to queue a reviewed PR. Merge it once more after dealing with what the title says.",
-            PrReviews.DesignKind => "The review of a PR asks a question of design, which is the author's to decide. No fixer started; Answer posts what you type on the PR and starts it.",
+            PrReviews.DesignKind => "The review of a PR asks a question of design, which is the author's to decide. No fixer started; an option or Answer in your own words posts the answer on the PR and starts it.",
             PrReviews.FixStartedKind => "A fixer was started on a PR's branch to make the changes its review asked for. Nothing to do.",
             PrReviews.FixOfferKind => "A review asked for changes on someone else's PR. Fix it starts a session on the PR's branch that makes them.",
             PrReviews.FixFailedKind => "The fixer for a PR could not start, or its push could not be reviewed. The card's choice starts it again.",

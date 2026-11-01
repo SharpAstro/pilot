@@ -678,7 +678,8 @@ public static class Briefs
         text.AppendLine("- `comment`: neither: questions, or findings that should not hold it up.");
         text.AppendLine("A `changes` verdict on the owner's PR starts a session that makes the changes. Start a finding with `design:` when it is");
         text.AppendLine("a question of design or direction (a choice for the author, not a defect to fix): such a finding goes to the");
-        text.AppendLine("controller and starts no fixer.");
+        text.AppendLine("controller and starts no fixer. Write it on one line as `design: <the question> Option: <choice> => <what follows>`,");
+        text.AppendLine("with 2 to 4 concrete options (each `Option: <choice> => <consequence in a line>`) and `Option*:` for the one you recommend.");
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {
