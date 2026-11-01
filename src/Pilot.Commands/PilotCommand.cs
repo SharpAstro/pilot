@@ -1855,7 +1855,7 @@ public static class PilotCommand
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {
-            yield return $"queued  {queued.Code}{(queued.Level is { } level ? $" [{IssuePriorities.Name(level).ToLowerInvariant()}]" : queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
+            yield return $"queued  {queued.Code}{(queued is { FromField: true, Level: { } level } ? $" [{IssuePriorities.Name(level).ToLowerInvariant()}]" : queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
         }
     }
 

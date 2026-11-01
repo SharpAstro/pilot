@@ -31,7 +31,7 @@ public sealed record AdmissionRow
 }
 
 /// <summary>One flight waiting for admission and why: its own planner or reviewer's wait, else its first queued leg's.</summary>
-public sealed record QueuedFlight(string Code, string? Title, string Why, bool Priority, DateTimeOffset Since, IssuePriority? Level = null)
+public sealed record QueuedFlight(string Code, string? Title, string Why, bool Priority, DateTimeOffset Since, IssuePriority? Level = null, bool FromField = false)
 {
     /// <summary>The flights waiting for admission, by Priority (Urgent, High, Medium, unset, Low), then in the order they formed; the one read every client shows.</summary>
     public static QueuedFlight[] Of(IEnumerable<FlightRow> flights, IEnumerable<LegRow> legs, AdmissionRow? admission)
@@ -46,7 +46,7 @@ public sealed record QueuedFlight(string Code, string? Title, string Why, bool P
                 var priority = admission?.Priority.Contains(x.Flight.Code) == true;
                 // Without the field the label is the only mark, and it ranks as High.
                 var level = x.Flight.HasPriorityField ? x.Flight.IssuePriority : priority ? IssuePriority.High : (IssuePriority?)null;
-                return new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, priority, x.Flight.CreatedAt, level);
+                return new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, priority, x.Flight.CreatedAt, level, x.Flight.HasPriorityField);
             })
             .OrderBy(q => IssuePriorities.Rank(q.Level)).ThenBy(q => q.Since)];
     }

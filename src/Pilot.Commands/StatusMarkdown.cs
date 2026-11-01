@@ -45,7 +45,7 @@ internal static class StatusMarkdown
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {
-            facts.Add($"**queued** {queued.Code}{(queued.Level is { } level ? $" ({IssuePriorities.Name(level).ToLowerInvariant()})" : queued.Priority ? " (priority)" : "")} {Text(queued.Title ?? "")}: {Text(queued.Why)}");
+            facts.Add($"**queued** {queued.Code}{(queued is { FromField: true, Level: { } level } ? $" ({IssuePriorities.Name(level).ToLowerInvariant()})" : queued.Priority ? " (priority)" : "")} {Text(queued.Title ?? "")}: {Text(queued.Why)}");
         }
         if (facts.Count > 0)
         {

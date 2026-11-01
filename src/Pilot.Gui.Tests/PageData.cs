@@ -160,9 +160,9 @@ internal sealed class PageData
             LandedAt = i % 3 == 2 ? now.AddMinutes(-30) : null,
             Queued = i % 3 == 0 ? (lengthen ? "waiting for an Opus slot: 3 of 3 flying: " + LongWord + ", " + LongPath : "waiting for an Opus slot: 3 of 3 flying") : null,
             GitHubLabel = i % 9 == 0 ? "pilot: priority" : null,
-            // A few flights of a repo with the Priority field: High (a priority flight), then Medium and Low (quieter levels, in the queue).
-            HasPriorityField = i % 9 is 3 or 4 or 6,
-            IssuePriority = (i % 9) switch { 3 => IssuePriority.Medium, 4 => IssuePriority.High, 6 => IssuePriority.Low, _ => null },
+            // Flights of a repo with the Priority field: Urgent (a priority flight, queued), Medium and Low (quieter levels).
+            HasPriorityField = true,
+            IssuePriority = (i % 3) switch { 0 => IssuePriority.Urgent, 1 => IssuePriority.Medium, _ => IssuePriority.Low },
             Review = i % 2 == 0 ? new ReviewRow
             {
                 State = (ReviewState)(i % 3),
