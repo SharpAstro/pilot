@@ -310,6 +310,7 @@ using var client = snapshot is null ? NewClient() : null;
 // with the loop pumping instead (ShutdownDrain), so the teardown stays on this thread.
 var feed = client is null ? null : NodeFeed.For(client);
 SpendReads? spendReads = null;
+DecisionReads? decisionReads = null;
 if (feed is not null)
 {
     feed.Log = LogLine;
@@ -740,6 +741,7 @@ if (feed is not null && client is not null && clients is not null)
     spendReads = new SpendReads(client, loop.RequestRedraw);
     chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
     chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
+    decisionReads = new DecisionReads(client, loop.RequestRedraw);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
@@ -1085,6 +1087,16 @@ void RenderFrame()
             spendReads.AskFlight(openCode);
         }
         chrome.Flights.Spend = spendReads.Flights;
+    }
+    if (decisionReads is not null)
+    {
+        var shown = chrome.Page == PilotPage.Flights ? chrome.Flights.OpenCode : null;
+        if (shown is not null)
+        {
+            decisionReads.AskFlight(shown);
+        }
+        decisionReads.Saw(feed?.LastDecision, shown);
+        chrome.Flights.Decisions = decisionReads.Flights;
     }
     chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend);
     // The hover text the router says is due, last, over everything.

@@ -897,6 +897,41 @@ public static class PilotCommand
             }
             return 0;
         });
+        var decisionFlight = new Option<string?>("--flight") { Description = "Only this flight's decisions (its code, as PIL583), with those of its cards and PRs" };
+        var decisionKind = new Option<string?>("--kind") { Description = "Only this kind: design, merge, go-around, accept-leg, pass-with-notes, overlap, priority, dismiss or card" };
+        var decisionSince = new Option<string?>("--since") { Description = "Only decisions at or after this: a time (14:30, 2026-10-27T09:00) or a span back from now (30m, 2h, 3d)" };
+        var decisionJson = new Option<bool>("--json") { Description = "The decisions as JSON, whole" };
+        var decisionsCommand = Action(new Command("decisions", "The decisions in the black box, oldest first: what was asked, the options, the choice, who chose and why") { Options = { decisionFlight, decisionKind, decisionSince, decisionJson } }, async (p, client, ct) =>
+        {
+            DateTimeOffset? since = null;
+            if (p.GetValue(decisionSince) is { Length: > 0 } sinceText)
+            {
+                since = ParseSince(sinceText, DateTimeOffset.Now) ?? throw new UsageException($"--since {sinceText} is neither a time nor a span like 2h");
+            }
+            var envelope = await client.GetDecisionsAsync(p.GetValue(decisionFlight), p.GetValue(decisionKind), since, ct);
+            if (envelope is not { Success: true, Response: { } report })
+            {
+                await output.WriteLineAsync($"refused: {envelope.Error}");
+                return 1;
+            }
+            if (p.GetValue(decisionJson))
+            {
+                await output.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(report, PilotJsonContext.Default.DecisionReport));
+                return 0;
+            }
+            if (report.Decisions.Length == 0)
+            {
+                await output.WriteAsync("No decisions.\n");
+                return 0;
+            }
+            foreach (var d in report.Decisions)
+            {
+                var options = d.Options.Length > 0 ? $" of [{string.Join(", ", d.Options)}]" : "";
+                var reason = d.Reason.Length > 0 ? $": {d.Reason}" : "";
+                await output.WriteLineAsync($"{d.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}  {d.Subject}  {d.Kind}  {d.Choice}{options}  by {d.By} ({d.ByKind}){reason}");
+            }
+            return 0;
+        });
         var jobId = Arg("job", "The job's id, as j3");
         var jobShow = Action(new Command("job", "One job: how it stands, and where its whole output is") { Arguments = { jobId } }, async (p, client, ct) =>
         {
@@ -1337,7 +1372,7 @@ public static class PilotCommand
         var root = new RootCommand("pilot v2's command line, against this machine's node or one on the LAN (--node). Inside a flight's plane, --leg defaults to its flying leg.")
         {
             Options = { socket, node, outputFormat },
-            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
+            Subcommands = { status, attachments, sessions, sessionCommand,reposCommand, prsCommand, issueCommand, idea, ideas, flight, legCommand, checkCommand, artifact, cards, answer, dismiss, say, sayAll, compact, note, review, runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, tell, watchtower, digest, summary, summarise, reviewCost, update, nodeCommand, archive, ring, flag, handled, nodes, connectNode, grants, settings, logs },
         };
 
         // mcp: these same commands as an MCP server's tools, over this process's standard streams. Only the console host
@@ -1482,6 +1517,22 @@ public static class PilotCommand
             }
         }
         return new IdeaCall(null, 0, null, string.Join(' ', words));
+    }
+
+    /// <summary>A <c>--since</c> as a moment: a span back from <paramref name="now"/> (<c>30m</c>, <c>2h</c>, <c>3d</c>), else a time as <see cref="DateTimeOffset"/> reads it (a bare time is today, local); null when it is neither.</summary>
+    internal static DateTimeOffset? ParseSince(string text, DateTimeOffset now)
+    {
+        text = text.Trim();
+        if (text.Length > 1 && char.ToLowerInvariant(text[^1]) is var unit and ('m' or 'h' or 'd')
+            && double.TryParse(text.AsSpan(0, text.Length - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out var amount) && amount >= 0)
+        {
+            return now - (unit switch { 'm' => TimeSpan.FromMinutes(amount), 'h' => TimeSpan.FromHours(amount), _ => TimeSpan.FromDays(amount) });
+        }
+        if (TimeSpan.TryParseExact(text, ["h\\:mm", "hh\\:mm", "h\\:mm\\:ss", "hh\\:mm\\:ss"], CultureInfo.InvariantCulture, out var clock))
+        {
+            return new DateTimeOffset(now.Date + clock, now.Offset);
+        }
+        return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var at) ? at : null;
     }
 
     /// <summary>The repo an idea is in when its id names none: <c>--repo</c> as a path when it is one, else by name, else <see cref="IdeaIds.DefaultRepo"/>.</summary>

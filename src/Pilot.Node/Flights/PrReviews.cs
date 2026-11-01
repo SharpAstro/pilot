@@ -1630,7 +1630,7 @@ public sealed class PrReviews(
         }
         if (asksDesign)
         {
-            return await ActOnAnswerAsync(pr, review, given!, command.Who, command.PersonsWord, command.Autopilot, words, cancellationToken);
+            return await ActOnAnswerAsync(pr, review, given!, command.Who, command.PersonsWord, command.Autopilot, words, cancellationToken, command);
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
@@ -1647,7 +1647,7 @@ public sealed class PrReviews(
     /// the person gave (<paramref name="postWords"/>) are posted on the PR once the act was not refused; an answer that is already a
     /// comment there posts nothing.
     /// </summary>
-    private async Task<string> ActOnAnswerAsync(PrRef pr, PrReviewRow review, string given, string? who, string? personsWord, bool autopilot, string? postWords, CancellationToken cancellationToken)
+    private async Task<string> ActOnAnswerAsync(PrRef pr, PrReviewRow review, string given, string? who, string? personsWord, bool autopilot, string? postWords, CancellationToken cancellationToken, CommandRequest? command = null)
     {
         review = review with { DesignAnswer = given };
         // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
@@ -1659,7 +1659,7 @@ public sealed class PrReviews(
             {
                 throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
             }
-            if (!string.IsNullOrEmpty(postWords))
+            if (command is null && !string.IsNullOrEmpty(postWords))
             {
                 await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, answer, cancellationToken);
             }
@@ -1670,6 +1670,10 @@ public sealed class PrReviews(
                 throw new FlightException(refused);
             }
             state.PutPrReview(review);
+            if (command is not null)
+            {
+                await RecordDesignAsync(pr, flight, review, command, given, postWords ?? "", cancellationToken);
+            }
             SettleDesign(pr.Repo, pr.Number, $"answered by {who}: {flight.Code}'s last leg went round with it", review.Url, $"{flight.Code}'s last leg was sent round with the answer");
             return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
@@ -1692,12 +1696,35 @@ public sealed class PrReviews(
             state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
                 $"{pr} was taken out of the merge queue so the fix can be pushed", "The answer to its design question started a fixer; its push is reviewed afresh and queued when green.", link: review.Url);
         }
-        if (!string.IsNullOrEmpty(postWords))
+        if (command is null && !string.IsNullOrEmpty(postWords))
         {
             // Posted once the start was not refused, so a retry does not post them twice.
             await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, answer, cancellationToken);
         }
+        if (command is not null)
+        {
+            // Recorded once the start was not refused, so a retry does not record the answer twice.
+            await RecordDesignAsync(pr, null, review, command, given, postWords ?? "", cancellationToken);
+        }
         return fixerStart;
+    }
+
+    // A question of design answered, once: the findings asked, the options the design card offered (its choices that are not the free
+    // Answer), the option picked or the free text, and the words as the reason. On a flight's PR the flight is the subject.
+    private async Task RecordDesignAsync(PrRef pr, FlightRow? flight, PrReviewRow review, CommandRequest command, string? given, string words, CancellationToken cancellationToken)
+    {
+        var target = Verbs.PrTarget(pr.Repo, pr.Number);
+        var options = state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
+            .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Label).Distinct().ToArray();
+        var answer = (given ?? "").Trim();
+        var byKind = command.Autopilot ? DecisionByKinds.Autopilot
+            : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
+            : DecisionByKinds.Node;
+        var decision = state.RecordDecision(flight is null ? target : Verbs.FlightTarget(flight.Code), DecisionKinds.Design,
+            string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString())), options, answer.Length > 0 ? answer : "answered",
+            command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR");
+        // Off the state lock; a comment that cannot be posted is a card, never a failed answer.
+        await new DesignDecisionMirror(state, github).PostAsync(decision, pr, flight, TrackedClone(pr) ?? review.ClonePath, cancellationToken);
     }
 
     /// <summary>

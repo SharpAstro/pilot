@@ -656,6 +656,9 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// <summary>What the ledger says each flight has spent so far, for the open flight's page; set by the host, which reads the node's spend route for the flight shown.</summary>
     public IReadOnlyList<SpendFlightReport> Spend { get; set; } = [];
 
+    /// <summary>The decisions the host read for each flight (by code), oldest first; the flight's page lists its own.</summary>
+    public IReadOnlyDictionary<string, DecisionRow[]> Decisions { get; set; } = new Dictionary<string, DecisionRow[]>();
+
     /// <summary>Asked for a flight's spend when its page opens, and again as it stays open; the host reads the node and fills <see cref="Spend"/>.</summary>
     public Action<string>? OnSpend { get; set; }
 
@@ -878,7 +881,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         var selected = Selected >= 0 && Selected < screen.Lines.Count ? screen.Lines[Selected] : null;
         var open = OpenLine(whole ?? screen);
         // The wizard, or an open flight's page, takes the flights' place; the header stays.
-        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf, Spend.FirstOrDefault(s => s.Flight == open.Code))) : Main(screen);
+        var body = Wizard.IsOpen ? Wizard.Tree() : open is not null ? DetailPage(FlightDetail.From(open, screen.AsOf, Spend.FirstOrDefault(s => s.Flight == open.Code), Decisions.GetValueOrDefault(open.Code))) : Main(screen);
         var parts = new List<Layout.Node> { Header(screen) };
         if (!Wizard.IsOpen && open is null)
         {

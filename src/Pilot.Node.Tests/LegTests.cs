@@ -923,8 +923,15 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>When set, CommentIssueAsync fails with it, as a GitHub that refused the comment.</summary>
+    public string? CommentFails { get; set; }
+
     public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {
+        if (CommentFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
         IssueComments.Add((number, body));
         PrConversation.Add((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
         return Task.CompletedTask;

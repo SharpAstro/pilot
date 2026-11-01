@@ -29,6 +29,12 @@ public interface INodeJournal
         add { }
         remove { }
     }
+
+    /// <summary>
+    /// Every decision the journal has kept, oldest first: the <see cref="DecisionEvent"/>s it was given, kept whole and
+    /// outside any compaction. A journal that keeps none returns none.
+    /// </summary>
+    IReadOnlyList<DecisionRow> Decisions() => [];
 }
 
 /// <summary>What a journal hands back on start. <see cref="Empty"/> for a node that has never run.</summary>
@@ -56,6 +62,17 @@ public sealed class InMemoryJournal(int maxDeltas = InMemoryJournal.DefaultMaxDe
     public const int DefaultMaxDeltas = 1024;
 
     private readonly List<NodeEvent> _deltas = [];
+
+    // Outside the compaction: a decision is kept whole for as long as the journal lives.
+    private readonly List<DecisionRow> _decisions = [];
+
+    public IReadOnlyList<DecisionRow> Decisions()
+    {
+        lock (_deltas)
+        {
+            return [.. _decisions];
+        }
+    }
 
     // The state as of the last event appended: what a compaction writes as the new snapshot.
     private readonly NodeMirror _mirror = new NodeMirror();
@@ -87,6 +104,10 @@ public sealed class InMemoryJournal(int maxDeltas = InMemoryJournal.DefaultMaxDe
         lock (_deltas)
         {
             _mirror.Apply(nodeEvent);
+            if (nodeEvent is DecisionEvent decided)
+            {
+                _decisions.Add(decided.Decision);
+            }
             if (nodeEvent is SnapshotEvent snapshot)
             {
                 _snapshot = snapshot;

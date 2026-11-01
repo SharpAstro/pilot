@@ -193,12 +193,24 @@ internal sealed record FlightDetail
     /// <summary>What the ledger says the flight has spent so far, per leg and round; null where the node has not told or the flight has spent nothing.</summary>
     public SpendFlightReport? Spend { get; init; }
 
+    /// <summary>The decisions made on the flight, oldest first; empty when none was read or made.</summary>
+    public IReadOnlyList<DecisionRow> Decisions { get; init; } = [];
+
+    /// <summary>One line a decision: when, kind, the choice among the options, who and as what, then the reason.</summary>
+    public static string DecisionText(DecisionRow d)
+    {
+        var options = d.Options.Length > 1 ? $" (of {string.Join(" / ", d.Options)})" : "";
+        var reason = d.Reason.Length > 0 ? $": {d.Reason}" : "";
+        return $"{d.At.ToUniversalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} {d.Kind}: {d.Choice}{options}, by {d.By} ({d.ByKind}){reason}";
+    }
+
     /// <summary>The flight's own planner and reviewer sessions: live first, then ended, newest first.</summary>
     public IReadOnlyList<LegSessionLine> Sessions { get; init; } = [];
 
-    public static FlightDetail From(FlightLine line, DateTimeOffset now, SpendFlightReport? spend = null) => new()
+    public static FlightDetail From(FlightLine line, DateTimeOffset now, SpendFlightReport? spend = null, IReadOnlyList<DecisionRow>? decisions = null) => new()
     {
         Line = line,
+        Decisions = decisions is null ? [] : [.. decisions.OrderBy(d => d.At).ThenBy(d => d.Seq)],
         Sessions = [.. line.AllSessions
             .Where(s => s.Role is SessionRole.Planner or SessionRole.Reviewer)
             .Select(s => LegSessionLine.From(s, s.Role == SessionRole.Planner ? "planner" : "reviewer", now))
@@ -220,6 +232,7 @@ internal sealed record FlightDetail
         {
             lines.AddRange(SpendText.FlightLines(spend).Select(l => $"spend: {new string(' ', l.Indent * 2)}{l.Text}"));
         }
+        lines.AddRange(Decisions.Select(d => $"decision: {DecisionText(d)}"));
         if (OtherSubTasks.Count > 0)
         {
             lines.Add("other sub-tasks:");

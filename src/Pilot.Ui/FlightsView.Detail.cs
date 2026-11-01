@@ -260,6 +260,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             scrolled.Add(SpendBlock(spend));
         }
+        if (detail.Decisions.Count > 0)
+        {
+            scrolled.Add(DecisionsBlock(detail.Decisions));
+        }
         if (Gallery.Section($"flight:{line.Code}", detail.Attachments) is { } attachments)
         {
             scrolled.Add(attachments);
@@ -271,6 +275,13 @@ internal sealed partial class FlightsView<TSurface>
             .Pad(Gutter, 8f)
             .Stretch();
     }
+
+    // The decisions made on the flight, oldest first: one wrapped line each, the question on hover.
+    private Layout.Node DecisionsBlock(IReadOnlyList<DecisionRow> decisions) =>
+        Layout.Builder.VStack(
+                [Label("decisions").RowH(20f),
+                .. decisions.Select(d => Prose(FlightDetail.DecisionText(d), 12f, Dim).WithTooltip(d.Question))])
+            .WithGap(4f);
 
     // What the flight has spent so far, said with its timeframe: the total, then each leg and each of its rounds, indented.
     private Layout.Node SpendBlock(SpendFlightReport spend)

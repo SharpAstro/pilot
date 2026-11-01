@@ -1102,6 +1102,49 @@ public sealed class NodeState
         return result;
     }
 
+    /// <summary>
+    /// Records a decision: a <see cref="DecisionEvent"/> on the stream, kept whole by the journal. Under the lock, as
+    /// <see cref="Complete"/> is.
+    /// </summary>
+    public DecisionRow RecordDecision(string subject, string kind, string question, string[] options, string choice, string by, string byKind, string reason)
+    {
+        lock (_gate)
+        {
+            var at = _time.GetUtcNow();
+            var decision = new DecisionRow
+            {
+                Subject = subject, Kind = kind, Question = question, Options = options, Choice = choice,
+                By = by, ByKind = byKind, Reason = reason.Trim(), At = at, Seq = _seq + 1,
+            };
+            Publish(new DecisionEvent { Seq = decision.Seq, At = at, Decision = decision });
+            return decision;
+        }
+    }
+
+    /// <summary>
+    /// The decisions kept, oldest first: of a flight (its subject is the flight, or a card or PR of it, <c>flight/PIL583</c>
+    /// and anything below it), of a kind, made at or after <paramref name="since"/>.
+    /// </summary>
+    public DecisionRow[] Decisions(string? flight = null, string? kind = null, DateTimeOffset? since = null)
+    {
+        lock (_gate)
+        {
+            return [.. _journal.Decisions()
+                .Where(d => flight is not { Length: > 0 } || SubjectIsOf(d.Subject, flight))
+                .Where(d => kind is not { Length: > 0 } || string.Equals(d.Kind, kind, StringComparison.OrdinalIgnoreCase))
+                .Where(d => since is not { } from || d.At >= from)
+                .OrderBy(d => d.At).ThenBy(d => d.Seq)];
+        }
+    }
+
+    private static bool SubjectIsOf(string subject, string flight)
+    {
+        var prefix = $"flight/{flight}";
+        return subject.Equals(flight, StringComparison.OrdinalIgnoreCase)
+            || subject.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+            || subject.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>The held deltas after <paramref name="since"/>, or null when a snapshot is what the client needs.</summary>
     private List<byte[]>? DeltasSince(long? since, string? stream, int capacity)
     {

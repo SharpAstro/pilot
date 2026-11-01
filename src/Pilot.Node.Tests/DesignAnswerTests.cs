@@ -114,17 +114,15 @@ public sealed class DesignAnswerTests : PrFixTestsBase
 /// The same question of design on a flight's PR goes through the flight's go-around: it rings the design card naming the flight, and
 /// review fix with an answer sends the flight's last leg round with the question and the answer, starting no PR fixer.
 /// </summary>
-/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
-[Trait("Category", "Slow")]
-public sealed class FlightDesignAnswerTests : ReviewTestsBase
+public abstract class FlightDesignTestsBase : ReviewTestsBase
 {
-    private const string Head = "cafe0000cafe0000";
-    private const string Question = "README.md:1 design: should this be a service at all?";
-    private const string PrTarget = "pr/x/tianwen#71";
+    private protected const string Head = "cafe0000cafe0000";
+    private protected const string Question = "README.md:1 design: should this be a service at all?";
+    private protected const string PrTarget = "pr/x/tianwen#71";
 
-    private readonly PrReviews _reviews;
+    private protected readonly PrReviews _reviews;
 
-    public FlightDesignAnswerTests()
+    protected FlightDesignTestsBase()
     {
         var origin = Path.Combine(_root, "origin.git").Replace('\\', '/');
         Git(Repo, "config", "remote.origin.url", "https://github.com/x/tianwen.git");
@@ -141,11 +139,11 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         };
     }
 
-    private Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
+    private protected Task<CommandResult> RunPr(string verb, string who, params string[] args) =>
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private async Task<FlightRow> AskedDesign(string? question = null)
+    private protected async Task<FlightRow> AskedDesign(string? question = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -174,10 +172,15 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         return flight;
     }
 
-    private LegRow LastLeg(string code) => _state.Legs(code).OrderBy(l => l.Order).Last();
+    private protected LegRow LastLeg(string code) => _state.Legs(code).OrderBy(l => l.Order).Last();
 
-    private WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
+    private protected WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
+}
 
+/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
+[Trait("Category", "Slow")]
+public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
+{
     [Fact]
     public async Task ADesignQuestionOnAFlightsPrRingsTheDesignCardNamingTheFlight()
     {
@@ -206,7 +209,9 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         leg.Report.ShouldContain("Keep it a library");
         Fixers.ShouldBeEmpty();
         _workers.Started.Count.ShouldBe(started + 1);
-        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep it a library");
+        // One on the flight's issue and one on its PR (DesignDecisionMirror).
+        _github.IssueComments.Count.ShouldBe(2);
+        _github.IssueComments.ShouldAllBe(c => c.Body.Contains("Keep it a library"));
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.DesignKind);
     }
 
@@ -271,7 +276,9 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
         leg.State.ShouldBe(LegState.Flying);
         leg.Report.ShouldNotBeNull().ShouldContain("Keep a library (no new process)");
         Fixers.ShouldBeEmpty();
-        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep a library (no new process)");
+        // The decision mirror posts the decision on the flight's issue and on its PR.
+        _github.IssueComments.Count.ShouldBe(2);
+        _github.IssueComments.ShouldAllBe(c => c.Body.Contains("Keep a library (no new process)"));
     }
 }
 
