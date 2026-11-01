@@ -113,11 +113,11 @@ public sealed class ListTableTests : IDisposable
     }
 
     // Sessions' values for the first row, which name each column's cell.
-    private static string[] SessionTitles => ["Session", "Model", "Context", "Last response", "State", "Spend"];
+    private static string[] SessionTitles => ["Session", "Model", "Context", "Last response", "State", "Spend", "Age", "Spend/min"];
 
     private static (string Title, string Value)[] SessionColumns(SessionLine line) =>
     [
-        ("Session", line.Role), ("Model", line.Model), ("Context", line.Context), ("Last response", line.LastResponse), ("State", line.State), ("Spend", line.Spend),
+        ("Session", line.Role), ("Model", line.Model), ("Context", line.Context), ("Last response", line.LastResponse), ("State", line.State), ("Spend", line.Spend), ("Age", line.Age), ("Spend/min", line.SpendPerMinute),
     ];
 
     private static (string Title, string Value)[] JobColumns(JobLine line) =>
@@ -433,7 +433,8 @@ public sealed class ListTableTests : IDisposable
     {
         var view = Sessions();
         var screen = SessionsScreenOf();
-        var cells = Arranged(view.Tree(screen));
+        // Wide enough for every optional column, Age and Spend/min among them.
+        var cells = Arranged(view.Tree(screen), 1400f);
         var first = screen.Lines[0];
 
         // Each title sits over its values, and the fixed columns have the widths the page declares: the next column starts a gap after.
@@ -443,6 +444,8 @@ public sealed class ListTableTests : IDisposable
         }
         (cells.HeaderX("Last response") - cells.HeaderX("Context") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         (cells.HeaderX("Spend") - cells.HeaderX("State") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
+        (cells.HeaderX("Age") - cells.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(130f, 0.5f);
+        (cells.HeaderX("Spend/min") - cells.HeaderX("Age") - ListTable.ColumnGap).ShouldBe(70f, 0.5f);
         (cells.HeaderX("Context") - cells.HeaderX("Model") - ListTable.ColumnGap).ShouldBe(140f, 0.5f);
         cells.HasHeader("Node").ShouldBeFalse("the Node column shows only with several nodes known");
         view.Table.Saved.ShouldBeEmpty();
