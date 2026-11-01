@@ -1068,15 +1068,15 @@ public sealed class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions, idea);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null)
     {
         var result = new CommandResult
         {
@@ -1093,6 +1093,7 @@ public sealed class NodeState
             Milestones = error is null ? milestones : null,
             Readiness = error is null ? readiness : null,
             Suggestions = error is null ? suggestions : null,
+            Idea = error is null ? idea : null,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,

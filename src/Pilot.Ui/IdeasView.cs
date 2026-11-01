@@ -35,7 +35,7 @@ internal sealed record IdeasScreen(IReadOnlyList<IdeaRow> Ideas, IReadOnlyList<C
 }
 
 /// <summary>What the node said to an idea verb, as the page needs it.</summary>
-internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null, ReadinessResult? Readiness = null, MilestoneSuggestions? Suggestions = null);
+internal sealed record IdeaReply(bool Ok, string? Error = null, string? Way = null, string? Made = null, IdeaTidyProposal? Tidy = null, MilestoneProposal? Milestones = null, ReadinessResult? Readiness = null, MilestoneSuggestions? Suggestions = null, IdeaRow? Idea = null);
 
 /// <summary>
 /// The Ideas page: a box to note an idea in one line (Claude picks the repo, so there is no picker), the ideas newest first with
@@ -87,6 +87,25 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     // The ideas sent to be noted whose answer has not come back, oldest first: the box is emptied at once and the next one may be
     // noted beside them, so the line under it names them rather than only saying it is working (the owner, 2026-10-29).
     private System.Collections.Immutable.ImmutableList<string> _noting = [];
+
+    // Ideas the node's answer said it filed whose row the screen does not hold yet (the read behind it can lag): shown until it does.
+    private System.Collections.Immutable.ImmutableList<IdeaRow> _held = [];
+
+    private IdeasScreen WithHeld(IdeasScreen screen)
+    {
+        var held = Volatile.Read(ref _held);
+        if (held.IsEmpty)
+        {
+            return screen;
+        }
+        var known = screen.Ideas.Select(i => i.Qualified).ToHashSet();
+        if (held.Any(h => known.Contains(h.Qualified)))
+        {
+            System.Collections.Immutable.ImmutableInterlocked.Update(ref _held, list => list.RemoveAll(h => known.Contains(h.Qualified)));
+        }
+        var missing = held.Where(h => !known.Contains(h.Qualified)).ToList();
+        return missing.Count == 0 ? screen : screen with { Ideas = [.. screen.Ideas, .. missing] };
+    }
     
     /// <summary>Whether the planned and dropped ideas, folded below by default, are listed.</summary>
     public bool ShowFolded { get; set; }
@@ -228,6 +247,11 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         try
         {
             reply = await RunAsync($"note:{Interlocked.Increment(ref _notes)}", "ideas:note", "noting", Verbs.NoteIdea, Verbs.RepoTarget(Verbs.AnyRepo), args);
+            // Held before the ideating entry goes, so no frame has neither; the node's own row replaces it when the screen holds the key.
+            if (reply is { Ok: true, Idea: { } filed })
+            {
+                System.Collections.Immutable.ImmutableInterlocked.Update(ref _held, list => list.RemoveAll(i => i.Qualified == filed.Qualified).Add(filed));
+            }
         }
         finally
         {
@@ -732,6 +756,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what a test arranges.</summary>
     internal Layout.Node Tree(IdeasScreen screen)
     {
+        screen = WithHeld(screen);
         _screen = screen;
         var marked = false;
         while (System.Collections.Immutable.ImmutableInterlocked.TryDequeue(ref _markers, out var marker))

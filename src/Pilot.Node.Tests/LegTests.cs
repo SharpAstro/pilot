@@ -312,15 +312,25 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(AddMilestone(repoPath, IdeaIds.Milestone));
     }
 
+    /// <summary>When set, an issue made by CreateIssueInMilestoneAsync is left out of MilestoneIssuesAsync, as gh's list can lag a fresh issue.</summary>
+    public bool HideCreatedFromLists { get; set; }
+
+    private readonly HashSet<int> _hidden = [];
+
     public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
         Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
-            ? [.. list.Where(i => i.Milestone == milestone).OrderByDescending(i => i.Number).Select(Labelled)]
+            ? [.. list.Where(i => i.Milestone == milestone && !_hidden.Contains(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
     {
         IssuesCreated.Add((repoPath, title, body));
-        return Task.FromResult(AddIssue(repoPath, title, milestone, body: body ?? ""));
+        var made = AddIssue(repoPath, title, milestone, body: body ?? "");
+        if (HideCreatedFromLists)
+        {
+            _hidden.Add(made.Number);
+        }
+        return Task.FromResult(made);
     }
 
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
@@ -1730,6 +1740,64 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await finishing).Ok.ShouldBeTrue();
         L("parser").State.ShouldBe(LegState.Done);
         L("parser").Recheck.ShouldBeNull();
+    }
+
+    private void HoldFlight() => _state.PutFlight(_state.Flights().Single() with { State = FlightState.Held });
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AConnectWhileALegsCheckRerunsStillLetsItFinishDone()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+
+        var gate = new TaskCompletionSource();
+        var runs = _checks.Runs.Count;
+        _checks.OnRun = () => gate.Task;
+        var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        for (var i = 0; i < 100 && _checks.Runs.Count == runs; i++)
+        {
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        HoldFlight();
+        gate.SetResult();
+
+        var result = await finishing;
+        result.Error.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALegOfAnAlreadyHeldFlightIsRecordedDone()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        HoldFlight();
+
+        var result = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in");
+        result.Error.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Done);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheNextLegOfAHeldFlightWaitsUntilItFliesAgain()
+    {
+        await FlightWithTwoLegs();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "1");
+        await Leg(Verbs.Check, "flight/TIA1/parser", "2");
+        HoldFlight();
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parser in")).Error.ShouldBeNull();
+
+        var next = _state.Legs("TIA1").Single(l => l.Name != "parser").Name;
+        (await Leg(Verbs.StartLeg, $"flight/TIA1/{next}")).Error.ShouldNotBeNull();
+        _state.Legs("TIA1").Single(l => l.Name == next).State.ShouldBe(LegState.Planned);
     }
 
     [Fact]

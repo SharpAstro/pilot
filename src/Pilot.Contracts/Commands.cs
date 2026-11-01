@@ -115,6 +115,10 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MilestoneSuggestions? Suggestions { get; init; }
 
+    /// <summary>A <c>note-idea</c>'s filed idea, as its row; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IdeaRow? Idea { get; init; }
+
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
