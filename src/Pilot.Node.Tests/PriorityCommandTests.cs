@@ -9,6 +9,8 @@ namespace Pilot.Node.Tests;
 /// <c>flight-priority</c> (#570): writes the Priority field of the flight's issue and puts the level on its row; <c>none</c> clears it;
 /// a repo without the field refuses, naming the <c>pilot: priority</c> label.
 /// </summary>
+/// <remarks>Slow: every test creates a real flight through git (5.8 s in a loaded fast step).</remarks>
+[Trait("Category", "Slow")]
 public sealed class PriorityCommandTests : LegCommanderTestsBase
 {
     // The base builds its commanders without a GitHub client, so this one has the tracker the verb writes through.
