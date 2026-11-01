@@ -49,6 +49,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
 
         Settled("is merged");
+        Notice().Kind.ShouldBe(PrReviews.DesignSettledKind);
     }
 
     [Fact]
