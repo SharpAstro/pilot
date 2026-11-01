@@ -549,6 +549,21 @@ public sealed partial class LegCommander(
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
 
+    // The step each flight's advance was refused once: one miss rings nothing and the next sweep tries again; a second miss of the same step rings.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _missedOnce = new(StringComparer.Ordinal);
+
+    /// <summary>True when this refusal of <paramref name="key"/> is the flight's first (it is noted and nothing rings); false on the second in a row, which rings.</summary>
+    private bool FirstMiss(string code, string key)
+    {
+        if (_missedOnce.TryGetValue(code, out var seen) && seen == key)
+        {
+            _missedOnce.TryRemove(code, out _);
+            return false;
+        }
+        _missedOnce[code] = key;
+        return true;
+    }
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _pilotMdRung = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -672,6 +687,7 @@ public sealed partial class LegCommander(
         if (result.Ok)
         {
             _rung.TryRemove(current.Code, out _);
+            _missedOnce.TryRemove(current.Code, out _);
             // It went on here, so a move that failed once is no longer what it waits on (while the node is in maintenance it is held, and says so).
             if (!Models.Maintenance && current.MoveFailure is not null)
             {
@@ -692,6 +708,10 @@ public sealed partial class LegCommander(
         // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
         // sweep opens the PR once that card closes.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
+        {
+            return;
+        }
+        if (FirstMiss(current.Code, $"{step.Verb} {step.Target}"))
         {
             return;
         }
@@ -790,6 +810,12 @@ public sealed partial class LegCommander(
         }
         var result = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
         if (result.Ok)
+        {
+            _missedOnce.TryRemove(current.Code, out _);
+            return false;
+        }
+        // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
+        if (FirstMiss(current.Code, key))
         {
             return false;
         }
