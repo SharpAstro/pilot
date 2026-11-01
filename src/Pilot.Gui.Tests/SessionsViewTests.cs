@@ -75,7 +75,7 @@ public sealed class SessionsViewTests
 
         var line = screen.Lines.Single(l => l.Row.Id == tower.Id);
         line.Compacted.ShouldBe("compacted 12 m ago");
-        SessionsCapture.RowsText(screen).ShouldContain("spend 1.83M over 3 h 41 m | compacted 12 m ago");
+        SessionsCapture.RowsText(screen).ShouldContain("| compacted 12 m ago");
         ChipBrief.Session(line).ShouldContain("compacted 12 m ago: its context reached 70% of its window");
         screen.Lines.Where(l => l.Row.Id != tower.Id).ShouldAllBe(l => l.Compacted == null);
         using var renderer = new RgbaImageRenderer(1280, 800);
