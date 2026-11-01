@@ -120,6 +120,7 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ACallRunsTheCliHandlerAsTheClient_AndARefusalOrAUsageErrorIsAnErrorResult()
     {
         var replies = await Serve(Server(),
@@ -231,7 +232,7 @@ public sealed class McpTests : IAsyncLifetime
             Args = args;
             var toChild = new FedReader();
             var fromChild = new FedReader();
-            var server = new McpServer(folder, node: null, socket: socket);
+            var server = new McpServer(folder, node: null, socket: socket, handedOver: true);
             Running = server.RunAsync(new TappedReader(toChild, Heard), new FeedWriter(fromChild), Ct);
             return new McpChild(new FeedWriter(toChild), fromChild, () => toChild.Dispose());
         }
@@ -259,7 +260,7 @@ public sealed class McpTests : IAsyncLifetime
         // The reply to the ping comes first, then the tools may differ on the new binary.
         (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
         (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
-        child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp"]);
+        child.Args.ShouldBe(["--node-socket", _node.SocketPath, "mcp", "--handed-over"]);
         // The child's server reads what it was written on its own task, so it may not have taken the second line yet.
         string[] heard = [];
         for (var i = 0; i < 600; i++)
@@ -333,6 +334,127 @@ public sealed class McpTests : IAsyncLifetime
         replies.Select(r => r.GetProperty("id").GetInt32()).ShouldBe([1, 2, 3]);
         log.ToString().ShouldContain("no pilot beside me");
         log.ToString().Split("cannot start").Length.ShouldBe(2);
+    }
+
+    /// <summary>Fake children that record when each is disposed: real hand-over servers on in-memory pipes.</summary>
+    private sealed class TrackedChildren(string folder, string socket)
+    {
+        private readonly List<bool[]> _disposed = [];
+
+        public int Started => _disposed.Count;
+
+        public bool Disposed(int index) => _disposed[index][0];
+
+        public McpChild Start(string[] args)
+        {
+            var flag = new bool[1];
+            _disposed.Add(flag);
+            var toChild = new FedReader();
+            var fromChild = new FedReader();
+            _ = new McpServer(folder, node: null, socket: socket, handedOver: true).RunAsync(toChild, new FeedWriter(fromChild), Ct);
+            return new McpChild(new FeedWriter(toChild), fromChild, () => { flag[0] = true; toChild.Dispose(); });
+        }
+    }
+
+    [Fact]
+    public async Task ThreeUpdatesInARowLeaveOneLiveChildAndTheClientIsAnsweredAfterEachSwap()
+    {
+        var children = new TrackedChildren(_node.Folder, _node.SocketPath);
+        var version = McpServer.Running;
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>(Volatile.Read(ref version)), watch: TimeSpan.FromMilliseconds(20), log: new StringWriter(), startChild: children.Start);
+        var running = server.RunAsync(input, output, Ct);
+
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        for (var update = 1; update <= 3; update++)
+        {
+            Volatile.Write(ref version, $"{90 + update}.0.0");
+            (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+            input.Feed($$"""{"jsonrpc":"2.0","id":{{10 + update}},"method":"ping"}""");
+            (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(10 + update);
+        }
+
+        children.Started.ShouldBe(3);
+        children.Disposed(0).ShouldBeTrue();
+        children.Disposed(1).ShouldBeTrue();
+        children.Disposed(2).ShouldBeFalse();
+
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        children.Disposed(2).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AServerStartedAsAHandOverChildNeverStartsAChildWhateverTheInstalledVersion()
+    {
+        var started = 0;
+        var version = 0;
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>($"{Interlocked.Increment(ref version)}.0.0"), watch: TimeSpan.FromMilliseconds(10), log: new StringWriter(),
+            startChild: _ => { Interlocked.Increment(ref started); throw new IOException("must not start"); }, handedOver: true);
+        var running = server.RunAsync(input, output, Ct);
+
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        await Task.Delay(150, Ct);
+        input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+
+        started.ShouldBe(0);
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+    }
+
+    [Fact]
+    public async Task ASwapWhoseNewChildDoesNotAnswerInitializeKeepsTheCurrentChildServingAndSaysWhyOnce()
+    {
+        var children = new TrackedChildren(_node.Folder, _node.SocketPath);
+        var version = "91.0.0";
+        var deadStarts = 0;
+        var dead = new List<bool[]>();
+        var log = new StringWriter();
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>(Volatile.Read(ref version)), watch: TimeSpan.FromMilliseconds(20), log: log,
+            startChild: args =>
+            {
+                if (Volatile.Read(ref version) != "92.0.0")
+                {
+                    return children.Start(args);
+                }
+                // The new binary's server ends before it answers initialize.
+                Interlocked.Increment(ref deadStarts);
+                var flag = new bool[1];
+                dead.Add(flag);
+                var gone = new FedReader();
+                gone.Dispose();
+                return new McpChild(new FeedWriter(new FedReader()), gone, () => flag[0] = true);
+            });
+        var running = server.RunAsync(input, output, Ct);
+
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+        Volatile.Write(ref version, "92.0.0");
+        await Task.Delay(200, Ct);
+        input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+
+        deadStarts.ShouldBe(1);
+        dead[0][0].ShouldBeTrue();
+        children.Started.ShouldBe(1);
+        children.Disposed(0).ShouldBeFalse();
+        log.ToString().ShouldContain("did not come up");
+        log.ToString().Split("did not come up").Length.ShouldBe(2);
+
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
     }
 
     private const string Restarting = "the node is restarting (or not running): try again in a moment";
@@ -430,6 +552,7 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARemoteNodeNobodyListensOn_IsTheSameToolErrorAndTheServerKeepsGoing()
     {
         using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

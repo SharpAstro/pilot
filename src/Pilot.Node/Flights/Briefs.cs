@@ -181,6 +181,8 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
+            + " never the full log, so a suite's output cannot fill your context.");
         text.AppendLine(WaitRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
@@ -678,7 +680,8 @@ public static class Briefs
         text.AppendLine("- `comment`: neither: questions, or findings that should not hold it up.");
         text.AppendLine("A `changes` verdict on the owner's PR starts a session that makes the changes. Start a finding with `design:` when it is");
         text.AppendLine("a question of design or direction (a choice for the author, not a defect to fix): such a finding goes to the");
-        text.AppendLine("controller and starts no fixer.");
+        text.AppendLine("controller and starts no fixer. Write it on one line as `design: <the question> Option: <choice> => <what follows>`,");
+        text.AppendLine("with 2 to 4 concrete options (each `Option: <choice> => <consequence in a line>`) and `Option*:` for the one you recommend.");
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {
@@ -714,6 +717,21 @@ public static class Briefs
             {
                 text.AppendLine($"- {finding.Path}:{finding.Line} {finding.Body}");
             }
+        }
+        var questions = review.Findings.Where(f => f.Body.StartsWith(PrReviews.DesignPrefix, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (questions.Length > 0 && review.DesignAnswer is { Length: > 0 } answer)
+        {
+            text.AppendLine();
+            text.AppendLine("The review asked these questions of design. The answer below is the author's decision: carry it out, do not reopen it.");
+            foreach (var question in questions)
+            {
+                text.AppendLine();
+                text.AppendLine($"### Question: {question.Path}:{question.Line}");
+                text.AppendLine(question.Body);
+            }
+            text.AppendLine();
+            text.AppendLine("### Answer");
+            text.AppendLine(answer);
         }
         text.AppendLine();
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
@@ -835,8 +853,8 @@ public static class Briefs
         // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
         text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
-        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises,");
-        text.AppendLine("and a flight's leg past its round cap, are the person's unless they ask for it in the chat: say so on the card and leave it to them.");
+        text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises");
+        text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
         text.AppendLine($"On a leg-failed card, run `{pilot} leg finish verified --leg <code>/<leg>` for that leg first: the node finishes it only if its pushed work checks out, else the card stays the person's.");
         text.AppendLine();
         if (model is { Length: > 0 })
@@ -901,6 +919,9 @@ public static class Briefs
         text.AppendLine("  One question per block, about one thing, and each choice says in full what it does to which flight, leg, PR or job, so it");
         text.AppendLine("  reads right on its own: \"Leave PIL338's leg waits-are-said alone for now\", \"Redo leg waits-are-said once more\", never");
         text.AppendLine("  \"Leave it\" or \"Yes\". After a reply that listed several open items, ask about one of them by name, not all at once.");
+        text.AppendLine($"  A design card (kind pr-review-design) you relay: read it with `{pilot} cards`, quote its question as the card has it (with its file and line),");
+        text.AppendLine($"  and make the card's choices the ask block's lines in the card's order. The one they press is pressed with `{pilot} answer <card> <choice> --why`;");
+        text.AppendLine("  a card with only the free-text choice asks for their words.");
         text.AppendLine("- \"Let's launch a flight for X\" (or \"start a flight on X\"), said in the chat, is yours to carry out end to end, in this order:");
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");
@@ -958,7 +979,7 @@ public static class Briefs
         text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
-        text.AppendLine("  The node refuses it past its third round, on a design question and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
+        text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you unless they ask for it in the chat, so answer it with a redo of the leg (a go-around), a resume");

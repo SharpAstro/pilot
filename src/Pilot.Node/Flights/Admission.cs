@@ -1,4 +1,5 @@
 using System.Globalization;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
@@ -60,6 +61,9 @@ public sealed record FleetSession(string Node, string Label, string? Model, bool
     /// <summary>What names the session across nodes and across a claim and the session that follows it (<c>worker:PIL1</c>); the label when none is given.</summary>
     public string Identity { get; init; } = "";
 
+    /// <summary>For an Idle session counted only because it has work pending (<c>idle, job j12 running</c>); null for any other. Never part of the key.</summary>
+    public string? Note { get; init; }
+
     internal string Key => Identity.Length > 0 ? Node.ToUpperInvariant() + "/" + Identity : Node.ToUpperInvariant() + "/" + Label;
 }
 
@@ -74,6 +78,9 @@ public sealed record FleetFlight(string Node, string Code, string Repo, FlightPh
 
     /// <summary>Marked <c>pilot: priority</c>: it bypasses the Opus cap and the repo hold, and still counts in the Opus figure.</summary>
     public bool Priority { get; init; }
+
+    /// <summary>The issue's Priority field, where the repo has it; the label counts as High where it does not. Orders the queue before the dependents rule and age.</summary>
+    public IssuePriority? Level { get; init; }
 
     /// <summary>When it was made, to order flights otherwise equal; unknown goes last.</summary>
     public DateTimeOffset? Since { get; init; }
@@ -145,7 +152,7 @@ public static class Admission
         if (IsOpus(request.Model) && input.OpusCap > 0
             && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
         {
-            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}"))}");
+            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => (s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}") + (s.Note is null ? "" : $" ({s.Note})")))}");
         }
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }
@@ -214,9 +221,14 @@ public static class Admission
         _ => "its plane is up",
     };
 
-    // Ordered first: the flights most others wait for, then the older, then by code.
+    // Ordered first: by Priority (Urgent, High, Medium, unset, Low), then the flights most others wait for, then the older, then by code.
     private static IComparer<FleetFlight> Ranking(Dictionary<string, int> dependents) => Comparer<FleetFlight>.Create((a, b) =>
     {
+        var byLevel = IssuePriorities.Rank(a.Level).CompareTo(IssuePriorities.Rank(b.Level));
+        if (byLevel != 0)
+        {
+            return byLevel;
+        }
         var byDependents = dependents.GetValueOrDefault(b.Key).CompareTo(dependents.GetValueOrDefault(a.Key));
         if (byDependents != 0)
         {

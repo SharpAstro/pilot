@@ -9,6 +9,8 @@ namespace Pilot.Node.Tests;
 /// Admission wired into the starts the node makes: the Opus cap, the one-flight-per-repo mode and the priority label, each showing
 /// as a queued reason on the row (never a ring or a stall) and starting by itself on the sweep once a slot frees.
 /// </summary>
+/// <remarks>Slow: every test starts legs of real flights in worktrees (2 to 9 s each run alone, up to 21.8 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class LegAdmissionTests : LegCommanderTestsBase
 {
     private void Settings(int cap, bool oneFlightPerRepo = false)

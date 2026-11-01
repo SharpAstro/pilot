@@ -16,7 +16,7 @@ public static class WindDown
         {
             return $"{code} has landed";
         }
-        if (ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Landed or SessionEndReasons.Merged } entry)
+        if (ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndReason: SessionEndReasons.Landed or SessionEndReasons.Merged or SessionEndReasons.Planned } entry)
         {
             return entry.EndReason;
         }

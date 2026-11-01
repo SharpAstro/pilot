@@ -195,7 +195,7 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
-                    RepoRootsKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
+                    RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }

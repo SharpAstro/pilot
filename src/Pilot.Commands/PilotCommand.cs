@@ -505,6 +505,10 @@ public static class PilotCommand
         var fly = Action(new Command("fly", "Stop the flight's wait for a package nuget.org does not serve: it flies now") { Arguments = { code } },
             (p, client, ct) => Send(client, Verbs.FlyAnyway, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
+        var level = Arg("level", "urgent, high, medium, low, or none to clear it");
+        var priority = Action(new Command("priority", "Set the Priority field of the flight's issue (none clears it)") { Arguments = { code, level } },
+            (p, client, ct) => Send(client, Verbs.FlightPriority, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(level)!], who, ct));
+
         var move = Action(new Command("move", "Hand the flight to the best willing node of the fleet: its plane is pushed and checked, and this node stops flying it") { Arguments = { code }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.MoveFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
 
@@ -561,7 +565,7 @@ public static class PilotCommand
         var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
             (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
         var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, move, pr, reviewStart, allowRound, merge, land } };
+            { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, pr, reviewStart, allowRound, merge, land } };
 
         // leg
         var name = Arg("name", "The leg's name: lower-case letters, digits and dashes");
@@ -719,11 +723,12 @@ public static class PilotCommand
             });
         // review fix: the fixer of a PR whose review asked for changes, as its card's Fix it starts it (#350: tianwen #1857's
         // fixer could not start, its card was gone, and nothing but a script could start it again)
-        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does") { Arguments = { prRef } },
+        var fixAnswer = new Argument<string[]>("answer") { Description = "The answer to the review's question of design, posted on the PR first; without it the PR's author's or the controller's comment after the review is the answer", Arity = ArgumentArity.ZeroOrMore };
+        var reviewFix = Action(new Command("fix", "Start a fixer on a PR whose review asked for changes, as its card's Fix it does; a review that asked a question of design needs its answer (words after the PR, or a comment on the PR)") { Arguments = { prRef, fixAnswer } },
             (p, client, ct) =>
             {
                 var pr = Pr(p.GetValue(prRef)!);
-                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+                return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), p.GetValue(fixAnswer) ?? [], who, ct);
             });
         var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
         {
@@ -751,8 +756,9 @@ public static class PilotCommand
         var choice = Words("choice", "The choice's number or label");
         // --why is the message acted on, as for the person's own commands: the watchtower quotes the person's words in its chat
         // with it, and the node takes such an answer or dismissal as theirs. A dismissal's reason stays its own words.
-        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn } },
-            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice)], who, ct, p.GetValue(actingOn)));
+        var answerWords = new Option<string[]>("--words") { Description = "The words a choice that asks for them needs, such as the design card's Answer", Arity = ArgumentArity.OneOrMore, AllowMultipleArgumentsPerToken = true };
+        var answer = Action(new Command("answer", "Run the card's choice; the card closes when it is done") { Arguments = { card, choice }, Options = { actingOn, answerWords } },
+            (p, client, ct) => Send(client, Verbs.Answer, Verbs.CardTarget(p.GetValue(card)!), [Join(p, choice), .. p.GetValue(answerWords) ?? []], who, ct, p.GetValue(actingOn)));
         var dismissReason = Words("reason", "Why it needs nothing", required: false);
         var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissReason }, Options = { actingOn } },
             (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissReason) ?? [], who, ct, p.GetValue(actingOn)));
@@ -1337,12 +1343,14 @@ public static class PilotCommand
         if (console)
         {
             var mcp = new Command("mcp", "Serve these commands as MCP tools, and the node's flights, legs, cards and sessions as resources, over stdio: claude mcp add pilot -- pilot mcp");
+            var handedOver = new Option<bool>("--handed-over") { Hidden = true, Description = "Started by another pilot mcp's hand-over: never hands over itself" };
+            mcp.Options.Add(handedOver);
             mcp.SetAction(async (parseResult, ct) =>
             {
                 var utf8 = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
                 using var input = new StreamReader(Console.OpenStandardInput(), utf8);
                 await using var stdout = new StreamWriter(Console.OpenStandardOutput(), utf8);
-                await new McpServer(cwd, parseResult.GetValue(node), parseResult.GetValue(socket)).RunAsync(input, stdout, ct);
+                await new McpServer(cwd, parseResult.GetValue(node), parseResult.GetValue(socket), handedOver: parseResult.GetValue(handedOver)).RunAsync(input, stdout, ct);
                 return 0;
             });
             root.Subcommands.Add(mcp);
@@ -1851,7 +1859,7 @@ public static class PilotCommand
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {
-            yield return $"queued  {queued.Code}{(queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
+            yield return $"queued  {queued.Code}{(queued is { FromField: true, Level: { } level } ? $" [{IssuePriorities.Name(level).ToLowerInvariant()}]" : queued.Priority ? " [priority]" : "")}  {queued.Title}: {queued.Why}";
         }
     }
 
@@ -1917,7 +1925,8 @@ public static class PilotCommand
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",
                 _ => "flying",
             };
-            text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state})");
+            var level = flight.HasPriorityField && flight.IssuePriority is { } set ? $", priority {IssuePriorities.Name(set).ToLowerInvariant()}" : "";
+            text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state}{level})");
             text.AppendLine($"  plane {flight.Worktree} on {flight.Branch}{(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}");
             foreach (var leg in snapshot.Legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {

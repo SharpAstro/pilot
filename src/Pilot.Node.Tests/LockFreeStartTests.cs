@@ -11,6 +11,8 @@ namespace Pilot.Node.Tests;
 /// claude session leaves every other command answering, and the start's own command answers "started" and reports the start
 /// later, on its card.
 /// </summary>
+/// <remarks>Slow: every test starts legs of real flights in worktrees (eight of the nine measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class LockFreeStartTests : LegCommanderTestsBase
 {
     // A backstop, not the claim: each test proves its order (answered while the launcher is still held). One second failed on a

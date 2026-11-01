@@ -114,6 +114,12 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
+    public IssuePriority? IssuePriority { get; init; }
+
+    /// <summary>Whether the issue's repo has the Priority field (and the token can read it): where it does, it alone says priority and the <c>pilot: priority</c> label is ignored.</summary>
+    public bool HasPriorityField { get; init; }
+
     /// <summary>
     /// Why its planner or reviewer waits for admission (the Opus cap, the one-flight-per-repo mode); a leg's own wait is on
     /// <see cref="LegRow.Queued"/>. Not a stall and no ring: the node asks again on its sweep. Null when it waits for nothing.
@@ -162,6 +168,14 @@ public sealed record FlightRow
     }
 
     private readonly OverlapRow[]? _overlaps;
+
+    /// <summary>
+    /// The files the planner told <c>touches</c> its legs will change, kept normalised (forward slashes, each once): what a finished leg's
+    /// diff is compared against, so only a file nobody foresaw rings the overlap card (#564). Null when the planner never asked, which
+    /// compares every file of the diff. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? PlannedFiles { get; init; }
 
     /// <summary>
     /// The issues of other flights folded into this one (<c>fold</c>): its planner plans their points as legs after its own,
@@ -397,6 +411,10 @@ public sealed record OverlapRow
 
     /// <summary>The files both change, as the planner's <c>touches</c> said them; null when it did not say.</summary>
     public string[]? Files { get; init; }
+
+    /// <summary>The leg whose end rang this overlap, because its diff changed a file the other does; null for a planner's ask.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AfterLeg { get; init; }
 
     /// <summary>
     /// The choice the planner leans to, as <c>touches</c> picked it (<c>fold</c> or <c>connect</c>): what the card's title says. Null

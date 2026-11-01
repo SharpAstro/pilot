@@ -252,6 +252,70 @@ public sealed class AdmissionViewsTests
         }
     }
 
+    private static FlightRow Leveled(int i, IssuePriority? level, string? queued = "waiting for an Opus slot") =>
+        Flight(i, queued) with { HasPriorityField = true, IssuePriority = level };
+
+    [Fact]
+    public void ARowSaysItsLevelAndOnlyUrgentAndHighAreAPriorityFlight()
+    {
+        var lines = FlightLine.Build([Leveled(1, IssuePriority.Urgent), Leveled(2, IssuePriority.High), Leveled(3, IssuePriority.Medium), Leveled(4, IssuePriority.Low), Leveled(5, null)], [], Now, [], null);
+
+        lines.Single(l => l.Code == "PIL901").LevelMark.ShouldBe("urgent");
+        lines.Single(l => l.Code == "PIL902").LevelMark.ShouldBe("high");
+        lines.Single(l => l.Code == "PIL903").LevelMark.ShouldBe("medium");
+        lines.Single(l => l.Code == "PIL904").LevelMark.ShouldBe("low");
+        lines.Single(l => l.Code == "PIL905").ShouldSatisfyAllConditions(l => l.LevelMark.ShouldBeNull(), l => l.ShownPriority.ShouldBeNull());
+        lines.Where(l => l.PriorityMark is not null).Select(l => l.Code).Order().ShouldBe(["PIL901", "PIL902"]);
+        lines.Single(l => l.Code == "PIL903").ShownPriority.ShouldBe("medium");
+    }
+
+    [Fact]
+    public void TheQueueGoesUrgentHighMediumUnsetLowInPilotStatusAndOnHome()
+    {
+        FlightRow[] flights = [Leveled(1, IssuePriority.Low), Leveled(2, null), Leveled(3, IssuePriority.Medium), Leveled(4, IssuePriority.High), Leveled(5, IssuePriority.Urgent)];
+        var queue = QueuedFlight.Of(flights, [], null);
+        queue.Select(q => q.Code).ShouldBe(["PIL905", "PIL904", "PIL903", "PIL902", "PIL901"]);
+
+        var snapshot = Snapshot(flights, [], null);
+        var status = string.Join('\n', PilotCommand.AdmissionLines(snapshot));
+        status.ShouldContain("PIL905 [urgent]");
+        status.ShouldContain("PIL903 [medium]");
+        status.ShouldContain("PIL901 [low]");
+        status.IndexOf("PIL905", StringComparison.Ordinal).ShouldBeLessThan(status.IndexOf("PIL904", StringComparison.Ordinal));
+        status.IndexOf("PIL902", StringComparison.Ordinal).ShouldBeLessThan(status.IndexOf("PIL901", StringComparison.Ordinal));
+
+        var home = new HomeScreen(Screens(flights, [], null), new SessionsScreen([], "t", Now), new JobsScreen([], "t", Now), CardsScreen.Empty);
+        home.QueueLines.Select(q => q.Line.Code).ShouldBe(["PIL905", "PIL904", "PIL903", "PIL902", "PIL901"]);
+    }
+
+    [Fact]
+    public void TheFlightPageOffersEachOtherLevelAndNoneOnlyWhereTheRepoHasTheField()
+    {
+        var withField = FlightLine.Build([Leveled(1, IssuePriority.High, null)], [], Now, [], null).Single();
+        var choices = FlightAction.For(withField).Where(a => a.Verb == Verbs.FlightPriority).ToList();
+        choices.Select(a => a.Args[0]).ShouldBe(["urgent", "medium", "low", "none"]);
+        choices.Select(a => a.Key).Distinct().Count().ShouldBe(4);
+
+        var without = FlightLine.Build([Flight(2, null)], [], Now, [], null).Single();
+        FlightAction.For(without).ShouldNotContain(a => a.Verb == Verbs.FlightPriority);
+    }
+
+    [Theory]
+    [InlineData("flights table")]
+    [InlineData("flight page")]
+    [InlineData("home")]
+    public async Task ALevelOnARowTheQueueAndThePageDrawsWithoutTextOverText(string page)
+    {
+        var data = PageData.For("long");
+        data.Flights.Lines.ShouldContain(l => l.LevelMark == "medium");
+        data.Flights.Lines.ShouldContain(l => l.LevelMark == "low");
+        foreach (var width in new[] { 700, 1900 })
+        {
+            var faults = await PageTextOverlapTests.FaultsOf(page, "long", width, 1f);
+            faults.Select(f => f.Line).ShouldBeEmpty($"{page} at {width}");
+        }
+    }
+
     /// <summary>The longest a frame of a page with many flights queued takes to lay out and draw (median of the frames), in milliseconds.</summary>
     private const double FrameBudgetMs = 250;
 

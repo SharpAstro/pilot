@@ -46,8 +46,9 @@ public sealed record CommandRequest
     /// <summary>
     /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
     /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
-    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). Null for a
-    /// client that does not retry (the GUI, a card's button): every send runs.
+    /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). The GUI gives
+    /// every chat send a fresh id, and a say carries it on to the session's delivery, so a retried send reaches the
+    /// session once. Null for a client that does not retry (a card's button): every send runs.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestId { get; init; }
@@ -182,6 +183,12 @@ public static class Verbs
     /// that nuget.org does not serve, or never will), and flies when nothing else holds it.
     /// </summary>
     public const string FlyAnyway = "fly-anyway";
+
+    /// <summary>
+    /// <c>flight-priority flight/&lt;code&gt; &lt;urgent|high|medium|low|none&gt;</c>: writes the Priority field of the flight's issue
+    /// (<c>none</c> clears it) and puts the level on the flight's row. Refused, naming the <c>pilot: priority</c> label, where the repo has no field.
+    /// </summary>
+    public const string FlightPriority = "flight-priority";
 
     /// <summary>
     /// <c>receive-flight flight/&lt;code&gt; &lt;FlightMove as JSON&gt;</c> (#376): another node of the fleet hands this one a flight, with its whole
@@ -782,6 +789,12 @@ public static class MergeWays
     /// merge again. Handled, not refused: the PR was not merged and nothing is left to answer.
     /// </summary>
     public const string Updated = "updated";
+
+    /// <summary>
+    /// A merge of this flight is already running and this ask was a repeat of it: answered ok and left alone. Not merged, and no
+    /// news about where the first one stands, so a caller leaves its card open and looks again later.
+    /// </summary>
+    public const string InProgress = "in-progress";
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>

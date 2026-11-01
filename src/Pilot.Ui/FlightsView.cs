@@ -29,6 +29,12 @@ internal sealed record FlightLine
     /// <summary>The mark on a priority flight's row and page (<see cref="FlightMarks.PriorityMark"/>); null for any other flight.</summary>
     public string? PriorityMark { get; init; }
 
+    /// <summary>The level of the issue's Priority field as a word (urgent, high, medium, low); null when unset or the repo has no field.</summary>
+    public string? LevelMark { get; init; }
+
+    /// <summary>What a row, card, page and queue line say: the level where there is one, else the priority mark.</summary>
+    public string? ShownPriority => LevelMark ?? PriorityMark;
+
     /// <summary>The plane's branch.</summary>
     public required string Branch { get; init; }
 
@@ -47,6 +53,9 @@ internal sealed record FlightLine
     /// listed they read as three sessions at it (PIL208's page, 2026-10-25).
     /// </summary>
     public IReadOnlyList<SessionRow> Working { get; init; } = [];
+
+    /// <summary>Every session of the flight the node still knows, whatever its state or role (the flight page links its legs' sessions from these).</summary>
+    public IReadOnlyList<SessionRow> AllSessions { get; init; } = [];
 
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
     public NodeMark? Node { get; init; }
@@ -109,6 +118,7 @@ internal sealed record FlightLine
         Queued = queued,
         StateDetail = StateDetail ?? (queued is null || Row.State != FlightState.Flying ? null : $"queued: {queued}"),
         PriorityMark = FlightMarks.IsPriority(Row, admission) ? FlightMarks.PriorityMark : null,
+        LevelMark = FlightMarks.LevelMark(Row),
     };
 
     /// <summary>Lines in drawing order (<see cref="Build"/>'s), several nodes' merged.</summary>
@@ -152,6 +162,7 @@ internal sealed record FlightLine
             },
             Branch = flight.Branch,
             Sessions = sessions.Count == 0 ? "no session" : $"{sessions.Count} {(sessions.Count == 1 ? "session" : "sessions")} · {live} live",
+            AllSessions = [.. sessions],
             Working = [.. sessions
                 .Where(s => s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer
                     && s.State is SessionState.Working or SessionState.Waiting)
@@ -223,7 +234,7 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
     public bool Confirm { get; init; }
 
     /// <summary>What names the action's button: its verb, and the other flight where several share a verb (one Remove wait for each connection).</summary>
-    public string Key => Verb == Verbs.Disconnect && Args.Length > 0 ? $"{Verb}:{Args[0]}" : Verb;
+    public string Key => Verb is Verbs.Disconnect or Verbs.FlightPriority && Args.Length > 0 ? $"{Verb}:{Args[0]}" : Verb;
 
     /// <summary>The start of the message it puts in the chat's box, for the person to finish; null when it is not said in the chat.</summary>
     public string? ChatMessage { get; init; }
@@ -298,6 +309,18 @@ internal sealed record FlightAction(string Label, string Verb, string Target, st
         if (line.Node is null or { Here: true })
         {
             actions.Add(new FlightAction("Plan a leg", Verbs.PlanLeg, target, []) { ChatMessage = $"plan a leg on {code}: " });
+        }
+        // Where the repo has the Priority field, the page offers each other level (and none, to clear it); the list's panel leaves them to the page.
+        if (flight.HasPriorityField)
+        {
+            foreach (var level in Enum.GetValues<IssuePriority>().Where(l => l != flight.IssuePriority))
+            {
+                actions.Add(new FlightAction($"Priority: {IssuePriorities.Name(level).ToLowerInvariant()}", Verbs.FlightPriority, target, [IssuePriorities.Name(level).ToLowerInvariant()]));
+            }
+            if (flight.IssuePriority is not null)
+            {
+                actions.Add(new FlightAction("Priority: none", Verbs.FlightPriority, target, ["none"]));
+            }
         }
         return [.. actions.Select(a => a with { Node = line.Node })];
     }
@@ -649,6 +672,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     {
         Palette.Use(Night);
         BeginFrame();
+        _mapBodySeen = null;
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
@@ -658,7 +682,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         _arranged = arranged;
         NoteLayersArranged(arranged);
         // A leg a card's link asked for: the layout just made knows where its block sits, so scroll there and paint again at the new offset.
-        if (RevealLeg(arranged))
+        // The map's body was not the size its tree was built for (the first frame, or a resized window): draw again at the right fit.
+        if (RevealLeg(arranged) || NoteMapBody())
         {
             Render(screen, bounds);
         }
@@ -831,9 +856,19 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
             GoBack();
             return true;
         }
+        // The wheel over the map pans it (Ctrl+wheel is left to zoom); the layer menu's own list took it first where it was over it.
+        if (!IsDetailOpen && evt is InputEvent.Scroll wheel && HandleMapScroll(wheel))
+        {
+            return true;
+        }
         if (IsDetailOpen)
         {
             return evt is InputEvent.KeyDown { Key: var scrollKey } && ScrollDetail(scrollKey);
+        }
+        // On the map the arrows and the zoom chords move the view; in List and Grid the arrows move the selection.
+        if (evt is InputEvent.KeyDown mapKey && HandleMapKey(mapKey))
+        {
+            return true;
         }
         return evt is InputEvent.KeyDown key && HandleListKey(key.Key, key.Modifiers);
     }
@@ -949,7 +984,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
         else if (CanCommand)
         {
             // Retry move is in the flight's red band, not said twice.
-            foreach (var action in FlightAction.For(line).Where(a => a.Verb != Verbs.MoveFlight))
+            foreach (var action in FlightAction.For(line).Where(a => a.Verb is not (Verbs.MoveFlight or Verbs.FlightPriority)))
             {
                 buttons.Add(ActionButton(line, action, $"flight:{line.Code}:{action.Key}"));
             }
@@ -1168,10 +1203,10 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
                 ? Layout.Builder.VStack(
                     Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
                     Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
-                : line.PriorityMark is { } priority
+                : line.ShownPriority is { } priority
                     ? Layout.Builder.VStack(
                         Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
-                        Whole(Layout.Builder.Text(priority, 11f, Held).RowH(18f), priority, 0))
+                        Whole(Layout.Builder.Text(priority, 11f, line.PriorityMark is null ? Dim : Held).RowH(18f), priority, 0))
                     : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
             ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, dim)),

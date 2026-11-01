@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Pilot.Contracts;
@@ -135,6 +136,18 @@ public sealed partial class LegCommander(
         var merged = false;
         FlightRow? moving = null;
         SubTask? removedSubTask = null;
+        // Set when this command marked its flight's leg-end check, so it clears only its own mark (a refused finish set none).
+        var markedLegEnd = false;
+        // Any other exception leaves the command with its mark held: the filter drops it and never catches.
+        bool DropLegEndMarkOnThrow()
+        {
+            if (markedLegEnd)
+            {
+                ClearLegEndChecking(CodeOf(command.Target));
+                markedLegEnd = false;
+            }
+            return false;
+        }
         try
         {
             if (peerRefusal is not null)
@@ -174,7 +187,12 @@ public sealed partial class LegCommander(
                     Tick(command);
                     break;
                 case Verbs.FinishLeg:
+                    // From before the leg is recorded done until its overlap check has rung or decided not to, the sweep starts nothing of this flight.
+                    MarkLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = true;
                     await FinishAsync(command, cancellationToken);
+                    // Whichever way the finish recorded the leg done (a push-blocked one puts it directly), the mark's life counts from now.
+                    RefreshLegEndChecking(CodeOf(command.Target));
                     break;
                 case Verbs.WaitLeg:
                     made = Wait(command);
@@ -233,9 +251,18 @@ public sealed partial class LegCommander(
                     break;
             }
         }
+        catch (InProgressException ex)
+        {
+            // A repeat of a step already running is no refusal: ok, saying so.
+            made = ex.Message;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
+        }
+        catch (Exception) when (DropLegEndMarkOnThrow())
+        {
+            throw;
         }
         finally
         {
@@ -276,7 +303,24 @@ public sealed partial class LegCommander(
             && ((command.Args ?? []).FirstOrDefault() is "done" or "accepted" or "verified" or PushedWithLease or MergedWithOrigin
                 || ((command.Args ?? []).FirstOrDefault() is "failed" && LegOf(command.Target).Leg.State == LegState.Done)))
         {
+            // The overlap check of what the plane changed, before the flight goes on: a card it rings holds the next leg through Due().
+            try
+            {
+                await CheckLegEndOverlapAsync(command.Target, cancellationToken);
+            }
+            finally
+            {
+                if (markedLegEnd)
+                {
+                    ClearLegEndChecking(CodeOf(command.Target));
+                    markedLegEnd = false;
+                }
+            }
             await AdvanceAsync(LegOf(command.Target).Flight, cancellationToken);
+        }
+        else if (markedLegEnd)
+        {
+            ClearLegEndChecking(CodeOf(command.Target));
         }
 
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last
@@ -479,10 +523,13 @@ public sealed partial class LegCommander(
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
                 }
+                // The merged base's push went up: what it brought may share a file with another flight (rings, never fails the update). Last, as it lets the lock go.
+                await CheckAfterPushAsync(flight, cancellationToken);
                 return (null, kept);
             }
             state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
+            await CheckAfterPushAsync(flight, cancellationToken);
             return (null, null);
         }
         catch (FlightException ex)
@@ -501,6 +548,21 @@ public sealed partial class LegCommander(
 
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
+
+    // The step each flight's advance was refused once: one miss rings nothing and the next sweep tries again; a second miss of the same step rings.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _missedOnce = new(StringComparer.Ordinal);
+
+    /// <summary>True when this refusal of <paramref name="key"/> is the flight's first (it is noted and nothing rings); false on the second in a row, which rings.</summary>
+    private bool FirstMiss(string code, string key)
+    {
+        if (_missedOnce.TryGetValue(code, out var seen) && seen == key)
+        {
+            _missedOnce.TryRemove(code, out _);
+            return false;
+        }
+        _missedOnce[code] = key;
+        return true;
+    }
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _pilotMdRung = new(StringComparer.OrdinalIgnoreCase);
 
@@ -558,6 +620,8 @@ public sealed partial class LegCommander(
                 _plannersWaiting[code] = true;
             }
         }
+        // A planner whose plan is done is ended, so it frees its slot before the starts below ask for one.
+        await EndPlannedPlannersAsync(cancellationToken);
         // The starts admission holds go first, in the order it gives, so a freed slot goes to the one it ranks first.
         var flying = state.Flights().Where(f => f.State == FlightState.Flying).ToList();
         var queuedFirst = Slots.Order(flying.Where(f => f.Queued is not null || state.Legs(f.Code).Any(l => l.Queued is not null)).Select(f => f.Code));
@@ -623,6 +687,7 @@ public sealed partial class LegCommander(
         if (result.Ok)
         {
             _rung.TryRemove(current.Code, out _);
+            _missedOnce.TryRemove(current.Code, out _);
             // It went on here, so a move that failed once is no longer what it waits on (while the node is in maintenance it is held, and says so).
             if (!Models.Maintenance && current.MoveFailure is not null)
             {
@@ -646,6 +711,10 @@ public sealed partial class LegCommander(
         {
             return;
         }
+        if (FirstMiss(current.Code, $"{step.Verb} {step.Target}"))
+        {
+            return;
+        }
         _rung[current.Code] = $"failed {step.Target}";
         // Needs someone: the node tried the step itself and was refused, and says it once; asking again is the choice.
         var named = label.Replace("its ", $"{current.Code}'s ", StringComparison.Ordinal);
@@ -663,8 +732,18 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // The overlap check of a leg just finished has not rung or decided yet: nothing starts until it has, so a card cannot arrive after the next leg flies.
+        if (LegEndChecking(current.Code))
+        {
+            return null;
+        }
         // A session of it is being started: its next step waits for it to be up, as a step asked now would be refused.
         if (Starting(current.Code))
+        {
+            return null;
+        }
+        // Its PR is being opened already (by another sweep or a person): joined, not asked again, so no second call and no miss to ring.
+        if (IsCalling(current.Code, OpeningPr))
         {
             return null;
         }
@@ -694,6 +773,9 @@ public sealed partial class LegCommander(
     }
 
     private sealed record DueStep(CommandRequest? Step);
+
+    /// <summary>What a flight is <see cref="Calling"/> while its PR is opened.</summary>
+    private const string OpeningPr = "having its PR opened";
 
     /// <summary>The argument of the node's own <see cref="Verbs.StartReview"/> that pushes a head the PR lacks before the review starts.</summary>
     internal const string UnreadHeadArg = "unread-head";
@@ -737,6 +819,12 @@ public sealed partial class LegCommander(
         var result = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
         if (result.Ok)
         {
+            _missedOnce.TryRemove(current.Code, out _);
+            return false;
+        }
+        // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
+        if (FirstMiss(current.Code, key))
+        {
             return false;
         }
         _rung[current.Code] = key;
@@ -770,6 +858,11 @@ public sealed partial class LegCommander(
             }
         }
         await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
+        if (needsPush)
+        {
+            // What the push added may share a file with another flight; last, as it lets the lock go and the review is already started.
+            await CheckAfterPushAsync(flight, cancellationToken);
+        }
     }
 
     private async Task PlanAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -1712,6 +1805,8 @@ public sealed partial class LegCommander(
     private async Task RecordDoneAsync(FlightRow flight, LegRow leg, string? report, bool push, CancellationToken cancellationToken)
     {
         state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = report, Wait = null });
+        // The leg-end mark's leak guard counts from here, not from when the finish began: the leg's own check can outlast it (#564).
+        RefreshLegEndChecking(flight.Code);
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
         if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
         {
@@ -1886,6 +1981,44 @@ public sealed partial class LegCommander(
         }
     }
 
+    // The flights whose answered design question is sending a leg round now: that go-around may take a done leg, as the answer is the person's word.
+    private readonly ConcurrentDictionary<string, byte> _answeredDesign = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A PR review's design question on a flight's PR, answered: the flight's last leg goes round with <paramref name="why"/> (the
+    /// question and its answer), even when it is done. It is the go-around command itself, so the cap on rounds, the held loop and
+    /// the taking back of an armed merge all hold. Null when it went round; else why not.
+    /// </summary>
+    public async Task<string?> AnsweredDesignAsync(string code, string why, string? who, string? personsWord, CancellationToken cancellationToken)
+    {
+        if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is not { } last)
+        {
+            return $"{code} has no leg to send round";
+        }
+        _answeredDesign[code] = 0;
+        try
+        {
+            var result = await RunAsync(new CommandRequest
+            {
+                Verb = Verbs.GoAround,
+                Target = Verbs.LegTarget(code, last.Name),
+                Args = [why],
+                Who = who is { Length: > 0 } ? who : "node",
+                PersonsWord = personsWord,
+            }, cancellationToken);
+            // A command queued behind the lock runs later, and still needs the mark.
+            if (result.Later is { } later)
+            {
+                result = await later;
+            }
+            return result.Error;
+        }
+        finally
+        {
+            _answeredDesign.TryRemove(code, out _);
+        }
+    }
+
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, leg) = LegOf(command.Target);
@@ -1897,7 +2030,9 @@ public sealed partial class LegCommander(
         }
         // A done leg goes around too when the review asked for changes: that is how they are made.
         // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
+        // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
         if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
+            && !(leg.State == LegState.Done && _answeredDesign.ContainsKey(flight.Code))
             && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind is MergeFailed or PrReady && c.Subject == Verbs.FlightTarget(flight.Code) && c.Choices.Any(ch => ch.Verb == Verbs.GoAround))))
         {
             throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
@@ -2018,6 +2153,12 @@ public sealed partial class LegCommander(
         }
         if (underWay)
         {
+            // The entry is the job row: live while it is open and moved within StuckAfter. Asked again, the merge answers ok and the entry is left as it is.
+            if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is { Open: true } live && time.GetUtcNow() - live.ChangedAt < StuckAfter)
+            {
+                // The repeat's own head and method are ignored: the first merge's stand. Its Way says "not merged, no news" to callers.
+                return (false, AlreadyInProgress, MergeWays.InProgress);
+            }
             throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
         }
         // The turn is the command's before its entry is put: a journal that cannot write the entry (a full disk) throws out of Enqueue
@@ -2080,7 +2221,9 @@ public sealed partial class LegCommander(
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
-        if (DroppedForConflict(flight.Code, pr.Head))
+        // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
+        // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
+        if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
             throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
@@ -2479,7 +2622,7 @@ public sealed partial class LegCommander(
         var title = string.Join(' ', command.Args ?? []).Trim();
         // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
         // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
-        using var call = Calling(flight.Code, "having its PR opened");
+        using var call = Calling(flight.Code, OpeningPr, coalesce: true);
         (FlightRow repaired, PullRequest pr, bool mergedBase) opened;
         try
         {
@@ -2713,7 +2856,7 @@ public sealed partial class LegCommander(
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
         // still being started: its start is out and not recorded yet (PIL338).
         if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
-                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone)
+                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone && !_plannersEnded.ContainsKey(s.Id))
             || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin
                 && !state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)))
             || IsStarting(PlanKey(flight.Code))))
@@ -2841,7 +2984,7 @@ public sealed partial class LegCommander(
             }
             throw new FlightException(RoundRefusal(flight));
         }
-        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
+        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer", coalesce: true);
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {

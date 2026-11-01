@@ -241,6 +241,21 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Called with the card and the choice's number from 1 when its button is clicked.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 
+    /// <summary>Called with the card, the choice's number and the words typed when a choice that asks for words (<see cref="CardChoice.AsksFor"/>) is clicked.</summary>
+    public Action<CardRow, int, string>? OnAnswerWords { get; set; }
+
+    private readonly Dictionary<string, TextInputState> _words = [];
+
+    /// <summary>The text field of a card's choice that asks for words, one per card, kept across frames.</summary>
+    internal TextInputState WordsOf(CardRow card, CardChoice choice)
+    {
+        if (!_words.TryGetValue(card.Id, out var input))
+        {
+            _words[card.Id] = input = new TextInputState { Placeholder = choice.AsksFor ?? "" };
+        }
+        return input;
+    }
+
     /// <summary>Called with the card when its Dismiss is clicked.</summary>
     public Action<CardRow>? OnDismiss { get; set; }
 
@@ -820,6 +835,22 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             var action = $"card:{card.Id}:{number}";
             // A choice shown as a chip stays one while a press is with the node; a button is dead, and says "…" if it is the one pressed.
             var label = StatusLabel(choice, card.Detail);
+            if (choice.AsksFor is not null)
+            {
+                var words = WordsOf(card, choice);
+                lines.Add(Layout.Builder.TextInput(words, 14f, Palette.Input).RowH(28f));
+                buttons.Add(closed
+                    ? Dead(label)
+                    : Presses.Button(card.Id, action, () => Pill(label, action, () =>
+                    {
+                        var typed = words.Text.Trim();
+                        if (typed.Length > 0)
+                        {
+                            OnAnswerWords?.Invoke(card, number, typed);
+                        }
+                    }), pressed => Dead(pressed ? $"{label} …" : label)));
+                continue;
+            }
             buttons.Add(closed
                 ? Dead(label)
                 : IsChip(choice.Status)

@@ -81,10 +81,15 @@ public sealed partial class LegCommander
     /// <summary>A leg session or a reviewer of the flight is being started: the sweep leaves its next step until it is up.</summary>
     internal bool Starting(string code) => IsStarting(LegsKey(code)) || IsStarting(ReviewKey(code));
 
-    private void RefuseIfStarting(string key, string what)
+    private void RefuseIfStarting(string key, string what, bool coalesce = false)
     {
         if (IsStarting(key))
         {
+            // A start asked again while it is live (PIL575): in progress, not refused. One out past StuckAfter is refused as before.
+            if (coalesce && _starting.TryGetValue(key, out var held) && time.GetUtcNow() - held.At < StuckAfter)
+            {
+                throw new InProgressException($"{what} is being started");
+            }
             throw new FlightException($"{what} is being started already: wait for its card, or for it to show");
         }
     }
@@ -300,15 +305,48 @@ public sealed partial class LegCommander
         return why is not null;
     }
 
-    /// <summary>Reads the <c>pilot: priority</c> label of the flight's issue at a start (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
+    /// <summary>
+    /// An issue that carries the <c>pilot: priority</c> label beside the Priority field: the field is set from the label (High when it is empty,
+    /// its own value kept otherwise) and the label removed, so it happens once. Returns the level the field has after; a refusal leaves it as it
+    /// was (the next start tries again) and never blocks a start.
+    /// </summary>
+    private static async Task<IssuePriority?> MigratePriorityLabelAsync(ITracker tracker, FlightRow flight, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        var now = level;
+        try
+        {
+            if (level is null)
+            {
+                await tracker.SetPriorityAsync(flight.RepoPath, flight.Issue, IssuePriority.High, cancellationToken);
+                now = IssuePriority.High;
+            }
+            await tracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Priority, cancellationToken);
+        }
+        catch (FlightException)
+        {
+        }
+        return now;
+    }
+
+    /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
     private async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken)
     {
         try
         {
             if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
             {
+                var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
                 var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
-                Slots.SetIssuePriority(flight.Code, labels.Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase));
+                var hasLabel = labels.Contains(PilotMarks.Priority, StringComparer.OrdinalIgnoreCase);
+                var level = read.Level;
+                if (read.HasField && hasLabel)
+                {
+                    level = await MigratePriorityLabelAsync(tracker, flight, read.Level, cancellationToken);
+                }
+                // Where the repo has the field it is the only source; the label counts only where there is none.
+                Slots.SetIssuePriority(flight.Code, !read.HasField && hasLabel);
+                var hasField = read.HasField;
+                state.UpdateFlight(flight.Code, f => f.HasPriorityField == hasField && f.IssuePriority == level ? f : f with { HasPriorityField = hasField, IssuePriority = level });
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

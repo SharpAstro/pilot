@@ -377,6 +377,9 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+  A repeat of a merge while the flight's first one is still running answers Ok with way `in-progress` (`MergeWays.InProgress`):
+  nothing is merged yet, so its card stays open, the autopilot and the armed-at-green merge neither report "merged" nor ring, and a
+  recheck ends with the label off and a Handled line saying a merge is already running. The first merge's own result updates the card.
 - **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
   kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
   a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
@@ -822,6 +825,15 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 `pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
 `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
 
+**Updates.** A server lives as long as its session and a host does not restart a stdio server it lost, so the server the
+client started watches the installed version (after each message and on a quiet timer) and, on a newer one, starts the
+newest binary's `pilot mcp --handed-over` (a hidden option), replays `initialize` to it, sends `tools/list_changed` once
+and relays both ways. It stays at most two processes deep however many updates there are: a hand-over child never looks
+at the installed version nor hands over, and the client-started server swaps its child on each later update, passing on
+the old child's replies still owed (for a bounded wait) before disposing it. A swap that fails (the binary cannot start,
+or the new child ends or does not answer `initialize`) keeps the current child serving, logs why once, and is not
+retried for that version.
+
 ## The GUI
 
 A button that asks the node something is made through `Presses` (`Pilot.Ui/Presses.cs`): it reads its working label on the frame it
@@ -935,8 +947,12 @@ The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, a
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
 line, so `ChatComposer` keeps the lines before the one being typed and shows them above the field, read-only: Backspace
 on an empty line takes the line before back into the field, and a paste of several lines lands as several. Moving the
-caret up into an earlier line waits for a multi-line field in DIR.Lib. A refusal (`refused: …`, the message clipped)
-is said in the chat itself, in red, until the next send goes through. A snapshot or capture has no node to tell, so the
+caret up into an earlier line waits for a multi-line field in DIR.Lib. Enter clears the box at once and the
+message shows as a pending `you · sending…` line; messages sent meanwhile queue behind it (`you · queued N`, with Drop) and go
+one after another, each to the node it was sent for, whichever page is shown. A delivery that was refused or threw stays as a
+`you · failed` line with the node's words and Retry (again, at the end of the queue) and Edit (back into the box, and its card
+back into the quote when none is up); it is on its node's page until then. A refused choice or restart is said in red until
+the next send goes through. A snapshot or capture has no node to tell, so the
 page shows no box and no buttons there.
 
 **The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
@@ -1487,8 +1503,10 @@ how its row looks. A flying leg's worker stalling is: its flight is derailing (s
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Redo leg**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
-watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
-`worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings
+watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed`, `worker-waiting-job` and
+`worker-nudged`); an idle worker over 90% of its context window is never nudged: it is compacted once
+(`worker-compacted`), and if it is idle and still full after that the leg goes round with a fresh worker
+(`worker-replaced`), ringing `worker-idle` only when that replacement fills and stalls too; a session that stopped twice in a turn with files not committed in its plane rings
 (`stopped-uncommitted`, see Hooks); and a PR's review rings with its verdict (`pr-review-ready`, about
 `pr/<owner>/<repo>#<n>`) and **Post**, which posts it to GitHub once, its worktree going when the card closes (see Any
 PR's review).

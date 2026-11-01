@@ -9,6 +9,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>Landing a flight or merging its PR winds down its sessions by the node's own act (#542), and a sweep rings for any that outlive it.</summary>
+/// <remarks>Slow: every test lands or merges a real flight (all four measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class WindDownTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

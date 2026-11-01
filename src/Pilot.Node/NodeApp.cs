@@ -210,6 +210,7 @@ public static class NodeApp
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
+            reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
@@ -237,6 +238,7 @@ public static class NodeApp
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
                 Models = services.GetRequiredService<RoleModels>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
+                Gate = services.GetRequiredService<StartGate>(),
                 Error = logWriter,
                 StartedPlanner = legs.StartedPlanner,
                 RestartPlanner = legs.RestartPlannerAsync,
@@ -264,7 +266,8 @@ public static class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Watchtower>());
-        builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>()));
+        builder.Services.AddSingleton<SendLog>();
+        builder.Services.AddSingleton(services => new WatchtowerChat(services.GetRequiredService<Watchtower>(), services.GetRequiredService<TranscriptBook>(), services.GetRequiredService<SendLog>()));
         builder.Services.AddSingleton(services => new Compactor(services.GetRequiredService<NodeState>(), services.GetRequiredService<Watchtower>(),
             services.GetRequiredService<NodeCommands>().RunAsync, services.GetRequiredService<TimeProvider>())
         {
@@ -341,6 +344,7 @@ public static class NodeApp
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
             {
                 Say = commands.RunAsync,
+                Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
             };
@@ -426,6 +430,7 @@ public static class NodeApp
         {
             // Ending a session cancels the jobs it owns.
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
+            Sends = services.GetRequiredService<SendLog>(),
         });
         configure?.Invoke(builder);
 

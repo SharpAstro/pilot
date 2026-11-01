@@ -133,7 +133,7 @@ public sealed partial class LegCommander
         var text = new System.Text.StringBuilder();
         text.Append($"{Named(flight)} overlaps {Named(other)}{(node is null ? "" : $", which flies on {node}")}.");
         text.Append($" The planner says: {why}.");
-        text.Append($" Connect holds {flight.Code} until {other.Code} has landed.");
+        text.Append($" Connect holds {flight.Code} until {other.Code} has landed (a card raised at a leg's end holds the next leg, never the one finished).");
         text.Append(" Plan in parallel flies both; the second to land resolves the conflicts.");
         text.Append(node is null
             ? $" Fold takes {flight.Code}'s issue into {other.Code}."
@@ -199,6 +199,11 @@ public sealed partial class LegCommander
         state.PutFlight(flight);
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"connect {flight.Code} to {at}", OverlapKind);
 
+        // A question raised at a leg's end (#564) has no planner waiting: the flight goes on at the node's next sweep, no session is started.
+        if (known.AfterLeg is not null)
+        {
+            return await GoOnAfterLegEndAnswerAsync(flight, $"{told ?? $"{flight.Code} is connected to {at}: it waits for it to land"}; no planner is started, as {known.AfterLeg} had finished and stays done; the next leg is held until {at} lands", cancellationToken);
+        }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
         // What the connect said stands: for a flight that landed already it is "nothing to wait for", not "waits".
@@ -237,9 +242,38 @@ public sealed partial class LegCommander
 
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
+        if (known.AfterLeg is not null)
+        {
+            return await GoOnAfterLegEndAnswerAsync(flight, $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on", cancellationToken);
+        }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
         return $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer";
+    }
+
+    /// <summary>
+    /// After the answer to a card raised at a leg's end: the check runs again (a second other flight with unforeseen files rings its own card,
+    /// one at a time) and the flight advances, off the lock as the finish path does. A connect leaves the next leg held by <see cref="Due"/>
+    /// until the other lands; a parallel answer lets it start. No planner is stopped or started.
+    /// </summary>
+    private async Task<string> GoOnAfterLegEndAnswerAsync(FlightRow flight, string told, CancellationToken cancellationToken)
+    {
+        // Marked from here, under the lock, so a sweep in the gap starts nothing before the re-check has rung or decided not to.
+        MarkLegEndChecking(flight.Code);
+        await OffLockAsync(null, async () =>
+        {
+            var last = state.Legs(flight.Code).Where(l => l.State == LegState.Done).OrderByDescending(l => l.Order).FirstOrDefault()?.Name ?? "the last leg";
+            try
+            {
+                await CheckOverlapAsync(flight.Code, last, cancellationToken);
+            }
+            finally
+            {
+                ClearLegEndChecking(flight.Code);
+            }
+            await AdvanceAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
+        });
+        return told;
     }
 
     /// <summary>The planner this node started for the flight and when, if it still holds one.</summary>
