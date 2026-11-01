@@ -11,12 +11,28 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class IssuePriorityTests : LegCommanderTestsBase
 {
+    // The base builds its commanders without a GitHub client, so they have no tracker to read the issue from: these run on ones that have.
+    private readonly FlightCommander _trackedFlights;
+    private readonly LegCommander _tracked;
+
+    public IssuePriorityTests()
+    {
+        var git = new GitCli();
+        _trackedFlights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
+        _tracked = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), _trackedFlights,
+            new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1"), TimeProvider.System);
+    }
+
+    private Task<CommandResult> TrackedLeg(string verb, string target, params string[] args) =>
+        _tracked.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+
     private void Settings(int cap, bool oneFlightPerRepo = false)
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", [cap.ToString()]).Settings!;
         settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
         settings = NodeSettings.With(settings, "one-flight-per-repo", [oneFlightPerRepo ? "on" : "off"]).Settings!;
         _legs.Models = new RoleModels(settings);
+        _tracked.Models = new RoleModels(settings);
     }
 
     private void OtherOpus(string name) =>
@@ -28,15 +44,15 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
 
     private async Task Flight(int issue, string leg)
     {
-        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = [issue.ToString(), "Work"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
-        (await Leg(Verbs.PlanLeg, $"flight/TIA{issue}", $"name={leg}", "goal=Do it", "done-when=It is done")).Ok.ShouldBeTrue();
+        (await _trackedFlights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = [issue.ToString(), "Work"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        (await TrackedLeg(Verbs.PlanLeg, $"flight/TIA{issue}", $"name={leg}", "goal=Do it", "done-when=It is done")).Ok.ShouldBeTrue();
     }
 
     private LegRow Leg1(string code, string name) => _state.Legs(code).Single(l => l.Name == name);
 
     private FlightRow Row(string code) => _state.Flights().Single(f => f.Code == code);
 
-    private async Task Start(int issue, string leg) => (await Leg(Verbs.StartLeg, Verbs.LegTarget($"TIA{issue}", leg))).Ok.ShouldBeTrue();
+    private async Task Start(int issue, string leg) => (await TrackedLeg(Verbs.StartLeg, Verbs.LegTarget($"TIA{issue}", leg))).Ok.ShouldBeTrue();
 
     [Fact]
     public async Task AHighIssueIsAdmittedOverTheOpusCapAndAnUnsetOneWaits()
@@ -161,7 +177,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         Row("TIA1").IssuePriority.ShouldBe(IssuePriority.High);
 
         // Asked again: the label is gone, so nothing is written a second time.
-        await _legs.AdvanceAllAsync(Ct);
+        await _tracked.AdvanceAllAsync(Ct);
         await Flight(2, "two");
         await Start(2, "two");
         _github.PrioritySets.Count.ShouldBe(1);
