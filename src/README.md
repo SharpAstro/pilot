@@ -822,6 +822,15 @@ The **resources** are the snapshot's pieces as JSON, each row as the node's wire
 `pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
 `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
 
+**Updates.** A server lives as long as its session and a host does not restart a stdio server it lost, so the server the
+client started watches the installed version (after each message and on a quiet timer) and, on a newer one, starts the
+newest binary's `pilot mcp --handed-over` (a hidden option), replays `initialize` to it, sends `tools/list_changed` once
+and relays both ways. It stays at most two processes deep however many updates there are: a hand-over child never looks
+at the installed version nor hands over, and the client-started server swaps its child on each later update, passing on
+the old child's replies still owed (for a bounded wait) before disposing it. A swap that fails (the binary cannot start,
+or the new child ends or does not answer `initialize`) keeps the current child serving, logs why once, and is not
+retried for that version.
+
 ## The GUI
 
 A button that asks the node something is made through `Presses` (`Pilot.Ui/Presses.cs`): it reads its working label on the frame it
@@ -935,8 +944,12 @@ The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, a
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
 line, so `ChatComposer` keeps the lines before the one being typed and shows them above the field, read-only: Backspace
 on an empty line takes the line before back into the field, and a paste of several lines lands as several. Moving the
-caret up into an earlier line waits for a multi-line field in DIR.Lib. A refusal (`refused: …`, the message clipped)
-is said in the chat itself, in red, until the next send goes through. A snapshot or capture has no node to tell, so the
+caret up into an earlier line waits for a multi-line field in DIR.Lib. Enter clears the box at once and the
+message shows as a pending `you · sending…` line; messages sent meanwhile queue behind it (`you · queued N`, with Drop) and go
+one after another, each to the node it was sent for, whichever page is shown. A delivery that was refused or threw stays as a
+`you · failed` line with the node's words and Retry (again, at the end of the queue) and Edit (back into the box, and its card
+back into the quote when none is up); it is on its node's page until then. A refused choice or restart is said in red until
+the next send goes through. A snapshot or capture has no node to tell, so the
 page shows no box and no buttons there.
 
 **The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
