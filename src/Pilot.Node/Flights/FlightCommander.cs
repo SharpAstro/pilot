@@ -81,7 +81,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -112,6 +112,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                         break;
                     case Verbs.FlyAnyway:
                         FlyAnyway(command);
+                        break;
+                    case Verbs.FlightPriority:
+                        made = await SetPriorityAsync(command, cancellationToken);
                         break;
                 }
             }
@@ -474,7 +477,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             return;
         }
-        await EnsureReadLabelsAsync(tracker, repoPath, code, cancellationToken);
+        await _setup.EnsureAsync(tracker, repoPath, code, cancellationToken);
         try
         {
             await tracker.AddLabelAsync(repoPath, item.Id, PilotMarks.NodeLabel(Machine), cancellationToken);
@@ -491,32 +494,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
     }
 
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Repo, string Label), bool> _readLabelsMade = new();
-
-    /// <summary>
-    /// Makes each label the node reads from a person (<see cref="PilotMarks.ReadFromPeople"/>) in the repo, once per repo per run.
-    /// A refusal is a Handled card, never a ring, and never loses the flight; it is tried again at the next create.
-    /// </summary>
-    private async Task EnsureReadLabelsAsync(ITracker tracker, string repoPath, string code, CancellationToken cancellationToken)
-    {
-        foreach (var label in PilotMarks.ReadFromPeople)
-        {
-            if (_readLabelsMade.ContainsKey((repoPath, label)))
-            {
-                continue;
-            }
-            try
-            {
-                await tracker.EnsureLabelAsync(repoPath, label, cancellationToken);
-                _readLabelsMade[(repoPath, label)] = true;
-            }
-            catch (FlightException ex)
-            {
-                state.RaiseCard(CardBin.Handled, "node-label-refused", $"flight/{code}", $"The label {label} could not be made in the repo of {code}: {LegCommander.OneLine(ex.Message)}", ex.Message);
-                return;
-            }
-        }
-    }
+    private readonly RepoSetup _setup = new(state);
 
     /// <summary>
     /// A create-flight this node, in maintenance, does not take itself: made on the best willing node of the fleet instead
@@ -1085,11 +1063,38 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         }
     }
 
-    /// <summary>
-    /// <c>fly-anyway flight/&lt;code&gt;</c>: the way out of a wait for a package that is not coming (its publish failed, or the
-    /// connection never needed it). Every package wait of the flight is dropped, its late card closed, and the flight flies when
-    /// nothing else holds it.
-    /// </summary>
+    /// <summary><c>flight-priority flight/&lt;code&gt; &lt;level&gt;</c>: writes the issue's Priority field (or clears it with <c>none</c>); refused where the repo has no field.</summary>
+    private async Task<string> SetPriorityAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = Find(command.Target);
+        var word = command.Args.FirstOrDefault()?.Trim();
+        IssuePriority? level;
+        if (string.Equals(word, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            level = null;
+        }
+        else if (IssuePriorities.TryParse(word, out var parsed))
+        {
+            level = parsed;
+        }
+        else
+        {
+            throw new FlightException("priority is one of urgent, high, medium, low or none");
+        }
+        if (Trackers?.Of(flight.Tracker) is not { } tracker)
+        {
+            throw new FlightException($"{flight.Code} has no tracker to set a priority on");
+        }
+        var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
+        if (!read.HasField)
+        {
+            throw new FlightException($"{flight.Code}'s repo has no Priority field (or the token cannot read it); mark a priority flight with the '{IssuePriorities.Label}' label instead");
+        }
+        await tracker.SetPriorityAsync(flight.RepoPath, flight.Issue, level, cancellationToken);
+        state.UpdateFlight(flight.Code, f => f with { HasPriorityField = true, IssuePriority = level });
+        return $"{flight.Code} priority {(level is { } l ? IssuePriorities.Name(l) : "cleared")}";
+    }
+
     private void FlyAnyway(CommandRequest command)
     {
         var flight = Find(command.Target);

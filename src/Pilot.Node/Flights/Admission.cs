@@ -1,4 +1,5 @@
 using System.Globalization;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
@@ -77,6 +78,9 @@ public sealed record FleetFlight(string Node, string Code, string Repo, FlightPh
 
     /// <summary>Marked <c>pilot: priority</c>: it bypasses the Opus cap and the repo hold, and still counts in the Opus figure.</summary>
     public bool Priority { get; init; }
+
+    /// <summary>The issue's Priority field, where the repo has it; the label counts as High where it does not. Orders the queue before the dependents rule and age.</summary>
+    public IssuePriority? Level { get; init; }
 
     /// <summary>When it was made, to order flights otherwise equal; unknown goes last.</summary>
     public DateTimeOffset? Since { get; init; }
@@ -217,9 +221,14 @@ public static class Admission
         _ => "its plane is up",
     };
 
-    // Ordered first: the flights most others wait for, then the older, then by code.
+    // Ordered first: by Priority (Urgent, High, Medium, unset, Low), then the flights most others wait for, then the older, then by code.
     private static IComparer<FleetFlight> Ranking(Dictionary<string, int> dependents) => Comparer<FleetFlight>.Create((a, b) =>
     {
+        var byLevel = IssuePriorities.Rank(a.Level).CompareTo(IssuePriorities.Rank(b.Level));
+        if (byLevel != 0)
+        {
+            return byLevel;
+        }
         var byDependents = dependents.GetValueOrDefault(b.Key).CompareTo(dependents.GetValueOrDefault(a.Key));
         if (byDependents != 0)
         {

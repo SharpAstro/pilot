@@ -335,9 +335,41 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
 internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
     IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
 
+/// <summary>What GitHub's Priority field says of an issue: whether the repo has the field (and the token reads it), and the level, null when unset.</summary>
+public sealed record PriorityRead(bool HasField, IssuePriority? Level)
+{
+    /// <summary>The repo or org has no Priority field, or the token cannot read it: the <c>pilot: priority</c> label stands in.</summary>
+    public static PriorityRead NoField { get; } = new(false, null);
+}
+
 /// <summary>The GitHub calls a merge needs, so a test decides what GitHub says.</summary>
 public interface IGitHub
 {
+    /// <summary>The Priority field of issue <paramref name="number"/>: <see cref="PriorityRead.NoField"/> where the repo has none or gh cannot read it, a null level where it is unset.</summary>
+    Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Makes the org's Priority issue field (single select: Urgent, High, Medium, Low) when it has none; an existing one is never renamed or
+    /// added to. True when it was made, false when it was there.
+    /// </summary>
+    /// <exception cref="FlightException">The owner is no organization, or GitHub or the token refused it.</exception>
+    Task<bool> EnsurePriorityFieldAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>The names of the labels the repo has; empty when gh cannot say.</summary>
+    Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken);
+
+    /// <summary>Deletes <paramref name="label"/> from the repo (gone already counts as deleted).</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>How many open issues carry <paramref name="label"/>.</summary>
+    /// <exception cref="FlightException">gh could not say.</exception>
+    Task<int> OpenIssuesWithLabelAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>Sets the Priority field of issue <paramref name="number"/> to <paramref name="level"/>; null clears it.</summary>
+    /// <exception cref="FlightException">The repo has no such field or GitHub refused it.</exception>
+    Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken);
+
     /// <summary>
     /// Where PR <paramref name="number"/>'s merge stands on GitHub (<see cref="MergeState"/>); null when GitHub would not say
     /// (<c>UNKNOWN</c> while it works the PR out, or no answer).
