@@ -68,6 +68,13 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// </summary>
     public Func<string, CancellationToken, Task>? Advance { get; set; }
 
+    /// <summary>
+    /// Starts the planner of a flight made here (plan-flight on it, taking who made it), off the reply, so a flight made by the CLI,
+    /// MCP or plan-idea is planned with no further command. A planner held by the window or admission waits and the sweep starts it.
+    /// Null where there is none (a test's commander).
+    /// </summary>
+    public Func<string, string, CancellationToken, Task<CommandResult>>? Plan { get; set; }
+
     /// <summary>The quiet card a flight folded into another leaves in place of a landed one.</summary>
     public const string FoldedKind = "folded";
 
@@ -163,8 +170,41 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
         {
             AdvanceOffReply(received, advance, cancellationToken);
         }
+        // A flight made here is planned off the reply too; one routed to another node (Way set) is planned there.
+        if (result.Ok && command.Verb == Verbs.CreateFlight && result.Way is null && result.Made is { } created && Plan is { } plan)
+        {
+            PlanOffReply(created, command.Who, plan, cancellationToken);
+        }
         return result;
     }
+
+    private void PlanOffReply(string code, string who, Func<string, string, CancellationToken, Task<CommandResult>> plan, CancellationToken cancellationToken)
+    {
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                var planned = await plan(code, who, cancellationToken);
+                if (!planned.Ok)
+                {
+                    RaisePlanRefused(code, planned.Error ?? "refused");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                RaisePlanRefused(code, ex.Message);
+            }
+        }, CancellationToken.None);
+        _advancing[task] = true;
+        _ = task.ContinueWith(t => _advancing.TryRemove(t, out _), TaskScheduler.Default);
+    }
+
+    private void RaisePlanRefused(string code, string why) =>
+        state.RaiseCard(CardBin.Ring, LegCommander.NextStepKind, Verbs.FlightTarget(code), $"{code} was made, but its planner was refused: {LegCommander.OneLine(why)}", why,
+            [new CardChoice { Label = $"Plan {code}", Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(code) }]);
 
     // The advances running after their receive-flight was answered; a test awaits them (WhenAdvancedAsync).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Task, bool> _advancing = [];

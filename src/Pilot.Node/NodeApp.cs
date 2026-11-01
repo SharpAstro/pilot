@@ -202,6 +202,9 @@ public static class NodeApp
             legs.Error = services.GetRequiredService<LogWriter>();
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
+            // A flight made here is planned at once: the create starts its planner, so no further plan-flight is needed.
+            services.GetRequiredService<FlightCommander>().Plan = (code, who, token) =>
+                legs.RunAsync(new CommandRequest { Verb = Verbs.PlanFlight, Target = Verbs.FlightTarget(code), Who = who }, token);
             return legs;
         });
         builder.Services.AddSingleton(services =>
