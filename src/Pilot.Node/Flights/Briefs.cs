@@ -181,6 +181,8 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
+            + " never the full log, so a suite's output cannot fill your context.");
         text.AppendLine(WaitRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time

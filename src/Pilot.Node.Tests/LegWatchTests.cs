@@ -46,18 +46,18 @@ public sealed class LegWatchTests
         return Task.FromResult(_state.Complete(command, _refuse));
     }
 
-    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null) =>
+    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
         _state.PutSession(new SessionRow
         {
-            Id = "a1b2c3d4",
-            SessionId = "a1b2c3d4-0000-4000-8000-000000000000",
+            Id = id,
+            SessionId = id + "-0000-4000-8000-000000000000",
             Name = "du1-tia1-parser",
             Kind = SessionKind.Background,
             Cwd = "/work/tia1",
             Role = SessionRole.Worker,
             Flight = "TIA1",
             Leg = "parser",
-            ContextTokens = 0,
+            ContextTokens = context,
             ContextWindow = 200_000,
             State = state,
             WaitingFor = waitingFor,
@@ -307,6 +307,173 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AnIdleWorkerWithRoomRingsAndItsDetailSaysItIsIdleWithRoom()
+    {
+        Worker(SessionState.Idle, context: 20_000);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            await _watch.LookAsync(Ct);
+        }
+
+        var card = Open().ShouldHaveSingleItem();
+        (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
+        card.Detail.ShouldStartWith("idle with room in its context (10% of its window used) and no job of its own running; ");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWaitingOnAJobOfItsOwnRaisesNoRingAndOneHandledLineSayingSo()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _state.PutJob(new JobRow
+        {
+            Id = "j3", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Running, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j3.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        _said.ShouldBeEmpty();
+        var line = Handled().ShouldHaveSingleItem();
+        line.Kind.ShouldBe("worker-waiting-job");
+        line.Title.ShouldContain("waits on a job of its own");
+    }
+
+    [Fact]
+    public void AFullContextIdleWorkerIsClassifiedFullAndOneWithRoomAsRoom()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        var leg = _state.Legs().First();
+        _watch.ClassifyIdle(leg, _state.Sessions().First()).ShouldBe(LegWatch.IdleCause.Full);
+        Worker(SessionState.Idle, context: 1_000);
+        _watch.ClassifyIdle(leg, _state.Sessions().First()).ShouldBe(LegWatch.IdleCause.Room);
+    }
+
+    [Fact]
+    public async Task ARefusedCompactionSendsTheLegRoundOnTheNextLook()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        _refuse = "no such session";
+        await _watch.LookAsync(Ct);
+        _said.Single().Verb.ShouldBe(Verbs.Compact);
+        _refuse = null;
+
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        _said[1].Verb.ShouldBe(Verbs.GoAround);
+        _said[1].Args[0].ShouldContain("context was full");
+        _said.Any(c => c.Verb == Verbs.Say).ShouldBeFalse();
+        Open().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACompactionThatNeverAnswersIsSpentAfterTheWaitAndTheLegGoesRound()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        _time.Advance(LegWatch.CompactWait);
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        _said[1].Verb.ShouldBe(Verbs.GoAround);
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWaitingOnAJobOfItsLegAloneRaisesNoRing()
+    {
+        Worker(SessionState.Idle, context: 1_000);
+        _state.PutJob(new JobRow
+        {
+            Id = "j4", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Queued, Owner = "zzzz", OwnerName = "someone-else",
+            Flight = "TIA1", Leg = "parser", LogPath = "/tmp/j4.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start,
+        });
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-waiting-job");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerAtNinetyFivePercentIsCompactedAndNotNudged()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        var compact = _said.ShouldHaveSingleItem();
+        (compact.Verb, compact.Target, compact.Who).ShouldBe((Verbs.Compact, "session/a1b2c3d4", "node"));
+        compact.Args[0].ShouldContain("job summaries");
+        _said.Any(c => c.Verb == Verbs.Say).ShouldBeFalse();
+        Open().ShouldBeEmpty();
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-compacted");
+
+        // Idle on and not yet answered: neither nudged nor compacted twice.
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerStillFullAfterItsCompactionIsReplacedByAGoAroundAndAReplacementThatFillsAgainRings()
+    {
+        Worker(SessionState.Idle, context: 190_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        _said.Single().Verb.ShouldBe(Verbs.Compact);
+
+        // It answered the compaction and is idle, still full.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 192_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        var around = _said[1];
+        (around.Verb, around.Target, around.Who).ShouldBe((Verbs.GoAround, "flight/TIA1/parser", "node"));
+        around.Args[0].ShouldContain("context was full");
+        around.Args[0].ShouldContain("96%");
+        Open().ShouldBeEmpty();
+        Handled().Select(c => c.Kind).ShouldContain("worker-replaced");
+
+        // The go-around gave the leg a fresh worker, which fills and stalls too: rung, naming the full context.
+        _state.PutLeg(_state.Legs("TIA1").Single() with { WorkerJob = "e5f6a7b8" });
+        Worker(SessionState.Idle, lastResponse: _time.GetUtcNow(), context: 185_000, id: "e5f6a7b8");
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+
+        _said.Count.ShouldBe(2);
+        // (The first worker still shows as a stray in this test, as a real one is stopped by the node; only the idle ring is looked at.)
+        var card = Open().Where(c => c.Kind != LegWatch.StraySession).ShouldHaveSingleItem();
+        (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
+        card.Title.ShouldContain("filled its context again");
+        card.Title.ShouldNotContain("nudged");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerUnderNinetyPercentIsNudgedAsBefore()
+    {
+        Worker(SessionState.Idle, context: 170_000);
+        _time.Advance(TimeSpan.FromMinutes(4));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Say);
+        Handled().ShouldHaveSingleItem().Kind.ShouldBe("worker-nudged");
+    }
+
+    [Fact]
     public async Task ANudgeTheNodeCannotDeliverRings()
     {
         Worker(SessionState.Ended);
@@ -316,7 +483,7 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Detail).ShouldBe((LegWatch.Idle, "the node tried to nudge it: the folder is gone"));
+        (card.Kind, card.Detail).ShouldBe((LegWatch.Idle, "idle with room in its context (0% of its window used) and no job of its own running; the node tried to nudge it: the folder is gone"));
         card.Title.ShouldEndWith("could not be nudged: the folder is gone");
     }
 
