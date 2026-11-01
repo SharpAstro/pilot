@@ -355,7 +355,8 @@ public sealed class LegWatchTests
         await _watch.LookAsync(Ct);
 
         _said.Count.ShouldBe(2);
-        var card = Open().ShouldHaveSingleItem();
+        // (The first worker still shows as a stray in this test, as a real one is stopped by the node; only the idle ring is looked at.)
+        var card = Open().Where(c => c.Kind != LegWatch.StraySession).ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
         card.Title.ShouldContain("filled its context again");
         card.Title.ShouldNotContain("nudged");
