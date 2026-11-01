@@ -343,6 +343,7 @@ public sealed class StandingTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFlightsSessionMayNotTargetAnotherFlightButHasItsOwn()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

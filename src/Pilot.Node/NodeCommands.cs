@@ -597,6 +597,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             {
                 Get<LegCommander>().ShowMerge(choice.Target, result.Made, result.Way);
             }
+            else if (result.Way == MergeWays.InProgress)
+            {
+                // A repeat of a merge already running: the card stays open, and the first merge's result updates or closes it.
+            }
             else if (!state.CloseCard(card.Id, choice.Label, command.Who))
             {
                 // Closed by the landing already, as landed: it says too which answer it was.

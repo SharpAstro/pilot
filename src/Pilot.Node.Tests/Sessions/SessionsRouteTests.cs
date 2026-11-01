@@ -43,6 +43,7 @@ public sealed class SessionsRouteTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARowPutBeforeTheTrackersFirstPollIsLeftAloneByIt()
     {
         // The first poll of a real node runs at any moment after the host starts: here it runs after a row was put, as

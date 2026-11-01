@@ -5,6 +5,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>A git that outlives its budget or is cancelled says what it was and what it had said, so a CI log names the hang.</summary>
+[Trait("Category", "Slow")]
 public sealed class GitCliBudgetTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("p2g-").FullName;
@@ -37,6 +38,7 @@ public sealed class GitCliBudgetTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitPastItsBudgetIsKilledAndTheMessageNamesItsArgsFolderAndOutput()
     {
         // Long enough for a loaded runner to start sh and say its piece; it only costs the whole budget when git is not killed.
@@ -68,6 +70,7 @@ public sealed class GitCliBudgetTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AGitThatExitsLeavingAChildHoldingItsPipesIsBoundedByTheBudgetAndSaysSo()
     {
         // The alias backgrounds a sleep that inherits the pipes, so git exits while its output never closes.

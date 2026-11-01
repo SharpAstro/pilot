@@ -113,11 +113,11 @@ public sealed class ListTableTests : IDisposable
     }
 
     // Sessions' values for the first row, which name each column's cell.
-    private static string[] SessionTitles => ["Session", "Model", "Context", "Last response", "State", "Spend"];
+    private static string[] SessionTitles => ["Session", "Model", "Context", "Last response", "State", "Spend", "Age", "Spend/min"];
 
     private static (string Title, string Value)[] SessionColumns(SessionLine line) =>
     [
-        ("Session", line.Role), ("Model", line.Model), ("Context", line.Context), ("Last response", line.LastResponse), ("State", line.State), ("Spend", line.Spend),
+        ("Session", line.Role), ("Model", line.Model), ("Context", line.Context), ("Last response", line.LastResponse), ("State", line.State), ("Spend", line.Spend), ("Age", line.Age), ("Spend/min", line.SpendPerMinute),
     ];
 
     private static (string Title, string Value)[] JobColumns(JobLine line) =>
@@ -155,9 +155,9 @@ public sealed class ListTableTests : IDisposable
 
     private PilotChrome<RgbaImage> Chrome() => new(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
 
-    private static void ClickTitle(SessionsView<RgbaImage> view, SessionsScreen screen, string title)
+    private static void ClickTitle(SessionsView<RgbaImage> view, SessionsScreen screen, string title, float width = PageWidth)
     {
-        view.Render(screen, new RectF32(0f, 0f, PageWidth, PageHeight));
+        view.Render(screen, new RectF32(0f, 0f, width, PageHeight));
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
         regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"sessions:table:{title}").OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
@@ -208,7 +208,8 @@ public sealed class ListTableTests : IDisposable
             using (var file = GuiSettingsFile.Open(path))
             {
                 chrome.KeepColumnWidths(file, () => { });
-                ClickTitle(chrome.Sessions, screen, "Spend");
+                // Spend is an optional column: at 1280 it is dropped now Age and Spend/min share the row, so this click needs the wide page.
+                ClickTitle(chrome.Sessions, screen, "Spend", 1400f);
                 file.Flush();
             }
 
@@ -243,7 +244,10 @@ public sealed class ListTableTests : IDisposable
         }
         finally
         {
-            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+            if (Directory.Exists(Path.GetDirectoryName(path)!))
+            {
+                Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+            }
         }
     }
 
@@ -433,7 +437,8 @@ public sealed class ListTableTests : IDisposable
     {
         var view = Sessions();
         var screen = SessionsScreenOf();
-        var cells = Arranged(view.Tree(screen));
+        // Wide enough for every optional column, Age and Spend/min among them.
+        var cells = Arranged(view.Tree(screen), 1400f);
         var first = screen.Lines[0];
 
         // Each title sits over its values, and the fixed columns have the widths the page declares: the next column starts a gap after.
@@ -443,6 +448,8 @@ public sealed class ListTableTests : IDisposable
         }
         (cells.HeaderX("Last response") - cells.HeaderX("Context") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
         (cells.HeaderX("Spend") - cells.HeaderX("State") - ListTable.ColumnGap).ShouldBe(160f, 0.5f);
+        (cells.HeaderX("Age") - cells.HeaderX("Spend") - ListTable.ColumnGap).ShouldBe(130f, 0.5f);
+        (cells.HeaderX("Spend/min") - cells.HeaderX("Age") - ListTable.ColumnGap).ShouldBe(80f, 0.5f);
         (cells.HeaderX("Context") - cells.HeaderX("Model") - ListTable.ColumnGap).ShouldBe(140f, 0.5f);
         cells.HasHeader("Node").ShouldBeFalse("the Node column shows only with several nodes known");
         view.Table.Saved.ShouldBeEmpty();
@@ -643,8 +650,8 @@ public sealed class ListTableTests : IDisposable
         var view = Sessions();
         var screen = SessionsScreenOf();
 
-        // Wide enough for everything, then too narrow for the optional columns: they go from the header and the rows alike.
-        var wide = Arranged(view.Tree(screen), 1280f);
+        // Wide enough for everything (Age and Spend/min included), then too narrow for the optional columns: they go from the header and the rows alike.
+        var wide = Arranged(view.Tree(screen), 1400f);
         var narrow = Arranged(view.Tree(screen), 760f);
         var first = screen.Lines[0];
 

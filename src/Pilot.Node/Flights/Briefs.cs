@@ -181,6 +181,8 @@ public static class Briefs
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
             + " a quick build of one project) you run yourself, as usual."); 
+        text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
+            + " never the full log, so a suite's output cannot fill your context.");
         text.AppendLine(WaitRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
@@ -678,7 +680,8 @@ public static class Briefs
         text.AppendLine("- `comment`: neither: questions, or findings that should not hold it up.");
         text.AppendLine("A `changes` verdict on the owner's PR starts a session that makes the changes. Start a finding with `design:` when it is");
         text.AppendLine("a question of design or direction (a choice for the author, not a defect to fix): such a finding goes to the");
-        text.AppendLine("controller and starts no fixer.");
+        text.AppendLine("controller and starts no fixer. Write it on one line as `design: <the question> Option: <choice> => <what follows>`,");
+        text.AppendLine("with 2 to 4 concrete options (each `Option: <choice> => <consequence in a line>`) and `Option*:` for the one you recommend.");
         var own = login is { Length: > 0 } && string.Equals(login, review.Author, StringComparison.OrdinalIgnoreCase);
         if (own)
         {
@@ -753,6 +756,7 @@ public static class Briefs
         text.AppendLine($"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
+        text.AppendLine("- If GitHub refuses a push because the PR has merged (or is in a merge queue and is merging), the node follows up a merged PR's commits: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");
         text.AppendLine("- End your turn once the push and the comment are done.");
         return text.ToString();
     }
@@ -916,6 +920,9 @@ public static class Briefs
         text.AppendLine("  One question per block, about one thing, and each choice says in full what it does to which flight, leg, PR or job, so it");
         text.AppendLine("  reads right on its own: \"Leave PIL338's leg waits-are-said alone for now\", \"Redo leg waits-are-said once more\", never");
         text.AppendLine("  \"Leave it\" or \"Yes\". After a reply that listed several open items, ask about one of them by name, not all at once.");
+        text.AppendLine($"  A design card (kind pr-review-design) you relay: read it with `{pilot} cards`, quote its question as the card has it (with its file and line),");
+        text.AppendLine($"  and make the card's choices the ask block's lines in the card's order. The one they press is pressed with `{pilot} answer <card> <choice> --why`;");
+        text.AppendLine("  a card with only the free-text choice asks for their words.");
         text.AppendLine("- \"Let's launch a flight for X\" (or \"start a flight on X\"), said in the chat, is yours to carry out end to end, in this order:");
         text.AppendLine($"  1. `{pilot} issue create \"<title>\" --repo <the repo's checkout> --body \"<what and why, from what they said>\"` prints the issue's number");
         text.AppendLine($"     (`{pilot} repos` lists the repos and their checkouts; with more than one that could be meant, ask which). If they named an");

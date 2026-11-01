@@ -53,6 +53,15 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
     }
 
+    /// <summary>How many person messages the session's transcript holds: prompts that are no note and come from no other session (the node's says, hand-backs and tool output are not counted).</summary>
+    public int PersonMessages(string sessionId)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null) is { } reader ? reader.Entries.Count(e => e is { Kind: TranscriptKind.User, Note: false, From: null }) : 0;
+        }
+    }
+
     /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.
@@ -225,7 +234,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             // A message taken mid-turn (the person's tell while the session is working) is an attachment, not a user line.
             if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
             {
-                Said(PromptText(attachment));
+                var origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+                Said(Relayed(PromptText(attachment), origin) ?? PromptText(attachment));
                 return;
             }
             if (type is not ("assistant" or "user") || !line.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
@@ -235,8 +245,18 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
             if (type == "user")
             {
-                if (Pending is null || line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
+                if (Pending is null)
                 {
+                    return;
+                }
+                if (line.TryGetProperty("isMeta", out var meta) && meta.ValueKind == JsonValueKind.True)
+                {
+                    // A meta line is Claude Code's own, except a relay that began a turn: a say to a session between turns.
+                    if (line.TryGetProperty("origin", out var metaOrigin)
+                        && Relayed(content.ValueKind == JsonValueKind.String ? content.GetString() ?? "" : "", metaOrigin) is { } relayed)
+                    {
+                        Said(relayed);
+                    }
                     return;
                 }
                 Said(content.ValueKind switch
@@ -350,13 +370,27 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             };
             if (taken is { Length: > 0 })
             {
-                // Compared on the first of the queued text: a long message can come back with more round it.
-                var i = Queued.FindIndex(q => taken.Contains(q[..Math.Min(200, q.Length)], StringComparison.Ordinal));
+                // Compared on the first of the queued words: a long message can come back with more round it, a resume delivers
+                // the words without the relay's footer, and line endings and runs of spaces are not words.
+                var words = Same(taken);
+                var i = Queued.FindIndex(q => words.Contains(Same(q)[..Math.Min(200, Same(q).Length)], StringComparison.Ordinal));
                 if (i >= 0)
                 {
                     Queued.RemoveAt(i);
                 }
             }
+        }
+
+        // A message as it is compared: without the relay's footer or the node's prefix, with its line endings and runs of
+        // whitespace as single spaces.
+        internal static string Same(string text)
+        {
+            text = Unrelayed(text);
+            if (text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal))
+            {
+                text = text[NodeVoice.Prefix.Length..];
+            }
+            return WhiteSpace().Replace(text, " ").Trim();
         }
 
         private static string Clip(string text) => text.Length > TranscriptPage.TextLimit ? text[..TranscriptPage.TextLimit] + "…" : text;
@@ -447,7 +481,28 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         if (type == "attachment" && line.TryGetProperty("attachment", out var attachment) && Str(attachment, "type") == "queued_command")
         {
             var origin = attachment.TryGetProperty("origin", out var o) ? o : default;
+            if (Relayed(PromptText(attachment), origin) is { } relayed)
+            {
+                foreach (var entry in RelayEntry(relayed, origin))
+                {
+                    yield return entry;
+                }
+                yield break;
+            }
             foreach (var entry in Prompt(PromptText(attachment), origin))
+            {
+                yield return entry;
+            }
+            yield break;
+        }
+        if (type == "user" && line.TryGetProperty("isMeta", out var metaLine) && metaLine.ValueKind == JsonValueKind.True
+            && line.TryGetProperty("origin", out var metaOrigin) && line.TryGetProperty("message", out var metaMessage) && metaMessage.ValueKind == JsonValueKind.Object
+            && metaMessage.TryGetProperty("content", out var metaContent) && metaContent.ValueKind == JsonValueKind.String
+            && Relayed(metaContent.GetString() ?? "", metaOrigin) is { } metaRelayed)
+        {
+            // A relay that reached the session between turns begins one as a meta line, framed "Another Claude session sent a
+            // message:"; it is read as the words inside the envelope, like the same relay taken mid-turn.
+            foreach (var entry in RelayEntry(metaRelayed, metaOrigin))
             {
                 yield return entry;
             }
@@ -505,6 +560,38 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// The words of a cross-session message (a peer origin that is no subagent's hand-back), without the envelope or the frame
+    /// round it: the origin's <c>body</c>, else the envelope's; null for anything else.
+    /// </summary>
+    private static string? Relayed(string text, JsonElement origin)
+    {
+        if (Str(origin, "kind") != "peer" || origin.TryGetProperty("handback", out _) || origin.TryGetProperty("senderTaskId", out _)
+            || AgentMessage().IsMatch(text.Trim()))
+        {
+            return null;
+        }
+        return Str(origin, "body") ?? (Envelope().Match(text) is { Success: true } envelope ? envelope.Groups["body"].Value : null);
+    }
+
+    /// <summary>
+    /// A relayed message as an entry: the person's say (sent as the controller) and the node's own (a card, a nudge, which
+    /// <see cref="Reader"/> makes a note by its prefix) under no name, so the chat stamps the person's and counts it; another
+    /// session's under its name, so it is neither counted nor stamped as the person's.
+    /// </summary>
+    private static IEnumerable<TranscriptEntry> RelayEntry(string body, JsonElement origin)
+    {
+        var text = Reminder().Replace(body, "").Trim();
+        if (text.Length == 0)
+        {
+            yield break;
+        }
+        var name = Str(origin, "name");
+        var from = name is null || string.Equals(name, ClaudeCliDelivery.ControllerName, StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith(NodeVoice.Prefix, StringComparison.Ordinal) ? null : name;
+        yield return new TranscriptEntry { Index = 0, Kind = TranscriptKind.User, Text = text, From = from };
     }
 
     // A user or assistant line's text: the assistant's words as they are, a prompt tidied.
@@ -730,6 +817,9 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
     // A reply as a person reads it: its ask block is the question, and the choices are the buttons under it.
     private static string Plain(string text) => AskBlock().Replace(text, m => Asked(m.Value) is { } ask ? ask.Question : "");
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhiteSpace();
 
     [GeneratedRegex(@"<ask>(?<body>.*?)</ask>", RegexOptions.Singleline)]
     private static partial Regex AskBlock();

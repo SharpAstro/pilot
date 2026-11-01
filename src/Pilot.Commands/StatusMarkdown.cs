@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -26,6 +26,10 @@ internal static class StatusMarkdown
             facts.Add(piloting
                 ? "**autopilot** on (only the person changes it: `pilot settings set autopilot off`)"
                 : "**autopilot** off (only the person changes it: `pilot settings set autopilot on`)");
+        }
+        if (sendTimings is not null)
+        {
+            facts.Add($"**sends** {Text(SendTimingRow.Summary(sendTimings))}");
         }
         if (snapshot.Usage?.Account is { } account)
         {

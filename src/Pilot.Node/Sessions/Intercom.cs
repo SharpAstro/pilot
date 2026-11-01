@@ -136,11 +136,32 @@ public static class Intercom
         {
             throw new SessionDeliveryException($"{path} is not a named pipe path");
         }
+        if (!PipeListed(Prefix, path))
+        {
+            throw new SessionDeliveryException($"the endpoint {path} refused it: no pipe of that name is there");
+        }
         await using var pipe = new NamedPipeClientStream(".", path[Prefix.Length..], PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(limit);
         await pipe.WriteAsync(payload, limit);
         await pipe.FlushAsync(limit);
         await WaitForRejectionAsync(pipe, path, caller);
+    }
+
+    /// <summary>
+    /// Whether a pipe of this name is there. A client's connect waits for a missing pipe until its timeout, so a session that
+    /// has gone would cost the whole <see cref="Timeout"/> before the fallback; listing the pipe namespace answers at once and
+    /// does not connect to the listener. A listing that fails says yes, and the connect decides as before.
+    /// </summary>
+    private static bool PipeListed(string prefix, string path)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(prefix).Contains(path, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
     }
 
     private static async Task SendSocketAsync(string path, byte[] payload, CancellationToken limit, CancellationToken caller)

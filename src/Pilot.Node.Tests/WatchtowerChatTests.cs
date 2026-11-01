@@ -162,6 +162,111 @@ public sealed class WatchtowerChatTests : IDisposable
         _chat.Page(-1).Entries.Select(e => (e.Text, e.Note)).ShouldBe([("wake up", true), ("/compact keep the leg", true), ("and what about the docs?", false)]);
     }
 
+    private async Task OneWatchtowerAsync()
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+    }
+
+    private static string Enqueued(string text) => $$$"""{"type":"queue-operation","operation":"enqueue","content":{{{System.Text.Json.JsonSerializer.Serialize(text)}}}}""";
+
+    [Fact]
+    public async Task TwoSendsOfTheSameWordsEachGiveTheirEntryItsOwnSendId()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        sends.Record("s1", "ok", Start);
+        sends.Record("s2", "ok", Start);
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "ok"), Said("assistant", "Done."), Said("user", "ok"));
+
+        var page = new WatchtowerChat(_tower, _book, sends).Page(-1);
+
+        page.Entries.Where(e => e.Kind == TranscriptKind.User).Select(e => e.SendId).ShouldBe(["s1", "s2"]);
+        page.Entries.Single(e => e.Kind == TranscriptKind.Assistant).SendId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARelayedAndACardContextSendAreStampedToo()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        var card = new CardRow
+        {
+            Id = "c7", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/TIA1/parser", Title = "parser failed", Detail = "x", At = Start, State = CardState.Open,
+            Choices = [new CardChoice { Label = "Retry", Verb = Verbs.Answer, Target = "card/c7", Args = ["Retry"] }],
+        };
+        var about = CardContext.Compose(card, "DU1", null, "why?");
+        sends.Record("relay1", "is it done?", Start);
+        sends.Record("card1", about, Start);
+        _profile.Append(_profile.TranscriptPath(First),
+            Said("user", "is it done?\\n\\n" + ClaudeCliDelivery.RelayNote),
+            $$$"""{"type":"user","message":{"role":"user","content":{{{System.Text.Json.JsonSerializer.Serialize(about)}}}}}""");
+
+        new WatchtowerChat(_tower, _book, sends).Page(-1).Entries.Select(e => e.SendId).ShouldBe(["relay1", "card1"]);
+    }
+
+    [Fact]
+    public async Task ASayRelayedToALiveWatchtowerIsStampedOnceBetweenTurnsAndMidTurn()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        sends.Record("s1", "is it done?", Start);
+        sends.Record("s2", "and the docs?", Start);
+        _profile.Append(_profile.TranscriptPath(First),
+            TranscriptBookTests.RelayedBetweenTurns(ClaudeCliDelivery.ControllerName, "is it done?"),
+            TranscriptBookTests.RelayedMidTurn("node", NodeVoice.Prefix + " A card opened"),
+            TranscriptBookTests.RelayedMidTurn(ClaudeCliDelivery.ControllerName, "and the docs?"));
+
+        var page = new WatchtowerChat(_tower, _book, sends).Page(-1);
+
+        page.Entries.Select(e => (e.Text, e.SendId)).ShouldBe([("is it done?", "s1"), ("A card opened", (string?)null), ("and the docs?", "s2")]);
+    }
+
+    [Fact]
+    public async Task AQueuedLineTakesTheSendNoEntryTookAndAStaleOneSharesItsEntrysId()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        sends.Record("s1", "again", Start);
+        sends.Record("s2", "again", Start);
+        // The first was taken; the second still waits.
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "again"), Enqueued("again"));
+        var waiting = new WatchtowerChat(_tower, _book, sends).Page(-1);
+        waiting.Entries.Single().SendId.ShouldBe("s1");
+        waiting.Queued.ShouldBe(["again"]);
+        waiting.QueuedIds.ShouldBe(["s2"]);
+
+        // A line that every send of its words has an entry for: the stale line of the oldest, with its id.
+        File.WriteAllText(_profile.TranscriptPath(First), "");
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "again"), Said("user", "again"), Enqueued("again"));
+        var stale = new WatchtowerChat(_tower, new TranscriptBook(_profile.Profile), sends).Page(-1);
+        stale.Entries.Select(e => e.SendId).ShouldBe(["s1", "s2"]);
+        stale.QueuedIds.ShouldBe(["s1"]);
+    }
+
+    [Fact]
+    public async Task AnOlderMessageOfTheSameWordsTakesNoLaterSendsId()
+    {
+        await OneWatchtowerAsync();
+        var sends = new SendLog(_time);
+        sends.Record("s1", "ok", Start.AddHours(1));
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "ok"));
+
+        new WatchtowerChat(_tower, _book, sends).Page(-1).Entries.Single().SendId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task WithNoSendsKeptTheFeedCarriesNoIds()
+    {
+        await OneWatchtowerAsync();
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "ok"), Enqueued("more"));
+
+        var page = _chat.Page(-1);
+
+        page.Entries.Single().SendId.ShouldBeNull();
+        page.QueuedIds.ShouldBeNull();
+    }
+
     [Fact]
     public async Task TheFeedSurvivesARestartOfTheNodeWhoseRowsAreGone()
     {

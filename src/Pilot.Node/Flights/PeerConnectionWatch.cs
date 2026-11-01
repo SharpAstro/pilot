@@ -3,7 +3,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The node's watch on the flights held for a flight of another node (<see cref="Pilot.Contracts.FlightRow.PeerConnections"/>, #375): on a
 /// cycle it asks each peer what it flies, drops each wait whose flight landed (or whose PR merged) so the flight flies, and keeps a flight
-/// held, with the reason on the wait, while its node cannot be asked. See <see cref="FlightCommander.LookAtPeerConnectionsAsync"/>.
+/// held, with the reason on the wait, while its node cannot be asked. It also sweeps connections to landed flights of this node (#590). See <see cref="FlightCommander.LookAtPeerConnectionsAsync"/>.
 /// </summary>
 public sealed class PeerConnectionWatch(FlightCommander flights, TimeProvider time) : BackgroundService
 {
@@ -15,11 +15,32 @@ public sealed class PeerConnectionWatch(FlightCommander flights, TimeProvider ti
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        try
+        {
+            // Once at start: a row stuck on a landed flight (a restart between a land and its release) is released without a disconnect.
+            await flights.ReleaseLandedConnectionsAsync(stopping);
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            await Error.WriteLineAsync($"peer connection watch: releasing landed connections failed: {ex.Message}");
+        }
         while (!stopping.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(Interval, time, stopping);
+                try
+                {
+                    await flights.ReleaseLandedConnectionsAsync(stopping);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await Error.WriteLineAsync($"peer connection watch: releasing landed connections failed: {ex.Message}");
+                }
                 await flights.LookAtPeerConnectionsAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)

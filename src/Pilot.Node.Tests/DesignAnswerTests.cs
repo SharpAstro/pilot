@@ -10,6 +10,8 @@ namespace Pilot.Node.Tests;
 /// A review that asks a question of design (a finding starting <c>design:</c>) is fixed once the question has an answer: the words
 /// given on <c>review fix</c> (posted on the PR first), or the PR's author's comment after the review. Without one it is refused.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (5.3 to 11.1 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class DesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -31,6 +33,23 @@ public sealed class DesignAnswerTests : PrFixTestsBase
         brief.ShouldContain("Keep it a library, no service.");
         brief.ShouldContain("### Answer");
         Row.DesignAnswer.ShouldBe("Keep it a library, no service.");
+    }
+
+    [Fact]
+    public async Task AnAnswerCommentWhoseFixerFailedToStartNeverSettlesTheCardWithAFalseClaim()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        Comment("ada", "Keep it a library, no service.", TimeSpan.FromMinutes(1));
+        // The clone's origin goes dead, so the start fails after the answer is stored.
+        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", Path.Combine(Path.GetTempPath(), "pilot-no-such-origin-" + Guid.NewGuid().ToString("N")));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind
+            && (c.Title + c.Detail).Contains("Opus slot", StringComparison.OrdinalIgnoreCase));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
     }
 
     [Fact]
@@ -124,7 +143,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
         _reviews.RunAsync(new CommandRequest { Verb = verb, Target = PrTarget, Args = args, Who = who }, Ct);
 
     /// <summary>A flight whose last leg is done, its PR open (number 71), and a PR review of it that asked a question of design.</summary>
-    private protected async Task<FlightRow> AskedDesign()
+    private protected async Task<FlightRow> AskedDesign(string? question = null)
     {
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
@@ -147,7 +166,7 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
             State = PrReviewState.Reviewing,
             StartedAt = DateTimeOffset.UtcNow,
         });
-        (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", Question)).Error.ShouldBeNull();
+        (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", question ?? Question)).Error.ShouldBeNull();
         // The node does not post it here, so the controller does: the post is when the design card is raised.
         (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();
         return flight;
@@ -158,6 +177,8 @@ public abstract class FlightDesignTestsBase : ReviewTestsBase
     private protected WorkerStart[] Fixers => [.. _workers.Started.Where(s => s.Name.Contains("-fix-"))];
 }
 
+/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
+[Trait("Category", "Slow")]
 public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
 {
     [Fact]
@@ -209,6 +230,26 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
     }
 
     [Fact]
+    public async Task AnAnswerCommentSeenByTheSweepSendsTheLastLegRoundOnce()
+    {
+        var flight = await AskedDesign();
+        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+        await _reviews.SweepAsync(Ct);
+        var started = _workers.Started.Count;
+        await _reviews.SweepAsync(Ct);
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep it a library, no service.");
+        Fixers.ShouldBeEmpty();
+        _workers.Started.Count.ShouldBe(started);
+        _github.IssueComments.ShouldBeEmpty();
+        var notice = _state.Cards().Single(c => c.Kind == PrReviews.DesignSettledKind);
+        notice.Detail.ShouldNotBeNull().ShouldContain("sent round");
+    }
+
+    [Fact]
     public async Task WithNoAnswerReviewFixOnAFlightsPrIsRefusedAsOnAnyOther()
     {
         var flight = await AskedDesign();
@@ -219,12 +260,135 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
         LastLeg(flight.Code).State.ShouldBe(LegState.Done);
         Fixers.ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task OptionsOnAFlightsDesignCardAreChoicesAndPressingOneSendsTheLastLegRoundWithItsText()
+    {
+        var flight = await AskedDesign(DesignAnswerQuestions.WithOptions);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        var option = card.Choices[0];
+
+        (await RunPr(option.Verb, "controller", option.Args)).Error.ShouldBeNull();
+
+        var leg = LastLeg(flight.Code);
+        leg.State.ShouldBe(LegState.Flying);
+        leg.Report.ShouldNotBeNull().ShouldContain("Keep a library (no new process)");
+        Fixers.ShouldBeEmpty();
+        // The decision mirror posts the decision on the flight's issue and on its PR.
+        _github.IssueComments.Count.ShouldBe(2);
+        _github.IssueComments.ShouldAllBe(c => c.Body.Contains("Keep a library (no new process)"));
+    }
+}
+
+/// <summary>
+/// The design card built from a finding's options: one choice per option with the recommended first, then the free-text Answer;
+/// pressing an option posts it as the answer and starts the fixer; a question with no options shows its text and only the Answer.
+/// </summary>
+public sealed class DesignOptionsCardTests : PrFixTestsBase
+{
+    private readonly NodeCommands _commands;
+
+    public DesignOptionsCardTests()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_reviews);
+        services.AddSingleton(new Watchtower(_state, _workers, (_, _) => throw new InvalidOperationException("the watchtower runs nothing here"), _options, TimeProvider.System));
+        services.AddSingleton(new RoleModels(null));
+        _commands = new NodeCommands(services.BuildServiceProvider(), _state);
+    }
+
+    private CardRow OpenDesign() => _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem();
+
+    [Fact]
+    public async Task TheCardHoldsTheQuestionWithItsPathAndOneChoicePerOptionRecommendedFirstThenAnswerInYourOwnWords()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
+
+        var card = OpenDesign();
+        card.Title.ShouldContain("should this be a service at all?");
+        card.Detail.ShouldNotBeNull().ShouldContain("README.md:1 should this be a service at all?");
+        card.Detail.ShouldContain("Make it a service: more to run");
+        card.Choices.Select(c => c.Label).ShouldBe(["Keep a library", "Make it a service", PrReviews.AnswerLabel]);
+        card.Choices.Take(2).ShouldAllBe(c => c.Verb == Verbs.FixPr && c.Target == "pr/acme/widget#7" && c.AsksFor == null);
+        card.Choices[2].AsksFor.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task PressingAnOptionPostsItsTextAsTheAnswerAndStartsTheFixer()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);
+        var card = OpenDesign();
+
+        var result = await _commands.RunAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = ["1"], Who = "controller" }, Ct);
+
+        result.Error.ShouldBeNull();
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("Keep a library (no new process)");
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("Keep a library (no new process)");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    public async Task AQuestionWithNoOptionsShowsItsFullTextAndOnlyTheFreeTextChoice()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all, given how little it does?");
+
+        var card = OpenDesign();
+        card.Detail.ShouldNotBeNull().ShouldContain("should this be a service at all, given how little it does?");
+        card.Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+    }
+
+    [Fact]
+    public async Task SeveralQuestionsOfferNoOptionsOnlyTheFreeTextChoice()
+    {
+        await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions, "README.md:9 design: and the name? Option: Keep => none Option: Rename => churn");
+
+        OpenDesign().Choices.ShouldHaveSingleItem().Label.ShouldBe(PrReviews.AnswerLabel);
+    }
+}
+
+internal static class DesignAnswerQuestions
+{
+    public const string WithOptions = "README.md:1 design: should this be a service at all? Option: Make it a service => more to run Option*: Keep a library => no new process";
+}
+
+/// <summary>The design finding read apart: question, options with consequences, the recommended mark, and the fallback.</summary>
+public sealed class DesignQuestionTests
+{
+    private static PrFinding F(string body) => new() { Path = "a.cs", Line = 3, Body = body };
+
+    [Fact]
+    public void ParsesTheQuestionAndEachOptionWithItsConsequenceAndTheRecommendedMark()
+    {
+        var q = DesignQuestion.Parse(F("design: Keep it? Option: Yes => cheap Option*: No => costly. Option: Maybe"))!;
+
+        q.Question.ShouldBe("Keep it?");
+        q.Options.Select(o => (o.Text, o.Consequence, o.Recommended)).ShouldBe([("Yes", "cheap", false), ("No", "costly.", true), ("Maybe", "", false)]);
+        q.RecommendedFirst.Select(o => o.Text).ShouldBe(["No", "Yes", "Maybe"]);
+        q.Options[0].Answer.ShouldBe("Yes (cheap)");
+        q.Options[2].Answer.ShouldBe("Maybe");
+    }
+
+    [Fact]
+    public void WithNoOptionTheWholeTextIsTheQuestion()
+    {
+        var q = DesignQuestion.Parse(F("Design: should it be a service? Or not."))!;
+
+        q.Question.ShouldBe("should it be a service? Or not.");
+        q.Options.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AFindingThatIsNotADesignQuestionIsNull() => DesignQuestion.Parse(F("a bug here")).ShouldBeNull();
 }
 
 /// <summary>
 /// The design card's Answer choice: it asks for words, <c>pilot card answer &lt;card&gt; &lt;choice&gt; &lt;words&gt;</c> posts them on the PR
 /// and starts the fixer (closing the card), and an answer with no words is refused with the card left open.
 /// </summary>
+/// <remarks>Slow: every test fixes a PR in a real clone and worktree (all three measured over 5 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -249,7 +413,7 @@ public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", Question);
 
         var choice = OpenDesign().Choices.ShouldHaveSingleItem();
-        (choice.Label, choice.Verb, choice.Target).ShouldBe(("Answer", Verbs.FixPr, "pr/acme/widget#7"));
+        (choice.Label, choice.Verb, choice.Target).ShouldBe((PrReviews.AnswerLabel, Verbs.FixPr, "pr/acme/widget#7"));
         choice.AsksFor.ShouldNotBeNull();
     }
 
@@ -273,7 +437,7 @@ public sealed class AnswerChoiceDesignAnswerTests : PrFixTestsBase
         await Review("acme/widget#7", "comment", Question);
         var card = OpenDesign();
 
-        (await Answer(card, "Answer")).Error.ShouldNotBeNull().ShouldContain("needs words");
+        (await Answer(card, PrReviews.AnswerLabel)).Error.ShouldNotBeNull().ShouldContain("needs words");
         (await Answer(card, "1")).Error.ShouldNotBeNull().ShouldContain("needs words");
 
         Fixers.ShouldBeEmpty();

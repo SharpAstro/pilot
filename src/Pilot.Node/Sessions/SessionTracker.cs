@@ -704,6 +704,8 @@ public sealed class SessionTracker : BackgroundService
                 EndReason = entry.EndReason,
                 EndedAt = ended ? entry.EndedAt : null,
                 WallSeconds = ended ? entry.WallSeconds : null,
+                LastCompactedAt = entry.CompactedAt,
+                CompactedBecause = entry.CompactedBecause,
             };
         }
         _rows[row.Id] = row;

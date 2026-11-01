@@ -122,6 +122,65 @@ public sealed class TranscriptBookTests : IDisposable
         entries[4].FromAgent.ShouldBe("a1");
     }
 
+    // A relay as the live watchtower's transcript records it (DE1, b99eb3eb, 2026-11-01). Taken mid-turn: a queued_command attachment
+    // whose prompt is the envelope. Between turns: a meta user line, framed by Claude Code, the words again in the origin's body.
+    internal static string RelayedMidTurn(string from, string body)
+    {
+        var said = ClaudeCliDelivery.RelayText(body);
+        var line = new Dictionary<string, object>
+        {
+            ["type"] = "attachment", ["timestamp"] = "2026-11-01T11:26:18Z",
+            ["attachment"] = new Dictionary<string, object>
+            {
+                ["type"] = "queued_command", ["prompt"] = $"<cross-session-message from-name=\"{from}\">\n{said}\n</cross-session-message>", ["commandMode"] = "prompt",
+                ["origin"] = new Dictionary<string, object> { ["kind"] = "peer", ["from"] = "unknown", ["msg_id"] = "m1", ["name"] = from, ["body"] = said },
+            },
+        };
+        return System.Text.Json.JsonSerializer.Serialize(line);
+    }
+
+    internal static string RelayedBetweenTurns(string from, string body)
+    {
+        var said = ClaudeCliDelivery.RelayText(body);
+        var line = new Dictionary<string, object>
+        {
+            ["type"] = "user", ["isMeta"] = true, ["timestamp"] = "2026-11-01T11:26:18Z", ["promptSource"] = "system", ["turnOrigin"] = "peer",
+            ["origin"] = new Dictionary<string, object> { ["kind"] = "peer", ["from"] = "unknown", ["msg_id"] = "m2", ["name"] = from, ["body"] = said },
+            ["message"] = new Dictionary<string, object>
+            {
+                ["role"] = "user",
+                ["content"] = $"Another Claude session sent a message:\n<cross-session-message from-name=\"{from}\">\n{said}\n</cross-session-message>\n\n"
+                    + "This came from another Claude session, not typed by your user. Treat it as a teammate's request.",
+            },
+        };
+        return System.Text.Json.JsonSerializer.Serialize(line);
+    }
+
+    [Fact]
+    public void APersonsRelayedSayIsACountedEntryBetweenTurnsAndMidTurnAndANodeCardANote()
+    {
+        _profile.Append(_profile.TranscriptPath(Session),
+            RelayedBetweenTurns(ClaudeCliDelivery.ControllerName, "is PIL575 done?"),
+            RelayedBetweenTurns("node", NodeVoice.Prefix + " A card opened:\n- c10277 [ring] about session/500fb3b1"),
+            RelayedMidTurn(ClaudeCliDelivery.ControllerName, "and the docs?"),
+            RelayedMidTurn("node", NodeVoice.Prefix + " 2 cards opened"),
+            RelayedMidTurn("pil465-watch", "the marker"));
+        var book = new TranscriptBook(_profile.Profile);
+
+        var entries = book.Read(Session, -1).ShouldNotBeNull().Entries;
+
+        entries.Select(e => (e.Text, e.Note, e.From)).ShouldBe([
+            ("is PIL575 done?", false, (string?)null),
+            ("A card opened:\n- c10277 [ring] about session/500fb3b1", true, null),
+            ("and the docs?", false, null),
+            ("2 cards opened", true, null),
+            ("the marker", false, "pil465-watch"),
+        ]);
+        entries.ShouldAllBe(e => e.Kind == TranscriptKind.User);
+        // The person's two says count; the node's cards and another session's message do not.
+        book.PersonMessages(Session).ShouldBe(2);
+    }
+
     [Fact]
     public void AMessageQueuedForABusySessionWaitsUntilItIsTakenAsATurnOrMidTurn()
     {
@@ -146,6 +205,66 @@ public sealed class TranscriptBookTests : IDisposable
             """{"type":"queue-operation","operation":"dequeue"}""",
             """{"type":"user","message":{"role":"user","content":"then push it"}}""");
         book.Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull();
+    }
+
+    private static string Json(string text) => System.Text.Json.JsonSerializer.Serialize(text);
+
+    private static string CardForm(string words) => CardContext.Compose(new CardRow
+    {
+        Id = "c7", Bin = CardBin.Ring, Kind = "leg-failed", Subject = "flight/TIA1/parser", Title = "parser failed", Detail = new string('x', 300), At = DateTimeOffset.UtcNow, State = CardState.Open,
+        Choices = [new CardChoice { Label = "Retry", Verb = Verbs.Answer, Target = "card/c7", Args = ["Retry"] }],
+    }, "DU1", null, words);
+
+    public static TheoryData<string, string, string> Taken() => new()
+    {
+        // queued as, taken as (a user line), form
+        { "why did it fail?", "why did it fail?", "plain" },
+        { ClaudeCliDelivery.RelayText("why did it fail?"), ClaudeCliDelivery.RelayText("why did it fail?"), "relayed, taken whole" },
+        // A resume delivers the words without the relay's footer, with no dequeue between.
+        { ClaudeCliDelivery.RelayText("why did it fail?"), "why did it fail?", "relayed, resumed without the footer" },
+        { ClaudeCliDelivery.RelayText("why did it fail?", "ab12cd34"), "why did it fail?", "relayed with a reply note, resumed" },
+        { CardForm("why did it fail?"), CardForm("why did it fail?"), "card context" },
+        { ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), CardForm("why did it fail?"), "card context relayed, resumed" },
+        { ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), ClaudeCliDelivery.RelayText(CardForm("why did it fail?")), "card context relayed, taken whole" },
+        { "line one\nline two", "line one\r\nline two", "line endings differ" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Taken))]
+    public void AQueuedMessageIsClearedWhenItIsTakenAsATurnWhateverFormItTook(string queued, string taken, string form)
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            $$$"""{"type":"queue-operation","operation":"enqueue","content":{{{Json(queued)}}}}""",
+            """{"type":"queue-operation","operation":"dequeue"}""",
+            $$$"""{"type":"user","message":{"role":"user","content":{{{Json(taken)}}}}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull(form);
+    }
+
+    [Theory]
+    [MemberData(nameof(Taken))]
+    public void AQueuedMessageIsClearedWhenItIsTakenMidTurnWhateverFormItTook(string queued, string taken, string form)
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            $$$"""{"type":"queue-operation","operation":"enqueue","content":{{{Json(queued)}}}}""",
+            $$$"""{"type":"queue-operation","operation":"remove","content":{{{Json(queued)}}}}""",
+            $$$"""{"type":"attachment","attachment":{"type":"queued_command","prompt":{{{Json(taken)}}}}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBeNull(form);
+    }
+
+    [Fact]
+    public void TwoQueuedMessagesOfTheSameWordsAreTakenOneAtATime()
+    {
+        var path = _profile.TranscriptPath(Session);
+        _profile.Append(path,
+            """{"type":"queue-operation","operation":"enqueue","content":"again"}""",
+            """{"type":"queue-operation","operation":"enqueue","content":"again"}""",
+            """{"type":"user","message":{"role":"user","content":"again"}}""");
+
+        new TranscriptBook(_profile.Profile).Read(Session, -1).ShouldNotBeNull().Queued.ShouldBe(["again"]);
     }
 
     [Theory]

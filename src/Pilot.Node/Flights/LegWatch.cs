@@ -116,6 +116,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>How a worker runs the CLI, socket and all, for the nudge: <see cref="Briefs.Run"/>, as its brief says it.</summary>
     public string Pilot { get; init; } = "pilot";
 
+    /// <summary>The share of its window past which an idle worker is compacted, then replaced, never nudged.</summary>
+    public double FullShare { get; init; } = 0.9;
+
+    /// <summary>What holds a compaction while the 5-hour window is spent: the node's one gate; null in a test with none.</summary>
+    public StartGate? Gate { get; set; }
+
+    // By worker job: the response it had when it was compacted for a full context; by leg subject: the worker job the leg was sent round from for one.
+    private readonly Dictionary<string, DateTimeOffset?> _compactedFull = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _replacedFull = new(StringComparer.Ordinal);
+
     // By worker job: the reset each was resumed after, and how often it was nudged.
     private readonly Dictionary<string, DateTimeOffset> _resumedAfter = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     // By worker job: the reset a usage-limit stop was said to be waiting for, so the Handled line is written once, not every look.
@@ -368,12 +378,27 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         // A worker idle while a job of its own runs or waits its turn is waiting, as it was told to: the job wakes it, so it
         // is not stalled. Its own by row, or by name: a worker Claude Code continued as a copy is a row of its own, while
         // the job it handed over is still the first row's (TIA1739's j13 rang c205 to c207 as stalls, 2026-10-23).
-        if (now - since < IdleGrace || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
-                && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase))))
+        if (now - since < IdleGrace)
         {
             return;
         }
+        var cause = ClassifyIdle(leg, worker);
+        if (cause == IdleCause.OwnJob)
+        {
+            if (_ownJobNoted.Add(leg.WorkerJob!))
+            {
+                state.RaiseCard(CardBin.Handled, "worker-waiting-job", Subject(leg), $"{Name(leg)}'s worker is idle because it waits on a job of its own or of its leg; the job wakes it");
+            }
+            return;
+        }
         var job = leg.WorkerJob!;
+        // A worker whose context is near full is never nudged: a nudge is a turn it has no room for. It is compacted once, then
+        // the leg goes round with a fresh worker (pilot #578).
+        if (cause == IdleCause.Full)
+        {
+            await FullAsync(leg, worker, since, now, cancellationToken);
+            return;
+        }
         var nudges = _nudges.GetValueOrDefault(job);
         if (nudges >= MaxNudges)
         {
@@ -386,8 +411,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
             Ring(leg, Idle, answered > 0 ? $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, though it answers its nudges" : $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}",
                 answered > 0
-                    ? $"nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
-                    : $"nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
+                    ? $"{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
+                    : $"{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
                 worker);
             return;
         }
@@ -406,7 +431,103 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"the node tried to nudge it: {result.Error}", worker);
+            Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"{RoomLead(worker)}the node tried to nudge it: {result.Error}", worker);
+        }
+    }
+
+    /// <summary>Why an idle worker is idle (pilot #578): its context is full, it waits on a job of its own, or it is idle with room.</summary>
+    internal enum IdleCause { Full, OwnJob, Room }
+
+    /// <summary>
+    /// The one place an idle worker's cause is read. A job of its own is one it owns (by row or name, since Claude Code may continue a
+    /// session as a copy) or one of its flight and leg; a live job of its own wins over a full context, as the job wakes the worker.
+    /// </summary>
+    internal IdleCause ClassifyIdle(LegRow leg, SessionRow worker)
+    {
+        if (state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+            && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase)
+                || (string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))))
+        {
+            return IdleCause.OwnJob;
+        }
+        return worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow ? IdleCause.Full : IdleCause.Room;
+    }
+
+    /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
+    private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"idle with room in its context ({100.0 * worker.ContextTokens / worker.ContextWindow:0}% of its window used) and no job of its own running; ")
+        : "idle (its context size is unknown) and no job of its own running; ";
+
+    private readonly HashSet<string> _compactRefused = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _compactedWhen = new(StringComparer.Ordinal);
+
+    /// <summary>How long an accepted compaction may stay unanswered before it counts as spent (Claude Code may answer /compact with an error and no turn).</summary>
+    public static readonly TimeSpan CompactWait = TimeSpan.FromMinutes(10);
+
+    private readonly HashSet<string> _ownJobNoted = new(StringComparer.Ordinal);
+
+    /// <summary>What a full worker's summary keeps: the leg, and a way of reading that does not fill the window again.</summary>
+    public const string FullFocus = "Keep your leg: its goal, the steps done and left, and what you were doing when this was cut. "
+        + "From here read job summaries (`pilot jobs`, the end of a log), not whole logs.";
+
+    private async Task FullAsync(LegRow leg, SessionRow worker, DateTimeOffset since, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var job = leg.WorkerJob!;
+        var subject = Subject(leg);
+        var share = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{100.0 * worker.ContextTokens / worker.ContextWindow:0}%");
+        // A go-around already sent for this worker is still starting: do not send another.
+        if (_replacedFull.TryGetValue(subject, out var sent) && sent == job)
+        {
+            return;
+        }
+        if (_replacedFull.TryGetValue(subject, out var older) && older != job)
+        {
+            // The fresh worker filled and stalled too: another one would do the same, so a person decides.
+            Ring(leg, Idle, $"{Name(leg)}'s worker has filled its context again ({share}) and stopped, after a replacement for a full context",
+                $"context full: the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {Steps(leg)}, so the node nudges and replaces no more",
+                worker, redoWhy: "filled its context twice");
+            return;
+        }
+        var compacted = _compactedFull.TryGetValue(job, out var at);
+        var spent = _compactRefused.Contains(job) || (compacted && _compactedWhen.TryGetValue(job, out var when) && now - when >= CompactWait);
+        if (compacted && !spent && !(worker.LastResponseAt > (at ?? DateTimeOffset.MinValue)))
+        {
+            // Compacted and the compaction has not answered yet (and is not spent): nothing to nudge, nothing to replace.
+            return;
+        }
+        if (!compacted)
+        {
+            var limit = Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Repo ?? "");
+            if (Gate?.Hold($"{Verbs.Compact} {worker.Id}", limit, Models.WeekLimit, "worker-compacted", subject, $"Compaction of {worker.Name} waits (its context is {share} of its window)") == true)
+            {
+                return;
+            }
+            var result = await run(new CommandRequest { Verb = Verbs.Compact, Target = Verbs.SessionTarget(worker.Id), Args = [FullFocus], Who = Who }, cancellationToken);
+            _compactedFull[job] = worker.LastResponseAt;
+            _compactedWhen[job] = now;
+            if (result.Ok)
+            {
+                state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compacted, not nudged");
+                return;
+            }
+            // A compaction refused is a compaction spent: the next look sends the leg round instead of trying again.
+            _compactRefused.Add(job);
+            state.RaiseCard(CardBin.Handled, "worker-compacted", subject, $"{Name(leg)}'s worker went idle at {share} of its context window; compaction refused: {result.Error}");
+            return;
+        }
+        // Idle and still near full after its compaction: a fresh worker, the go-around's own reason naming the share.
+        var reason = $"the last worker's context was full ({share} of its window) after a compaction";
+        // LegCommander.GoAroundAsync takes a go-around on a flying leg from any caller, this watch's Who included.
+        var around = await run(new CommandRequest { Verb = Verbs.GoAround, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+        if (around.Ok)
+        {
+            _replacedFull[subject] = job;
+            state.RaiseCard(CardBin.Handled, "worker-replaced", subject, $"{Name(leg)}'s worker was still at {share} of its context window after a compaction; sent round with a fresh worker");
+        }
+        else
+        {
+            Ring(leg, Idle, $"{Name(leg)}'s worker is at {share} of its context window and could not be replaced: {Clip(around.Error ?? "no reason given")}",
+                $"context full: the node compacted it, and it is still full; the go-around was refused: {around.Error}", worker);
         }
     }
 
@@ -874,6 +995,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 var cwd = string.IsNullOrEmpty(row.Cwd) ? "unknown" : row.Cwd;
                 why = $"the node did not start it and it is no role, leg, flight or PR of this node; cwd {cwd}, running {Ago(now, row.StartedAt)}";
             }
+            if (why is not null && NodeIsEnding(row, now))
+            {
+                // The node stopped it, or its flight just landed: give the stop time to take before a person is rung.
+                continue;
+            }
             if (why is null || !_strays.Add(row.Id))
             {
                 continue;
@@ -883,6 +1009,18 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
         }
+    }
+
+    /// <summary>How long a node stop (or the landing of a flight) may take to end a session before one still running needs a person. Separate from <see cref="StrayGrace"/>, which is about a done leg's worker.</summary>
+    public TimeSpan StopGrace { get; init; } = TimeSpan.FromMinutes(5);
+
+    private bool NodeIsEnding(SessionRow row, DateTimeOffset now)
+    {
+        if (Ledger?.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is { EndedAt: { } endedAt, EndedBy: not "claude" } && now - endedAt < StopGrace)
+        {
+            return true;
+        }
+        return row.Flight is { } code && state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Landed, LandedAt: { } landed } && now - landed < StopGrace;
     }
 
     /// <summary>How long a session no role claims may run before it rings as a stranger, measured from its start.</summary>

@@ -132,6 +132,7 @@ public abstract class PrFixTestsBase : IDisposable
 public sealed class PrFixTests1 : PrFixTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch()
     {
         var row = await Review("acme/widget#7", "changes", "README.md:1 hello is not a greeting", "README.md:1 and no test");
@@ -143,6 +144,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
         PrOrigins.Git(worktree, "symbolic-ref", "--short", "HEAD").ShouldBe("feature/seven");
         start.Brief.ShouldContain("README.md:1 hello is not a greeting");
         start.Brief.ShouldContain("Two things are wrong.");
+        start.Brief.ShouldContain("the node follows up a merged PR's commits");
         start.Brief.ShouldContain("never rebase");
         start.Brief.ShouldContain("never with force");
         start.Brief.ShouldContain("gh pr comment 7 -R acme/widget");
@@ -165,6 +167,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFreshReviewKeepsTheFixerAndItsRepeatedChangesVerdictStartsNoSecond()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -175,6 +178,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnApproveOnAnOwnPrStartsNoFixer()
     {
         await Review("acme/widget#7", "approve");
@@ -183,6 +187,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer()
     {
         _github.Login = "controller";
@@ -203,6 +208,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheWatchtowersFixerOnAutopilotKeepsTheGuardsTheNodesOwnFixerKeeps()
     {
         // The review of #470: review fix from the watchtower on autopilot must not start what the node's own fixer would not.
@@ -218,6 +224,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ADesignQuestionRingsAndStartsNoFixer()
     {
         await Review("acme/widget#7", "changes", "README.md:1 design: should this be a service at all?");
@@ -234,6 +241,7 @@ public sealed class PrFixTests1 : PrFixTestsBase
 public sealed class PrFixTests2 : PrFixTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnUntrackedRepoGetsNoFixerAndRingsTheOwnerWithTheFindings()
     {
         await Review("acme/gadget#9", "changes", "README.md:1 wrong");
@@ -266,6 +274,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFixersPushStopsItRemovesItsWorktreeAndStartsOneFreshReviewCarryingTheRound()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -284,6 +293,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFreshReviewOfAFixersPushThatPassesWithGreenChecksQueuesThePr()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -301,6 +311,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesOnRoundTwoStartsTheNextFixerWithRoundTwoAndStatusSaysSo()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -318,6 +329,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
 public sealed class PrFixTests3 : PrFixTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -343,6 +355,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -362,6 +375,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APrMergedMeanwhileEndsItsFixerAndWorktree()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -376,6 +390,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AReviewStartedByHandKeepsTheRoundCount()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -388,6 +403,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StatusListsTheFixUnderTheReviewLineEvenOnceTheReviewClosed()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -401,6 +417,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFixPrOnAPrWithNoReviewHereStartsAReviewFirstAndAFixPrOnAPassedReviewIsStillRefused()
     {
         var log = new StringWriter();
@@ -424,6 +441,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFixPrOnAPrWithNoReviewHereFixesItsFindingsWhenTheNewReviewAsksForChanges()
     {
         (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
@@ -435,6 +453,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFixPrWritesOneLineToTheLogStartedWhenItStartsAFixerAndRefusedWhenItDoesNot()
     {
         var log = new StringWriter();

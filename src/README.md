@@ -377,6 +377,9 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
   (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
+  A repeat of a merge while the flight's first one is still running answers Ok with way `in-progress` (`MergeWays.InProgress`):
+  nothing is merged yet, so its card stays open, the autopilot and the armed-at-green merge neither report "merged" nor ring, and a
+  recheck ends with the label off and a Handled line saying a merge is already running. The first merge's own result updates the card.
 - **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
   kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
   a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
@@ -737,7 +740,7 @@ and the source for rich.
 
 ### Say to all
 
-`pilot say-all <text…>` says the text to every session its filters pick, one `say` each (resumed when idle, relayed when
+`pilot say-all <text…>` says the text to every session its filters pick, one `say` each (resumed when idle, except a live idle watchtower, which is relayed to; relayed when
 mid-turn), and prints a line per session: `ok session/7734b775 (relayed)  <name>  <role>  <state>`, or `refused
 session/<id> …` and why. It exits 1 if any say failed, else 0; no session picked says so. By default it picks the
 active sessions, working or waiting; `--all` adds idle ones; ended, failed and archived sessions are never picked.
@@ -795,6 +798,15 @@ branch before any worker goes in, and lands one that is already gone.
 
 ### The MCP server
 
+**Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,
+fix) passes `--strict-mcp-config --mcp-config <data folder>/mcp.json`, so it loads pilot's own server (`pilot --node-socket
+<socket> mcp`) and nothing else, plus `--autocompact auto`, which pins the auto-compact window to Claude Code's default (it does not switch compaction on; that is the `autoCompactEnabled` setting, on by default). All of these
+are start options: the node records them, and a resume with nothing on file (or flags on file that lack the strict config
+or the config file, see `RespawnFlagsCover`) passes them again. The file is rewritten only when its contents change. A repo
+that wants an extra server for its legs lists it in its `PILOT.md` under a heading `MCP servers for legs`, one bullet per
+server name (`- inspector: why`), and defines it in its `.mcp.json`; the node adds just those to that repo's config, written
+as `mcp-<repo>.json`. None listed means pilot's server only. The one-shot `claude -p` summary and relay calls keep no MCP.
+
 `pilot mcp` serves the same commands to any MCP client (Claude Code, the desktop app) over stdio, from the same binary.
 To add it to Claude Code, for every project:
 
@@ -821,6 +833,15 @@ client is a Claude session), so it is an assistant's unless a session the node k
 The **resources** are the snapshot's pieces as JSON, each row as the node's wire writes it: `pilot://flights`,
 `pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
 `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
+
+**Updates.** A server lives as long as its session and a host does not restart a stdio server it lost, so the server the
+client started watches the installed version (after each message and on a quiet timer) and, on a newer one, starts the
+newest binary's `pilot mcp --handed-over` (a hidden option), replays `initialize` to it, sends `tools/list_changed` once
+and relays both ways. It stays at most two processes deep however many updates there are: a hand-over child never looks
+at the installed version nor hands over, and the client-started server swaps its child on each later update, passing on
+the old child's replies still owed (for a bounded wait) before disposing it. A swap that fails (the binary cannot start,
+or the new child ends or does not answer `initialize`) keeps the current child serving, logs why once, and is not
+retried for that version.
 
 ## The GUI
 
@@ -935,8 +956,12 @@ The box at the foot sends through the node's `tell` (`ChatCommands.TellAsync`, a
 **Shift+Enter** (Alt+Enter, for a terminal that cannot tell Shift) starts a new line. DIR.Lib's text field is a single
 line, so `ChatComposer` keeps the lines before the one being typed and shows them above the field, read-only: Backspace
 on an empty line takes the line before back into the field, and a paste of several lines lands as several. Moving the
-caret up into an earlier line waits for a multi-line field in DIR.Lib. A refusal (`refused: …`, the message clipped)
-is said in the chat itself, in red, until the next send goes through. A snapshot or capture has no node to tell, so the
+caret up into an earlier line waits for a multi-line field in DIR.Lib. Enter clears the box at once and the
+message shows as a pending `you · sending…` line; messages sent meanwhile queue behind it (`you · queued N`, with Drop) and go
+one after another, each to the node it was sent for, whichever page is shown. A delivery that was refused or threw stays as a
+`you · failed` line with the node's words and Retry (again, at the end of the queue) and Edit (back into the box, and its card
+back into the quote when none is up); it is on its node's page until then. A refused choice or restart is said in red until
+the next send goes through. A snapshot or capture has no node to tell, so the
 page shows no box and no buttons there.
 
 **The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
@@ -998,9 +1023,10 @@ never from an earlier watchtower's conversation, and the node says every Ring an
 | When | The node |
 | --- | --- |
 | there is something to watch (a flight not landed, a job running or waiting, a ring open) and none runs, or it ended or failed | starts a fresh one (a Handled line says why) |
-| nothing to watch | starts none; one already running is stopped once it has been idle 15 min with nothing to watch (a Handled line). With nothing in the air a watchtower costs nothing; the next flight, job or ring starts a fresh one, briefed from the state |
+| nothing to watch and no UI connected | starts none; one already running is stopped once it has been idle 15 min with no flight, job or ring and no UI (GUI or TUI, local or over the LAN; a CLI or MCP call is no UI) connected, counted from when the last UI left or the last flight landed (a Handled line, and a `stopped by the watchtower: quiet: ...` reason in the session ledger). |
+| a flight is in the air, or on a node with no flight a UI is connected | keeps it live, never stopped for quiet, so a message to it is relayed into the live process, not resumed; a UI connecting or a flight in the air starts one when none runs, with no card to wait for (resumed in place only when cards are untold and it is warm); a live idle watchtower is relayed to directly over its intercom, falling back to the resume when there is no live endpoint, and a flight taking off or a job or ring starts one briefed from the state |
 | it is running on a brief that has since changed (a node restarted after an update, or the node's own brief settings changed) | stops it and starts a fresh one before saying it anything, with a Handled line (`its brief changed since the node started it`). A say resumes the same session, which keeps the brief it had, so only a fresh start carries the new one. The node records a fingerprint of the brief's fixed part (its template and rules, not the flights and cards it lists) in `watchtower-brief` in its data folder when it starts a watchtower, so a restarted node still compares; one with no record is taken as started by an older node |
-| idle 50 min with more than 100k of context, or past 70% of its window | compacts it (see Compaction): it keeps its conversation as a summary, never replaced by a fresh one for its size |
+| idle 50 min with more than 100k of context, or past its share of the window (`watchtower-compact-share`, 60 by default), or after a long chat (`watchtower-chat-messages`, 40 by default) | compacts it (see Compaction), and replaces it by a fresh one when it is still past its share after the compaction; the last compaction shows on its session row |
 | stopped by the usage limit | a For-you card until the reset, then resumes it |
 | it cannot be started | rings with why: Claude Code starts no background session in a folder never trusted, so run `claude` in that folder once and accept the prompt |
 
@@ -1075,7 +1101,7 @@ Claude Code's prompt cache lives an hour, and a session woken after that reads i
 The node's compactor is a heartbeat over the background sessions it will wake again: the watchtower while it has
 something to watch, and any session waiting on a job of its own (a worker that handed a suite over with `pilot run`,
 idle until the job wakes it). Each one idle 50 min with more than 100k of context is compacted while its cache is
-still warm, and one past 70% of its window as soon as it is idle: `compact session/<id>`, which resumes it with Claude
+still warm, and one past its share of the window (`watchtower-compact-share`, 60 by default) as soon as it is idle: `compact session/<id>`, which resumes it with Claude
 Code's `/compact` as its next turn, its focus what the summary keeps (for a worker, its task and the job it waits on).
 Below 100k a cold read costs little more than the summary, and a fresh session starts near 50k anyway. A session is
 compacted once per stretch of idleness, not again until it has answered something; one mid-turn is refused, never sent
@@ -1487,8 +1513,10 @@ how its row looks. A flying leg's worker stalling is: its flight is derailing (s
 thing is done: answered, dismissed, or closed by the node when its flight lands or its leg finishes. Raised so far: a
 PR opened with every leg done rings with **Merge** on that head; a failed leg rings with **Redo leg**; a landed flight
 is a For-you card; a leg started with a sibling clone behind its origin raises a For-you `sibling-behind` card; the leg
-watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed` and
-`worker-nudged`); a session that stopped twice in a turn with files not committed in its plane rings
+watch's cards (`worker-stopped`, `-idle`, `-waiting`, `-failed`, `-missing`, and the Handled `worker-resumed`, `worker-waiting-job` and
+`worker-nudged`); an idle worker over 90% of its context window is never nudged: it is compacted once
+(`worker-compacted`), and if it is idle and still full after that the leg goes round with a fresh worker
+(`worker-replaced`), ringing `worker-idle` only when that replacement fills and stalls too; a session that stopped twice in a turn with files not committed in its plane rings
 (`stopped-uncommitted`, see Hooks); and a PR's review rings with its verdict (`pr-review-ready`, about
 `pr/<owner>/<repo>#<n>`) and **Post**, which posts it to GitHub once, its worktree going when the card closes (see Any
 PR's review).

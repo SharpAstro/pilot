@@ -92,6 +92,7 @@ public sealed class ValidatorTests : IDisposable
         Leg(Verbs.ValidateLeg, Render, [answer, .. report]);
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFirstLegStartsItsWorkerWithNoValidator()
     {
         await FlightAfterItsFirstLeg();
@@ -104,6 +105,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker()
     {
         await FlightAfterItsFirstLeg();
@@ -125,6 +127,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegGoStartsTheWorker()
     {
         await FlightAfterItsFirstLeg();
@@ -139,6 +142,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegNoGoRingsWithTheReportAndItsChoicesAndTheLegStaysPlanned()
     {
         await FlightAfterItsFirstLeg();
@@ -162,6 +166,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ValidateLegIsRefusedWhenNothingIsPendingAndFromTheNode()
     {
         await FlightAfterItsFirstLeg();
@@ -176,6 +181,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAnywayStartsTheWorkerWithNoSecondValidatorAndClosesTheRing()
     {
         await FlightAfterItsFirstLeg();
@@ -191,6 +197,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSweepStartsNoSecondValidatorWhileOneIsPendingOrAfterANoGo()
     {
         await FlightAfterItsFirstLeg();
@@ -210,6 +217,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanningALegAgainValidatesItAfreshAndRemovingItClosesTheNoGoRing()
     {
         await FlightAfterItsFirstLeg();
@@ -232,6 +240,7 @@ public sealed class ValidatorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ASpentFiveHourWindowHoldsTheValidatorsStartAsItHoldsAWorkers()
     {
         await FlightAfterItsFirstLeg();

@@ -9,6 +9,8 @@ namespace Pilot.Node.Tests;
 /// GitHub's Priority issue field in admission (#570): where the repo has it, it alone says priority and orders the queue; where it has
 /// none the <c>pilot: priority</c> label stands in; a label found beside the field is moved onto it once and removed.
 /// </summary>
+/// <remarks>Slow: its admission tests start legs of real flights in worktrees (2 to 6 s each run alone, up to 8 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class IssuePriorityTests : LegCommanderTestsBase
 {
     // The base builds its commanders without a GitHub client, so they have no tracker to read the issue from: these run on ones that have.

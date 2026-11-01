@@ -54,6 +54,9 @@ internal sealed record FlightLine
     /// </summary>
     public IReadOnlyList<SessionRow> Working { get; init; } = [];
 
+    /// <summary>Every session of the flight the node still knows, whatever its state or role (the flight page links its legs' sessions from these).</summary>
+    public IReadOnlyList<SessionRow> AllSessions { get; init; } = [];
+
     /// <summary>The node it flies on, when the page merges several; null on a page of one node, this window's.</summary>
     public NodeMark? Node { get; init; }
 
@@ -159,6 +162,7 @@ internal sealed record FlightLine
             },
             Branch = flight.Branch,
             Sessions = sessions.Count == 0 ? "no session" : $"{sessions.Count} {(sessions.Count == 1 ? "session" : "sessions")} · {live} live",
+            AllSessions = [.. sessions],
             Working = [.. sessions
                 .Where(s => s.Role is SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer
                     && s.State is SessionState.Working or SessionState.Waiting)

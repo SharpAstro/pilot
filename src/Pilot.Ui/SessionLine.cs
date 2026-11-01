@@ -40,6 +40,12 @@ internal sealed partial record SessionLine
     /// <summary>Since its last response, <c>3m ago</c>; <c>none yet</c> before one.</summary>
     public required string LastResponse { get; init; }
 
+    /// <summary>When the node last compacted it, <c>compacted 12 m ago</c>; null when it never has (<see cref="SessionRow.LastCompactedAt"/>).</summary>
+    public string? Compacted { get; init; }
+
+    /// <summary>Why it was last compacted (<see cref="SessionRow.CompactedBecause"/>); null when it never was.</summary>
+    public string? CompactedBecause { get; init; }
+
     /// <summary>Where it is: working, waiting on you, idle, ended, failed.</summary>
     public required string State { get; init; }
 
@@ -73,8 +79,14 @@ internal sealed partial record SessionLine
     /// <summary>Since its <see cref="SessionRow.StartedAt"/>, <c>9 h</c>; <c>unknown</c> when the start is not known.</summary>
     public required string Age { get; init; }
 
-    /// <summary>Its spend in weighted tokens, against its budget when it has one, and over what time: <c>2.31M / 4M · 58% over 9 h</c>, or <c>1.83M over 3 m</c>.</summary>
+    /// <summary>Its spend in weighted tokens, against its budget when it has one: <c>2.31M / 4M · 58%</c>, or <c>1.83M</c>. The time is <see cref="Age"/>'s to say.</summary>
     public required string Spend { get; init; }
+
+    /// <summary>Its spend over its age, per minute: <c>57k/min</c>; <c>unknown</c> when the start is not known. A session younger than a minute counts as one minute.</summary>
+    public required string SpendPerMinute { get; init; }
+
+    /// <summary>The number behind <see cref="SpendPerMinute"/>, weighted tokens a minute, for sorting; null when the start is not known.</summary>
+    public double? SpendRate { get; init; }
 
     /// <summary>The share of its budget it has spent, 0 and up (past 1 when over); null without a budget.</summary>
     public float? SpendFraction { get; init; }
@@ -96,7 +108,11 @@ internal sealed partial record SessionLine
     {
         var detail = WaitingFor ?? EndedBecause;
         var state = detail is null ? State : $"{State} ({detail})";
-        var line = string.Join(" | ", Role, ShownName, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}");
+        var line = string.Join(" | ", Role, ShownName, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}", $"age {Age}", $"spend/min {SpendPerMinute}");
+        if (Compacted is not null)
+        {
+            line += $" | {Compacted}";
+        }
         return Node is { } node ? $"{node.Name} | {line}" : line;
     }
 
@@ -123,7 +139,7 @@ internal sealed partial record SessionLine
         float? spendFraction = row.Budget is > 0 ? (float)row.SpendWeighted / row.Budget.Value : null;
         // A StartedAt of UnixEpoch is "not known", not 56 years.
         var age = row.StartedAt > DateTimeOffset.UnixEpoch ? Span(now - row.StartedAt) : null;
-        var over = age is null ? "" : $" over {age}";
+        var perMinute = RatePerMinute(row, now);
         return new SessionLine
         {
             Row = row,
@@ -133,6 +149,8 @@ internal sealed partial record SessionLine
             Context = $"{Tokens(row.ContextTokens)} / {Tokens(row.ContextWindow)} · {Percent(contextFraction)}",
             ContextFraction = Math.Clamp(contextFraction, 0f, 1f),
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
+            Compacted = row.LastCompactedAt is { } compactedAt ? $"compacted {Span(now - compactedAt)} ago" : null,
+            CompactedBecause = row.LastCompactedAt is null ? null : row.CompactedBecause,
             State = IsStopped(row) ? "stopped" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
             EndedBecause = row.EndedBecause,
@@ -142,11 +160,20 @@ internal sealed partial record SessionLine
             Gone = row.State == SessionState.Waiting && row.Gone,
             Age = age ?? "unknown",
             Spend = row.Budget is { } budget
-                ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}{over}"
-                : $"{Tokens(row.SpendWeighted)}{over}",
+                ? $"{Tokens(row.SpendWeighted)} / {Tokens(budget)} · {Percent(spendFraction ?? 0f)}"
+                : Tokens(row.SpendWeighted),
+            SpendRate = perMinute,
+            SpendPerMinute = perMinute is { } rate ? $"{Tokens((long)Math.Round(rate))}/min" : "unknown",
             SpendFraction = spendFraction,
         };
     }
+
+    /// <summary>
+    /// Weighted tokens spent per minute of its age; null when the start is not known (a StartedAt of UnixEpoch). The age counts as at
+    /// least one minute, so a session seconds old does not show an absurd rate.
+    /// </summary>
+    internal static double? RatePerMinute(SessionRow row, DateTimeOffset now) =>
+        row.StartedAt > DateTimeOffset.UnixEpoch ? row.SpendWeighted / Math.Max(1d, (now - row.StartedAt).TotalMinutes) : null;
 
     /// <summary>Its age as a span of time in the largest two units that matter, no "ago": 5s, 3m, 9 h, 1 h 42 m, 2 d 5 h.</summary>
     internal static string Span(TimeSpan span)

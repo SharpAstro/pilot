@@ -251,6 +251,11 @@ public sealed partial class LegCommander(
                     break;
             }
         }
+        catch (InProgressException ex)
+        {
+            // A repeat of a step already running is no refusal: ok, saying so.
+            made = ex.Message;
+        }
         catch (FlightException ex)
         {
             error = ex.Message;
@@ -544,6 +549,21 @@ public sealed partial class LegCommander(
     // The step each flight's advance last carded: said once, not every sweep, until the flight moves on.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _rung = new(StringComparer.Ordinal);
 
+    // The step each flight's advance was refused once: one miss rings nothing and the next sweep tries again; a second miss of the same step rings.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _missedOnce = new(StringComparer.Ordinal);
+
+    /// <summary>True when this refusal of <paramref name="key"/> is the flight's first (it is noted and nothing rings); false on the second in a row, which rings.</summary>
+    private bool FirstMiss(string code, string key)
+    {
+        if (_missedOnce.TryGetValue(code, out var seen) && seen == key)
+        {
+            _missedOnce.TryRemove(code, out _);
+            return false;
+        }
+        _missedOnce[code] = key;
+        return true;
+    }
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _pilotMdRung = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -667,6 +687,7 @@ public sealed partial class LegCommander(
         if (result.Ok)
         {
             _rung.TryRemove(current.Code, out _);
+            _missedOnce.TryRemove(current.Code, out _);
             // It went on here, so a move that failed once is no longer what it waits on (while the node is in maintenance it is held, and says so).
             if (!Models.Maintenance && current.MoveFailure is not null)
             {
@@ -687,6 +708,10 @@ public sealed partial class LegCommander(
         // An open that conflicted has raised the watchtower's pr-conflicts card already: no second ring for the owner, and no latch, so the
         // sweep opens the PR once that card closes.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
+        {
+            return;
+        }
+        if (FirstMiss(current.Code, $"{step.Verb} {step.Target}"))
         {
             return;
         }
@@ -717,6 +742,11 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // Its PR is being opened already (by another sweep or a person): joined, not asked again, so no second call and no miss to ring.
+        if (IsCalling(current.Code, OpeningPr))
+        {
+            return null;
+        }
         var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
         if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
         {
@@ -743,6 +773,9 @@ public sealed partial class LegCommander(
     }
 
     private sealed record DueStep(CommandRequest? Step);
+
+    /// <summary>What a flight is <see cref="Calling"/> while its PR is opened.</summary>
+    private const string OpeningPr = "having its PR opened";
 
     /// <summary>The argument of the node's own <see cref="Verbs.StartReview"/> that pushes a head the PR lacks before the review starts.</summary>
     internal const string UnreadHeadArg = "unread-head";
@@ -785,6 +818,12 @@ public sealed partial class LegCommander(
         }
         var result = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(current.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
         if (result.Ok)
+        {
+            _missedOnce.TryRemove(current.Code, out _);
+            return false;
+        }
+        // The first refusal rings nothing: the next sweep asks again, and a second in a row rings.
+        if (FirstMiss(current.Code, key))
         {
             return false;
         }
@@ -2114,6 +2153,12 @@ public sealed partial class LegCommander(
         }
         if (underWay)
         {
+            // The entry is the job row: live while it is open and moved within StuckAfter. Asked again, the merge answers ok and the entry is left as it is.
+            if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is { Open: true } live && time.GetUtcNow() - live.ChangedAt < StuckAfter)
+            {
+                // The repeat's own head and method are ignored: the first merge's stand. Its Way says "not merged, no news" to callers.
+                return (false, AlreadyInProgress, MergeWays.InProgress);
+            }
             throw new FlightException($"{asked.Code} is being merged already: wait for its answer, then ask again");
         }
         // The turn is the command's before its entry is put: a journal that cannot write the entry (a full disk) throws out of Enqueue
@@ -2176,7 +2221,9 @@ public sealed partial class LegCommander(
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
-        if (DroppedForConflict(flight.Code, pr.Head))
+        // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
+        // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
+        if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
             throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
@@ -2355,6 +2402,12 @@ public sealed partial class LegCommander(
             throw new FlightException(flight.Review is null
                 ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
                 : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
+        }
+        // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
+        if (PrRef.Parse(flight.PullRequestUrl) is { } own
+            && state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReviews.DesignKind && c.Subject == Verbs.PrTarget(own.Repo, own.Number)) is { } design)
+        {
+            throw new FlightException($"{flight.Code}'s PR {own} has an open design question (card {design.Id}): answer it or dismiss it first");
         }
         return (flight, head, method);
     }
@@ -2581,7 +2634,7 @@ public sealed partial class LegCommander(
         var title = string.Join(' ', command.Args ?? []).Trim();
         // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
         // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
-        using var call = Calling(flight.Code, "having its PR opened");
+        using var call = Calling(flight.Code, OpeningPr, coalesce: true);
         (FlightRow repaired, PullRequest pr, bool mergedBase) opened;
         try
         {
@@ -2943,7 +2996,7 @@ public sealed partial class LegCommander(
             }
             throw new FlightException(RoundRefusal(flight));
         }
-        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer");
+        RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer", coalesce: true);
         var legs = state.Legs(flight.Code);
         if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
         {

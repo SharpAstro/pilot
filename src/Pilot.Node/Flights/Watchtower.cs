@@ -63,7 +63,13 @@ public sealed class Watchtower(
     /// </summary>
     public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(30);
 
-    /// <summary>How long it is kept once there is nothing to watch, idle, before it is stopped.</summary>
+    /// <summary>
+    /// Whether any UI (GUI or TUI, local or over the LAN) is connected: on a node with no flight to watch it keeps the watchtower live,
+    /// so a chat is relayed into the live process. A CLI command or an MCP call is no UI.
+    /// </summary>
+    public Func<bool> UiConnected { get; set; } = () => false;
+
+    /// <summary>How long it is kept once there is nothing to watch and no UI is connected, idle, before it is stopped.</summary>
     public TimeSpan QuietFor { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>How long after a failed start the next one is tried.</summary>
@@ -145,7 +151,9 @@ public sealed class Watchtower(
     {
         try
         {
-            await Ready();
+            // With the stopping token: a node that stops before the tracker's first poll runs never sees that poll complete,
+            // and a wait without the token held its stop to the host's shutdown timeout.
+            await Ready().WaitAsync(stopping);
         }
         catch (OperationCanceledException)
         {
@@ -535,6 +543,8 @@ public sealed class Watchtower(
     private static string Fold(string? text) =>
         string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
 
+    private DateTimeOffset? _wokeAt;
+
     private static bool Live(SessionRow row) => row.State is SessionState.Working or SessionState.Waiting or SessionState.Idle;
 
     /// <summary>
@@ -556,6 +566,9 @@ public sealed class Watchtower(
             : null;
     }
 
+    /// <summary>What keeps it live: <see cref="Watching"/>, else a connected UI, else null (the quiet stop applies after <see cref="QuietFor"/>).</summary>
+    public string? Keeping() => Watching() ?? (UiConnected() ? "a UI is connected" : null);
+
     /// <summary>One look: keeps it running while there is something to watch, and tells it the cards it has not heard of.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
@@ -571,7 +584,7 @@ public sealed class Watchtower(
             // Kept every look, so a row archived before anyone asked for the chat is still known by its session.
             Generations();
             KeepChurnCard(Health());
-            var watching = Watching();
+            var watching = Keeping();
             NoteHeld();
             if (watching is not null || _watchingAt is null)
             {
@@ -628,18 +641,24 @@ public sealed class Watchtower(
                         return;
                     }
                 }
-                // One that ended (its turn over, or stopped when quiet) on the brief it has is woken only when there is something
-                // to say to it: in place while its cache is warm, where the say resumes it; past that, a fresh one, below. Started
-                // afresh after every ended turn instead, SE1 began 83 in a day (2026-10-25), each reading its brief again cold.
+                // One that ended (its turn over, or stopped when quiet) on the brief it has: with cards untold and its cache warm the
+                // say resumes it in place; otherwise a fresh one is started below, since something keeps it. That start costs a cold
+                // read of the brief (SE1 began 83 in a day on 2026-10-25 when sessions ended after each turn), so watch the start count
+                // in pilot status's send timings on a node like that.
                 if (row is { State: SessionState.Ended } && Briefed() == BriefFingerprint() && row.Id != _resumeRefused)
                 {
-                    if (Untold().Count == 0)
+                    // Past the check above, something keeps it (a flight in the air, or a connected UI), so one that is not live is
+                    // started with no card to wait for: chatting never waits for a cold start (PIL584). With cards untold and its cache
+                    // warm, the say resumes it in place; otherwise a fresh one is started below.
+                    if (_wokeAt is { } woke && row.Id == _job && now - woke < ShowUpGrace)
                     {
+                        // Resumed in place a moment ago: the listing may still show it ended, which is no reason to start a second.
                         return;
                     }
-                    if (Warm(row, now))
+                    if (Untold().Count > 0 && Warm(row, now))
                     {
                         _job = row.Id;
+                        _wokeAt = now;
                         if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)
                         {
                             // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
@@ -1001,7 +1020,7 @@ public sealed class Watchtower(
     /// <summary>Ends a watchtower with nothing left to watch, and says so; the next thing to watch starts a fresh one.</summary>
     private async Task StopQuietAsync(SessionRow row, CancellationToken cancellationToken)
     {
-        if (!await EndOneAsync(row, "nothing to watch", time.GetUtcNow(), cancellationToken))
+        if (!await EndOneAsync(row, $"quiet: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes", time.GetUtcNow(), cancellationToken))
         {
             // Not confirmed: kept as current, so the next look ends it again; the messenger's card says when it will not stop.
             return;
@@ -1009,7 +1028,7 @@ public sealed class Watchtower(
         _job = null;
         _startedAt = null;
         state.RaiseCard(CardBin.Handled, "watchtower-parked", Verbs.WatchtowerTarget,
-            $"Stopped the watchtower: nothing to watch for {QuietFor.TotalMinutes:0} minutes; the next card resumes it within the hour, else starts a fresh one");
+            $"Stopped the watchtower: no flight in the air and no UI connected for {QuietFor.TotalMinutes:0} minutes; a flight taking off or a UI connecting resumes it within the hour, else starts a fresh one");
     }
 
     private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
@@ -1061,7 +1080,7 @@ public sealed class Watchtower(
     /// The open cards it has not heard of, oldest first: not its own, not Handled lines, not about itself; and once, a Ring
     /// card it was told <see cref="RetellAfter"/> ago that is still open.
     /// </summary>
-    private List<CardRow> Untold()
+    internal List<CardRow> Untold()
     {
         var now = time.GetUtcNow();
         return state.Cards(openOnly: true)
@@ -1094,7 +1113,9 @@ public sealed class Watchtower(
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
-        var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+        var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
+            // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
+            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{_retold.Count}" }, cancellationToken);
         _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {

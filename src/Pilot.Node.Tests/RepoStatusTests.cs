@@ -321,6 +321,7 @@ public sealed class RepoStatusTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheRouteServesTheCacheOfARealRepoThroughARealNodeAndPilotReposPrintsIt()
     {
         // A repo with a bare origin, a flight's plane with one commit past main, and an open PR gh says.

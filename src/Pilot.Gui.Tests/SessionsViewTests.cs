@@ -1,5 +1,6 @@
 using DIR.Lib;
 using Pilot.Contracts;
+using Pilot.Ui;
 using Shouldly;
 using Xunit;
 
@@ -14,13 +15,13 @@ public sealed class SessionsViewTests
     /// <summary>The sample's six sessions as the view shows them, as of the snapshot's own moment (09:41:09 UTC).</summary>
     private static readonly string[] ExpectedRows =
     [
-        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k over 20 m",
-        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M over 3 h 41 m",
-        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58% over 1 h 35 m",
-        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64% over 12 h 10 m",
-        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0% over 38 m",
-        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
-        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% over 2 h 10 m",
+        "ad hoc · stargazer | fix the flaky clock test | Opus 5.5 · medium | 38.4k / 1M · 4% | last response 3m ago | waiting on you (permission to run: dotnet test) | spend 402k | age 20 m | spend/min 19.8k/min",
+        "watchtower | xy1-watchtower | Opus 5.5 · xhigh | 84.2k / 1M · 8% | last response 2s ago | working | spend 1.83M | age 3 h 41 m | spend/min 8.26k/min",
+        "worker · ORB204 / parser | xy1-orb204-parser | Sonnet 5.5 · medium | 61.2k / 200k · 31% | last response 18s ago | working | spend 2.31M / 4M · 58% | age 1 h 35 m | spend/min 24.2k/min",
+        "pilot · ORB204 | pilot-12 | Opus 5.5 · high | 213k / 1M · 21% | last response 28m ago | idle | spend 6.4M / 10M · 64% | age 12 h 10 m | spend/min 8.76k/min",
+        "worker · LIB117 / bump | xy1-lib117-bump | no response yet | 0 / 200k · 0% | last response none yet | failed | spend 0 / 1M · 0% | age 38 m | spend/min 0/min",
+        "reviewer · ORB204 / parser | xy1-orb204-review | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% | age 2 h 10 m | spend/min 9.92k/min",
+        "planner · ORB204 | xy1-orb204-plan | Opus 5.5 · high | 143k / 200k · 72% | last response 1h 42m ago | ended | spend 1.29M / 2M · 65% | age 2 h 10 m | spend/min 9.92k/min",
     ];
 
     private static SessionsScreen SampleScreen()
@@ -58,6 +59,25 @@ public sealed class SessionsViewTests
         SessionsCapture.RowsText(screen).ShouldContain("ended (its process went (no longer listed))");
         screen.Lines.Single(l => l.Row.Id == ended.Id).EndedBecause.ShouldBe("its process went (no longer listed)");
         screen.Lines.Where(l => l.Row.Id != ended.Id).ShouldAllBe(l => l.EndedBecause == null || l.Row.Id == ended.Id);
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        SessionsCapture.Render(renderer, screen);
+    }
+
+    [Fact]
+    public void TheWatchtowerRowShowsWhenAndWhyItWasLastCompacted()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var tower = snapshot.Sessions.First(s => s.Role == SessionRole.Watchtower) with
+        {
+            LastCompactedAt = snapshot.At - TimeSpan.FromMinutes(12), CompactedBecause = "its context reached 70% of its window",
+        };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = [.. snapshot.Sessions.Select(s => s.Id == tower.Id ? tower : s)] }, "sample");
+
+        var line = screen.Lines.Single(l => l.Row.Id == tower.Id);
+        line.Compacted.ShouldBe("compacted 12 m ago");
+        SessionsCapture.RowsText(screen).ShouldContain("| compacted 12 m ago");
+        ChipBrief.Session(line).ShouldContain("compacted 12 m ago: its context reached 70% of its window");
+        screen.Lines.Where(l => l.Row.Id != tower.Id).ShouldAllBe(l => l.Compacted == null);
         using var renderer = new RgbaImageRenderer(1280, 800);
         SessionsCapture.Render(renderer, screen);
     }

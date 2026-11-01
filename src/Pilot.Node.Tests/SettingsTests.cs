@@ -51,6 +51,25 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void TheWatchtowerCompactionKeysRoundTripAndTakeTheirValues()
+    {
+        var file = Path.Combine(_root, NodeSettings.FileName);
+        var settings = NodeSettings.With(new NodeSettings(), "watchtower-compact-share", ["50"]).Settings.ShouldNotBeNull();
+        settings = NodeSettings.With(settings, "watchtower-chat-messages", ["25"]).Settings.ShouldNotBeNull();
+        settings.Write(file);
+
+        var read = NodeSettings.Read(file);
+        (string.Join(' ', read.Get("watchtower-compact-share")!), string.Join(' ', read.Get("watchtower-chat-messages")!)).ShouldBe(("50", "25"));
+        var roles = new RoleModels(read);
+        (roles.WatchtowerCompactShare, roles.WatchtowerChatMessages).ShouldBe((50.0, 25));
+        var defaults = new RoleModels(null);
+        (defaults.WatchtowerCompactShare, defaults.WatchtowerChatMessages).ShouldBe((60.0, 40));
+        NodeSettings.With(read, "watchtower-compact-share", ["0"]).Error.ShouldNotBeNull();
+        NodeSettings.With(read, "watchtower-chat-messages", ["-1"]).Error.ShouldNotBeNull();
+        NodeSettings.With(read, "watchtower-chat-messages", ["default"]).Settings!.WatchtowerChatMessages.ShouldBeNull();
+    }
+
+    [Fact]
     public void TheWorkerLadderKeysRoundTripAndTakeTheirValues()
     {
         var file = Path.Combine(_root, NodeSettings.FileName);
@@ -92,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort, worker-model-max, worker-effort-max, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-model, worker-model, planner-model, reviewer-model, reviewer-deep-model, watchtower-effort, worker-effort, planner-effort, reviewer-effort, reviewer-deep-effort, worker-model-max, worker-effort-max, worker-ladder")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
@@ -146,6 +165,7 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -255,6 +275,7 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheChecksRouteAnswersOverTheWire()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -439,6 +460,21 @@ public sealed class SettingsTests : IDisposable
         result.Way.ShouldBe("merge-method saved as squash; the next merge uses it");
         node.App.Services.GetRequiredService<RoleModels>().MergeMethod.ShouldBe("squash");
         (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "merge-method").Choices.ShouldBe(["rebase", "squash", "merge"]);
+    }
+
+    /// <summary>A repo list keeps every entry through the file: priority-repos was written as its first entry alone, so a second repo was lost on save.</summary>
+    [Theory]
+    [InlineData("priority-repos")]
+    [InlineData("no-auto-merge-repos")]
+    [InlineData("sub-task-repos")]
+    [InlineData("repo-trackers")]
+    public void ARepoListKeepsEveryEntryThroughTheFile(string key)
+    {
+        var file = Path.Combine(_root, $"{key}.json");
+        string[] entries = key == "repo-trackers" ? ["tianwen=github", "pilot=shortcut"] : ["tianwen", "pilot"];
+        NodeSettings.With(new NodeSettings(), key, entries).Settings.ShouldNotBeNull().Write(file);
+
+        NodeSettings.Read(file).Get(key).ShouldBe(entries);
     }
 
     /// <summary>A list entry that names a folder by path must be one, and stands for the folder's name; a repo-trackers entry must be repo=tracker.</summary>
