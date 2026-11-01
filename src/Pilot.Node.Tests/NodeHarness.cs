@@ -110,8 +110,9 @@ internal sealed class NodeHarness : IAsyncDisposable
 
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
                 // A stop that hangs takes the host's 30 s default and fails the test that disposed the node, whichever it was
-                // (LanTests on ubuntu and MergeFixtureCardTests on windows, #559's runs, both exactly 30 s). Capped here, and
-                // StopNodeAsync names what was still running, so the hang shows as a warning instead of a slow test.
+                // (LanTests on ubuntu and MergeFixtureCardTests on windows, #559's runs, both exactly 30 s). Both causes are fixed
+                // (the watchtower's wait for a first poll a quick stop had skipped; the repo watch's git in the temp folder's
+                // clones), and the cap stays: StopNodeAsync names what was still running, so a new hang shows as a warning.
                 builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = StopCap);
                 // A test node never runs the claude CLI or reads this machine's sessions: it tracks what the test gives it.
                 builder.Services.AddSingleton<IClaudeAgents>(agents);
