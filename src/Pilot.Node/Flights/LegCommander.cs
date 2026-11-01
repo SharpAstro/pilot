@@ -742,6 +742,11 @@ public sealed partial class LegCommander(
         {
             return null;
         }
+        // Its PR is being opened already (by another sweep or a person): joined, not asked again, so no second call and no miss to ring.
+        if (IsCalling(current.Code, OpeningPr))
+        {
+            return null;
+        }
         var legs = state.Legs(current.Code).OrderBy(l => l.Order).ToList();
         if (legs.Count == 0 || legs.Any(l => l.State is LegState.Flying or LegState.Failed))
         {
@@ -768,6 +773,9 @@ public sealed partial class LegCommander(
     }
 
     private sealed record DueStep(CommandRequest? Step);
+
+    /// <summary>What a flight is <see cref="Calling"/> while its PR is opened.</summary>
+    private const string OpeningPr = "having its PR opened";
 
     /// <summary>The argument of the node's own <see cref="Verbs.StartReview"/> that pushes a head the PR lacks before the review starts.</summary>
     internal const string UnreadHeadArg = "unread-head";
@@ -2614,7 +2622,7 @@ public sealed partial class LegCommander(
         var title = string.Join(' ', command.Args ?? []).Trim();
         // The base repaired, the branch pushed and the PR looked up and made are git and GitHub: asked with the lock let go (PIL338), and
         // recorded once the flight is found as it was. Each is safe to say again, as a PR made and not recorded is found by its branch.
-        using var call = Calling(flight.Code, "having its PR opened", coalesce: true);
+        using var call = Calling(flight.Code, OpeningPr, coalesce: true);
         (FlightRow repaired, PullRequest pr, bool mergedBase) opened;
         try
         {
