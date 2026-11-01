@@ -275,6 +275,7 @@ public static class NodeApp
             Gate = services.GetRequiredService<StartGate>(),
             Ledger = services.GetRequiredService<SessionLedger>(),
             Error = logWriter,
+            PersonMessages = row => services.GetRequiredService<TranscriptBook>().PersonMessages(row.SessionId),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Compactor>());
         // From the profile the tracker reads, so a test node, on a profile of its own, never reads the machine's.

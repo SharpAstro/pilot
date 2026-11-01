@@ -20,13 +20,16 @@ public sealed class CompactorTests
     private readonly NodeState _state;
     private readonly List<CommandRequest> _said = [];
     private readonly Compactor _compactor;
+    private readonly FakeWorkers _workers = new();
+    private int _persons;
+    private readonly Pilot.Node.Sessions.SessionLedger _ledger = new();
     private string? _refuse;
 
     public CompactorTests()
     {
         _state = new NodeState(new InMemoryJournal(), _time);
-        var tower = new Watchtower(_state, new FakeWorkers(), Run, new NodeOptions("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1"), _time);
-        _compactor = new Compactor(_state, tower, Run, _time);
+        var tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", "/tmp/pilot2", MachinePrefix: "DU1"), _time);
+        _compactor = new Compactor(_state, tower, Run, _time) { PersonMessages = _ => _persons, Ledger = _ledger };
         // Something to watch: a flight in the air with a leg flying.
         _state.PutFlight(new FlightRow
         {
@@ -84,6 +87,88 @@ public sealed class CompactorTests
         _time.Advance(TimeSpan.FromMinutes(50));
         await _compactor.LookAsync(Ct);
         _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ALiveWatchtowerIdleAt70PercentIsCompactedOnceAndNotAgainUntilItGrowsPastTheShare()
+    {
+        Row("t0000001", "du1-watchtower", context: 700_000);
+        await _compactor.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+        Handled().ShouldBe(["Compacted du1-watchtower: its context reached 70% of its window"]);
+
+        // The compaction answered and left it small: nothing more, however long it sits (under the idle floor of 100k).
+        Row("t0000001", "du1-watchtower", context: 60_000, lastResponse: _time.GetUtcNow());
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await _compactor.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        // Grown past the share again: compacted again.
+        Row("t0000001", "du1-watchtower", context: 650_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AWatchtowerUnderTheShareIsNotCompacted()
+    {
+        Row("t0000001", "du1-watchtower", context: 550_000);
+        await _compactor.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALongChatIsCompactedOnceIdleAndTheCountStartsOverAfterwards()
+    {
+        Row("t0000001", "du1-watchtower", context: 90_000);
+        _persons = 39;
+        await _compactor.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+
+        _persons = 40;
+        await _compactor.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+        Handled().ShouldBe(["Compacted du1-watchtower: the chat has 40 person messages since its last compaction"]);
+
+        // Answered; thirty-nine more messages is under the count, forty is not.
+        Row("t0000001", "du1-watchtower", context: 60_000, lastResponse: _time.GetUtcNow());
+        _persons = 79;
+        await _compactor.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _persons = 80;
+        await _compactor.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ACompactionIsLoggedAndTheSessionRowCarriesWhenAndWhy()
+    {
+        var log = new StringWriter();
+        _compactor.Error = log;
+        _ledger.Started("t0000001", "du1-watchtower", Pilot.Node.Sessions.SessionRoles.Resolve("du1-watchtower", background: true), Pilot.Node.Sessions.SessionStartReasons.WatchtowerStart, null);
+        Row("t0000001", "du1-watchtower", context: 700_000);
+
+        await _compactor.LookAsync(Ct);
+
+        log.ToString().ShouldContain("compactor: compacted du1-watchtower (t0000001): its context reached 70% of its window");
+        var row = _state.Sessions().Single(r => r.Id == "t0000001");
+        row.LastCompactedAt.ShouldBe(Start);
+        row.CompactedBecause.ShouldBe("its context reached 70% of its window");
+    }
+
+    [Fact]
+    public async Task AWatchtowerStillPastTheShareAfterCompactingIsReplacedNotCompactedAgain()
+    {
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+        _said.ShouldHaveSingleItem();
+
+        // Answered, and still at 75%: a fresh watchtower in its place, through the watchtower's own start.
+        Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-watchtower");
+        Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower: still at 75% of its window after a compaction", StringComparison.Ordinal));
     }
 
     [Fact]

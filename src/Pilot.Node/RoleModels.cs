@@ -389,6 +389,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The share of its window, in percent, past which an idle live watchtower is compacted (<see cref="NodeSettings.WatchtowerCompactShareKey"/>); 60 by default.</summary>
+    public double WatchtowerCompactShare
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WatchtowerCompactShare ?? 60;
+            }
+        }
+    }
+
+    /// <summary>The person messages in a watchtower chat after which it is compacted once idle (<see cref="NodeSettings.WatchtowerChatMessagesKey"/>); 40 by default, 0 is off.</summary>
+    public int WatchtowerChatMessages
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.WatchtowerChatMessages ?? 40;
+            }
+        }
+    }
+
     /// <summary>The most Opus sessions the fleet runs at once (<see cref="NodeSettings.OpusCapKey"/>); 3 unless the settings say otherwise, 0 for no cap.</summary>
     public int OpusCap
     {

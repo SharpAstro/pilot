@@ -53,6 +53,15 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
     }
 
+    /// <summary>How many person messages the session's transcript holds: prompts that are no note (the node's says and tool output are not counted).</summary>
+    public int PersonMessages(string sessionId)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null) is { } reader ? reader.Entries.Count(e => e is { Kind: TranscriptKind.User, Note: false }) : 0;
+        }
+    }
+
     /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.

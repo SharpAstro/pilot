@@ -40,6 +40,12 @@ internal sealed partial record SessionLine
     /// <summary>Since its last response, <c>3m ago</c>; <c>none yet</c> before one.</summary>
     public required string LastResponse { get; init; }
 
+    /// <summary>When the node last compacted it, <c>compacted 12 m ago</c>; null when it never has (<see cref="SessionRow.LastCompactedAt"/>).</summary>
+    public string? Compacted { get; init; }
+
+    /// <summary>Why it was last compacted (<see cref="SessionRow.CompactedBecause"/>); null when it never was.</summary>
+    public string? CompactedBecause { get; init; }
+
     /// <summary>Where it is: working, waiting on you, idle, ended, failed.</summary>
     public required string State { get; init; }
 
@@ -97,6 +103,10 @@ internal sealed partial record SessionLine
         var detail = WaitingFor ?? EndedBecause;
         var state = detail is null ? State : $"{State} ({detail})";
         var line = string.Join(" | ", Role, ShownName, Model, Context, $"last response {LastResponse}", state, $"spend {Spend}");
+        if (Compacted is not null)
+        {
+            line += $" | {Compacted}";
+        }
         return Node is { } node ? $"{node.Name} | {line}" : line;
     }
 
@@ -133,6 +143,8 @@ internal sealed partial record SessionLine
             Context = $"{Tokens(row.ContextTokens)} / {Tokens(row.ContextWindow)} · {Percent(contextFraction)}",
             ContextFraction = Math.Clamp(contextFraction, 0f, 1f),
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
+            Compacted = row.LastCompactedAt is { } compactedAt ? $"compacted {Span(now - compactedAt)} ago" : null,
+            CompactedBecause = row.LastCompactedAt is null ? null : row.CompactedBecause,
             State = IsStopped(row) ? "stopped" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
             EndedBecause = row.EndedBecause,

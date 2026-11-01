@@ -47,6 +47,12 @@ public sealed record SessionLedgerEntry
 
     /// <summary>What woke it after its start (<c>compaction</c>, <c>say</c>), in order.</summary>
     public string[] Resumes { get; init; } = [];
+
+    /// <summary>When the node last compacted it (the Compactor); null when it never has.</summary>
+    public DateTimeOffset? CompactedAt { get; init; }
+
+    /// <summary>Why it was last compacted, in a line.</summary>
+    public string? CompactedBecause { get; init; }
 }
 
 /// <summary>
@@ -143,6 +149,23 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
                 Replace(entries, entry, entry with { EndedAt = now, EndReason = reason, EndedBy = by, WallSeconds = Wall(entry, now) });
                 Save(entries);
             }
+        }
+    }
+
+    /// <summary>Notes that the node compacted the session known by one of <paramref name="ids"/>, when and why; the session row shows it.</summary>
+    public SessionLedgerEntry? Compacted(IEnumerable<string> ids, DateTimeOffset at, string why)
+    {
+        lock (_lock)
+        {
+            var entries = Load();
+            if (FindLocked(entries, ids) is not { } entry)
+            {
+                return null;
+            }
+            var next = entry with { CompactedAt = at, CompactedBecause = why };
+            Replace(entries, entry, next);
+            Save(entries);
+            return next;
         }
     }
 
@@ -302,6 +325,11 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
                 json.WriteStringValue(r);
             }
             json.WriteEndArray();
+            if (e.CompactedAt is { } compactedAt)
+            {
+                json.WriteString("compactedAt", compactedAt);
+                json.WriteString("compactedBecause", e.CompactedBecause);
+            }
             json.WriteEndObject();
         }
         json.WriteEndArray();
@@ -337,6 +365,8 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
                 Tokens = item.TryGetProperty("tokens", out var tokens) && tokens.ValueKind == JsonValueKind.Number ? tokens.GetInt64() : 0,
                 WallSeconds = item.TryGetProperty("wallSeconds", out var wall) && wall.ValueKind == JsonValueKind.Number ? wall.GetInt64() : 0,
                 Resumes = List("resumes"),
+                CompactedAt = DateTimeOffset.TryParse(Text("compactedAt"), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var compactedAt) ? compactedAt : null,
+                CompactedBecause = Text("compactedBecause"),
             });
         }
         return entries;
