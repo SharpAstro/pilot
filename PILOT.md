@@ -34,6 +34,18 @@ is neither built nor tested by CI.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
   `--force`. Repos whose queue rebases (tianwen) say so in their own PILOT.md.
 
+## Sessions and the watchtower
+
+- A session's role is known by its **session id**, never by its name. Claude Code retitles a session after its work, and a
+  resume copies it under a new id; neither changes its role. A renamed watchtower is still the watchtower and is never
+  stopped or replaced for being renamed (#560).
+- A resume keeps the name and model the node started the session with. Code that resumes or messages a session goes through
+  the node's own path (`SessionMessenger`, `ClaudeProfile`), never a bare `claude --resume`.
+- Only a replacement the node chose (a brief change, a fresh start, `pilot watchtower restart`) ends a role's old session, and
+  it ends it through the node's wind-down. A session is ended with `pilot session end`, never `claude stop` from a session.
+- One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
+  `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading
