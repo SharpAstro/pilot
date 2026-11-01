@@ -1,3 +1,5 @@
+using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
 using Xunit;
@@ -119,4 +121,90 @@ public sealed class FlightLegSessionsTests
         dump.ShouldContain("   session: worker | de1-tia1611-cccc3333 | Opus 5.5 · xhigh | working");
         dump.ShouldContain("   earlier session: worker | de1-tia1611-aaaa1111 | Opus 5.5 · xhigh | finished 1h 30m ago");
     }
+
+    private static SessionRow[] Sample() =>
+    [
+        Session("pppp0001", SessionRole.Planner, null, SessionState.Ended, 0, endReason: SessionEndReasons.Planned, endedMinutes: 5),
+        Session("rrrr0001", SessionRole.Reviewer, null, SessionState.Working, 100),
+        Session("aaaa1111", SessionRole.Worker, "render", SessionState.Ended, 10, endReason: SessionEndReasons.Finished, endedMinutes: 30),
+        Session("cccc3333", SessionRole.Worker, "render", SessionState.Working, 70),
+    ];
+
+    private static LegRow[] SampleLegs() => [Leg("render", 1, LegState.Flying, "cccc3333"), Leg("parser", 2, LegState.Planned)];
+
+    private static (List<Layout.Content.Text> Leaves, List<ClickableRegion> Regions, IReadOnlyList<TextFault> Faults) Page(
+        int width = 1600, string? stale = null, Action<SessionRow, NodeMark?>? onSession = null)
+    {
+        using var vessel = new RgbaImageRenderer((uint)width, 900);
+        var flights = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Flights;
+        flights.OnSession = onSession ?? ((_, _) => { });
+        var line = FlightLine.Build([Flight()], Sample(), Now, SampleLegs()).Single() with { Stale = stale };
+        var screen = new FlightsScreen([line], "test", Now);
+        flights.Render(screen, new RectF32(0, 0, width, 900));
+        flights.OpenDetail("TIA1611");
+        flights.Render(screen, new RectF32(0, 0, width, 900));
+        var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+        var regions = new List<ClickableRegion>();
+        flights.CollectPaintedRegions(regions);
+        return (leaves, regions, TextOverlap.Faults(arranged));
+    }
+
+    [Fact]
+    public void AClickOnAFlyingLegsSessionLinkOpensItsRow()
+    {
+        var opened = new List<string>();
+        var (leaves, regions, _) = Page(onSession: (row, _) => opened.Add(row.Id));
+
+        leaves.Any(t => t.Value.Contains("de1-tia1611-cccc3333 · Opus 5.5 · xhigh · working", StringComparison.Ordinal)).ShouldBeTrue();
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:leg:render:session:cccc3333" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["cccc3333"]);
+    }
+
+    [Fact]
+    public void ARedoneLegShowsEachEarlierSessionWithItsEndReasonAndALink()
+    {
+        var opened = new List<string>();
+        var (leaves, regions, _) = Page(onSession: (row, _) => opened.Add(row.Id));
+
+        leaves.Any(t => t.Value.Contains("de1-tia1611-aaaa1111", StringComparison.Ordinal) && t.Value.Contains("finished", StringComparison.Ordinal)).ShouldBeTrue();
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:leg:render:session:aaaa1111" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["aaaa1111"]);
+    }
+
+    [Fact]
+    public void ALegThatNeverStartedHasNoSessionText()
+    {
+        var (leaves, regions, _) = Page();
+
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("flight:TIA1611:leg:parser:", StringComparison.Ordinal)).ShouldBeFalse();
+        leaves.Count(t => t.Value == "session").ShouldBe(1);
+    }
+
+    [Fact]
+    public void PlannerAndReviewerShowAtFlightLevel()
+    {
+        var opened = new List<string>();
+        var (leaves, regions, _) = Page(onSession: (row, _) => opened.Add(row.Id));
+
+        leaves.Any(t => t.Value == "Planner").ShouldBeTrue();
+        leaves.Any(t => t.Value == "Reviewer").ShouldBeTrue();
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:flight-session:pppp0001" }).OnClick!.Invoke(InputModifier.None);
+        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:flight-session:rrrr0001" }).OnClick!.Invoke(InputModifier.None);
+        opened.ShouldBe(["pppp0001", "rrrr0001"]);
+    }
+
+    [Fact]
+    public void AStaleLineDrawsTheLinksDeadWithTheStaleTooltip()
+    {
+        var (leaves, regions, _) = Page(stale: "DE1");
+
+        leaves.Any(t => t.Value.Contains("de1-tia1611-cccc3333", StringComparison.Ordinal)).ShouldBeTrue();
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":session:", StringComparison.Ordinal) && a.StartsWith("flight:TIA1611:leg:", StringComparison.Ordinal)).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(900)]
+    [InlineData(1600)]
+    public void NoTextOverlapsOnAPageWithSessions(int width) => Page(width).Faults.Select(f => f.Line).ShouldBeEmpty();
 }

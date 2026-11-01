@@ -206,7 +206,7 @@ internal sealed partial class FlightsView<TSurface>
         _legBlocks.Clear();
         var legs = detail.Legs.Count == 0
             ? [Layout.Builder.Text(line.Node is null or { Here: true } ? "no legs yet: Plan a leg" : "no legs yet", 13f, Dim).RowH(24f)]
-            : detail.Legs.Select(l => LegBlock(line.Code, l)).ToList();
+            : detail.Legs.Select(l => LegBlock(line, l)).ToList();
         // The flight's own summary leads what scrolls: the legs are the detail under it.
         if (Summary is { } board && _summaryCard.Build(board, board.Shelf.Flight(line.Code, line.Node), P, _screen.AsOf) is { } summary)
         {
@@ -250,6 +250,7 @@ internal sealed partial class FlightsView<TSurface>
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and
         // above the scroll they pushed the page's foot past the window's.
         List<Layout.Node> scrolled = [FlowRow.Of(22f, 14f, facts), FlowRow.Of(26f, 10f, WhoWorks(line))];
+        scrolled.AddRange(SessionRows(line, detail.Sessions, null));
         // The checklist leads the legs' detail: one line a leg, each opening its block below, then what a person added in the tracker.
         if (Checklist(line.Code, detail) is { } checklist)
         {
@@ -524,8 +525,42 @@ internal sealed partial class FlightsView<TSurface>
         return Layout.Builder.HStack([.. cells]).WithGap(ChecklistGap).RowH(ChecklistRowH);
     }
 
-    private Layout.Node LegBlock(string code, LegDetail leg)
+    // A session as a link: name, model and effort, state (or how it ended and when), coloured by state; dead with the stale tooltip while its node is unreachable.
+    private Layout.Node SessionLink(FlightLine line, string? leg, LegSessionLine s, bool earlier)
     {
+        var text = $"{s.Name} · {s.Model} · {s.Ended ?? s.State}";
+        var hit = leg is null ? $"flight:{line.Code}:flight-session:{s.Row.Id}" : $"flight:{line.Code}:leg:{leg}:session:{s.Row.Id}";
+        if (OnSession is not { } open)
+        {
+            return Layout.Builder.Text(text, 12f, earlier ? Dim : Body).WAuto().Selectable();
+        }
+        var row = s.Row;
+        if (line.Stale is not null)
+        {
+            return CardsView<TSurface>.Dead(text).WithTooltip(StaleWhy(line));
+        }
+        var color = earlier ? Dim : s.State == "waiting" ? Held : s.IsLive ? Flying : Dim;
+        return Layout.Builder.Text(text, 12f, color)
+            .Pad(10f, 4f)
+            .WAuto()
+            .Bg(Button)
+            .BgHover(ButtonHover)
+            .Follows(new HitResult.ButtonHit(hit), _ => open(row, line.Node));
+    }
+
+    // The sessions of a leg (leg set) or of the flight (planner and reviewer), one line each, labelled with the role; the current one first, earlier ones dim.
+    private IEnumerable<Layout.Node> SessionRows(FlightLine line, IReadOnlyList<LegSessionLine> sessions, string? leg)
+    {
+        foreach (var s in sessions)
+        {
+            var label = char.ToUpperInvariant(s.Role[0]) + s.Role[1..];
+            yield return FlowRow.Of(28f, 10f, [Layout.Builder.Text(label, 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg, s, false)]);
+        }
+    }
+
+    private Layout.Node LegBlock(FlightLine line, LegDetail leg)
+    {
+        var code = line.Code;
         var color = LegColor(leg.Row);
         var head = new List<Layout.Node>
         {
@@ -546,6 +581,14 @@ internal sealed partial class FlightsView<TSurface>
         }
 
         var rows = new List<Layout.Node> { FlowRow.Of(24f, 12f, head) };
+        if (leg.Session is { } current)
+        {
+            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("session", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, current, false)]));
+        }
+        foreach (var old in leg.Earlier)
+        {
+            rows.Add(FlowRow.Of(28f, 10f, [Layout.Builder.Text("earlier", 11f, Faint).WFixed(DetailLabelWidth), SessionLink(line, leg.Name, old, true)]));
+        }
         rows.Add(Field("Goal", leg.Goal));
         rows.Add(Field("Done when", leg.DoneWhen));
         if (leg.Check is { } check)
