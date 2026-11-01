@@ -1297,7 +1297,8 @@ public sealed class PrReviews(
     {
         var target = Verbs.PrTarget(pr.Repo, pr.Number);
         var flight = FlightOf(pr);
-        if (flight is null && (review.Fixer is not null || review.DesignAnswer is { Length: > 0 } || _queued.ContainsKey(target)))
+        // A stored answer alone proves nothing: it is stored before the start, so a start that failed leaves it set. Only a fixer on or queued counts.
+        if (flight is null && (review.Fixer is not null || _queued.ContainsKey(target)))
         {
             var by = review.Fixer is { } fixer ? $"{fixer} is making the changes the answer calls for" : "the fixer waits for a free Opus slot and starts with the answer";
             SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, by);
@@ -1313,8 +1314,14 @@ public sealed class PrReviews(
                 [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = target }]);
             return;
         }
-        // Held for a slot: the answer is stored and the fixer starts later, so the card settles with that said.
-        SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, "the fixer waits for a free Opus slot and starts with the answer");
+        // Say only what is true: a fixer running, one queued for a slot, or the flight's leg sent round.
+        var now = Of(pr) ?? review;
+        var how = flight is not null ? "the flight's last leg goes round with the answer"
+            : now.Fixer is { } started ? $"{started} is making the changes the answer calls for"
+            : _queued.ContainsKey(target) ? "the fixer waits for a free Opus slot and starts with the answer"
+            : null;
+        if (how is null) return;
+        SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, how);
     }
 
     /// <summary>A landed flight in the PR's repo whose title names the PR (<c>#n</c>) and that is not the PR's own flight, or null.</summary>

@@ -34,6 +34,23 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AnAnswerCommentWhoseFixerFailedToStartNeverSettlesTheCardWithAFalseClaim()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        Comment("ada", "Keep it a library, no service.", TimeSpan.FromMinutes(1));
+        // The clone's origin goes dead, so the start fails after the answer is stored.
+        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", Path.Combine(Path.GetTempPath(), "pilot-no-such-origin-" + Guid.NewGuid().ToString("N")));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind
+            && (c.Title + c.Detail).Contains("Opus slot", StringComparison.OrdinalIgnoreCase));
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
+    }
+
+    [Fact]
     public async Task ReviewFixWithAnswerWordsPostsThemOnThePrAndStartsTheFixerWithThem()
     {
         await Review("acme/widget#7", "changes", Question);
