@@ -127,6 +127,8 @@ public sealed class FlightDesignAnswerTests : ReviewTestsBase
             StartedAt = DateTimeOffset.UtcNow,
         });
         (await RunPr(Verbs.PrVerdict, "du1-review-tianwen-71", "comment", "A question.", Question)).Error.ShouldBeNull();
+        // The node does not post it here, so the controller does: the post is when the design card is raised.
+        (await RunPr(Verbs.PostReview, "controller")).Error.ShouldBeNull();
         return flight;
     }
 
