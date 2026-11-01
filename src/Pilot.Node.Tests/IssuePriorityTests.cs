@@ -96,7 +96,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
         var at = new DateTimeOffset(2026, 11, 1, 8, 0, 0, TimeSpan.Zero);
         FlightRow Row(string code, IssuePriority? level, int minutes) => new()
         {
-            Code = code, Repo = "tianwen", RepoPath = "/r", Branch = "flight/" + code, Title = code, CreatedAt = at.AddMinutes(minutes), Queued = "waiting",
+            Code = code, Repo = "tianwen", RepoPath = "/r", Branch = "flight/" + code, Title = code, Issue = 1, Worktree = "/w", Base = "main", State = FlightState.Flying, CreatedAt = at.AddMinutes(minutes), Queued = "waiting",
             HasPriorityField = true, IssuePriority = level,
         };
 
