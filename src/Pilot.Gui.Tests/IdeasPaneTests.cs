@@ -1169,7 +1169,7 @@ public sealed class IdeasPaneTests
     }
 
     [Fact]
-    public async Task MakeFlightOnAnIssueWithNoFlightSendsCreateFlightThenPlanFlightAndAFlownRowHasNone()
+    public async Task MakeFlightOnAnIssueWithNoFlightSendsCreateFlightOnlyAndAFlownRowHasNone()
     {
         using var renderer = new RgbaImageRenderer(1280, 1400);
         var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, Made: "PIL12"));
@@ -1184,10 +1184,10 @@ public sealed class IdeasPaneTests
 
         Click(regions, "ideas:make-flight:pilot#12");
         await Task.WhenAll(tasks);
-        sent.Count.ShouldBe(2);
+        sent.Count.ShouldBe(1);
         (sent[0].Verb, sent[0].Target).ShouldBe((Verbs.CreateFlight, Verbs.RepoTarget(@"C:\src\pilot")));
         sent[0].Args.ShouldBe(["#12", "Resize the split " + LongTitle]);
-        (sent[1].Verb, sent[1].Target).ShouldBe((Verbs.PlanFlight, Verbs.FlightTarget("PIL12")));
+        sent.ShouldNotContain(s => s.Verb == Verbs.PlanFlight);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("made PIL12");
     }
 
