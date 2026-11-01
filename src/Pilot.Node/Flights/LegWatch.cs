@@ -452,7 +452,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         if (!compacted)
         {
-            var limit = Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Repo);
+            var limit = Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == leg.Flight)?.Repo ?? "");
             if (Gate?.Hold($"{Verbs.Compact} {worker.Id}", limit, Models.WeekLimit, "worker-compacted", subject, $"Compaction of {worker.Name} waits (its context is {share} of its window)") == true)
             {
                 return;
