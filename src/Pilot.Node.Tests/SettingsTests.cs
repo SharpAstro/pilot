@@ -519,12 +519,11 @@ public sealed class SettingsTests : IDisposable
     {
         await using var node = await NodeHarness.StartAsync(Ct);
 
-        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key) && !s.Key.EndsWith("-max", StringComparison.Ordinal)).ToArray();
+        var rows = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Where(s => NodeSettings.IsRoleKey(s.Key)).ToArray();
 
-        rows.ShouldNotBeEmpty();
-        rows.ShouldAllBe(r => r.Choices.Contains("none"));
-        rows.ShouldAllBe(r => r.Detail.Contains("default leaves the choice to Claude Code"));
-        rows.ShouldAllBe(r => !r.Detail.Contains("none leaves"));
+        rows.Length.ShouldBe(RoleModels.Roles.Count);
+        rows.ShouldAllBe(r => !r.Choices.Contains("none"));
+        rows.ShouldAllBe(r => r.Detail.Contains("a bare model leaves the effort to Claude Code"));
     }
 
     [Fact]
