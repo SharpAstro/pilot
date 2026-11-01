@@ -95,6 +95,8 @@ public sealed class DesignAnswerTests : PrFixTestsBase
 /// The same question of design on a flight's PR goes through the flight's go-around: it rings the design card naming the flight, and
 /// review fix with an answer sends the flight's last leg round with the question and the answer, starting no PR fixer.
 /// </summary>
+/// <remarks>Slow: every test flies a real flight in a worktree and opens its PR (3 to 6 s each run alone, 11.7 s in a full run).</remarks>
+[Trait("Category", "Slow")]
 public sealed class FlightDesignAnswerTests : ReviewTestsBase
 {
     private const string Head = "cafe0000cafe0000";
