@@ -6,6 +6,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>An Idle session holds an Opus slot only while it has work pending (#569).</summary>
+/// <remarks>Slow: every test starts legs of real flights in worktrees (5.5 to 6.4 s under load).</remarks>
+[Trait("Category", "Slow")]
 public sealed class IdleAdmissionTests : LegCommanderTestsBase
 {
     private void Settings(int cap, string onePerRepo = "off")

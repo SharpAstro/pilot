@@ -71,7 +71,7 @@ public sealed class DesignSettledTests : PrFixTestsBase
 
         await _reviews.SweepAsync(Ct);
 
-        Settled("conversation answers it");
+        Settled("the fixer started");
     }
 
     [Fact]
@@ -91,12 +91,47 @@ public sealed class DesignSettledTests : PrFixTestsBase
         _state.PutFlight(new FlightRow
         {
             Code = "WID9", Repo = "widget", RepoPath = WidgetClone, Issue = 9, Title = "Follow-up of widget#7: make it a library", Branch = "flight/wid9",
-            Worktree = Path.Combine(_root, "plane-wid9"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow,
+            Worktree = Path.Combine(_root, "plane-wid9"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow, LandedAt = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5),
         });
 
         await _reviews.SweepAsync(Ct);
 
         Settled("WID9 landed");
+    }
+
+    private void Landed(string code, string repo, DateTimeOffset at) =>
+        _state.PutFlight(new FlightRow
+        {
+            Code = code, Repo = repo, RepoPath = WidgetClone, Issue = 9, Title = "Follow-up of widget#7: make it a library", Branch = $"flight/{code.ToLowerInvariant()}",
+            Worktree = Path.Combine(_root, $"plane-{code}"), Base = "main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UtcNow, LandedAt = at,
+        });
+
+    [Fact]
+    public async Task AFollowUpThatLandedBeforeTheReviewOrInARepoOnlyEndingWithTheNameLeavesTheCardRinging()
+    {
+        await Asked();
+        Landed("WID1", "widget", DateTimeOffset.UtcNow - TimeSpan.FromDays(1));
+        Landed("WID2", "mywidget", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5));
+
+        await _reviews.SweepAsync(Ct);
+
+        OpenDesign().ShouldNotBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
+    }
+
+    [Fact]
+    public async Task ADesignCardListsOptionsInTheOrderOfItsButtonsAndBoundsAndCleansReviewerText()
+    {
+        var longQuestion = new string('q', 300);
+        await Review("acme/widget#7", "comment", $"README.md:1 design: {longQuestion}\nmore Option: first\n\t\u001b[31mred\u0007 {new string('x', 200)} => ok Option*: second => best");
+
+        var card = OpenDesign().ShouldNotBeNull();
+        card.Title.Length.ShouldBeLessThan(200);
+        card.Title.ShouldNotContain(c => char.IsControl(c));
+        card.Choices.ShouldAllBe(c => c.Label.Length <= 60 && !c.Label.Any(char.IsControl));
+        var detail = card.Detail.ShouldNotBeNull();
+        detail.IndexOf("- second", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("- first", StringComparison.Ordinal));
+        card.Choices[0].Label.ShouldBe("second");
     }
 
     [Fact]
@@ -129,5 +164,105 @@ public sealed class DesignSettledTests : PrFixTestsBase
 
         OpenDesign().ShouldNotBeNull().Bin.ShouldBe(CardBin.Ring);
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.DesignSettledKind);
+    }
+
+    private void AnswerComment() =>
+        _github.PrConversation.Add((7, new PrComment("ada", "Keep it a library.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+
+    private void HoldFixers()
+    {
+        _reviews.Models = AdmissionHeld.CapOfOne();
+        _state.PutSession(AdmissionHeld.Opus("du1-other-worker"));
+    }
+
+    private void FreeSlot() => _state.PutSession(AdmissionHeld.Opus("du1-other-worker", SessionState.Ended));
+
+    [Fact]
+    public async Task ACommentAnswerSeenBySweepStartsOneFixerWithTheAnswerAndPostsNothing()
+    {
+        await Asked();
+        AnswerComment();
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        var brief = Fixers.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("Keep it a library.");
+        Row.DesignAnswer.ShouldBe("Keep it a library.");
+        _github.IssueComments.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheNoticeOfACommentAnswerSaysAFixIsUnderWayNotThatNothingIsLeft()
+    {
+        await Asked();
+        AnswerComment();
+
+        await _reviews.SweepAsync(Ct);
+
+        var detail = Notice().Detail.ShouldNotBeNull();
+        detail.ShouldContain("a fix is under way");
+        detail.ShouldContain(Row.Fixer.ShouldNotBeNull());
+        detail.ShouldNotContain("nothing is left to answer");
+    }
+
+    [Fact]
+    public async Task ACommentAnswerThenTheCardAnswerStartOnlyOneFixer()
+    {
+        await Asked();
+        AnswerComment();
+        await _reviews.SweepAsync(Ct);
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Other", "words")).Error.ShouldNotBeNull();
+
+        Fixers.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task TheCardAnswerThenACommentAnswerStartOnlyOneFixer()
+    {
+        await Asked();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        AnswerComment();
+
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ACardAnswerHeldForASlotAndThenACommentAnswerStartOnlyOneFixerOnceTheSlotFrees()
+    {
+        await Asked();
+        HoldFixers();
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        AnswerComment();
+
+        await _reviews.SweepAsync(Ct);
+        Fixers.ShouldBeEmpty();
+        Notice().Detail.ShouldNotBeNull().ShouldNotContain("nothing is left to answer");
+        FreeSlot();
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("Keep it a library");
+    }
+
+    [Fact]
+    public async Task ACommentAnswerHeldForASlotAndThenTheCardAnswerStartOnlyOneFixerOnceTheSlotFrees()
+    {
+        await Asked();
+        HoldFixers();
+        AnswerComment();
+        await _reviews.SweepAsync(Ct);
+        Fixers.ShouldBeEmpty();
+        Row.DesignAnswer.ShouldBe("Keep it a library.");
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        FreeSlot();
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldHaveSingleItem();
     }
 }

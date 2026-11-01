@@ -51,6 +51,7 @@ public sealed class PushTests : IDisposable
     private string Other => Path.Combine(_root, "other");
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_fast_forward_is_pushed()
     {
         File.WriteAllText(Path.Combine(Plane, "mine.txt"), "mine\n");
@@ -63,6 +64,7 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_commit_the_remote_has_and_the_plane_lacks_is_merged_in_and_kept()
     {
         File.WriteAllText(Path.Combine(Other, "theirs.txt"), "theirs\n");
@@ -85,6 +87,7 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_conflicting_remote_commit_is_refused_with_both_heads_and_the_remote_is_left_as_it_was()
     {
         File.WriteAllText(Path.Combine(Other, "shared.txt"), "one\ntheirs\nthree\n");
@@ -112,6 +115,7 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_head_rewritten_after_its_push_is_merged_with_the_pushed_history_never_forced_over_it()
     {
         File.WriteAllText(Path.Combine(Plane, "mine.txt"), "mine\n");
@@ -130,6 +134,7 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_clean_update_merges_the_base_in_and_pushes_without_force_and_no_git_rebase_is_run()
     {
         // Main moves on after the branch was cut.
@@ -155,6 +160,7 @@ public sealed class PushTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_conflicting_base_merge_is_aborted_and_refused_with_nothing_pushed_and_no_rebase()
     {
         Git(Plane, "checkout", "-q", "main");

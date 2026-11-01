@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 /// go-around: disarmed, dequeued, the PR-ready card's Merge closed and a card saying so, and offered again only once the new leg
 /// is done and a fresh review passes (pilot #342).
 /// </summary>
+[Trait("Category", "Slow")]
 public sealed class MergeTakeBackTests : IDisposable
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -157,6 +158,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PlanLegOnANodeArmedMergeClearsItAndSaysSo()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -198,6 +200,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StartLegOnAQueuedMergeDequeues()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -212,6 +215,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task StartLegOnAGitHubArmedMergeDisarmsIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -226,6 +230,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAroundOnAQueuedMergeDequeues()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -243,6 +248,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task GoAroundOnAGitHubArmedMergeDisarmsIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
@@ -257,6 +263,7 @@ public sealed class MergeTakeBackTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task NoMergeIsOfferedUntilAFreshReviewPasses()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

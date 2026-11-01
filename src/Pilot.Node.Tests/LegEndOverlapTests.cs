@@ -9,6 +9,8 @@ namespace Pilot.Node.Tests;
 /// The overlap check at a leg's end (#564): a finished leg whose plane changed a file another flight in the air changes, and that the planner
 /// did not name to <c>touches</c>, rings the overlap card and holds the next leg; one that stayed to its planned files rings nothing.
 /// </summary>
+/// <remarks>Slow: every test builds a bare origin, pushes to it and flies a plane in a real worktree (2 to 7 s each, run alone).</remarks>
+[Trait("Category", "Slow")]
 public sealed class LegEndOverlapTests : LegCommanderTestsBase
 {
     private string Origin => Path.Combine(_root, "origin.git");

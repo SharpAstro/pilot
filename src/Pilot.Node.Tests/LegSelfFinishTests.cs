@@ -68,6 +68,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_failed_leg_with_its_work_pushed_and_its_check_passing_is_finished_by_the_node()
     {
         _legs.Models = new RoleModels(null);
@@ -89,6 +90,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_plane_ahead_of_origin_still_raises_leg_failed()
     {
         var flight = await PushedLegAsync();
@@ -100,6 +102,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_plane_diverged_from_origin_still_raises_leg_failed()
     {
         var flight = await PushedLegAsync();
@@ -110,6 +113,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_plane_behind_origin_still_raises_leg_failed()
     {
         var flight = await PushedLegAsync();
@@ -120,6 +124,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_leg_with_no_check_still_raises_leg_failed()
     {
         await PushedLegAsync();
@@ -130,6 +135,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_check_runner_that_throws_still_raises_leg_failed_with_the_report_and_the_reason_on_the_card()
     {
         await PushedLegAsync();
@@ -142,6 +148,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_dirty_plane_still_raises_leg_failed()
     {
         var flight = await PushedLegAsync();
@@ -151,6 +158,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task An_unticked_step_still_raises_leg_failed()
     {
         await PushedLegAsync(tick: false);
@@ -161,6 +169,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_failing_check_still_raises_leg_failed_and_its_tail_is_on_the_card()
     {
         await PushedLegAsync();
@@ -182,6 +191,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Verified_from_the_watchtower_finishes_a_failed_leg_whose_plane_matches_its_branch_and_whose_check_passes()
     {
         _legs.Models = new RoleModels(null);
@@ -201,6 +211,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Verified_on_a_plane_that_does_not_match_its_branch_is_refused_and_the_card_stays_open()
     {
         var flight = await PushedLegAsync();
@@ -217,6 +228,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Verified_with_a_failing_check_is_refused_and_the_card_stays_open()
     {
         await PushedLegAsync();
@@ -232,6 +244,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Verified_on_a_leg_with_no_check_is_refused()
     {
         await PushedLegAsync();
@@ -249,6 +262,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Accepted_from_the_watchtower_is_still_refused()
     {
         await PushedLegAsync();
@@ -262,6 +276,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Verified_on_a_leg_that_is_not_failed_is_refused()
     {
         await PushedLegAsync();
@@ -273,6 +288,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_leg_the_node_finishes_for_a_failed_report_gets_its_sub_task_ticked()
     {
         _legs.Models = new RoleModels(new NodeSettings { SubTaskRepos = ["tianwen"] });
@@ -286,6 +302,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_verified_leg_gets_its_sub_task_ticked()
     {
         _legs.Models = new RoleModels(new NodeSettings { SubTaskRepos = ["tianwen"] });
@@ -300,6 +317,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task A_verified_check_that_outlasts_the_reply_deadline_and_fails_leaves_its_tail_on_the_card_and_keeps_the_report()
     {
         await PushedLegAsync();

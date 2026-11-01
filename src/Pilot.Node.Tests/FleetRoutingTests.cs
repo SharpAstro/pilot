@@ -131,6 +131,7 @@ public sealed class FleetRoutingTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheMostHeadroomWinsThenTheFewestFlightsInTheAir()
     {
         var busy = Willing("AA1", used: 20, flying: 3);
@@ -180,6 +181,7 @@ public sealed class FleetRoutingTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ARefusalNamesEveryNodeWithItsOwnReason()
     {
         var reasons = new (FakePeer Peer, string Reason)[]
@@ -202,6 +204,7 @@ public sealed class FleetRoutingTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APeerThatRefusesTheFlightLeavesItToTheNextOne()
     {
         var first = Willing("AA1", used: 1);
@@ -224,6 +227,7 @@ public sealed class FleetRoutingTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task ANodeNotInMaintenanceNeverRoutes()
     {
         Maintenance(false);

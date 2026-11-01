@@ -1239,7 +1239,7 @@ public sealed class PrReviews(
     /// answered, a flight that follows it landed); false when no design card is open. A settled question rings no more, and the
     /// watchtower, which reads the open cards, never asks about it.
     /// </summary>
-    private bool SettleDesign(string repo, int number, string cause, string? link)
+    private bool SettleDesign(string repo, int number, string cause, string? link, string? underway = null)
     {
         var subject = Verbs.PrTarget(repo, number);
         if (!state.Cards(openOnly: true).Any(c => c.Kind == DesignKind && c.Subject == subject))
@@ -1248,7 +1248,7 @@ public sealed class PrReviews(
         }
         state.CloseCardsAbout(subject, $"settled: {cause}", DesignKind);
         state.RaiseCard(CardBin.Handled, DesignSettledKind, subject, $"{repo}#{number}: the design question is settled, {cause}",
-            "The card stopped ringing; nothing is left to answer.", link: link);
+            underway is null ? "The card stopped ringing; nothing is left to answer." : $"The card stopped ringing: the question is answered and a fix is under way ({underway}).", link: link);
         return true;
     }
 
@@ -1277,9 +1277,9 @@ public sealed class PrReviews(
                     SettleDesign(pr.Repo, pr.Number, $"{landed.Code} landed as its follow-up", review.Url);
                     continue;
                 }
-                if (await AnswerCommentAsync(pr, review, cancellationToken) is { Length: > 0 })
+                if (await AnswerCommentAsync(pr, review, cancellationToken) is { Length: > 0 } comment)
                 {
-                    SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url);
+                    await ActOnCommentAnswerAsync(pr, review, comment, cancellationToken);
                 }
             }
             catch (FlightException)
@@ -1289,13 +1289,52 @@ public sealed class PrReviews(
         }
     }
 
+    /// <summary>
+    /// A comment on the PR answered the design question: it goes the way the card's Answer goes. A fixer already on, one held for a slot
+    /// or an answer already stored starts nothing more; a start that fails leaves the failed-start card, not a settled notice.
+    /// </summary>
+    private async Task ActOnCommentAnswerAsync(PrRef pr, PrReviewRow review, string comment, CancellationToken cancellationToken)
+    {
+        var target = Verbs.PrTarget(pr.Repo, pr.Number);
+        var flight = FlightOf(pr);
+        // A stored answer alone proves nothing: it is stored before the start, so a start that failed leaves it set. Only a fixer on or queued counts.
+        if (flight is null && (review.Fixer is not null || _queued.ContainsKey(target)))
+        {
+            var by = review.Fixer is { } fixer ? $"{fixer} is making the changes the answer calls for" : "the fixer waits for a free Opus slot and starts with the answer";
+            SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, by);
+            return;
+        }
+        try
+        {
+            await ActOnAnswerAsync(pr, review, comment, "the PR's comment", null, false, null, cancellationToken);
+        }
+        catch (FlightException ex) when (flight is null)
+        {
+            RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, target, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = target }]);
+            return;
+        }
+        // Say only what is true: a fixer running, one queued for a slot, or the flight's leg sent round.
+        var now = Of(pr) ?? review;
+        var how = flight is not null ? "the flight's last leg goes round with the answer"
+            : now.Fixer is { } started ? $"{started} is making the changes the answer calls for"
+            : _queued.ContainsKey(target) ? "the fixer waits for a free Opus slot and starts with the answer"
+            : null;
+        if (how is null) return;
+        SettleDesign(pr.Repo, pr.Number, "the PR's conversation answers it", review.Url, how);
+    }
+
     /// <summary>A landed flight in the PR's repo whose title names the PR (<c>#n</c>) and that is not the PR's own flight, or null.</summary>
     private FlightRow? LandedFollowUp(PrRef pr)
     {
         var own = FlightOf(pr);
         var named = new System.Text.RegularExpressions.Regex($@"#{pr.Number}\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        // Only a flight that landed after the review was posted can have followed it up; one that landed before answered nothing.
+        var asked = Of(pr) is { } review ? review.PostingAt ?? review.FinishedAt ?? review.StartedAt : (DateTimeOffset?)null;
         return state.Flights().FirstOrDefault(f => f.State == FlightState.Landed && f.Code != own?.Code
-            && f.Repo.EndsWith(pr.Name, StringComparison.OrdinalIgnoreCase) && named.IsMatch(f.Title ?? ""));
+            && f.LandedAt is { } landedAt && (asked is null || landedAt > asked)
+            && (string.Equals(f.Repo, pr.Name, StringComparison.OrdinalIgnoreCase) || string.Equals(f.Repo, pr.Repo, StringComparison.OrdinalIgnoreCase))
+            && named.IsMatch(f.Title ?? ""));
     }
 
     /// <summary>The prefix that marks a finding as a question of design, not a defect to fix.</summary>
@@ -1346,7 +1385,7 @@ public sealed class PrReviews(
         {
             var questions = review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList();
             var design = DesignDetail(questions);
-            var asked = questions.Count == 1 ? $": {Cut(questions[0].Question, 80)}" : "";
+            var asked = questions.Count == 1 ? $": {Clean(questions[0].Question, 80)}" : "";
             var choices = DesignChoices(subject, questions);
             if (flight is not null)
             {
@@ -1466,29 +1505,10 @@ public sealed class PrReviews(
             {
                 throw new FlightException($"{pr}'s review asks a question of design and it has no answer yet: answer it on the PR, or give the answer with review fix {pr} <answer>");
             }
-            review = review with { DesignAnswer = given };
-            // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
-            state.PutPrReview(review);
         }
-        if (asksDesign && FlightOf(pr) is { } flight)
+        if (asksDesign)
         {
-            if (SendFlightRound is not { } send)
-            {
-                throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
-            }
-            if (words.Length > 0)
-            {
-                await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
-            }
-            var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
-            var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {command.Who}):\n{given}\nMake the changes the answer calls for.";
-            if (await send(flight.Code, round, command.Who, command.PersonsWord, cancellationToken) is { } refused)
-            {
-                throw new FlightException(refused);
-            }
-            state.PutPrReview(review);
-            SettleDesign(pr.Repo, pr.Number, $"answered by {command.Who}: {flight.Code}'s last leg went round with it", review.Url);
-            return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
+            return await ActOnAnswerAsync(pr, review, given!, command.Who, command.PersonsWord, command.Autopilot, words, cancellationToken);
         }
         // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
@@ -1496,11 +1516,50 @@ public sealed class PrReviews(
         {
             throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
         }
-        var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
-        if (asksDesign && words.Length > 0)
+        return await StartFixerAsync(pr, review, cancellationToken);
+    }
+
+    /// <summary>
+    /// Acts on the answer to a review's design question, whether the card's Answer gave it or the PR's conversation did: the answer
+    /// is stored as DesignAnswer, then a flight's last leg goes round with it, or the fixer starts on a PR no flight owns. The words
+    /// the person gave (<paramref name="postWords"/>) are posted on the PR once the act was not refused; an answer that is already a
+    /// comment there posts nothing.
+    /// </summary>
+    private async Task<string> ActOnAnswerAsync(PrRef pr, PrReviewRow review, string given, string? who, string? personsWord, bool autopilot, string? postWords, CancellationToken cancellationToken)
+    {
+        review = review with { DesignAnswer = given };
+        // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
+        state.PutPrReview(review);
+        var answer = $"Answer to the review's question of design (given by {who}):\n\n{postWords}";
+        if (FlightOf(pr) is { } flight)
         {
-            // The words given are the answer; posted once the start was not refused, so a retry does not post them twice.
-            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, $"Answer to the review's question of design (given by {command.Who}):\n\n{words}", cancellationToken);
+            if (SendFlightRound is not { } send)
+            {
+                throw new FlightException($"{flight.Code} owns {pr}: its own legs fix it");
+            }
+            if (!string.IsNullOrEmpty(postWords))
+            {
+                await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, answer, cancellationToken);
+            }
+            var questions = string.Join('\n', review.Findings.Where(IsDesign).Select(f => f.ToString()));
+            var round = $"The review of {pr} asked a question of design:\n{questions}\nThe answer (by {who}):\n{given}\nMake the changes the answer calls for.";
+            if (await send(flight.Code, round, who, personsWord, cancellationToken) is { } refused)
+            {
+                throw new FlightException(refused);
+            }
+            state.PutPrReview(review);
+            SettleDesign(pr.Repo, pr.Number, $"answered by {who}: {flight.Code}'s last leg went round with it", review.Url, $"{flight.Code}'s last leg was sent round with the answer");
+            return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
+        }
+        if (autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
+        {
+            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+        }
+        var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        if (!string.IsNullOrEmpty(postWords))
+        {
+            // Posted once the start was not refused, so a retry does not post them twice.
+            await github.CommentIssueAsync(TrackedClone(pr) ?? review.ClonePath, pr.Number, answer, cancellationToken);
         }
         return fixerStart;
     }
@@ -1588,7 +1647,7 @@ public sealed class PrReviews(
             Slots.End("fix-pr:" + fixer, counting);
         }
         state.PutPrReview(fixing with { FixerJob = job });
-        SettleDesign(pr.Repo, pr.Number, "answered: the fixer started on it", review.Url);
+        SettleDesign(pr.Repo, pr.Number, "answered: the fixer started on it", review.Url, $"{fixer} is making the changes the answer calls for");
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
@@ -1662,7 +1721,7 @@ public sealed class PrReviews(
     /// <summary>Each design question in full with its path:line, and each option with its consequence.</summary>
     private static string DesignDetail(IReadOnlyList<DesignQuestion> questions) =>
         string.Join('\n', questions.Select(q => $"{q.Finding.Path}:{q.Finding.Line} {q.Question}"
-            + string.Concat(q.Options.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
+            + string.Concat(q.RecommendedFirst.Select(o => $"\n- {o.Text}{(o.Consequence.Length > 0 ? $": {o.Consequence}" : "")}{(o.Recommended ? " (recommended)" : "")}"))));
 
     /// <summary>
     /// The design card's choices: one per option, the recommended first, each a <c>review fix</c> whose args are the option's words
@@ -1674,13 +1733,20 @@ public sealed class PrReviews(
         var choices = new List<CardChoice>();
         if (questions.Count == 1)
         {
-            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = o.Text, Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
+            choices.AddRange(questions[0].RecommendedFirst.Select(o => new CardChoice { Label = Clean(o.Text, 60), Verb = Verbs.FixPr, Target = subject, Args = [o.Answer] }));
         }
         choices.Add(AnswerChoice(subject));
         return choices;
     }
 
     private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 3)].TrimEnd() + "...";
+
+    /// <summary>Reviewer text for a card's title or a button label: control characters become spaces, whitespace collapses, and it is cut to <paramref name="max"/>.</summary>
+    internal static string Clean(string text, int max)
+    {
+        var plain = string.Concat(text.Select(c => char.IsControl(c) ? ' ' : c));
+        return Cut(System.Text.RegularExpressions.Regex.Replace(plain, @"\s+", " ").Trim(), max);
+    }
 
     /// <summary>The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args.</summary>
     internal static CardChoice AnswerChoice(string subject) => new() { Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = "Your answer" };
