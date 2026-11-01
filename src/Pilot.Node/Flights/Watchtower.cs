@@ -142,6 +142,18 @@ public sealed class Watchtower(
     private string? _resumeRefused;
     private bool _adopted;
     private bool _lastSayTransient;
+
+    /// <summary>Consecutive says refused for a transient config read, to the same ended row, after which the session is taken as lost (#553).</summary>
+    public int TransientTries { get; init; } = 3;
+
+    /// <summary>How long the same row may keep refusing says for a transient config read before it is taken as lost (#553).</summary>
+    public TimeSpan TransientFor { get; init; } = TimeSpan.FromMinutes(30);
+
+    private string? _transientId;
+    private int _transientCount;
+    private DateTimeOffset _transientSince;
+    private int _sayRuns;
+    private string? _transientWhy;
     // Rows this node has stopped as a second watchtower; the sweep leaves them alone until the tracker shows them ended.
     private readonly HashSet<string> _stopped = new(StringComparer.Ordinal);
     // When there was last something to watch; the node's start counts, so one running then is kept QuietFor first.
@@ -659,11 +671,31 @@ public sealed class Watchtower(
                     {
                         _job = row.Id;
                         _wokeAt = now;
-                        if (await TellNewCardsAsync(row, cancellationToken) == false && !_lastSayTransient)
+                        var runsBefore = _sayRuns;
+                        if (await TellNewCardsAsync(row, cancellationToken) == false)
                         {
-                            // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
-                            // was a transient read of the config file keeps the session: it is tried again after the retry time (#542).
-                            _resumeRefused = row.Id;
+                            if (!_lastSayTransient)
+                            {
+                                // Not delivered: the next look starts a fresh one rather than trying this one again. A refusal that
+                                // was a transient read of the config file keeps the session: it is tried again after the retry time (#542).
+                                _resumeRefused = row.Id;
+                            }
+                            else if (_sayRuns != runsBefore)
+                            {
+                                // ... but not forever: the same row refusing past the bound is lost (#553).
+                                if (_transientId != row.Id)
+                                {
+                                    _transientId = row.Id;
+                                    _transientCount = 0;
+                                    _transientSince = now;
+                                }
+                                _transientCount++;
+                                if (_transientCount >= TransientTries || now - _transientSince >= TransientFor)
+                                {
+                                    _resumeRefused = row.Id;
+                                    _transientWhy = $"its says kept failing on a config read ({_transientCount} tries over {(now - _transientSince).TotalMinutes:0} minutes)";
+                                }
+                            }
                         }
                         return;
                     }
@@ -672,7 +704,9 @@ public sealed class Watchtower(
                 // a restart asked for (restart-watchtower, or the card's Try now) is a person's, and goes ahead.
                 if (now >= _nextTry && !Gate.Hold("watchtower", Models.StartLimit, Models.WeekLimit, Waits, Verbs.WatchtowerTarget, "The watchtower waits to start"))
                 {
-                    await StartAsync($"{watching}, and {(row is null ? "none was running" : $"the last one {row.State.ToString().ToLowerInvariant()}")}", cancellationToken);
+                    var lost = _transientWhy is { } cause && row is not null && row.Id == _resumeRefused ? $"{watching}, and the last one ended and {cause}" : null;
+                    _transientWhy = null;
+                    await StartAsync(lost ?? $"{watching}, and {(row is null ? "none was running" : $"the last one {row.State.ToString().ToLowerInvariant()}")}", cancellationToken);
                 }
                 return;
             }
@@ -1113,6 +1147,7 @@ public sealed class Watchtower(
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
+        _sayRuns++;
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
             // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
             RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{_retold.Count}" }, cancellationToken);
@@ -1120,6 +1155,8 @@ public sealed class Watchtower(
         if (result.Ok)
         {
             _unreachableId = null;
+            _transientId = null;
+            _transientCount = 0;
             var now = time.GetUtcNow();
             foreach (var card in fresh)
             {

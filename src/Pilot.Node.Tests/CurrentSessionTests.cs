@@ -310,4 +310,27 @@ public sealed class CurrentSessionTests : IDisposable
         _said.Where(c => c.Verb == Verbs.Say).Select(c => c.Target).ShouldBe(["session/t0000001", "session/t0000001"]);
         _workers.Started.ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task TheWatchtowerIsReplacedWhenItsSaysKeepFailingOnAConfigReadPastTheBound()
+    {
+        Row("t0000001", "du1-watchtower", SessionState.Ended, lastResponse: Start);
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.BriefFile, Briefs.WatchtowerFingerprint("du1-watchtower", "pilot", _tower.Models.Model(RoleModels.Watchtower), _options.Machine));
+        _state.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR #7 is ready to merge");
+        _refuse = "claude --bg --resume failed (1): JSON Parse error: Unexpected EOF";
+
+        // Each refused say keeps the session until the bound; the look after the last one starts a fresh watchtower.
+        for (var look = 0; look < _tower.TransientTries; look++)
+        {
+            await _tower.LookAsync(Ct);
+            _workers.Started.ShouldBeEmpty();
+            _time.Advance(TimeSpan.FromMinutes(11));
+        }
+        await _tower.LookAsync(Ct);
+
+        _said.Count(c => c.Verb == Verbs.Say).ShouldBe(_tower.TransientTries);
+        _workers.Started.Count.ShouldBe(1);
+        _state.Cards().ShouldContain(c => c.Kind == "watchtower-started" && c.Title.Contains("config read"));
+    }
 }
