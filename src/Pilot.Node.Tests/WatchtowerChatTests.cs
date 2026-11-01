@@ -476,10 +476,11 @@ public sealed class WatchtowerChatTests : IDisposable
         // Launching a flight: create-issue, create-flight, plan-flight, said back with links; the planner covers "already flying".
         var issue = brief.IndexOf("`pilot issue create", StringComparison.Ordinal);
         var flight = brief.IndexOf("`pilot flight create <issue number>", StringComparison.Ordinal);
-        var plan = brief.IndexOf("`pilot flight plan <code>` starts its planner", StringComparison.Ordinal);
         issue.ShouldBeGreaterThan(0);
         flight.ShouldBeGreaterThan(issue);
-        plan.ShouldBeGreaterThan(flight);
+        // The create starts the planner itself, so the recipe no longer tells the chat to plan after it.
+        brief.ShouldNotContain("`pilot flight plan <code>` starts its planner");
+        brief.ShouldContain("starts its planner itself");
         brief.ShouldContain("planner's own overlap check");
         brief.ShouldContain("Say back in a line or two what you made, with links");
         // A leg asked for in the chat comes back as the plan card.
