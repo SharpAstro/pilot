@@ -65,6 +65,19 @@ public sealed class FlightTokensTests
         FlightLine.Build(Rows(), [], Now).Single(l => l.Code == "ORB204").TokensText.ShouldBeNull();
     }
 
+    [Fact]
+    public void ATokensReadAfterTheSnapshotMovesTheFigureAndFillsAFlightAddedSince()
+    {
+        // The snapshot said TIA1611 3,000,000 and had no ORB204; the read 30 s on says TIA1611 spent more and ORB204 now has spend.
+        var page = FlightsPage();
+        var later = page.WithTokens(new Dictionary<string, long> { ["TIA1611"] = 3_400_000, ["ORB204"] = 12_000 });
+
+        later.Lines.Single(l => l.Code == "TIA1611").TokensText.ShouldBe("3,400,000 tokens so far");
+        later.Lines.Single(l => l.Code == "ORB204").TokensText.ShouldBe("12,000 tokens so far");
+        // A flight the read does not know shows none.
+        page.WithTokens(new Dictionary<string, long>()).Lines.ShouldAllBe(l => l.TokensText == null);
+    }
+
     [Theory]
     [InlineData(700, 1.5f)]
     [InlineData(1300, 1f)]

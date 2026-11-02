@@ -107,6 +107,8 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ResponseEnvelope<SpendWasteReport>))]
 [JsonSerializable(typeof(SpendFlightReport))]
 [JsonSerializable(typeof(ResponseEnvelope<SpendFlightReport>))]
+[JsonSerializable(typeof(Dictionary<string, long>))]
+[JsonSerializable(typeof(ResponseEnvelope<Dictionary<string, long>>))]
 [JsonSerializable(typeof(SpendSnapshot))]
 [JsonSerializable(typeof(ResponseEnvelope<SettingsPage>))]
 [JsonSerializable(typeof(ResponseEnvelope<SetupChecks>))]

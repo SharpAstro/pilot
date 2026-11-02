@@ -69,4 +69,14 @@ public sealed class StatusTokensTests
 
         mirror.Flights["TIA1"].Tokens.ShouldBe(900);
     }
+
+    [Fact]
+    public async Task TheTokensRouteAnswersEveryFlightsTokensInOneRead()
+    {
+        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
+
+        var answer = await node.Client.GetSpendTokensAsync(TestContext.Current.CancellationToken);
+
+        answer.Response.ShouldNotBeNull();
+    }
 }

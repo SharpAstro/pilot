@@ -17,14 +17,17 @@ public sealed partial class LegCommander
     private void RaiseGoAroundCap(FlightRow flight, LegRow leg, int cap, string asked)
     {
         var target = Verbs.LegTarget(flight.Code, leg.Name);
-        var rounds = leg.GoAroundReasons.Select((r, i) => $"{i + 1}. {r.Why} ({r.By}, {r.At:u})");
-        var lastWhy = leg.GoAroundReasons.Length > 0 ? leg.GoAroundReasons[^1].Why : asked;
+        var rounds = leg.GoAroundReasons.Select((r, i) => $"{i + 1}. {r.Why} ({r.By}, {r.At:u})").ToList();
+        if (rounds.Count < leg.GoArounds)
+        {
+            rounds.Insert(0, $"({leg.GoArounds - rounds.Count} earlier rounds were not recorded)");
+        }
         var detail = $"{leg.GoArounds} go-arounds, the cap is {cap}. Each round said:\n{string.Join('\n', rounds)}\nAnother round asked for: {asked}";
         state.RaiseCard(CardBin.Ring, GoAroundCapKind, target,
             $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap is {cap}",
             detail,
             [
-                new CardChoice { Label = Models.RedoLabel(leg, "went round past the cap"), Verb = Verbs.GoAround, Target = target, Args = [lastWhy] },
+                new CardChoice { Label = Models.RedoLabel(leg, "went round past the cap"), Verb = Verbs.GoAround, Target = target, Args = [asked] },
                 new CardChoice { Label = $"Accept {leg.Name} as it stands", Verb = Verbs.FinishLeg, Target = target, Args = ["accepted", $"accepted at the go-around cap ({leg.GoArounds} rounds)"] },
             ],
             summary: $"{flight.Code}/{leg.Name} has gone around {leg.GoArounds} times, the cap. The watchtower and the node send it round no more; Go around sends one more, Accept takes the leg as it stands.");
@@ -71,7 +74,7 @@ public sealed partial class LegCommander
         // Every go-around is capped whatever its reason: PIL277 went round six times on failed checks, conflicts and reviews together.
         // Past the cap the watchtower and the node's own sends are refused and the card is the person's; a person's go-around passes.
         var cap = Models.MaxGoArounds;
-        if (leg.GoArounds >= cap && (IsWatchtower(command.Who) && command.PersonsWord is null || command.Who == LegWatch.Who))
+        if (leg.GoArounds >= cap && !IsPerson(flight, command.Who) && command.PersonsWord is null)
         {
             RaiseGoAroundCap(flight, leg, cap, why);
             throw new FlightException(

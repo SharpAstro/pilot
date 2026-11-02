@@ -56,6 +56,43 @@ internal sealed class SpendReads(NodeClient client, Action redraw)
         });
     }
 
+    private IReadOnlyDictionary<string, long>? _tokens;
+    private DateTimeOffset _tokensAt;
+    private int _tokensBusy;
+
+    /// <summary>Every flight's tokens so far as last read; null before the first answer, when the snapshot's figures stand.</summary>
+    public IReadOnlyDictionary<string, long>? Tokens => Volatile.Read(ref _tokens);
+
+    /// <summary>Reads every flight's tokens in one call, unless that was done less than <see cref="Every"/> ago.</summary>
+    public void AskTokens()
+    {
+        if (DateTimeOffset.UtcNow - _tokensAt < Every || Interlocked.Exchange(ref _tokensBusy, 1) == 1)
+        {
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var answer = await client.GetSpendTokensAsync(CancellationToken.None).ConfigureAwait(false);
+                if (answer.Response is { } tokens)
+                {
+                    Volatile.Write(ref _tokens, tokens);
+                    redraw();
+                }
+            }
+            catch (Exception)
+            {
+                // The node did not answer: the rows keep the figures they had and ask again after Every.
+            }
+            finally
+            {
+                _tokensAt = DateTimeOffset.UtcNow;
+                Volatile.Write(ref _tokensBusy, 0);
+            }
+        });
+    }
+
     /// <summary>The flights read so far, for the flight page.</summary>
     public IReadOnlyList<SpendFlightReport> Flights => [.. _flights.Values.Select(v => v.Report)];
 

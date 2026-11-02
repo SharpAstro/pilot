@@ -1086,6 +1086,15 @@ void RenderFrame()
             spendReads.AskFlight(openCode);
         }
         chrome.Flights.Spend = spendReads.Flights;
+        // The rows' tokens come from the snapshot at connect; a read repeated every 30 s keeps them current and fills a flight added since.
+        if (chrome.Page is PilotPage.Flights or PilotPage.Home)
+        {
+            spendReads.AskTokens();
+        }
+        if (spendReads.Tokens is { } tokensNow && flights is not null)
+        {
+            flights = flights.WithTokens(tokensNow);
+        }
         if (chrome.Page == PilotPage.Home)
         {
             spendReads.AskToday();

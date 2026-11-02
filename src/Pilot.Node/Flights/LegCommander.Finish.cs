@@ -47,7 +47,7 @@ public sealed partial class LegCommander
             {
                 await StopQuietly(flyingJob, cancellationToken);
             }
-            var accepted = $"failed, marked done anyway by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
+            var accepted = $"{(leg.State == LegState.Flying ? "accepted as it stands" : "failed, marked done anyway")} by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
             state.PutLeg(leg with { State = LegState.Done, Report = leg.Report is { Length: > 0 } was ? $"{accepted}\n{was}" : accepted });
             state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} marked done anyway");
             return;

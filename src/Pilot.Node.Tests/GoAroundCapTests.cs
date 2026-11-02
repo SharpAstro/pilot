@@ -62,6 +62,33 @@ public sealed class GoAroundCapTests : LegHoldTestsBase
     }
 
     [Fact]
+    public async Task TheCardsGoAroundBriefsTheNextWorkerWithTheRefusedAskNotTheLastRoundsReason()
+    {
+        await FlyingParser();
+        await RoundsAsTower(5);
+
+        (await As(LegWatch.Who, Verbs.GoAround, "flight/TIA1/parser", "context full")).Error.ShouldNotBeNull().ShouldContain("cap is 5");
+
+        var card = Cap().ShouldNotBeNull();
+        card.Choices[0].Args.ShouldBe(["context full"]);
+    }
+
+    [Fact]
+    public async Task AGoAroundFromAWorkerOrAnyOtherCallerThatIsNotThePersonIsCappedToo()
+    {
+        await FlyingParser();
+        await RoundsAsTower(5);
+        // The finish-conflict send goes round as the worker that finished (command.Who), so the cap must not name callers.
+        var worker = L("parser").Worker.ShouldNotBeNull();
+
+        (await As(worker, Verbs.GoAround, "flight/TIA1/parser", "merging origin conflicts")).Error.ShouldNotBeNull().ShouldContain("cap is 5");
+        (await As("node", Verbs.GoAround, "flight/TIA1/parser", "conflict")).Error.ShouldNotBeNull().ShouldContain("cap is 5");
+
+        L("parser").GoArounds.ShouldBe(5);
+        Cap().ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task TheCardsAcceptTakesAFlyingLegAsItStandsForThePersonOnly()
     {
         await FlyingParser();
