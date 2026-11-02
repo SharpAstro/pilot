@@ -243,7 +243,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 return FirewallAllows() is (true, _) ? null : "the rule is still not there";
             }
             case DefenderKey:
-                return FixDefender(processes);
+                // The walk over the repo roots is slow on a cold disk: off the command thread.
+                return await Task.Run(() => FixDefender(processes), cancellationToken);
             case TrustKey:
                 // Recorded in Claude Code's file, carefully (ClaudeTrust); the prompt in a window only when that cannot be.
                 Directory.CreateDirectory(options.WatchtowerFolder);

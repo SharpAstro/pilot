@@ -1394,8 +1394,9 @@ the folders a build machine wants left unscanned that are not excluded yet: each
 (`NUGET_PACKAGES`, else `~/.nuget/packages`), the node's data folder, `~/.claude` and the dotnet root. A folder on a Dev
 Drive is skipped (Defender's performance mode covers it), and it is fine when Defender is not the antivirus in force. Its
 button runs one elevated script of `Add-MpPreference -ExclusionPath` lines, so one prompt; `pilot settings setup defender
---processes` adds `-ExclusionProcess` for `pilot-node.exe`, `dotnet.exe`, `MSBuild.exe`, `VBCSCompiler.exe` and
-`testhost.exe` too. Defender shows its exclusions to an elevated process only, so from the node the check may not be able
+--processes` adds `-ExclusionProcess` for `pilot-node.exe`, `dotnet.exe`, `MSBuild.exe`, `VBCSCompiler.exe`,
+`testhost.exe`, `git.exe`, `git-lfs.exe`, `git-remote-https.exe` and every `*Tests*.exe` test runner built in a `bin` folder
+under the repo roots too. Defender shows its exclusions to an elevated process only, so from the node the check may not be able
 to tell and says so, offering the (idempotent) fix.
 
 The **Merge guard** check (`setup node merge-guard`, not optional) says whether `~/.claude/settings.json` has the merge

@@ -9,7 +9,7 @@ namespace Pilot.Node;
 /// (<see cref="MissingPaths"/>, <see cref="MissingProcesses"/>) and the elevated script that adds them (<see cref="Script"/>).
 /// <see cref="NodeSetup"/> runs the calls; nothing here touches the machine, so a test feeds it text.
 /// </summary>
-public static class DefenderExclusions
+public static partial class DefenderExclusions
 {
     /// <summary>
     /// The processes <c>--processes</c> excludes: the node itself, what a build and its tests start, and git with the helpers a
@@ -29,10 +29,17 @@ public static class DefenderExclusions
         var names = new List<string>(Processes);
         foreach (var root in roots.Where(Directory.Exists))
         {
-            foreach (var exe in Directory.EnumerateFiles(root, "*Tests*.exe", walk))
+            var runners = new System.IO.Enumeration.FileSystemEnumerable<string>(root,
+                (ref entry) => Path.GetRelativePath(root, entry.ToFullPath()), walk)
             {
-                var name = Path.GetFileName(exe);
-                if (exe.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                ShouldIncludePredicate = (ref entry) => !entry.IsDirectory && IsRunnerName(entry.FileName),
+                ShouldRecursePredicate = (ref entry) => !Pruned.Contains(entry.FileName.ToString(), StringComparer.OrdinalIgnoreCase),
+            };
+            foreach (var relative in runners)
+            {
+                var name = Path.GetFileName(relative);
+                // The bin test is on the path below the root, so a root that itself sits under a bin folder does not let obj files in.
+                if (relative.Split(Path.DirectorySeparatorChar)[..^1].Contains("bin", StringComparer.OrdinalIgnoreCase)
                     && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
                     names.Add(name);
@@ -41,6 +48,19 @@ public static class DefenderExclusions
         }
         return names;
     }
+
+    /// <summary>Folders the walk does not enter: no runner that counts is in them, and they are the biggest.</summary>
+    private static readonly string[] Pruned = ["obj", "node_modules", ".git"];
+
+    /// <summary>
+    /// A runner's file name as it may go into the elevated script: conservative characters only (the script's quoting would not
+    /// hold for every legal NTFS name, as the typographic quotes PowerShell reads as single quotes), ending <c>.exe</c>, with
+    /// <c>Tests</c> capitalised as the project naming has it, so <c>Contests.exe</c> and <c>Attests.exe</c> are not runners.
+    /// </summary>
+    public static bool IsRunnerName(ReadOnlySpan<char> name) => RunnerName().IsMatch(name);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?=[A-Za-z0-9._-]+\.(?i:exe)$).*Tests.*\.(?i:exe)$")]
+    private static partial System.Text.RegularExpressions.Regex RunnerName();
 
     /// <summary>What Get-MpPreference gives a process that is not elevated, in place of the list: Defender hides its exclusions from it.</summary>
     private const string Hidden = "N/A";

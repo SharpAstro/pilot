@@ -40,9 +40,10 @@ public sealed class DefenderTests : IDisposable
     private static string Json(string[]? paths = null, string[]? processes = null, string mode = "Normal", bool realtime = true, string[]? devDrives = null) =>
         JsonSerializer.Serialize(new { Paths = paths ?? [], Processes = processes ?? [], Mode = mode, Realtime = realtime, DevDrives = devDrives ?? [] });
 
-    private NodeSetup Setup(Func<string> answer, string[]? folders = null, bool applies = true, Func<string, string, bool>? elevated = null) =>
+    private NodeSetup Setup(Func<string> answer, string[]? folders = null, bool applies = true, Func<string, string, bool>? elevated = null, Func<IReadOnlyList<string>>? wantedProcesses = null) =>
         new(new NodeOptions("/tmp/n.sock", _data), "pilot-node.exe", Path.GetTempPath())
         {
+            DefenderProcesses = wantedProcesses,
             Run = (_, _, _) => (0, answer()),
             DefenderApplies = applies,
             DefenderFolders = () => folders ?? [Repos, Packages, Data],
@@ -266,7 +267,61 @@ public sealed class DefenderTests : IDisposable
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'testhost.exe'");
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'git.exe'");
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'git-lfs.exe'");
+        elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'git-remote-https.exe'");
         elevated.ShouldNotContain("'dotnet.exe'");
+    }
+
+    /// <summary>A discovered runner name reaches the elevated script, and a runner the re-check finds still missing is named.</summary>
+    [Fact]
+    public async Task ADiscoveredRunnerReachesTheElevatedScriptAndTheStillNotExcludedCheck()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the node adds Defender's exclusions on Windows only");
+        string? elevated = null;
+        var excludedProcesses = new List<string>();
+        var setup = Setup(() => Json(paths: [Repos, Packages, Data], processes: [.. excludedProcesses]),
+            elevated: (_, args) =>
+            {
+                elevated = File.ReadAllText(args.Split("-File \"")[1].TrimEnd('"'));
+                excludedProcesses.AddRange(DefenderExclusions.Processes);
+                return true;
+            },
+            wantedProcesses: () => [.. DefenderExclusions.Processes, "Pilot.Node.Tests.exe"]);
+
+        (await setup.FixAsync(NodeSetup.DefenderKey, Ct, processes: true)).ShouldBe("still not excluded: Pilot.Node.Tests.exe");
+
+        elevated.ShouldNotBeNull().ShouldContain("Add-MpPreference -ExclusionProcess 'Pilot.Node.Tests.exe'");
+    }
+
+    /// <summary>A file name under a root is data: only a conservative one reaches the elevated script, never one with a typographic quote.</summary>
+    [Fact]
+    public void AHostileRunnerNameIsNotWanted()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_data, "hostile")).FullName;
+        var bin = Directory.CreateDirectory(Path.Combine(root, "p", "bin", "Release")).FullName;
+        var hostile = new[] { "x’;Set-Content injected.txt injected;’Tests.exe", "x'Tests.exe", "a b Tests.exe", "Contests.exe", "Attests.exe" };
+        foreach (var name in hostile.Append("Good.Tests.exe"))
+        {
+            try { File.WriteAllText(Path.Combine(bin, name), ""); } catch (IOException) { }
+        }
+
+        var wanted = DefenderExclusions.WantedProcesses([root]);
+
+        wanted.ShouldBe([.. DefenderExclusions.Processes, "Good.Tests.exe"], ignoreOrder: true);
+        DefenderExclusions.IsRunnerName("x‘Tests.exe").ShouldBeFalse();
+        DefenderExclusions.IsRunnerName("FooTests.exe").ShouldBeTrue();
+    }
+
+    /// <summary>A root that itself sits under a bin folder does not let obj files in; the walk does not enter obj at all.</summary>
+    [Fact]
+    public void ARootUnderABinFolderDoesNotAdmitObjFiles()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_data, "bin", "repos")).FullName;
+        var obj = Directory.CreateDirectory(Path.Combine(root, "p", "obj")).FullName;
+        File.WriteAllText(Path.Combine(obj, "Obj.Tests.exe"), "");
+        var other = Directory.CreateDirectory(Path.Combine(root, "p", "out")).FullName;
+        File.WriteAllText(Path.Combine(other, "Out.Tests.exe"), "");
+
+        DefenderExclusions.WantedProcesses([root]).ShouldBe(DefenderExclusions.Processes, ignoreOrder: true);
     }
 
     /// <summary>The test runners built under the repo roots join the list by name, once each, and only from a bin folder.</summary>
