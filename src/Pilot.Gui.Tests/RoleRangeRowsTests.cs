@@ -264,6 +264,7 @@ public sealed class RoleRangeRowsTests
                     .ToList();
                 rows.Count.ShouldBe(4, label);
                 var previousBottom = float.MinValue;
+                var diag = "";
                 foreach (var row in rows)
                 {
                     var rowBounds = bounds[row];
@@ -283,8 +284,9 @@ public sealed class RoleRangeRowsTests
                     }
                     rowBounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, who);
                     previousBottom = rowBounds.Y + rowBounds.Height;
+                    diag += $" [{TextOf(row.Children[0])} row={rowBounds} role={role} fleetX={fleetLeft}]";
                 }
-                TextOverlap.Faults(arranged).ShouldBeEmpty(label);
+                TextOverlap.Faults(arranged).ShouldBeEmpty(label + diag);
             }
         }
     }
