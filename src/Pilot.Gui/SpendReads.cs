@@ -22,6 +22,40 @@ internal sealed class SpendReads(NodeClient client, Action redraw)
     /// <summary>The page as last read; null before the first answer.</summary>
     public SpendScreen? Screen => Volatile.Read(ref _screen);
 
+    private SpendReport? _today;
+    private DateTimeOffset _todayAt;
+    private int _todayBusy;
+
+    /// <summary>Today's report as last read, for the Home page's line of the flights that spent the most; null before the first answer.</summary>
+    public SpendReport? Today => Volatile.Read(ref _today);
+
+    /// <summary>Reads today's report, unless it was read less than <see cref="Every"/> ago.</summary>
+    public void AskToday()
+    {
+        if (DateTimeOffset.UtcNow - _todayAt < Every || Interlocked.Exchange(ref _todayBusy, 1) == 1)
+        {
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var report = await client.GetSpendAsync("today", CancellationToken.None).ConfigureAwait(false);
+                Volatile.Write(ref _today, report.Response);
+                redraw();
+            }
+            catch (Exception)
+            {
+                // The node did not answer: Home keeps the line it had and asks again after Every.
+            }
+            finally
+            {
+                _todayAt = DateTimeOffset.UtcNow;
+                Volatile.Write(ref _todayBusy, 0);
+            }
+        });
+    }
+
     /// <summary>The flights read so far, for the flight page.</summary>
     public IReadOnlyList<SpendFlightReport> Flights => [.. _flights.Values.Select(v => v.Report)];
 
