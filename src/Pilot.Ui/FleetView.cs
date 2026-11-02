@@ -632,7 +632,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                             Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
                             Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar())
                         .WStar().HAuto())
-                .WithGap(14f).Pad(8f, 6f).HAuto();
+                .WithGap(14f).Pad(8f, 6f).HAuto().WStar();
             yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
         }
     }
