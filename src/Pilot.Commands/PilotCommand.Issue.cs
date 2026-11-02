@@ -148,4 +148,164 @@ public static partial class PilotCommand
         }
         return text.ToString();
     }
+    private sealed partial class BuildContext
+    {
+        /// <summary>Makes the issue: create, milestone, ready, suggest, accept.</summary>
+        internal Command IssueCommands()
+        {
+            // issue
+            var issueTitle = Arg("title", "The issue's title");
+            var issueBody = new Option<string?>("--body") { Description = "The issue's text" };
+            var issueRepo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
+            var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
+                (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
+                    p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
+            var issueRef = Arg("issue", "The issue: #12 or 12 in the repo, or tianwen#12 in another");
+            var issueMilestone = Words("milestone", $"The open milestone to put the issue in, or {Verbs.NoMilestone} to take it out of every milestone");
+            var issueSetMilestone = Action(new Command("milestone", $"Put an issue in an open milestone, or in none ({Verbs.NoMilestone}): GitHub sets it, guarded on the issue as the node last read it; a milestone that is not open is refused, naming the open ones") { Arguments = { issueRef, issueMilestone }, Options = { issueRepo } },
+                async (p, client, ct) =>
+                {
+                    var parsed = IssueIds.Parse(p.GetValue(issueRef) ?? "")
+                        ?? throw new UsageException($"{p.GetValue(issueRef)} is no issue: write #12, 12 or tianwen#12");
+                    var repoGiven = parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd);
+                    var repoName = Path.GetFileName(repoGiven.TrimEnd('/', '\\'));
+                    // The node compares the updated_at the row showed with GitHub's, so a move from a stale row is refused rather than made.
+                    var seen = (await SnapshotAsync(client, ct)).Issues.FirstOrDefault(i => i.Number == parsed.Number && string.Equals(i.Repo, repoName, StringComparison.OrdinalIgnoreCase));
+                    var milestoneName = Join(p, issueMilestone);
+                    return await Send(client, Verbs.SetMilestone, IssueIds.Target(repoGiven, parsed.Number),
+                        seen is null ? [milestoneName] : [milestoneName, seen.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)], who, ct);
+                });
+            // An issue as a person writes it, with the repo of the call when it names none: the repo as the node is given it, and the number.
+            (string Repo, int Number) ParseIssue(NodeClient client, ParseResult p, string? text)
+            {
+                var parsed = IssueIds.Parse(text ?? "") ?? throw new UsageException($"{text} is no issue: write #12, 12 or tianwen#12");
+                return (parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd), parsed.Number);
+            }
+            var issueReady = Action(new Command("ready", "Ask Claude whether an issue (an idea too) is ready to fly as a flight: one leg-sized goal, tests that can be named, no open questions. The answer, with its reasons and the time, is kept on the issue's row; nothing is written to GitHub") { Arguments = { issueRef }, Options = { issueRepo } },
+                (p, client, ct) =>
+                {
+                    var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueRef));
+                    return Send(client, Verbs.CheckReady, IssueIds.Target(repoGiven, number), [], who, ct);
+                });
+            var issueSuggestRefs = Words("issue", "The issue to suggest a milestone for: #12 or 12 in the repo, or tianwen#12 in another; none with --section", required: false);
+            var issueSection = new Option<string?>("--section") { Description = $"Suggest for every open issue of a section instead: {Verbs.SectionUnsorted} (the {IdeaIds.Milestone} milestone) or {Verbs.NoMilestone} (no milestone)" };
+            var issueSuggest = Action(new Command("suggest", "Ask Claude for a milestone for an issue, or for each issue of a section: an open milestone, or a new one (title and goal) with the issues that would go in it. Nothing is moved or made until pilot issue accept") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueSection } },
+                (p, client, ct) =>
+                {
+                    if (p.GetValue(issueSection) is { Length: > 0 } section)
+                    {
+                        section = section.Trim().ToLowerInvariant();
+                        return section is Verbs.SectionUnsorted or Verbs.NoMilestone
+                            ? Send(client, Verbs.SuggestMilestones, IssueIds.SectionTarget(RepoPath(client, p.GetValue(issueRepo), cwd), section), [], who, ct)
+                            : throw new UsageException($"--section is {Verbs.SectionUnsorted} or {Verbs.NoMilestone}, not {section}");
+                    }
+                    var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueSuggestRefs)?.FirstOrDefault());
+                    return Send(client, Verbs.SuggestMilestones, IssueIds.Target(repoGiven, number), [], who, ct);
+                });
+            var issueAcceptAll = new Option<bool>("--all") { Description = "Accept every suggestion kept for the repo" };
+            var issueAccept = Action(new Command("accept", "Apply the suggestions the node kept from pilot issue suggest: one issue, several, or --all. A suggested new milestone is made first, once; each issue is then moved as pilot issue milestone moves it") { Arguments = { issueSuggestRefs }, Options = { issueRepo, issueAcceptAll } },
+                (p, client, ct) =>
+                {
+                    var refs = p.GetValue(issueSuggestRefs) ?? [];
+                    if (p.GetValue(issueAcceptAll))
+                    {
+                        return Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)), [Verbs.AllArg], who, ct);
+                    }
+                    if (refs.Length == 0)
+                    {
+                        throw new UsageException("name the issue to accept the suggestion of, or --all");
+                    }
+                    var parsed = refs.Select(r => ParseIssue(client, p, r)).ToArray();
+                    return parsed.Length == 1
+                        ? Send(client, Verbs.AcceptMilestones, IssueIds.Target(parsed[0].Repo, parsed[0].Number), [], who, ct)
+                        : Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(parsed[0].Repo), [.. parsed.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))], who, ct);
+                });
+            var issueCommand = new Command("issue", "Issues: create, milestone, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issueReady, issueSuggest, issueAccept } };
+
+            return issueCommand;
+        }
+
+        /// <summary>Makes idea and ideas: issues in a repo's Ideas milestone.</summary>
+        internal (Command, Command) IdeaCommands()
+        {
+            // idea, ideas: issues in a repo's Ideas milestone, id I<issue number>
+            var ideaWords = Words("text", "The idea (its first line the title, the rest the body); or an idea's id (I381, or tianwen I1829) and then edit and the new text, plan, or drop and why");
+            var ideaRepo = new Option<string?>("--repo") { Description = $"The repo, by its folder's name or the path of its checkout; a new idea without it goes where Claude chooses among the node's repos, an idea's id without it is in {IdeaIds.DefaultRepo}" };
+            var ideaContext = new Option<string?>("--context") { Description = "A new idea: the page or flight you were on, which helps Claude choose its repo" };
+            var ideaMilestone = new Option<string?>("--milestone") { Description = "plan: the open milestone to move the idea to; without one (or --new-milestone) the node proposes a milestone and plans nothing" };
+            var ideaNewMilestone = new Option<string?>("--new-milestone") { Description = "plan: plan into a new milestone of this title, made on GitHub" };
+            var ideaMilestoneDescription = new Option<string?>("--milestone-description") { Description = "plan: with --new-milestone, the new milestone's one-line description" };
+            var ideaSave = new Option<bool>("--save") { Description = "tidy: save the proposal the last tidy showed (through the same up-to-date check as an edit)" };
+            var ideaDiscard = new Option<bool>("--discard") { Description = "tidy: forget the proposal the last tidy showed; nothing is written" };
+            var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan --milestone <name> or --new-milestone <title>: moves it to that milestone and creates its flight; without either it prints the milestone the node proposes and plans nothing), drop one (I<n> drop <why>) or fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded)")
+                { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard } },
+                async (p, client, ct) =>
+                {
+                    var call = ReadIdea(p.GetValue(ideaWords) ?? []);
+                    var named = call.Repo ?? IdeaRepoOf(client, p.GetValue(ideaRepo), cwd, call.Action is null ? Verbs.AnyRepo : IdeaIds.DefaultRepo);
+                    switch (call.Action)
+                    {
+                        case null:
+                            // Without --repo Claude chooses the repo: the node is given the text and the context, and files nothing under a guess.
+                            return await Send(client, Verbs.NoteIdea, Verbs.RepoTarget(named),
+                                named == Verbs.AnyRepo && p.GetValue(ideaContext) is { Length: > 0 } context ? [call.Rest, context] : [call.Rest], who, ct);
+                        case "move":
+                            return await Send(client, Verbs.MoveIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                        case "edit":
+                            // The edit starts from the idea as the node has read it now: its updated_at is what the node compares with GitHub's.
+                            var snapshot = await SnapshotAsync(client, ct);
+                            // An idea that was moved to another repo is read where it is now.
+                            var (readRepo, readNumber) = IdeaIds.Follow(snapshot.IdeaMoves, Path.GetFileName(named.TrimEnd('/', '\\')), call.Number);
+                            var read = snapshot.Ideas.FirstOrDefault(i => i.Number == readNumber && string.Equals(i.Repo, readRepo, StringComparison.OrdinalIgnoreCase))
+                                ?? throw new UsageException(IdeaIds.FlightOf(snapshot.Flights, snapshot.IdeaMoves, Path.GetFileName(named.TrimEnd('/', '\\')), call.Number) is { } planned
+                                    ? $"{IdeaIds.Id(call.Number)} of {named} is planned: it is the flight {planned}"
+                                    : $"the node has not read {IdeaIds.Id(call.Number)} of {named}: pilot ideas lists the ideas it has");
+                            return await Send(client, Verbs.EditIdea, IdeaIds.Target(named, call.Number), [read.UpdatedAt.ToString("O", CultureInfo.InvariantCulture), call.Rest], who, ct);
+                        case "tidy":
+                            var tidyTarget = IdeaIds.Target(named, call.Number);
+                            if (p.GetValue(ideaDiscard))
+                            {
+                                await output.WriteLineAsync(IdeaTidyCache.Discard(tidyTarget) ? $"discarded the tidy of {IdeaIds.Id(call.Number)}: nothing was written" : $"no tidy of {IdeaIds.Id(call.Number)} is waiting");
+                                return 0;
+                            }
+                            if (p.GetValue(ideaSave))
+                            {
+                                var kept = IdeaTidyCache.Read(tidyTarget)
+                                    ?? throw new UsageException($"no tidy of {IdeaIds.Id(call.Number)} is waiting to save: run pilot idea {IdeaIds.Id(call.Number)} tidy first");
+                                var saved = await Send(client, Verbs.SaveTidyIdea, tidyTarget,
+                                    [kept.UpdatedAt.ToString("O", CultureInfo.InvariantCulture), IdeaTidyCache.Joined(kept.Title, kept.Body)], who, ct);
+                                if (saved == 0)
+                                {
+                                    IdeaTidyCache.Discard(tidyTarget);
+                                }
+                                return saved;
+                            }
+                            return await Send(client, Verbs.TidyIdea, tidyTarget, [], who, ct);
+                        case "fold":
+                            return await Send(client, Verbs.FoldIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                        case "plan":
+                            if (p.GetValue(ideaNewMilestone) is { Length: > 0 } newMilestone)
+                            {
+                                return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number),
+                                    p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? [Verbs.NewMilestoneArg, newMilestone, description] : [Verbs.NewMilestoneArg, newMilestone], who, ct);
+                            }
+                            return p.GetValue(ideaMilestone) is { Length: > 0 } milestone
+                                ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone], who, ct)
+                                : await Send(client, Verbs.ProposeMilestone, IdeaIds.Target(named, call.Number), [], who, ct);
+                        default:
+                            return await Send(client, Verbs.DropIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
+                    }
+                });
+            var ideasAll = new Option<bool>("--all") { Description = "Dropped ideas too, not only the noted and planned ones" };
+            var ideasRepo = new Option<string?>("--repo") { Description = "Only this repo's, by its folder's name" };
+            var ideas = Action(new Command("ideas", "The ideas the node has read, newest first, with their ids") { Options = { ideasAll, ideasRepo } },
+                async (p, client, ct) =>
+                {
+                    await output.WriteAsync(Ideas((await SnapshotAsync(client, ct)).Ideas, p.GetValue(ideasAll), p.GetValue(ideasRepo)));
+                    return 0;
+                });
+
+            return (idea, ideas);
+        }
+    }
 }
