@@ -78,9 +78,13 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex) when (IsConflict(ex.Message))
         {
-            // A base that conflicts is the watchtower's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
-            // the same pr-conflicts card the update paths raise, not a ring that the flight could not open its PR by itself.
-            await ConflictsAsync(flight.Code, ex.Message, cancellationToken);
+            // A base that conflicts is a worker's to resolve, whoever asked to open the PR (the node after the last leg, a card, the CLI):
+            // the last leg goes round by itself with the conflict told, once for each head of the base. Only when that cannot be done
+            // (already sent for this head, the leg not done) is it the watchtower's pr-conflicts card, as the update paths raise.
+            if (await SendConflictRoundAsync(FlightOf(Verbs.FlightTarget(flight.Code)), ex.Message, cancellationToken) is not null)
+            {
+                await ConflictsAsync(flight.Code, ex.Message, cancellationToken);
+            }
             throw;
         }
         var (repaired, pr, mergedBase) = opened;
