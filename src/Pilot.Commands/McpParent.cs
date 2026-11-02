@@ -31,6 +31,27 @@ internal static class McpParent
         return false;
     }
 
+    /// <summary>Whether the process <paramref name="pid"/> is a <c>pilot mcp</c> (same test as for the parent); false when it cannot be read.</summary>
+    internal static bool IsPilotMcp(int pid)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return Environment.Is64BitProcess && WindowsProcess(pid) is { } windows && Matches(windows.Image, windows.Arguments);
+            }
+            if (OperatingSystem.IsLinux())
+            {
+                return LinuxProcess(pid) is { } linux && Matches(linux.Image, linux.Arguments);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException or EntryPointNotFoundException
+            or ArgumentException or FormatException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
+        return false;
+    }
+
     /// <summary>True for a program named pilot (or moved aside from that name) with an argument that is exactly <c>mcp</c>.</summary>
     internal static bool Matches(string? image, IReadOnlyList<string> arguments)
     {
@@ -90,8 +111,13 @@ internal static class McpParent
         {
             return null;
         }
-        var image = new FileInfo($"/proc/{ppid}/exe").LinkTarget;
-        var cmdline = File.ReadAllBytes($"/proc/{ppid}/cmdline");
+        return LinuxProcess(ppid);
+    }
+
+    private static (string Image, List<string> Arguments)? LinuxProcess(int pid)
+    {
+        var image = new FileInfo($"/proc/{pid}/exe").LinkTarget;
+        var cmdline = File.ReadAllBytes($"/proc/{pid}/cmdline");
         var arguments = Encoding.UTF8.GetString(cmdline).Split('\0', StringSplitOptions.RemoveEmptyEntries).ToList();
         // A moved-aside binary shows its target as "<path> (deleted)" or the new name; the first argument is the fallback.
         image ??= arguments.FirstOrDefault();
@@ -143,7 +169,12 @@ internal static class McpParent
         {
             return null;
         }
-        var handle = OpenProcess(QueryLimitedInformation, false, (int)self.InheritedFromUniqueProcessId);
+        return WindowsProcess((int)self.InheritedFromUniqueProcessId);
+    }
+
+    private static (string Image, List<string> Arguments)? WindowsProcess(int pid)
+    {
+        var handle = OpenProcess(QueryLimitedInformation, false, pid);
         if (handle == 0)
         {
             return null;
