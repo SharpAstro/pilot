@@ -467,6 +467,8 @@ public sealed class CliTests : IAsyncLifetime
     private async Task<string> FlightWithAValidatorFlying(string number)
     {
         await Ok(Repo, "flight", "create", number);
+        // The create starts the flight's planner off the reply; wait for it, or its start can land after the Clear below.
+        await _node.PlannedAsync();
         var flight = _node.State.Flights().Single();
         await Ok(_root, "leg", "plan", flight.Code, "parser", "--goal", "Parse", "--done-when", "It parses");
         await Ok(_root, "leg", "plan", flight.Code, "render", "--goal", "Draw", "--done-when", "It draws", "--item", "Draw it");
