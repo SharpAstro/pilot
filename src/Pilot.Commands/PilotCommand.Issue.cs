@@ -150,7 +150,7 @@ public static partial class PilotCommand
     }
     private sealed partial class BuildContext
     {
-        /// <summary>Makes the issue: create, milestone, ready, suggest, accept.</summary>
+        /// <summary>Makes the issue: create, milestone, priority, ready, suggest, accept.</summary>
         internal Command IssueCommands()
         {
             // issue
@@ -181,6 +181,13 @@ public static partial class PilotCommand
                 var parsed = IssueIds.Parse(text ?? "") ?? throw new UsageException($"{text} is no issue: write #12, 12 or tianwen#12");
                 return (parsed.Repo ?? RepoPath(client, p.GetValue(issueRepo), cwd), parsed.Number);
             }
+            var issueLevel = Arg("level", "urgent, high, medium, low, or none to clear it");
+            var issuePriority = Action(new Command("priority", "Set the Priority issue field of an open issue (none clears it), as the Ideas board does; refused where the repo has no field") { Arguments = { issueRef, issueLevel }, Options = { issueRepo } },
+                (p, client, ct) =>
+                {
+                    var (repoGiven, number) = ParseIssue(client, p, p.GetValue(issueRef));
+                    return Send(client, Verbs.SetPriority, IssueIds.Target(repoGiven, number), [p.GetValue(issueLevel)!], who, ct);
+                });
             var issueReady = Action(new Command("ready", "Ask Claude whether an issue (an idea too) is ready to fly as a flight: one leg-sized goal, tests that can be named, no open questions. The answer, with its reasons and the time, is kept on the issue's row; nothing is written to GitHub") { Arguments = { issueRef }, Options = { issueRepo } },
                 (p, client, ct) =>
                 {
@@ -220,7 +227,7 @@ public static partial class PilotCommand
                         ? Send(client, Verbs.AcceptMilestones, IssueIds.Target(parsed[0].Repo, parsed[0].Number), [], who, ct)
                         : Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(parsed[0].Repo), [.. parsed.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))], who, ct);
                 });
-            var issueCommand = new Command("issue", "Issues: create, milestone, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issueReady, issueSuggest, issueAccept } };
+            var issueCommand = new Command("issue", "Issues: create, milestone, priority, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issuePriority, issueReady, issueSuggest, issueAccept } };
 
             return issueCommand;
         }

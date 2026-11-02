@@ -653,6 +653,7 @@ pilot sessions
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number
+pilot issue priority <issue> <urgent|high|medium|low|none> [--repo <path>]   # the Priority issue field of an open issue, as the Ideas board sets it
 pilot flight create <issue> [title…] [--repo <path>] [--anyway]   # labels the issue (or story) `pilot node: <this node>`; refused when it carries another node's, unless --anyway (which comments why)
 # The node label's life: put on the item at create, added to the flight's PR when it opens (never swapped with the `pilot:` state
 # labels), taken off the item when the flight lands, lands after its merge or is folded (a failure is said on the landed card), and
