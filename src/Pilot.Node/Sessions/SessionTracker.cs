@@ -43,6 +43,9 @@ public sealed class SessionTracker : BackgroundService
     // listing with no process, which read as working for minutes (DE1, 2026-10-31); the row stays ended while it has no process.
     private readonly Dictionary<string, string> _stopped = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    /// <summary>Called once when a row first turns ended or failed on its own: the owner ids and why; drops the queued jobs they own.</summary>
+    public Action<IReadOnlyCollection<string>, string>? DropJobs { get; set; }
+
     /// <summary>
     /// The node stopped row <paramref name="id"/> and its delivery saw the process gone: the row is ended now, with
     /// <paramref name="why"/>, and stays so while the listing gives its session no process. A resume that does clears it.
@@ -708,10 +711,18 @@ public sealed class SessionTracker : BackgroundService
                 CompactedBecause = entry.CompactedBecause,
             };
         }
+        var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;
         _state.PutSession(row);
         if (row.State is SessionState.Ended or SessionState.Failed)
         {
+            // Its first end, not one the node made (those cancel their own jobs) and not a resume (a continuation owns the jobs):
+            // the queued jobs it owned leave the queue (#327).
+            if (!wasEnded && !_stopped.ContainsKey(row.Id) && !_resumedAs.ContainsKey(row.Id)
+                && row.EndedBecause?.StartsWith("resumed as", StringComparison.Ordinal) != true)
+            {
+                DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
+            }
             // The stop that did not take has taken after all: its card has nothing left to ask.
             _state.CloseCardsAbout(Verbs.SessionTarget(row.Id), "the session is seen ended", SessionMessenger.StopUnconfirmedKind);
         }

@@ -1175,9 +1175,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 target = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
-            else if (EndedNormally(ownerRow))
+            else if (EndedNormally(ownerRow) || ownerRow.State is SessionState.Ended or SessionState.Failed)
             {
-                // The owner finished its work and nothing took its place: nobody is waiting on this job.
+                // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
                 state.PutJob(job with { Told = true });
                 return;
             }
