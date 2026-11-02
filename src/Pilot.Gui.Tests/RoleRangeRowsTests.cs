@@ -216,4 +216,76 @@ public sealed class RoleRangeRowsTests
             faults.ShouldBeEmpty();
         }
     }
+
+    private static IEnumerable<Layout.Node> Descendants(Layout.Node node) => node switch
+    {
+        Layout.Node.Stack s => s.Children.SelectMany(c => Descendants(c).Prepend(c)),
+        Layout.Node.Wrap w => w.Children.SelectMany(c => Descendants(c).Prepend(c)),
+        _ => [],
+    };
+
+    private static string? TextOf(Layout.Node n) => n is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Value.Trim() : null;
+
+    [Fact]
+    public void TheFleetRangeRowsKeepTheRoleLeftOfTheFleetLineAndEveryNodeLineInsideItsRow()
+    {
+        var long1 = "sonnet-low..opus-low";
+        RoleRangeInfo[] Ranges(string worker, string planner) =>
+        [
+            new("watchtower", "opus-high..opus-xhigh", SettingSources.Fleet), new("worker", worker, SettingSources.Fleet),
+            new("planner", planner, SettingSources.BuiltIn), new("reviewer", "sonnet-medium..opus-medium", SettingSources.Fleet),
+        ];
+        var fleet = new FleetScreen(
+        [
+            FleetLine.From("node.sock", true, true, null, Summary("s1", "SE1", "DESKTOP-1", Ranges("sonnet-high..opus-medium", "opus-medium..opus-high"))),
+            FleetLine.From("10.0.0.9:47731", false, false, null, Summary("s2", "LE1", "LAPTOP-WITH-A-VERY-LONG-MACHINE-NAME-2", Ranges(long1, "sonnet-low..opus-xhigh"))),
+            FleetLine.From("10.0.0.10:47731", false, false, null, Summary("s3", "RP1", "RASPBERRY-PI-OBSERVATORY-ROOF", Ranges(long1, "opus-low..opus-low"))),
+        ], Live.At);
+
+        foreach (var width in new[] { 700, 1400 })
+        {
+            foreach (var scale in new[] { 1f, 1.5f })
+            {
+                var label = $"width {width}, scale {scale}";
+                using var renderer = new RgbaImageRenderer((uint)width, 1500);
+                var chrome = Chrome(renderer);
+                chrome.Show(PilotPage.Fleet);
+                chrome.Fleet.Table.PageWidth = width;
+                var tree = chrome.Fleet.Tree(fleet);
+                var arranged = Layout.Engine.Arrange(tree, new Rect<float>(0, 0, width, 3000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, scale));
+                var bounds = new Dictionary<Layout.Node, Rect<float>>(ReferenceEqualityComparer.Instance);
+                foreach (var a in arranged)
+                {
+                    bounds[a.Node] = a.Bounds;
+                }
+
+                var rows = arranged.Select(a => a.Node).OfType<Layout.Node.Stack>()
+                    .Where(s => s.Axis == Layout.Axis.Horizontal && s.Children.Length == 2 && fleet.Roles.Any(r => TextOf(s.Children[0]) == r.Role))
+                    .ToList();
+                rows.Count.ShouldBe(4, label);
+                var previousBottom = float.MinValue;
+                foreach (var row in rows)
+                {
+                    var rowBounds = bounds[row];
+                    var role = bounds[row.Children[0]];
+                    var texts = Descendants(row.Children[1]).Where(n => TextOf(n) is not null).ToList();
+                    var fleetText = texts.Single(n => TextOf(n)!.StartsWith("fleet: ", StringComparison.Ordinal));
+                    var fleetLeft = bounds[fleetText].X;
+                    var who = $"{label}, {TextOf(row.Children[0])}";
+                    (role.X + role.Width).ShouldBeLessThanOrEqualTo(fleetLeft, who);
+                    role.X.ShouldBeGreaterThanOrEqualTo(rowBounds.X, who);
+                    foreach (var text in texts.Where(n => n != fleetText))
+                    {
+                        var b = bounds[text];
+                        b.X.ShouldBeGreaterThanOrEqualTo(fleetLeft - 0.5f, $"{who}: {TextOf(text)}");
+                        b.X.ShouldBeGreaterThanOrEqualTo(rowBounds.X, $"{who}: {TextOf(text)}");
+                        (b.Y + b.Height).ShouldBeLessThanOrEqualTo(rowBounds.Y + rowBounds.Height + 0.5f, $"{who}: {TextOf(text)}");
+                    }
+                    rowBounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, who);
+                    previousBottom = rowBounds.Y + rowBounds.Height;
+                }
+                TextOverlap.Faults(arranged).ShouldBeEmpty(label);
+            }
+        }
+    }
 }
