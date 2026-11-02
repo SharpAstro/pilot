@@ -258,11 +258,13 @@ public sealed partial class LegCommander
                 _ = Task.Run(async () =>
                 {
                     await Task.Delay(SelfFinishGrace, time, CancellationToken.None);
+                    DropQueuedJobsOf(job, "its validator was done");
                     await StopQuietly(job, CancellationToken.None);
                 }, CancellationToken.None);
             }
             else
             {
+                DropQueuedJobsOf(job, "its validator was done");
                 await StopQuietly(job, cancellationToken);
             }
         }

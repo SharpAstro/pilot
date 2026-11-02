@@ -220,6 +220,7 @@ public static partial class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
@@ -246,6 +247,7 @@ public static partial class NodeApp
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
+            reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
@@ -418,6 +420,7 @@ public static partial class NodeApp
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
+                EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
@@ -517,6 +520,8 @@ public static partial class NodeApp
             Ledger = services.GetRequiredService<SpendLedger>(),
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            // A session that ends on its own takes its queued jobs off the queue (#327).
+            DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.

@@ -122,6 +122,7 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == job), "worker given up before it finished its leg");
             }
+            DropQueuedJobsOf(job, "its worker went around");
             await StopQuietly(job, cancellationToken);
         }
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
