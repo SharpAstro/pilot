@@ -196,6 +196,15 @@ public sealed class IssueReadyTests : IssueBoardFixture
     }
 
     [Fact]
+    public void ThePromptLetsOneGoalTakeSeveralLegs()
+    {
+        var prompt = ClaudeIssueReadinessChecker.Prompt(new IdeaText("Grade frames", "three parts"));
+
+        prompt.ShouldContain("a goal that takes several legs is fine");
+        prompt.ShouldNotContain("fits a single leg");
+    }
+
+    [Fact]
     public void TheAnswerIsReadFromTheJsonInClaudesWords()
     {
         var fenced = ClaudeIssueReadinessChecker.Read("```json\n{\"ready\": false, \"reasons\": [\"too big\", \" \", \"no tests\"]}\n```").ShouldNotBeNull();
