@@ -322,8 +322,8 @@ under 30 minutes old, of a window that has not reset), whether the repo is in `p
 - **light**: the 5-hour share is at 80% or more, or the 7-day at 90% or more. One pass, no subagents, an effort one
   step below the reviewer's (low when none is set).
 - **deep**: both windows below 50% and 70%, and a large diff (400 lines or 15 files; 200 or 8 for a priority repo).
-  An effort one step above the reviewer's (high when none is set), the model from `reviewer-deep-model` when set, and up
-  to three focused subagents, each checking one claim against the tree; `reviewer-deep-effort` replaces the step.
+  The reviewer range's max (opus at high built in) rather than its default, and up to three focused subagents, each
+  checking one claim against the tree.
 - **standard**: anything else, and any case where no fresh figures or no diff measure say otherwise: the reviewer's own
   model and effort, on its own, with no subagents or one at most.
 - A **priority repo is never lighter than standard**, however high the usage; its deep threshold is halved.
@@ -1224,9 +1224,17 @@ next look, as a node without a grant; a reached node, or this window's, offers n
 
 The node's settings live in `settings.json` in its data folder, read at every start: on the LAN, its machine prefix,
 repo roots, update channel and policy, jobs at once, job memory, the LAN port, and a model and an effort per kind of
-session it starts (#114). The watchtower and workers start on Sonnet and planners and reviewers on Opus unless set
-otherwise; a leg's own `--model` or `--effort` still wins for its worker; `none` passes no flag, leaving Claude Code's
-own default. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
+session it starts (#114, #599). Each role has a range, a `<role>-range` key (`watchtower-range`, `planner-range`,
+`worker-range`, `reviewer-range`) written `<default>..<max>`, each end a model and effort (`sonnet-high..opus-xhigh`).
+The default is what a session of the role starts on and the max is what a deep review or a redone leg climbs to. Built
+in: worker `sonnet..opus-xhigh`, watchtower `sonnet..sonnet-high`, planner and reviewer `opus..opus-high`. A role's range
+is this node's own, else the fleet's, else the built-in. `set node <range> <value> --fleet` sets the fleet layer instead,
+pushed to every node and kept in the `fleet-ranges` field of `settings.json`; a peer may only set a node's fleet layer,
+never its own range, so a peer's push needs `--fleet`. A leg's own `--model` or `--effort` still wins for its worker.
+Settings from before ranges are migrated when read: each role's `-model` and `-effort` become the nearest range, with
+`worker-model-max`/`worker-effort-max` and `reviewer-deep-model`/`reviewer-deep-effort` as the max. A reviewer pinned to
+Sonnet with no `reviewer-deep-*` keys now runs its deep reviews on the built-in max (opus-high), on purpose: that settles
+the mismatch of a Sonnet reviewer whose deep reviews had run on Opus only by a missing key. The watchtower's brief says its model, so a lighter one rings for a judgement rather than makes it. The command line wins over the
 file (an autostart entry made before the file existed still pins what it names), and a key the file leaves out takes
 the default; a value it cannot read is passed over, never fatal. `pilot-node setup` writes it, and so does the
 **Settings** page (Ctrl+8 in the GUI, 6 in the TUI), or `pilot settings set <key> [value…]`.
@@ -1242,7 +1250,7 @@ would show it after the change, on every path that saved it, the command-line-wi
 value from the answer and need not read the page again. `pilot settings` reads both routes and prints the checklist and
 the settings as before.
 
-A role's model and effort, and the job limits, are in force at once (the next session of that kind starts with
+A role's range, and the job limits, are in force at once (the next session of that kind starts with
 them; a waiting job starts as soon as the new limit allows). So are `maintenance` and `accept-fleet-flights` (#177),
 two switches, `on` or `off`. While `maintenance` is on the node takes no new flight: a `create-flight` is refused with
 `<machine> is in maintenance: it takes no new flights`, and its flights are moved out (see **Moving a node's flights out**

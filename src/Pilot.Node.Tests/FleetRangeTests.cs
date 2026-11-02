@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -123,6 +124,55 @@ public sealed class FleetRangeTests : IAsyncLifetime
         {
             ModelsOf(node).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.Fleet);
         }
+    }
+
+    [Fact]
+    public void APeerCannotSetThisNodesOwnRangeButCanSetTheFleetLayer()
+    {
+        var gate = GateOf(_a);
+        var before = ModelsOf(_a).RangeWithSource(RoleModels.Worker);
+
+        var refused = gate.Handle(new CommandRequest { Verb = Verbs.AdmissionSetting, Target = Verbs.NodeTarget, Who = "BB1", Args = [Key, "sonnet..opus"] });
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error.ShouldNotBeNull().ShouldContain("--fleet");
+        ModelsOf(_a).RangeWithSource(RoleModels.Worker).ShouldBe(before);
+
+        var accepted = gate.Handle(new CommandRequest { Verb = Verbs.AdmissionSetting, Target = Verbs.NodeTarget, Who = "BB1", Args = [Key, "sonnet..opus", "--fleet"] });
+
+        accepted.Ok.ShouldBeTrue(accepted.Error);
+        ModelsOf(_a).RangeWithSource(RoleModels.Worker).Source.ShouldBe(SettingSources.Fleet);
+    }
+
+    [Fact]
+    public async Task SettingsPrintsARangesFleetValueAndWhereNodesDiffer()
+    {
+        Set(_a, Key, "--fleet", "sonnet-high..opus-high").Ok.ShouldBeTrue();
+        Set(_b, Key, "opus-medium").Ok.ShouldBeTrue();
+        GateOf(_a).Fleet.Current();
+        var output = new StringWriter();
+
+        var exit = await PilotCommand.RunAsync(["--node-socket", _a.SocketPath, "settings"], Path.GetTempPath(), output, new StringWriter(), Ct);
+
+        exit.ShouldBe(0);
+        var lines = output.ToString().Split(Environment.NewLine);
+        var row = lines.Single(l => l.StartsWith("worker-range"));
+        var width = row.IndexOf("sonnet", StringComparison.Ordinal);
+        lines.Single(l => l.StartsWith("watchtower-range")).IndexOf(' ', 16).ShouldBeGreaterThan(15);
+        lines.ShouldContain(l => l.Trim() == "fleet: sonnet-high..opus-high");
+        lines.ShouldContain(l => l.Trim() == "differs: BB1 runs opus-medium..opus-medium");
+        width.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task SetHelpNamesTheRangeKeysAndFleet()
+    {
+        var output = new StringWriter();
+
+        await PilotCommand.RunAsync(["--node-socket", _a.SocketPath, "settings", "set", "--help"], Path.GetTempPath(), output, new StringWriter(), Ct);
+
+        output.ToString().ShouldContain("worker-range");
+        output.ToString().ShouldContain("--fleet");
     }
 
     [Fact]

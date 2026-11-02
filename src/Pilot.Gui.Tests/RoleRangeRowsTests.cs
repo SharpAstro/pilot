@@ -131,6 +131,16 @@ public sealed class RoleRangeRowsTests
     }
 
     [Fact]
+    public void ADefaultPressOnABareMaxsOwnPairOrAboveItSendsNothing()
+    {
+        var row = Range("sonnet-high..opus", SettingSources.BuiltIn);
+        var at = (string pair) => Array.IndexOf(Line, pair);
+        SettingsView<RgbaImage>.PressedRange(row, row.Value, at("opus-low"), "default").ShouldBeNull();
+        SettingsView<RgbaImage>.PressedRange(row, row.Value, at("opus-medium"), "default").ShouldBeNull();
+        SettingsView<RgbaImage>.PressedRange(row, "sonnet..opus", at("sonnet-high"), "default").ShouldBe("sonnet-high..opus");
+    }
+
+    [Fact]
     public void AFleetScopePressStartsFromTheFleetsRangeNotTheNodesOverride()
     {
         var row = Range("opus-low..opus-low", SettingSources.ThisNode, saved: "opus-low", fleet: "sonnet..opus-xhigh");
