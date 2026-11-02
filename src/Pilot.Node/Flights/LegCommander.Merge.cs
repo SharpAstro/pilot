@@ -383,9 +383,17 @@ public sealed partial class LegCommander
                 line, [merge with { Label = "Merge", Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
-                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.");
+                    : Models.Autopilot ? $"On autopilot: the node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail."
+                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.",
+                bin: MergeCardBin());
         }
     }
+
+    /// <summary>
+    /// The bin of a merge card: with the autopilot on the node does the merge itself, so the card is a quiet For-you card until
+    /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up); with it off, Ring as ever.
+    /// </summary>
+    public CardBin MergeCardBin(bool ownerMustAct = false) => Models.Autopilot && !ownerMustAct ? CardBin.ForYou : CardBin.Ring;
 
     /// <summary>
     /// While the flight's merge command is under way, its open pr-ready or merge-failed cards show the Merge choice as
@@ -475,7 +483,8 @@ public sealed partial class LegCommander
             ? card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Label = "Merge", Status = status, Note = note } : c).ToList()
             : [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
-        state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge));
+        state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
+            MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
 
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
@@ -532,7 +541,7 @@ public sealed partial class LegCommander
             offers.Add($"Merge {code}'s PR again as it is tries once more");
         }
         var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
-        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary);
+        state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary, CardBin.Ring);
         return true;
     }
 

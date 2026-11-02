@@ -99,7 +99,7 @@ public sealed partial class NodeState
     /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
     /// False when the card is not open or nothing changed.
     /// </summary>
-    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null, string? summary = null)
+    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null, string? summary = null, CardBin? bin = null)
     {
         lock (_gate)
         {
@@ -107,10 +107,12 @@ public sealed partial class NodeState
             {
                 return false;
             }
-            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind };
+            // An open card may move between Ring and For-you; never to or from Handled, which is born closed.
+            var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
+            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
-            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
+            if (next.Bin == card.Bin && next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
                 && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
             {
                 return false;

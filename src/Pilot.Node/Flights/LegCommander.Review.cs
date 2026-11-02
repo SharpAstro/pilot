@@ -436,7 +436,7 @@ public sealed partial class LegCommander
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))
             ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
-        state.RaiseCard(CardBin.Ring, PrReady, Verbs.FlightTarget(flight.Code),
+        state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
