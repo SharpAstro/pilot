@@ -629,6 +629,54 @@ public sealed class IdeasPaneTests
     }
 
     [Fact]
+    public async Task BreakUpSitsBesideTidyListsTheProposedPartsAndAcceptsFromTheVersionClaudeRead()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var read = Updated.AddHours(1);
+        var proposal = new BreakUpProposal(
+            [new BreakUpPart("Ideas pane list", "Show the ideas as a list.", ["Which order?"]), new BreakUpPart("Ideas pane filter", "Filter them by repo.", [])],
+            "ideas pane", "list and filter", read, null, null);
+        var (chrome, sent, tasks) = Chrome(renderer, new IdeaReply(true, BreakUp: proposal, Made: "pilot #901"));
+        var screen = Sample();
+
+        var actions = Actions(Regions(chrome, screen));
+        actions.ShouldContain("ideas:tidy:pilot I381");
+        actions.ShouldContain("ideas:breakup:pilot I381");
+
+        Click(Regions(chrome, screen), "ideas:breakup:pilot I381");
+        await Task.WhenAll(tasks);
+        sent.Last().Verb.ShouldBe(Verbs.BreakUpIssue);
+        var regions = Regions(chrome, screen);
+        Actions(regions).ShouldContain("ideas:breakup-accept:pilot I381");
+        Actions(regions).ShouldContain("ideas:breakup-discard:pilot I381");
+        var spoken = Spoken(renderer, chrome, screen);
+        spoken.ShouldContain("Ideas pane list");
+        spoken.ShouldContain("Ideas pane filter");
+        spoken.ShouldContain("Which order?");
+        foreach (var width in new[] { 480f, 1280f })
+        {
+            var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            TextOverlap.Faults(arranged).Where(f => f.Bounds.Y > TopBar.Height).Select(f => f.Line).ShouldBeEmpty($"at {width} wide");
+        }
+
+        tasks.Clear();
+        Click(regions, "ideas:breakup-accept:pilot I381");
+        await Task.WhenAll(tasks);
+        sent.Last().Verb.ShouldBe(Verbs.AcceptBreakUp);
+        sent.Last().Args[0].ShouldBe(read.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        chrome.Ideas.Said.ShouldContain("pilot #901");
+
+        // Discard sends nothing.
+        tasks.Clear();
+        Click(Regions(chrome, screen), "ideas:breakup:pilot I381");
+        await Task.WhenAll(tasks);
+        var before = sent.Count;
+        Click(Regions(chrome, screen), "ideas:breakup-discard:pilot I381");
+        sent.Count.ShouldBe(before);
+        chrome.Ideas.OpenAction.ShouldBeNull();
+    }
+
+    [Fact]
     public void ThePlannedAndDroppedAreFoldedBelowUntilOpened()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);

@@ -100,6 +100,12 @@ internal sealed partial class IdeasView<TSurface>
                     yield return node;
                 }
                 break;
+            case Mode.BreakUp:
+                foreach (var node in BreakUpRows(idea))
+                {
+                    yield return node;
+                }
+                break;
             case Mode.Move:
                 var repos = _screen.Repos.Where(r => !string.Equals(r, idea.Repo, StringComparison.OrdinalIgnoreCase)).ToList();
                 yield return repos.Count == 0
@@ -136,6 +142,37 @@ internal sealed partial class IdeasView<TSurface>
                 NodeButton(idea, "Save", "tidy-save", "saving the tidy", () => Run(() => SaveTidyAsync(idea), $"save tidy {idea.Id}"), Lit),
                 CardsView<TSurface>.Pill("Discard", $"ideas:tidy-discard:{KeyOf(idea)}", Close, Tint, P.Body),
                 CardsView<TSurface>.Pill("Edit", $"ideas:tidy-edit:{KeyOf(idea)}", () => EditProposal(idea), Tint, P.Bright))
+            .WithGap(8f).WithLineGap(4f).WStar();
+    }
+
+    // Claude's parts: each with its title, body and open questions, then Accept and Discard.
+    private IEnumerable<Layout.Node> BreakUpRows(IdeaRow idea)
+    {
+        if (_breakUp is not { } kept || kept.Key != KeyOf(idea))
+        {
+            yield return Layout.Builder.Text("● Claude is breaking it up…", 12f, P.Held).Selectable().RowH(18f);
+            yield return CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body);
+            yield break;
+        }
+        var number = 0;
+        foreach (var part in kept.Parts.Parts)
+        {
+            number++;
+            var rows = new List<Layout.Node> { WrappedProse.Of($"{number}. {part.Title}", 14f, P.Bright).WStar() };
+            if (part.Body.Trim().Length > 0)
+            {
+                rows.Add(WrappedProse.Of(part.Body, 13f, P.Body).WStar());
+            }
+            foreach (var question in part.OpenQuestions)
+            {
+                rows.Add(WrappedProse.Of("? " + question, 12f, P.Dim).WStar());
+            }
+            yield return Layout.Builder.VStack([.. rows]).WithGap(2f).WStar().HAuto();
+        }
+        yield return WrappedProse.Of($"Accept puts part 1 over {Name(idea)} and makes the other {kept.Parts.Parts.Length - 1} as new issues in its milestone with its priority.", 12f, P.Dim).WStar();
+        yield return Layout.Builder.WrapH(
+                NodeButton(idea, "Accept", "breakup-accept", "breaking it up", () => Run(() => AcceptBreakUpAsync(idea), $"accept break-up {idea.Id}"), Lit),
+                CardsView<TSurface>.Pill("Discard", $"ideas:breakup-discard:{KeyOf(idea)}", Close, Tint, P.Body))
             .WithGap(8f).WithLineGap(4f).WStar();
     }
 
