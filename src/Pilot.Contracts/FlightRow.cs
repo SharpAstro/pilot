@@ -65,6 +65,14 @@ public sealed record FlightRow
 
     public required DateTimeOffset CreatedAt { get; init; }
 
+    /// <summary>
+    /// The tokens its sessions have spent so far, summed from the node's spend ledger; null when the ledger holds none for it. The node
+    /// fills it in the snapshot it sends (never in the row it keeps), so the status line and the Flights page read it with no route
+    /// call per flight. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? Tokens { get; init; }
+
     /// <summary>Its PR's number, once <c>open-pr</c> opened it; null before.</summary>
     public int? PullRequest { get; init; }
 

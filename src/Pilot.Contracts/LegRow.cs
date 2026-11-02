@@ -58,6 +58,9 @@ public sealed record LegRow
     /// <summary>How many fresh workers it took after the first: each go-around starts one, briefed anew.</summary>
     public int GoArounds { get; init; }
 
+    /// <summary>Why each go-around was sent, oldest first, one per round (<see cref="GoArounds"/> counts them): what the go-around cap card lists.</summary>
+    public GoAroundReason[] GoAroundReasons { get; init => field = value ?? []; } = [];
+
     /// <summary>
     /// How many of those <see cref="GoArounds"/> were a done leg sent round on its review's findings: the count the node caps,
     /// as a leg that failed or stalled and went round again is not a review asking for what no worker can do.
@@ -156,6 +159,16 @@ public sealed record LegRecheck
     /// <summary>The outcome of a rerun that threw instead of passing or failing.</summary>
     public static string ThrewOutcome(string check, string error) =>
         $"The rerun of your leg's check `{check}` could not be run ({error}); the leg is still flying. Run `leg finish done` again.";
+}
+
+/// <summary>One go-around of a leg: what the next worker was told, who sent it and when.</summary>
+public sealed record GoAroundReason
+{
+    public required string Why { get; init; }
+
+    public required string By { get; init; }
+
+    public required DateTimeOffset At { get; init; }
 }
 
 /// <summary>A leg's worker waiting on a file or a time, with no job: what it waits for, why, and since when.</summary>

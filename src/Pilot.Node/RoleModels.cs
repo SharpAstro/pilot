@@ -415,6 +415,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How many go-arounds a leg may have before the node and the watchtower send it round no more (<see cref="NodeSettings.MaxGoAroundsKey"/>); 5 by default.</summary>
+    public int MaxGoArounds
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaxGoArounds ?? NodeSettings.DefaultMaxGoArounds;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {

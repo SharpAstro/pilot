@@ -257,6 +257,13 @@ house rules (work in the plane, commit, never push). A leg is done only with eve
 by the node in the plane, passing. A go-around stops the worker and starts a fresh one told why and what the plane
 holds (its commits and diff), never the last worker's conversation. A worker's row is measured against its leg's
 budget.
+**Go-around cap.** A leg's go-arounds are capped whatever their reason (a failed check, a conflict, red CI, a review): 5 by
+default, set with `pilot set node max-go-arounds <n>` (1 to 50, in force at once). Each round's reason and sender is kept on the
+leg (`GoAroundReasons`). Past the cap the watchtower and the node's own sends (the lookout of legs, the open-conflict send) are
+refused with the count and the cap, and a Ring `go-around-cap` card on the leg lists what each round said, with **Go around**
+and **Accept** (the leg as it stands: a failed leg is marked done anyway, a flying one stopped and marked done, a done one kept)
+that only the person may press. A person's own go-around passes the cap. The review's own cap (`MaxReviewGoArounds`, 3 rounds
+on its findings) stays as it is.
 
 **A stale sibling is said before the leg starts.** A repo's `UseLocal*` properties compile against the sibling clones
 beside it (`../DIR.Lib`) whatever state they are in, so a clone behind its origin fails a leg's check with errors that
@@ -1153,6 +1160,15 @@ limits are read at each start, so a saved setting counts at once, with no restar
   go ahead over a spent window. `flight plan` and `flight review` by hand are held like the node's own (the command
   succeeds, the card says it waits). A held planner is kept in memory, so a node restarted while it waits asks again
   (`flight plan`).
+- **A flight shows the tokens it has spent so far.** The node sums the spend ledger per flight (every session of it, since its
+  first message) and puts the figure on each flight of the snapshot it sends (`FlightRow.Tokens`, null with no spend; only the
+  snapshot carries it, never the row the node keeps, so a spend makes no change event, and a client keeps the last figure it was
+  told across a changed row). `pilot status` prints it on the flight's line (`1,234,567 tokens so far`) and the Flights page
+  under the Sessions cell of its row (the same words, nothing shown with no spend), beside the spend block of the flight's own
+  page. Home names the 3 flights that spent the most **today**, largest first, with their tokens and the window they are over
+  (`Most tokens spent, today, 2026-10-18 00:00 to 09:41 UTC`), from the same `today` report the Spend page reads; the ledger's
+  no-flight row is no flight, and no line shows when nothing was spent today. The GUI reads that report again once 30 s old
+  while Home is the page shown.
 - **The 7-day window rings and never holds:** at or past `week-limit` (90 % unless set), the first start of each 7-day
   window raises a Ring card (`usage-week`, closed when the next window's opens), and the start goes ahead; only the
   5-hour window decides whether a start waits.

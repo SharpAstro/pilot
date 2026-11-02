@@ -91,6 +91,7 @@ internal static class SessionsCapture
         {
             chrome.Spend.Pick(spendWindow);
             chrome.Flights.Spend = spend.Flights;
+            chrome.Home.Today = spend.Reports.FirstOrDefault(r => r.Window == "today");
         }
         if (repos is not null)
         {

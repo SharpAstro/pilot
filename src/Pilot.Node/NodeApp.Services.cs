@@ -47,6 +47,7 @@ public static partial class NodeApp
             services.GetRequiredService<INodeJournal>(), services.GetRequiredService<TimeProvider>(), options.RetainedDeltas)
         {
             Error = logWriter,
+            TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
         });
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
