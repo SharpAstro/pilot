@@ -4,7 +4,7 @@
     <!-- THE version of pilot v2, and the only place it is written. CI reads it back
          (dotnet msbuild -getProperty:VersionMajorMinor) and appends the run number, so a release bump
          is this one line: 2.0 -> 2.1 additive, 2.x -> 3.x breaking. v1 (pilot.py) is the 1.x line. -->
-    <VersionMajorMinor>2.0</VersionMajorMinor>
+    <VersionMajorMinor>2.1</VersionMajorMinor>
     <!-- Local builds get Major.Minor.0; CI passes -p:Version=Major.Minor.<run><attempt>+<sha>, and
          the condition lets it win. -->
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">$(VersionMajorMinor).0</VersionPrefix>
