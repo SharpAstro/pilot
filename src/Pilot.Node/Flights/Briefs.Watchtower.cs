@@ -195,6 +195,8 @@ public static partial class Briefs
         text.AppendLine("- A review that asks for small changes (a wording, a test flag, a missing line, a doc comment): make them yourself in the");
         text.AppendLine($"  plane, test, commit, push, and `{pilot} flight review <code>`. Send the leg round (the card's button) only for work a worker should");
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
+        text.AppendLine("- A leg's go-arounds are capped, whatever their reason (5 by default, `set node max-go-arounds <n>`). Past the cap the node refuses your go-around");
+        text.AppendLine("  and raises a go-around-cap card listing each round's reason: that card is the person's, so say so on it and leave it to them.");
         text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
         text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
         text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes) and make the small ones");

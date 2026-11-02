@@ -31,6 +31,12 @@ public sealed class FleetRoutingTests : IDisposable
         File.WriteAllText(Path.Combine(Repo, "README.md"), "hello\n");
         Git(Repo, "add", ".");
         Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+        // The remote stays GitHub's (a peer's checkout is told apart by it), but a fetch or a plane's base comes from a local bare copy (#462).
+        var bare = Path.Combine(_root, "origin.git");
+        Git(_root, "clone", "-q", "--bare", Repo, bare);
+        Git(Repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/{GitHub}.git");
+        Git(Repo, "fetch", "-q", "origin");
+        Git(Repo, "remote", "set-head", "origin", "main");
         _flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System) { Models = _models, Machine = "SE1", Fleet = _fleet };
         Maintenance(true);
     }

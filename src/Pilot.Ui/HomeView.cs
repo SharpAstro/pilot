@@ -215,6 +215,19 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
 
     private readonly SummaryCard _card = new();
 
+    /// <summary>
+    /// The node's spend report for today, which the page names the flights that spent the most from; null (nothing read, or no spend
+    /// today) draws no line. Set by the host from the same read the Spend page makes.
+    /// </summary>
+    public SpendReport? Today { get; set; }
+
+    /// <summary>How many flights the Home spend line names.</summary>
+    public const int TopFlights = 3;
+
+    /// <summary>The flights that spent the most tokens in <paramref name="report"/>, largest first; the ledger's own no-flight row is no flight.</summary>
+    internal static IReadOnlyList<SpendRow> TopSpenders(SpendReport? report) =>
+        report is null ? [] : [.. report.Flights.Where(f => f.Key != "-" && f.Tokens > 0).OrderByDescending(f => f.Tokens).Take(TopFlights)];
+
     /// <summary>Opens a flight's page on Flights.</summary>
     public Action<FlightLine>? OnFlight { get; set; }
 
@@ -297,6 +310,12 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         if (Summary is { } board && _card.Build(board, board.Shelf.Fleet(Nodes), Palette.Current, screen.Flights.AsOf) is { } card)
         {
             blocks.Add(card);
+            blocks.Add(Layout.Builder.Spacer().RowH(14f));
+        }
+        if (TopSpenders(Today) is { Count: > 0 } top && Today is { } today)
+        {
+            blocks.Add(Layout.Builder.Text($"Most tokens spent, {SpendText.Timeframe(today.Window, today.From, today.To, today.FromAccount)}", 13f, Dim).Selectable().RowH(22f));
+            blocks.AddRange(top.Select((row, i) => Layout.Builder.Text($"{i + 1}. {row.Key}: {SpendText.Tokens(row.Tokens)} tokens", 14f, Bright).Selectable().RowH(22f)));
             blocks.Add(Layout.Builder.Spacer().RowH(14f));
         }
         blocks.Add(Layout.Builder.Text(screen.Flying, 16f, screen.Flying == "Nothing is flying" ? Dim : Live).Selectable().RowH(28f));

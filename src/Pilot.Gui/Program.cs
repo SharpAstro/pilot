@@ -913,6 +913,7 @@ if (fileSpend is not null)
 {
     chrome.Spend.OnWindow = window => fileSpend = SpendScreen.From(snapshot!.Spend!, window, screen.Source, snapshot.At);
     chrome.Flights.Spend = snapshot!.Spend!.Flights;
+    chrome.Home.Today = snapshot.Spend.Reports.FirstOrDefault(r => r.Window == "today");
 }
 FlightsScreen? flights = snapshot is null ? null : new FlightsScreen(FlightLine.Build(snapshot.Flights, snapshot.Sessions, snapshot.At, snapshot.Legs, snapshot.Admission), screen.Source, snapshot.At) { Admission = snapshot.Admission };
 // A card about a leg opens its worker's transcript from the moment the card was raised.
@@ -1085,6 +1086,20 @@ void RenderFrame()
             spendReads.AskFlight(openCode);
         }
         chrome.Flights.Spend = spendReads.Flights;
+        // The rows' tokens come from the snapshot at connect; a read repeated every 30 s keeps them current and fills a flight added since.
+        if (chrome.Page is PilotPage.Flights or PilotPage.Home)
+        {
+            spendReads.AskTokens();
+        }
+        if (spendReads.Tokens is { } tokensNow && flights is not null)
+        {
+            flights = flights.WithTokens(tokensNow);
+        }
+        if (chrome.Page == PilotPage.Home)
+        {
+            spendReads.AskToday();
+        }
+        chrome.Home.Today = spendReads.Today;
     }
     if (decisionReads is not null)
     {

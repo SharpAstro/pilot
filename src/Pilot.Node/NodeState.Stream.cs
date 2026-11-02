@@ -225,7 +225,7 @@ public sealed partial class NodeState
         _notes.AddRange(snapshot.Notes);
         foreach (var flight in snapshot.Flights ?? [])
         {
-            _flights[flight.Code] = flight;
+            _flights[flight.Code] = flight with { Tokens = null };
         }
         foreach (var leg in snapshot.Legs ?? [])
         {
@@ -272,7 +272,7 @@ public sealed partial class NodeState
         Stream = Stream,
         Sessions = [.. _sessions.Values],
         Notes = [.. _notes],
-        Flights = [.. _flights.Values],
+        Flights = WithTokens([.. _flights.Values]),
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
         Usage = _usage,
@@ -290,6 +290,16 @@ public sealed partial class NodeState
         Issues = _issues,
         Summaries = [.. _summaries.Values],
     };
+
+    /// <summary>Where the spend ledger's tokens per flight come from; unset, no flight carries a figure.</summary>
+    public Func<IReadOnlyDictionary<string, long>>? TokensByFlight { get; set; }
+
+    // A flight's tokens so far go on the rows of a snapshot only: the rows the node keeps stay without, so a spend never makes a change.
+    private FlightRow[] WithTokens(FlightRow[] flights)
+    {
+        var tokens = TokensByFlight?.Invoke();
+        return tokens is null ? flights : [.. flights.Select(f => f with { Tokens = tokens.TryGetValue(f.Code, out var spent) && spent > 0 ? spent : null })];
+    }
 
     private static byte[] Serialize(NodeEvent nodeEvent) => JsonSerializer.SerializeToUtf8Bytes(nodeEvent, PilotJsonContext.Default.NodeEvent);
 
