@@ -316,6 +316,7 @@ public sealed class DesignOptionsCardTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task PressingAnOptionPostsItsTextAsTheAnswerAndStartsTheFixer()
     {
         await Review("acme/widget#7", "comment", DesignAnswerQuestions.WithOptions);

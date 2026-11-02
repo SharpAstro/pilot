@@ -175,6 +175,12 @@ public static class ChoiceStatus
     /// <summary>A review on GitHub asks for changes. Not a button.</summary>
     public const string ChangesRequested = "changes-requested";
 
+    /// <summary>
+    /// The node has taken the merge and is working on it: waiting its turn behind another flight of the repo, bringing the PR up to
+    /// date, or waiting for its checks. <see cref="CardChoice.Note"/> says which. Not a button: a second press is answered as in progress.
+    /// </summary>
+    public const string Merging = "merging";
+
     /// <summary>The PR merged: the card reads Merged for a few seconds, then goes.</summary>
     public const string Merged = "merged";
 }

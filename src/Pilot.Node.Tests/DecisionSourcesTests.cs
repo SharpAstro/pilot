@@ -12,6 +12,7 @@ namespace Pilot.Node.Tests;
 public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 {
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task DecisionRecordedWhenTheAutopilotMergesAPassedFlightFromItsPrReadyCard()
     {
         var (flight, _) = await Passed("30");
@@ -32,6 +33,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task OneDecisionNamingTheArmWhenTheAutopilotsMergeWaitsOnPendingChecks()
     {
         var (flight, _) = await Passed("32");

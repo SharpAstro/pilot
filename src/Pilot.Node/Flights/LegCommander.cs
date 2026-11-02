@@ -399,6 +399,13 @@ public sealed partial class LegCommander(
                     error = updated;
                 }
             }
+            // The command is done with the card: what SetEntry marked Merging while it updated is not a merge anyone runs now.
+            // The conflict mark set above is the card's own state, put back over the Merge it offered before.
+            RestoreMerge(code);
+            if (conflicting)
+            {
+                MarkMerge(command.Target, ChoiceStatus.Conflicting);
+            }
         }
 
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a

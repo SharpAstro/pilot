@@ -95,21 +95,77 @@ public sealed partial class LegCommander
         }
         state.PutMerge(row);
         state.Renumber(flight.Repo);
+        ShowMergingOf(row, null);
         return row;
     }
 
     // Only an entry still in the queue moves: one that left (dropped when its command was given up mid-batch) is never opened again.
-    private void SetEntry(string code, MergeEntryState to, string? why, bool awaitsReview = false, string? head = null)
+    // While the flight's command drives the entry, its card says what the merge waits for (cardNote, else the state's own words).
+    private void SetEntry(string code, MergeEntryState to, string? why, bool awaitsReview = false, string? head = null, string? cardNote = null)
     {
         if (state.Merges().FirstOrDefault(m => m.Flight == code) is { Open: true } held)
         {
-            state.PutMerge(held with { State = to, Why = why, AwaitsReview = awaitsReview, Head = head ?? held.Head, ChangedAt = time.GetUtcNow() });
+            var moved = held with { State = to, Why = why, AwaitsReview = awaitsReview, Head = head ?? held.Head, ChangedAt = time.GetUtcNow() };
+            state.PutMerge(moved);
             state.Renumber(held.Repo);
+            ShowMergingOf(moved, cardNote);
+        }
+    }
+
+    // The Merge choice a card offered before a merge command took it, by card id, so a refusal can put it back.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CardChoice> _beforeMerging = new(StringComparer.Ordinal);
+
+    // What an entry waits for, in the words of a card's Merge note; null for a state that says nothing of the kind.
+    private string? WaitsFor(MergeRow entry)
+    {
+        switch (entry.State)
+        {
+            case MergeEntryState.Waiting:
+                lock (_turns)
+                {
+                    var behind = state.Merges().Where(m => m.Repo == entry.Repo && m.Flight != entry.Flight && m.Open && _active.Contains(m.Flight)
+                            && (m.State is MergeEntryState.Updating or MergeEntryState.Merging or MergeEntryState.Batched
+                                || m.State == MergeEntryState.Waiting && (m.AddedAt, m.Flight).CompareTo((entry.AddedAt, entry.Flight)) < 0))
+                        .OrderBy(m => m.State is MergeEntryState.Updating or MergeEntryState.Merging or MergeEntryState.Batched ? 0 : 1).ThenBy(m => m.AddedAt).FirstOrDefault();
+                    return behind is null ? "waiting its turn" : $"waiting its turn behind {behind.Flight}";
+                }
+            case MergeEntryState.Updating:
+                return "being brought up to date";
+            case MergeEntryState.Checks:
+                return "waiting for checks";
+            case MergeEntryState.Batched:
+                return "in a batch";
+            case MergeEntryState.Merging:
+                return "merging";
+            default:
+                return null;
+        }
+    }
+
+    private void ShowMergingOf(MergeRow entry, string? note)
+    {
+        bool driven;
+        lock (_turns)
+        {
+            driven = _active.Contains(entry.Flight);
+        }
+        if (driven && (note ?? WaitsFor(entry)) is { } says)
+        {
+            ShowMerging(entry.Flight, says);
         }
     }
 
     /// <summary>Takes the entry out of its queue with <paramref name="why"/>: a conflict, a failed check, a refusal.</summary>
     public void DropMerge(string code, string why) => state.EndMerge(code, MergeEntryState.Dropped, why);
+
+    /// <summary>Whether a merge command of the flight is under way: its cards say Merging, and the PR look leaves them alone.</summary>
+    public bool IsMerging(string code)
+    {
+        lock (_turns)
+        {
+            return _active.Contains(code);
+        }
+    }
 
     /// <summary>
     /// Whether a merge command of <paramref name="repo"/> is under way: one asked there now would wait for the repo's turn inside its

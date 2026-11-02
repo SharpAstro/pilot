@@ -649,6 +649,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
+            // A merge command under way (waiting its turn, or for checks) says what it does on the card: the look leaves it be.
+            if (legs is not null && legs.IsMerging(flight.Code))
+            {
+                continue;
+            }
             var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
             HandOver(flight, pr);
             if (pr is not null && pr.Number == number && pr.State is "MERGED" or "CLOSED")
