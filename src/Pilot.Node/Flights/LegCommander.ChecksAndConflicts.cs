@@ -68,9 +68,9 @@ public sealed partial class LegCommander
         }
         var number = flight.PullRequest is { } n ? $"PR #{n}" : "branch";
         state.RaiseCard(CardBin.Ring, PrConflictsKind, subject, $"{code}'s {number} conflicts with its base",
-            $"{why}. The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} only if the conflict is real work, not a merge.",
+            $"{why}. A worker already tried (the node sends one first, and rings only when it stopped or the same conflict came back). The plane is {flight.Worktree}: {ConflictBrief(why)}, then {(flight.PullRequest is null ? $"`pilot flight pr {code}` (or dismiss this card, and the node opens it)" : $"`pilot flight review {code}`")}. {ResolveConflict} starts a fresh worker on the last leg.",
             choices, link: flight.PullRequestUrl,
-            summary: $"The {number} of {code} conflicts with its base. The watchtower merges the base into the plane and resolves it; {ResolveConflict} has a worker do it, for real work only.");
+            summary: $"The {number} of {code} conflicts with its base and a worker already tried. The watchtower merges the base into the plane and resolves it; {ResolveConflict} starts a fresh worker.");
         return Task.FromResult<string?>(null);
     }
 

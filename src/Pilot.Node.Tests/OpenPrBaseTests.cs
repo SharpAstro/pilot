@@ -149,6 +149,31 @@ public sealed class OpenPrBaseTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task WhenTheConflictWorkersRoundFailsTheConflictCardIsRungAndItsResolveSendsTheLegRoundAgain()
+    {
+        var (flight, _) = await PushedFlightWhoseBaseMoved("clash.txt", "theirs\n");
+        _legs.Models = new RoleModels(new NodeSettings());
+        await _legs.AdvanceAllAsync(Ct);
+        var worker = _state.Legs(flight.Code).Single().Worker!;
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "pr-conflicts");
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "could not resolve it")).Error.ShouldBeNull();
+
+        var open = _state.Cards(openOnly: true);
+        var card = open.Where(c => c.Kind == "pr-conflicts").ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        open.ShouldNotContain(c => c.Kind == LegCommander.NextStepKind);
+        var resolve = card.Choices.Single(c => c.Label.Contains(LegCommander.ResolveConflict));
+        var started = _workers.Started.Count;
+
+        var result = await Run(resolve.Verb, resolve.Target, "alice", [.. resolve.Args ?? []]);
+
+        result.Error.ShouldBeNull();
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Flying);
+        _workers.Started.Count.ShouldBeGreaterThan(started);
+    }
+
+    [Fact]
     public async Task ASecondConflictAtTheSameBaseHeadRaisesTheCardInsteadOfSendingAgain()
     {
         var (flight, pushed) = await PushedFlightWhoseBaseMoved("clash.txt", "theirs\n");

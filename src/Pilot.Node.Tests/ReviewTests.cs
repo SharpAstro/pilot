@@ -1729,7 +1729,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
         var resolve = card.Choices.Single(c => c.Verb == Verbs.GoAround);
         resolve.Label.ShouldBe("Resolve the conflict");
         resolve.Args.ShouldNotBeNull().Single().ShouldStartWith("the PR conflicts with its base");
-        card.Summary.ShouldNotBeNull().ShouldContain("Resolve the conflict has a worker do it, for real work only");
+        card.Summary.ShouldNotBeNull().ShouldContain("a worker already tried");
     }
 
     [Fact]
