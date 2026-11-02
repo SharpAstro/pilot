@@ -361,8 +361,6 @@ Task<string?> Tracked(Func<Task<string?>> work, string what)
     }, what);
     return answer.Task;
 }
-// A say's description ("refused: ...") without its prefix: the view puts its own before a refusal.
-static string? Plain(string said) => said.StartsWith("refused: ", StringComparison.Ordinal) ? said["refused: ".Length..] : said;
 // The release the update light shows, as the render thread last drew the header (null while none shows): the page builder
 // asks a frame each second while it is lit and unlit in turn, and none while there is no light.
 string? lightShown = null;
