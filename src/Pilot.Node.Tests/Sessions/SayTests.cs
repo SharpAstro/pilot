@@ -187,6 +187,41 @@ public sealed class SayTests : IDisposable
         _delivery.Calls.ShouldBe(["relay de1-watchtower", $"stop {AgentRows.SessionB}", $"resume {AgentRows.SessionB}"]);
     }
 
+    // PIL625: the owner's say from a UI must be a user turn; the intercom tags every message as a peer's, so it resumes (no gui fast path).
+    [Theory]
+    [InlineData("gui")]
+    [InlineData("sebastiangodelet@seb-surface/gui")]
+    public async Task AnOwnersSayToAnIdleLiveWatchtowerIsResumedAsAUserTurnWithNoRelay(string who)
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", pid: 4343, status: "idle", cwd: Cwd));
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", cwd: Cwd, startedAt: Recent));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.SayAsync(Say("b2c3d4e5", "hello there") with { Who = who }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Resumed);
+        _delivery.Relays.ShouldBeEmpty();
+        _delivery.Resumes.ShouldHaveSingleItem().Text.ShouldBe("hello there");
+        _log.ToString().ShouldContain($"say: who={who} from=owner target=");
+    }
+
+    [Theory]
+    [InlineData("node", "node")]
+    [InlineData("sebastiangodelet@seb-surface/du1-watchtower", "session")]
+    public async Task ANodeOrPeerWatchtowerSayToAnIdleLiveWatchtowerIsStillRelayed(string who, string kind)
+    {
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "de1-watchtower", "done", pid: 4343, status: "idle", cwd: Cwd));
+        await _tracker.PollAsync(Ct);
+
+        var result = await _messenger.SayAsync(Say("b2c3d4e5", "hello there") with { Who = who }, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(SayWays.Relayed);
+        _delivery.Resumes.ShouldBeEmpty();
+        _log.ToString().ShouldContain($"who={who} from={kind} target=");
+    }
+
     [Fact]
     public async Task TheNodesOwnSayIsMarkedAsTheNodesWhereAPersonsIsSentAsItIs()
     {
@@ -210,7 +245,7 @@ public sealed class SayTests : IDisposable
         result.Ok.ShouldBeTrue(result.Error);
         result.Way.ShouldBe(SayWays.Resumed);
         _delivery.Resumes.ShouldHaveSingleItem().Text.ShouldBe("/compact Keep the leg");
-        _log.ToString().ShouldContain("compact: who=node target=session/b2c3d4e5 way=resumed");
+        _log.ToString().ShouldContain("compact: who=node from=node target=session/b2c3d4e5 way=resumed");
     }
 
     [Theory]
@@ -324,7 +359,7 @@ public sealed class SayTests : IDisposable
 
         await Should.ThrowAsync<OperationCanceledException>(() => _messenger.SayAsync(Say("b2c3d4e5", "lost") with { RequestId = "r1" }, Ct));
 
-        _log.ToString().ShouldContain("say: who=tests target=session/b2c3d4e5 way=none cancelled");
+        _log.ToString().ShouldContain("say: who=tests from=session target=session/b2c3d4e5 way=none cancelled");
     }
 
     [Fact]
@@ -536,7 +571,7 @@ public sealed class SayTests : IDisposable
 
         await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
 
-        _log.ToString().ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
+        _log.ToString().ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
         _log.ToString().ShouldContain(" ms)");
     }
 
@@ -550,8 +585,8 @@ public sealed class SayTests : IDisposable
 
         var lines = _log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         lines.Length.ShouldBe(2);
-        lines[0].ShouldStartWith("say: who=tests target=session/a1b2c3d4 way=relayed route=direct delivered (");
-        lines[1].ShouldStartWith("say: who=tests target=session/nobody way=none refused: There is no session nobody: ");
+        lines[0].ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=direct delivered (");
+        lines[1].ShouldStartWith("say: who=tests from=session target=session/nobody way=none refused: There is no session nobody: ");
     }
 
     [Fact]
@@ -638,6 +673,8 @@ public sealed class RelayTextTests
     [InlineData("du1-watchtower", "du1-watchtower")]
     [InlineData("PIL5 gui-say", "PIL5-gui-say")]
     [InlineData("  @!  ", "controller")]
+    [InlineData("sebastiangodelet@seb-surface/gui", "controller")]
+    [InlineData("sebastiangodelet@seb-surface/du1-watchtower", "sebastiangodelet-seb-surface-du1-watchtower")]
     public void AMessageComesFromWhoSentItAndAClientIsTheController(string? who, string from) =>
         ClaudeCliDelivery.RelayFrom(who).ShouldBe(from);
 

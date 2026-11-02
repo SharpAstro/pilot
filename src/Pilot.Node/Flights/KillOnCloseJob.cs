@@ -14,13 +14,14 @@ internal sealed class KillOnCloseJob : IDisposable
 {
     private const int ExtendedLimitInformation = 9;
     private const uint KillOnJobClose = 0x2000;
+    private const uint LimitPriorityClass = 0x20;
 
     private nint _handle;
 
     private KillOnCloseJob(nint handle) => _handle = handle;
 
     /// <summary>A job holding <paramref name="process"/> and whatever it starts from now on, or null where none can be made.</summary>
-    public static KillOnCloseJob? Hold(Process process)
+    public static KillOnCloseJob? Hold(Process process, JobPriority priority = JobPriority.Normal)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -31,7 +32,15 @@ internal sealed class KillOnCloseJob : IDisposable
         {
             return null;
         }
-        var limits = new ExtendedLimits { Basic = new BasicLimits { LimitFlags = KillOnJobClose } };
+        var priorityClass = priority.WindowsClass();
+        var limits = new ExtendedLimits
+        {
+            Basic = new BasicLimits
+            {
+                LimitFlags = KillOnJobClose | (priorityClass == 0 ? 0 : LimitPriorityClass),
+                PriorityClass = priorityClass,
+            },
+        };
         if (!SetInformationJobObject(handle, ExtendedLimitInformation, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>())
             || !AssignProcessToJobObject(handle, process.Handle))
         {

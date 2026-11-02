@@ -154,6 +154,9 @@ internal sealed record FleetLine
 
     public required int Rings { get; init; }
 
+    /// <summary>The role ranges the node runs with (#599), each with its source; empty for a node not heard or an older one.</summary>
+    public RoleRangeInfo[] Ranges { get; init => field = value ?? []; } = [];
+
     /// <summary>The status as the lines it is drawn on: a last-known one is two (when last heard, then why), so each reads in full; any other is one.</summary>
     public string[] StateLines => LastKnown && State.IndexOf(" (", StringComparison.Ordinal) is > 0 and var cut ? [State[..cut], State[(cut + 1)..]] : [State];
 
@@ -208,6 +211,7 @@ internal sealed record FleetLine
             Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             Rings = summary.Connected || lastKnown ? summary.Rings : 0,
+            Ranges = (summary.Connected || lastKnown) && summary.Node?.Ranges is { } ranges ? ranges : [],
         };
     }
 }
@@ -215,6 +219,36 @@ internal sealed record FleetLine
 /// <summary>What the Fleet page shows: every node, this window's first.</summary>
 internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffset AsOf)
 {
+    /// <summary>One node's range for a role, and whether it is not the fleet's.</summary>
+    internal sealed record RoleNode(string Machine, string Range, string Source, bool Odd);
+
+    /// <summary>A role's row: the fleet's range and each node's, the odd ones out marked.</summary>
+    internal sealed record RoleRow(string Role, string Fleet, IReadOnlyList<RoleNode> Nodes)
+    {
+        public int Odd => Nodes.Count(n => n.Odd);
+    }
+
+    /// <summary>
+    /// A row per role (in the order the nodes publish them). The fleet's range is the one set for the fleet when a node says it
+    /// has one, else the one most nodes run (the first node's on a tie); a node whose range is another is odd.
+    /// </summary>
+    public IReadOnlyList<RoleRow> Roles
+    {
+        get
+        {
+            var roles = Lines.SelectMany(l => l.Ranges.Select(r => r.Role)).Distinct().ToList();
+            var rows = new List<RoleRow>();
+            foreach (var role in roles)
+            {
+                var nodes = Lines.Select(l => (Line: l, Range: l.Ranges.FirstOrDefault(r => r.Role == role))).Where(n => n.Range is not null).ToList();
+                var fleet = nodes.Where(n => n.Range!.Source == SettingSources.Fleet).Select(n => n.Range!.Range).FirstOrDefault()
+                    ?? nodes.GroupBy(n => n.Range!.Range).OrderByDescending(g => g.Count()).ThenBy(g => nodes.FindIndex(n => n.Range!.Range == g.Key)).First().Key;
+                rows.Add(new RoleRow(role, fleet, [.. nodes.Select(n => new RoleNode(n.Line.Machine, n.Range!.Range, n.Range.Source, n.Range.Range != fleet))]));
+            }
+            return rows;
+        }
+    }
+
     public string Summary
     {
         get
@@ -573,9 +607,34 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         return Layout.Builder.VStack(
                 Table.Header(FitColumns, Scale),
-                Layout.Builder.VStack(rows).WithScroll(_scroll).Stretch())
+                Layout.Builder.VStack([.. rows, .. RangeSection(screen)]).WithScroll(_scroll).Stretch())
             .Pad(Gutter, 8f)
             .Stretch();
+    }
+
+    /// <summary>The model ranges: a heading, then a row per role with the fleet's range and each node's, a node that differs marked.</summary>
+    private IEnumerable<Layout.Node> RangeSection(FleetScreen screen)
+    {
+        var roles = screen.Roles;
+        if (roles.Count == 0)
+        {
+            yield break;
+        }
+        yield return Layout.Builder.Text("Model ranges by role: the fleet's, and each node's (a node that differs says so)", 13f, Bright).RowH(30f).Pad(0f, 6f);
+        for (var i = 0; i < roles.Count; i++)
+        {
+            var role = roles[i];
+            var nodes = role.Nodes.Select(n => (Layout.Node)Layout.Builder.Text(
+                    n.Odd ? $"differs: {n.Machine}: {n.Range} ({n.Source})" : $"{n.Machine}: {n.Range}", 11f, n.Odd ? Ringing : Dim).Selectable().WAuto());
+            var row = Layout.Builder.HStack(
+                    Layout.Builder.Text(role.Role, 14f, Bright).Selectable().WFixed(110f).RowH(22f),
+                    Layout.Builder.VStack(
+                            Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
+                            Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar())
+                        .WStar().HAuto())
+                .WithGap(14f).Pad(8f, 6f).HAuto();
+            yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
+        }
     }
 
     /// <summary>

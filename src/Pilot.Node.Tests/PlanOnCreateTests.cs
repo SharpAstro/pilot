@@ -40,7 +40,7 @@ public sealed class PlanOnCreateTests : LegCommanderTestsBase
     public async Task ACreateWithAdmissionFullIsQueuedWithTheReasonAndTheSweepStartsThePlannerOnceASlotFrees()
     {
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", ["1"]).Settings!;
-        settings = NodeSettings.With(settings, "planner-model", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, RoleModels.RangeKey(RoleModels.Planner), ["opus"]).Settings!;
         _legs.Models = new RoleModels(settings);
         OtherOpus("du1-other-worker", SessionState.Working);
 

@@ -72,6 +72,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The folders the defender check wants excluded; null takes <see cref="WantedFolders"/>. A test gives its own.</summary>
     public Func<IReadOnlyList<string>>? DefenderFolders { get; init; }
 
+    /// <summary>The processes <c>--processes</c> wants excluded; null takes <see cref="DefenderExclusions.WantedProcesses"/> over the repo roots. A test gives its own.</summary>
+    public Func<IReadOnlyList<string>>? DefenderProcesses { get; init; }
+
     /// <summary>Opens a window for a person (the trust prompt); false when it did not open. A test replaces it.</summary>
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
 
@@ -240,7 +243,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 return FirewallAllows() is (true, _) ? null : "the rule is still not there";
             }
             case DefenderKey:
-                return FixDefender(processes);
+                // The walk over the repo roots is slow on a cold disk: off the command thread.
+                return await Task.Run(() => FixDefender(processes), cancellationToken);
             case TrustKey:
                 // Recorded in Claude Code's file, carefully (ClaudeTrust); the prompt in a window only when that cannot be.
                 Directory.CreateDirectory(options.WatchtowerFolder);
@@ -728,7 +732,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         }
         state = DefenderExclusions.WithRecord(state, state.Readable ? null : ReadDefenderRecord());
         var paths = DefenderExclusions.MissingPaths(wanted, state);
-        var names = processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, state) : [];
+        var wantedProcesses = processes ? (DefenderProcesses ?? (() => DefenderExclusions.WantedProcesses(options.RepoRoots)))() : [];
+        var names = DefenderExclusions.MissingProcesses(wantedProcesses, state);
         if (paths.Count == 0 && names.Count == 0)
         {
             return null;
@@ -753,7 +758,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return $"the elevated run left no record of the exclusions in {recordPath}, so they are not known to be excluded";
         }
-        var still = DefenderExclusions.MissingPaths(wanted, after).Concat(processes ? DefenderExclusions.MissingProcesses(DefenderExclusions.Processes, after) : []).ToList();
+        var still = DefenderExclusions.MissingPaths(wanted, after).Concat(DefenderExclusions.MissingProcesses(wantedProcesses, after)).ToList();
         return still.Count == 0 ? null : $"still not excluded: {string.Join(", ", still)}";
     }
 

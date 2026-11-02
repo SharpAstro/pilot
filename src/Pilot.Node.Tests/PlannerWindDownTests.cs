@@ -35,7 +35,7 @@ public sealed class PlannerWindDownTests : LegCommanderTestsBase
         var options = new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1");
         _mine = new LegCommander(_state, _recording, _checks, _github, git, new Planes(git), _flights, options, TimeProvider.System);
         var settings = NodeSettings.With(new NodeSettings(), "opus-cap", ["2"]).Settings!;
-        settings = NodeSettings.With(settings, "worker-model", ["opus"]).Settings!;
+        settings = NodeSettings.With(settings, "worker-range", ["opus"]).Settings!;
         settings = NodeSettings.With(settings, "one-flight-per-repo", ["off"]).Settings!;
         _mine.Models = new RoleModels(settings);
     }

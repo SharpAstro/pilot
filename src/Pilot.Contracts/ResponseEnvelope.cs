@@ -66,6 +66,9 @@ public sealed record NodeInfo
     /// <summary>Whether this node holds a repo to one flight (<c>one-flight-per-repo</c>); the fleet's value is the holder of the count's. Null from an older node.</summary>
     public bool? OneFlightPerRepo { get; init; }
 
+    /// <summary>The role ranges this node runs with, each with where it comes from (this node, the fleet or built in); null from an older node.</summary>
+    public RoleRangeInfo[]? Ranges { get; init; }
+
     /// <summary>The sessions this node counts against the Opus cap and its start gate, as <c>label (model)</c>; null from an older node.</summary>
     public string[]? CountedSessions { get; init; }
 
@@ -81,6 +84,9 @@ public sealed record NodeInfo
     /// <summary>Median and slowest of the node's session starts, resumes and relays over the last hour (PIL584); null when an older node did not say or none happened.</summary>
     public SendTimingRow[]? SendTimings { get; init; }
 }
+
+/// <summary>A role's effective range on a node (<c>sonnet-high..opus-medium</c>) and where it comes from (<see cref="SettingSources"/>).</summary>
+public sealed record RoleRangeInfo(string Role, string Range, string Source);
 
 /// <summary>A slot of the fleet's Opus count: <paramref name="Node"/> runs <paramref name="Label"/> and holds it until <paramref name="ExpiresAt"/>, unless it renews it.</summary>
 public sealed record AdmissionLease(string Node, string Label, string? Model, DateTimeOffset ExpiresAt);

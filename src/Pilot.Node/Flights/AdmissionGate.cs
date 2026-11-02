@@ -292,6 +292,71 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         }
     }
 
+    /// <summary>One peer's answer to a fleet value sent to it.</summary>
+    /// <param name="Outcome">What happened: sent, refused or unreachable.</param>
+    public sealed record FleetSent(string Node, FleetSendOutcome Outcome, string? Why = null)
+    {
+        public override string ToString() => Outcome switch
+        {
+            FleetSendOutcome.Sent => $"{Node}: sent",
+            FleetSendOutcome.Refused => $"{Node}: refused ({Why})",
+            _ => Why is null ? Node : $"{Node}: did not answer ({Why})",
+        };
+    }
+
+    public enum FleetSendOutcome { Sent, Refused, Unreachable }
+
+    /// <summary>
+    /// Sends a role range set for the fleet to every peer the fleet view reaches (not only the keeper of the count): each saves it as its fleet
+    /// layer and does not send it on. Peers known but silent are named as unreachable. <paramref name="values"/> empty clears the fleet's value.
+    /// </summary>
+    public IReadOnlyList<FleetSent> PushFleet(string key, string[] values)
+    {
+        var view = Fleet.Current();
+        var sent = new List<FleetSent>();
+        foreach (var peer in view.Peers)
+        {
+            try
+            {
+                var result = Fleet.SendSetting(peer, key, ["--fleet", .. values]);
+                sent.Add(result.Ok ? new FleetSent(peer.Name, FleetSendOutcome.Sent) : new FleetSent(peer.Name, FleetSendOutcome.Refused, result.Error));
+            }
+            catch (Exception ex) when (FleetAdmission.Unreachable(ex))
+            {
+                Fleet.Forget();
+                sent.Add(new FleetSent(peer.Name, FleetSendOutcome.Unreachable, FirstLine(ex.Message)));
+            }
+        }
+        // Peers the read could not reach already say why, as <c>host (did not answer: ...)</c>.
+        sent.AddRange(view.NotCounted.Select(n => new FleetSent(n, FleetSendOutcome.Unreachable)));
+        return sent;
+    }
+
+    /// <summary>The reachable nodes whose effective range for <paramref name="role"/> differs from the fleet's, each as name and value, and the fleet's own value (null when none is set).</summary>
+    public (SettingDeviation[] Deviations, string? FleetValue) DeviationsOf(string role)
+    {
+        var mine = models();
+        var fleet = mine.FleetRange(role)?.ToString();
+        if (fleet is null)
+        {
+            return ([], null);
+        }
+        var list = new List<SettingDeviation>();
+        var here = mine.Range(role).ToString();
+        if (here != fleet)
+        {
+            list.Add(new SettingDeviation(machine, here));
+        }
+        foreach (var peer in Fleet.Cached.Peers)
+        {
+            if (peer.Info.Ranges?.FirstOrDefault(r => r.Role == role) is { } r && r.Range != fleet)
+            {
+                list.Add(new SettingDeviation(peer.Name, r.Range));
+            }
+        }
+        return ([.. list], fleet);
+    }
+
     /// <summary>Answers a fleet admission verb sent by another node: a claim, a renewal list or a setting.</summary>
     public CommandResult Handle(CommandRequest command)
     {
@@ -306,8 +371,11 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             case Verbs.AdmissionSync when args.Length >= 1:
                 Fleet.Sync(args[0], args.Skip(1).Select(a => a.Split('|')).Where(p => p.Length >= 2).Select(p => (p[0], p[1], p.Length > 2 && p[2].Length > 0 ? p[2] : null)));
                 break;
-            case Verbs.AdmissionSetting when args.Length >= 2 && args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey:
-                error = SettingApplier is null ? "this node cannot apply settings" : SettingApplier(args);
+            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsRoleKey(args[0])):
+                // A peer may only set the fleet layer of a role range, never this node's own range.
+                error = NodeSettings.IsRoleKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
+                    ? $"a peer may only set the fleet layer of {args[0]}; send it with --fleet"
+                    : SettingApplier is null ? "this node cannot apply settings" : SettingApplier(args);
                 break;
             default:
                 error = $"{command.Verb} is not understood as sent";

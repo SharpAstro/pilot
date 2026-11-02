@@ -45,6 +45,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, $"set takes a setting ({string.Join(", ", NodeSettings.Keys)}), then its value; none, or default, takes it out");
         }
         var key = args[0].Trim().ToLowerInvariant();
+        // A role range set for the fleet: saved here as the fleet layer (this node's own value still wins), and sent to every peer reached.
+        if (args.Contains("--fleet", StringComparer.OrdinalIgnoreCase))
+        {
+            return SetFleet(command, key, [.. args[1..].Where(a => !a.Equals("--fleet", StringComparison.OrdinalIgnoreCase))]);
+        }
         var (updated, error) = NodeSettings.With(NodeSettings.Read(options.SettingsFile), key, args[1..]);
         if (updated is null)
         {
@@ -74,7 +79,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         {
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
-        // A role's model and effort are read when a session of it starts: in force for the next one, no restart.
+        // A role's range is read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey)
         {
@@ -91,6 +96,11 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
+        if (key == NodeSettings.JobPriorityKey)
+        {
+            jobs.Priority = updated.JobPriority ?? options.JobPriority;
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; the next job or check runs at it");
+        }
         // The job limits apply at once: a restart for them would wait for the very queue they are meant to clear.
         if (key is NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey)
         {
@@ -102,6 +112,36 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var carrying = NodeRestarter.JobsCarryOn(state) is { } jobsLeft ? $" ({jobsLeft} under the next node)" : "";
         var restart = restarter.Request($"{key} = {value}");
         return state.Complete(command, null, setting: Row(key, updated), way: restart ?? $"{key} saved as {value}; the node restarts to run with it{carrying}");
+    }
+
+    private CommandResult SetFleet(CommandRequest command, string key, string[] values)
+    {
+        var (updated, error) = NodeSettings.WithFleet(NodeSettings.Read(options.SettingsFile), key, values);
+        if (updated is null)
+        {
+            return state.Complete(command, error);
+        }
+        try
+        {
+            updated.Write(options.SettingsFile);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return state.Complete(command, $"{options.SettingsFile} could not be written: {ex.Message}");
+        }
+        roles.Apply(updated);
+        var value = updated.FleetRoles?.GetValueOrDefault(key) ?? "removed";
+        var way = $"{key} saved for the fleet as {value}, and in force now where this node has no value of its own";
+        // One sent from another node (a grant) is not sent on.
+        if (command.Grant is null && slots is not null)
+        {
+            var sent = slots.PushFleet(key, values);
+            if (sent.Count > 0)
+            {
+                way += "; " + string.Join("; ", sent);
+            }
+        }
+        return state.Complete(command, null, setting: Row(key, updated), way: way);
     }
 
     /// <summary>
@@ -158,6 +198,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         var pinned = options.CommandLineKeys?.Contains(key) == true;
         var started = options.Saved?.Get(key) is { } before ? (key == NodeSettings.ShortcutTokenKey ? "set" : Join(key, before)) : null;
         var (label, detail, choices) = Describe(key);
+        var role = RoleOf(key);
+        var (deviations, fleetValue) = role is not null && slots is not null ? slots.DeviationsOf(role) : ([], null);
         return new SettingRow
         {
             Key = key,
@@ -166,10 +208,14 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             Value = running,
             Saved = file,
             // A live setting runs with what the file says now; any other with what it said at the start.
-            Source = pinned ? SettingSources.CommandLine : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
+            Source = pinned ? SettingSources.CommandLine
+                : role is not null ? roles.RangeWithSource(role).Source
+                : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
             Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey,
             Pending = !pinned && !Live(key) && (file ?? Default(key)) != running,
+            Deviations = deviations,
+            FleetValue = fleetValue,
         };
     }
 
@@ -185,8 +231,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
         NodeSettings.MergeBatchKey => roles.MergeBatch ? "on" : "off",
         NodeSettings.WorkerLadderKey => roles.WorkerLadder ? "on" : "off",
-        NodeSettings.WorkerModelMaxKey => roles.WorkerModelMax,
-        NodeSettings.WorkerEffortMaxKey => roles.WorkerEffortMax,
         // Never the token itself: present or absent.
         NodeSettings.ShortcutTokenKey => roles.ShortcutToken is { Length: > 0 } ? "set" : "",
         NodeSettings.LanPortKey => options.LanPort.ToString(CultureInfo.InvariantCulture),
@@ -195,6 +239,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdatePolicyKey => options.UpdatePolicy.Name(),
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.JobPriorityKey => Pilot.Node.Flights.JobPriorities.Name(jobs.Priority),
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(roles.PrWatchIdle),
@@ -208,23 +253,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.RepoTrackersKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).RepoTrackers ?? []),
         NodeSettings.NoAutoMergeReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).NoAutoMergeRepos ?? []),
         NodeSettings.SubTaskReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).SubTaskRepos ?? []),
-        // A deep review runs on the reviewer's model and a step above its effort until these are set, so say that, not the bare role's.
-        _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => (effort ? roles.ReviewerEffort(ReviewDepth.Deep) : roles.ReviewerModel(ReviewDepth.Deep)) ?? RoleModels.NoneValue,
-        _ when RoleOf(key) is ({ } role, var effort) => (effort ? roles.Effort(role) : roles.Model(role)) ?? RoleModels.NoneValue,
+        _ when RoleOf(key) is { } role => roles.Range(role).ToString(),
         _ => "",
     };
 
-    // The role a role key is for, and whether it is its effort rather than its model.
-    private static (string? Role, bool Effort) RoleOf(string key) =>
-        RoleModels.Roles.FirstOrDefault(r => key == RoleModels.ModelKey(r)) is { } model ? (model, false)
-        : RoleModels.Roles.FirstOrDefault(r => key == RoleModels.EffortKey(r)) is { } effort ? (effort, true)
-        : (null, false);
+    // The role a range key is for.
+    private static string? RoleOf(string key) => RoleModels.Roles.FirstOrDefault(r => key == RoleModels.RangeKey(r));
 
-    /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's model or effort, the merge
+    /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's range, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -241,8 +281,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.ReviewDeepFirstKey => "on",
         NodeSettings.MergeBatchKey => "off",
         NodeSettings.WorkerLadderKey => "on",
-        NodeSettings.WorkerModelMaxKey => RoleModels.DefaultWorkerModelMax,
-        NodeSettings.WorkerEffortMaxKey => RoleModels.DefaultWorkerEffortMax,
         NodeSettings.ShortcutTokenKey => "",
         NodeSettings.LanPortKey => NodeWire.DefaultLanPort.ToString(CultureInfo.InvariantCulture),
         NodeSettings.MachineKey => (MachinePrefixes.Normalise(Environment.GetEnvironmentVariable("PILOT_MACHINE")) ?? MachinePrefixes.FromName(Environment.MachineName)),
@@ -251,6 +289,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => UpdateChannel.Stable.Name(),
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobMemoryKey => "0",
+        NodeSettings.JobPriorityKey => "below-normal",
         NodeSettings.MergeMethodKey => "rebase",
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
@@ -264,8 +303,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.RepoTrackersKey => "",
         NodeSettings.NoAutoMergeReposKey => "",
         NodeSettings.SubTaskReposKey => "",
-        _ when RoleOf(key) is (RoleModels.ReviewerDeep, var effort) => effort ? "high" : RoleModels.DefaultModel(RoleModels.Reviewer),
-        _ when RoleOf(key) is ({ } role, var effort) => effort ? RoleModels.NoneValue : RoleModels.DefaultModel(role),
+        _ when RoleOf(key) is { } role => RoleModels.BuiltIn(role).ToString(),
         _ => "",
     };
 
@@ -277,11 +315,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time, on any node of the fleet; the others wait, those the rest depend on first. A flight marked priority goes ahead. One value for the fleet: held by the node that keeps the Opus count (the lowest-named one this fleet reaches), and a set on any node is sent there", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
         NodeSettings.AutopilotKey => ("Autopilot", "While on, an assistant (a session you talk to) does your-only things (merge, land, settings, grants, update) directly when you asked; off, each raises a card for you to allow. Only you can change it, never an assistant", ["on", "off"]),
-        NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer-deep model; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
+        NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer's max; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
         NodeSettings.MergeBatchKey => ("Merge batches", "While on, a repo's merge queue entries that are ready (review passed at their head, checks green, nothing GitHub would refuse) are merged into one batch branch (pilot/batch/repo-machine-start-n: its base plus each PR, plain git), its CI run once on a draft PR from it, and landed together on green by a plain push of the base to the batch head. Only where the node may push the base: entries merged by merge, a base with no merge queue and no branch protection or rules (a queue repo batches by its own ruleset's group size). A red or conflicting batch, or one whose CI never starts, falls back to one entry at a time. A batch forms only from merges that overlap (asked while another merge of the repo is under way); an armed or autopilot merge is asked one at a time and merges alone. Off by default", ["on", "off"]),
-        NodeSettings.WorkerLadderKey => ("Worker ladder", "While on, a leg redone steps its fresh worker up by attempt: attempts 1 and 2 on the leg's model and effort, attempt 3 on opus, attempt 4 on opus at xhigh, never below the leg's plan nor past the max settings; off keeps the leg's model", ["on", "off"]),
-        NodeSettings.WorkerModelMaxKey => ("Worker model max", "The strongest model the worker ladder steps up to; opus by default", ["sonnet", "opus"]),
-        NodeSettings.WorkerEffortMaxKey => ("Worker effort max", "The highest effort the worker ladder steps up to; max by default", [.. RoleModels.Efforts]),
+        NodeSettings.WorkerLadderKey => ("Worker ladder", "While on, a leg redone steps its fresh worker up by attempt: attempts 1 and 2 on the leg's model and effort, attempt 3 on opus, attempt 4 on opus at xhigh, never below the leg's plan nor past the worker range's max; off keeps the leg's model", ["on", "off"]),
         NodeSettings.ShortcutTokenKey => ("Shortcut token", "The Shortcut API token that reads a story's title when a flight is made on one (sc-N); the SHORTCUT_API_TOKEN variable wins over it. Only whether it is set is shown", []),
         NodeSettings.LanPortKey => ("LAN port", "The TCP port other machines reach this node on", []),
         NodeSettings.MachineKey => ("Machine prefix", "Two letters and a number, at the front of this machine's session names (DE1-watchtower)", []),
@@ -290,6 +326,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => ("Update channel", "stable follows the tagged releases; beta follows main's every push (a Debug build, needs the .NET runtime)", [.. UpdateChannels.Names]),
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The least free memory, in GB, a second job waits for: a floor under the measured need of its kind of command, never a cap; 0 for the measured need alone", ["0", "2", "4", "8"]),
+        NodeSettings.JobPriorityKey => ("Job priority", "How much CPU the builds and tests the node starts yield to other work on the machine: below-normal (default) and idle give way, normal is the old behaviour. Claude sessions stay normal", [.. Pilot.Node.Flights.JobPriorities.Names]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights keep going past the start limit, up to the priority limit", []),
         NodeSettings.RepoTrackersKey => ("Repo trackers", "The tracker a bare number means when a flight is made in the repo; a repo not listed means GitHub issues", []),
         NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot or not; only your own merge lands them", []),
@@ -303,9 +340,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.WatchtowerCompactShareKey => ("Watchtower compaction share", "A live watchtower that is idle with more than this share of its context window, in percent, is compacted, once until its context has grown past the share again", ["40", "60", "70", "80"]),
         NodeSettings.WatchtowerChatMessagesKey => ("Watchtower chat length", "A watchtower chat of this many person messages since the last compaction is compacted at the next idle look; 0 is off", ["0", "20", "40", "80"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
-        _ when RoleOf(key) is ({ } role, false) => ($"{Title(role)} model", RoleDetail(role) + (role == RoleModels.ReviewerDeep ? "" : "; default leaves the choice to Claude Code"), ["sonnet", "opus", "haiku", RoleModels.NoneValue]),
-        _ when RoleOf(key) is (RoleModels.ReviewerDeep, true) => ("Reviewer-deep effort", "The effort a deep review starts at; unset, a step above the reviewer's (high when that is unset); default leaves the choice to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
-        _ when RoleOf(key) is ({ } role, true) => ($"{Title(role)} effort", $"The effort each {role} starts at; default leaves the choice to Claude Code", [.. RoleModels.Efforts, RoleModels.NoneValue]),
+        _ when RoleOf(key) is { } role => ($"{Title(role)} range", RangeDetail(role), [.. RoleRange.Line]),
         _ => (key, "", []),
     };
 
@@ -316,7 +351,18 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Watchtower => "The watchtower reads cards and runs pilot for hours: the longest-lived session, so the costliest per turn",
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
-        RoleModels.ReviewerDeep => "A deep review's model; unset, it runs on the reviewer's; default leaves the choice to Claude Code",
         _ => "Reviews a flight's PR before its merge card",
     };
+
+    private static string RangeDetail(string role)
+    {
+        var built = RoleModels.BuiltIn(role);
+        var max = role switch
+        {
+            RoleModels.Worker => "the max is the highest the worker ladder steps a redone leg to",
+            RoleModels.Reviewer => "the max is what a deep review runs on",
+            _ => "the max is the highest a session of the role may step to",
+        };
+        return $"{RoleDetail(role)}. A range: the pair it starts on and its max, as sonnet-high..opus-medium over the line {RoleRange.Line[0]} to {RoleRange.Line[^1]}; {max}; effort max is never allowed; a bare model leaves the effort to Claude Code. Built in: {built}, {RoleModels.BuiltInWhy(role)}";
+    }
 }

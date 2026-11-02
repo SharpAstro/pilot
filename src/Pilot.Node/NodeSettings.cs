@@ -25,6 +25,7 @@ public sealed record NodeSettings
     public const string UpdateChannelKey = "update-channel";
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
+    public const string JobPriorityKey = "job-priority";
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -50,10 +51,6 @@ public sealed record NodeSettings
     /// <summary>The repos whose flights keep their legs as sub-tasks of the work item (a GitHub sub-issue, a Shortcut task); off for a repo left out.</summary>
     public const string SubTaskReposKey = "sub-task-repos";
     public const string MergeBatchKey = "merge-batch";
-    /// <summary>The strongest model a leg's worker steps up to (<see cref="RoleModels.WorkerFor"/>); opus unless set.</summary>
-    public const string WorkerModelMaxKey = "worker-model-max";
-    /// <summary>The highest effort a leg's worker steps up to; max unless set.</summary>
-    public const string WorkerEffortMaxKey = "worker-effort-max";
     /// <summary>Whether a leg's fresh worker steps up a model ladder by attempt; on unless set off.</summary>
     public const string WorkerLadderKey = "worker-ladder";
 
@@ -61,13 +58,13 @@ public sealed record NodeSettings
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
     public static IReadOnlyList<string> MergeMethods { get; } = ["rebase", "squash", "merge"];
 
-    /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
+    /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
-         .. RoleModels.Roles.Select(RoleModels.ModelKey), .. RoleModels.Roles.Select(RoleModels.EffortKey), WorkerModelMaxKey, WorkerEffortMaxKey, WorkerLadderKey];
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
+         .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
-    /// <summary>Whether <paramref name="key"/> is a role's model or effort (<see cref="RoleModels"/>).</summary>
-    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.ModelKey(r) || key == RoleModels.EffortKey(r)) || key is WorkerModelMaxKey or WorkerEffortMaxKey;
+    /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
+    public static bool IsRoleKey(string key) => RoleModels.Roles.Any(r => key == RoleModels.RangeKey(r));
 
     public bool? Lan { get; init; }
 
@@ -111,6 +108,7 @@ public sealed record NodeSettings
     public int? MaxJobs { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
+    public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
 
     public string? MergeMethod { get; init; }
 
@@ -147,8 +145,39 @@ public sealed record NodeSettings
     /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>
     public IReadOnlyList<string>? SubTaskRepos { get; init; }
 
-    /// <summary>The roles' models and efforts by key (<c>worker-model</c>: <c>opus</c>); a key left out takes the role's default.</summary>
+    /// <summary>The roles' ranges by key (<c>worker-range</c>: <c>sonnet..opus-xhigh</c>); a key left out takes the role's built-in range.</summary>
     public IReadOnlyDictionary<string, string>? Roles { get; init; }
+
+    /// <summary>The file's object holding the fleet layer of the role ranges: not a setting a person sets by key, but what <c>set node &lt;range&gt; --fleet</c> on any node saved here.</summary>
+    public const string FleetRangesField = "fleet-ranges";
+
+    /// <summary>The fleet's role ranges by key, kept apart from this node's own (<see cref="Roles"/>), which win over them.</summary>
+    public IReadOnlyDictionary<string, string>? FleetRoles { get; init; }
+
+    /// <summary>These settings with the fleet's range for <paramref name="key"/> set to <paramref name="values"/> (none, or <c>default</c>, takes it out), or why not.</summary>
+    public static (NodeSettings? Settings, string? Error) WithFleet(NodeSettings settings, string key, IReadOnlyList<string> values)
+    {
+        if (!IsRoleKey(key))
+        {
+            return (null, $"{key} has no fleet value; the fleet holds {string.Join(", ", RoleModels.Roles.Select(RoleModels.RangeKey))}");
+        }
+        // Checked as an own value is, then the own layer is put back as it was.
+        var (checkedRange, error) = With(new NodeSettings(), key, values);
+        if (checkedRange is null)
+        {
+            return (null, error);
+        }
+        var fleet = new Dictionary<string, string>(settings.FleetRoles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+        if (checkedRange.Roles?.GetValueOrDefault(key) is { } range)
+        {
+            fleet[key] = range;
+        }
+        else
+        {
+            fleet.Remove(key);
+        }
+        return (settings with { FleetRoles = fleet.Count == 0 ? null : fleet }, null);
+    }
 
     public static string PathIn(string dataFolder) => Path.Combine(dataFolder, FileName);
 
@@ -178,7 +207,56 @@ public sealed record NodeSettings
                 settings = read;
             }
         }
-        return settings;
+        if (root[FleetRangesField] is JsonObject fleetRanges)
+        {
+            foreach (var role in RoleModels.Roles)
+            {
+                var key = RoleModels.RangeKey(role);
+                if (fleetRanges[key] is JsonValue v && v.TryGetValue<string>(out var text) && WithFleet(settings, key, [text]) is { Settings: { } withFleet })
+                {
+                    settings = withFleet;
+                }
+            }
+        }
+        return Migrated(settings, root);
+    }
+
+    // A reviewer pinned to Sonnet (reviewer-model) with no reviewer-deep-* keys migrates to sonnet..opus-high: its deep reviews
+    // now run on the built-in max, on purpose, as the settlement of the sonnet-versus-opus mismatch.
+    // Settings from before ranges (#599) held a model and an effort per role, a worker max and a deep review's own: each role that
+    // has any becomes the nearest range, its max raised to its default when that sits above, effort max read as xhigh.
+    private static NodeSettings Migrated(NodeSettings settings, JsonObject root)
+    {
+        string? Old(string key) => root[key] is { } v && Values(v) is [{ } first, ..] ? first.Trim().ToLowerInvariant() : null;
+        var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+        foreach (var role in RoleModels.Roles)
+        {
+            var key = RoleModels.RangeKey(role);
+            if (roles.ContainsKey(key))
+            {
+                continue;
+            }
+            var (model, effort) = (Old(role + "-model"), Old(role + "-effort"));
+            var (maxModel, maxEffort) = role switch
+            {
+                RoleModels.Worker => (Old("worker-model-max"), Old("worker-effort-max")),
+                RoleModels.Reviewer => (Old("reviewer-deep-model"), Old("reviewer-deep-effort")),
+                _ => (null, null),
+            };
+            if (model is null && effort is null && maxModel is null && maxEffort is null)
+            {
+                continue;
+            }
+            var built = RoleModels.BuiltIn(role);
+            var def = RoleRange.Nearest(model, effort, built.Default);
+            var max = RoleRange.Nearest(maxModel, maxEffort, built.Max);
+            if (max.Order < def.Order)
+            {
+                max = def;
+            }
+            roles[key] = new RoleRange(def, max).ToString();
+        }
+        return roles.Count == 0 ? settings : settings with { Roles = roles };
     }
 
     /// <summary>Writes the file whole, through a temporary file, so a reader never sees half of it.</summary>
@@ -203,10 +281,20 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
+                    JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
             }
+        }
+        if (FleetRoles is { Count: > 0 })
+        {
+            var fleet = new JsonObject();
+            foreach (var (key, range) in FleetRoles.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                fleet[key] = JsonValue.Create(range);
+            }
+            root[FleetRangesField] = fleet;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
         var temp = file + ".tmp";
@@ -237,6 +325,7 @@ public sealed record NodeSettings
         UpdatePolicyKey => UpdatePolicy is { } policy ? [policy.Name()] : null,
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
+        JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
@@ -394,6 +483,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var jobs) && jobs is >= 1 and <= 64
                     ? (settings with { MaxJobs = jobs }, null)
                     : (null, "max-jobs takes a number, 1 to 64");
+            case JobPriorityKey:
+                if (clear)
+                {
+                    return (settings with { JobPriority = null }, null);
+                }
+                return Pilot.Node.Flights.JobPriorities.Parse(One()) is { } jobPriority
+                    ? (settings with { JobPriority = jobPriority }, null)
+                    : (null, $"job-priority takes {string.Join(", ", Pilot.Node.Flights.JobPriorities.Names)}");
             case JobMemoryKey:
                 if (clear)
                 {
@@ -542,15 +639,11 @@ public sealed record NodeSettings
                     roles.Remove(role);
                     return (settings with { Roles = roles.Count == 0 ? null : roles }, null);
                 }
-                var value = One()?.ToLowerInvariant();
-                var effort = role.Contains("-effort", StringComparison.Ordinal);
-                if (value is null || (value != RoleModels.NoneValue && (effort ? !RoleModels.Efforts.Contains(value) : !RoleModels.IsModel(value))))
+                if (!RoleRange.TryParse(given, out var range, out var why))
                 {
-                    return (null, effort
-                        ? $"{role} takes {string.Join(", ", RoleModels.Efforts)} or none"
-                        : $"{role} takes a model (sonnet, opus, haiku, or a full id as claude-opus-5-5) or none");
+                    return (null, $"{role} {why}");
                 }
-                roles[role] = value;
+                roles[role] = range!.ToString();
                 return (settings with { Roles = roles }, null);
             }
             default:
@@ -662,6 +755,7 @@ public static class NodeSettingsMerge
             UpdateChannel = Free(NodeSettings.UpdateChannelKey) && saved.UpdateChannel is { } channel ? channel : options.UpdateChannel,
             MaxJobs = Free(NodeSettings.MaxJobsKey) && saved.MaxJobs is { } jobs ? jobs : options.MaxJobs,
             JobMemoryGigabytes = Free(NodeSettings.JobMemoryKey) && saved.JobMemoryGigabytes is { } memory ? memory : options.JobMemoryGigabytes,
+            JobPriority = saved.JobPriority is { } savedPriority ? savedPriority : options.JobPriority,
             Saved = saved,
             CommandLineKeys = given,
         };

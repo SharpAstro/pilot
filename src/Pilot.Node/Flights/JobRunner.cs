@@ -69,6 +69,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How many jobs run at once; the rest wait their turn. Set live by <c>set node max-jobs</c>, then <see cref="Pump"/>.</summary>
     public int MaxRunning { get; set; } = 1;
 
+    /// <summary>The priority every job's process tree runs at, so builds and tests yield the CPU to other work (#629); Normal keeps the node's own.</summary>
+    public JobPriority Priority { get; set; } = JobPriority.BelowNormal;
+
     /// <summary>
     /// The least free memory a second job waits for: what it needs is its kind's measured estimate (<see cref="JobMemory"/>), or this
     /// when that is less. A floor, never a cap: as a cap, a kind measured at 8 GB started beside another with 2 GB free, the overload
@@ -622,7 +625,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath);
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority);
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);
         }
@@ -632,7 +635,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return ex.Message;
         }
         // A check never outlives the node, a crash included: its wrapper (and so whatever it starts) is held by a kill-on-close job.
-        if (job.Kind == JobKind.Check && process.Child is { } wrapper && KillOnCloseJob.Hold(wrapper) is { } hold)
+        if (job.Kind == JobKind.Check && process.Child is { } wrapper && KillOnCloseJob.Hold(wrapper, Priority) is { } hold)
         {
             _holds[job.Id] = hold;
         }

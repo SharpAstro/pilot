@@ -174,6 +174,7 @@ public static partial class NodeApp
                 Watchtower = watchtower.Health(),
                 OpusCap = models.OpusCap,
                 OneFlightPerRepo = models.OneFlightPerRepo,
+                Ranges = models.Ranges(),
                 CountedSessions = slots.Publish().Counted,
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),

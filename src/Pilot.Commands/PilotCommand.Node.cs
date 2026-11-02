@@ -152,7 +152,15 @@ public static partial class PilotCommand
                     var note = setting.Source == SettingSources.CommandLine ? "command line"
                         : setting.Pending ? $"saved as {(setting.Saved ?? "default").Replace('\n', ';')}, at the next start"
                         : setting.Source;
-                    await output.WriteLineAsync($"{setting.Key,-15} {(value.Length == 0 ? "-" : value)}  ({note})");
+                    await output.WriteLineAsync($"{setting.Key,-16} {(value.Length == 0 ? "-" : value)}  ({note})");
+                    if (setting.FleetValue is { Length: > 0 } fleetValue)
+                    {
+                        await output.WriteLineAsync($"{"",-16} fleet: {fleetValue.Replace('\n', ';')}");
+                    }
+                    if (setting.Deviations.Length > 0)
+                    {
+                        await output.WriteLineAsync($"{"",-16} differs: {string.Join("; ", setting.Deviations.Select(d => $"{d.Node} runs {d.Value}"))}");
+                    }
                 }
                 if (shown.Restart is { } restart)
                 {
@@ -163,10 +171,11 @@ public static partial class PilotCommand
             });
             var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
             var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-            var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on") { Arguments = { settingKey, settingValue }, Options = { actingOn } },
-                (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? []], who, ct, p.GetValue(actingOn)));
+            var setFleet = new Option<bool>("--fleet") { Description = "For a role range (worker-range, planner-range, reviewer-range, watchtower-range): set the fleet's range, pushed to every node, not only this node's own; written after the value" };
+            var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on. A role range (worker-range, planner-range, reviewer-range, watchtower-range) takes --fleet after the value to set the fleet's layer") { Arguments = { settingKey, settingValue }, Options = { actingOn, setFleet } },
+                (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? [], .. p.GetValue(setFleet) ? new[] { "--fleet" } : []], who, ct, p.GetValue(actingOn)));
             var checkKey = Arg("check", "autostart, no-autostart, hooks, merge-guard, claude-permissions, lan, firewall, defender or trust");
-            var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler and testhost as processes too, not only the folders" };
+            var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler, testhost, git, git-lfs, git-remote-https and every *Tests*.exe runner built under the repo roots as processes too, not only the folders" };
             var setupCommand = Action(new Command("setup", "Make a setup check's fix: the logon entry, the hooks, the merge guard, Claude Code's allow rules for pilot's commands (claude-permissions), the LAN, the firewall rule and the Defender exclusions (each asks for elevation), the trust prompt") { Arguments = { checkKey }, Options = { defenderProcesses, actingOn } },
                 (p, client, ct) => Send(client, Verbs.Setup, Verbs.NodeTarget, [p.GetValue(checkKey)!, .. p.GetValue(defenderProcesses) ? new[] { "--processes" } : []], who, ct, p.GetValue(actingOn)));
             settings.Subcommands.Add(set);

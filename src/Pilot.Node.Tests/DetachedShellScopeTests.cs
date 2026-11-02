@@ -49,6 +49,24 @@ public sealed class DetachedShellScopeTests
     }
 
     [Fact]
+    public void NiceGoesInFrontOfTheShellInsideSetsidAndTheScope()
+    {
+        var (program, args) = DetachedShell.UnixArgv("echo hi", "u", "/usr/bin/setsid", "/usr/bin/systemd-run", "/bin/sh", ("/usr/bin/nice", 10));
+
+        program.ShouldBe("/usr/bin/systemd-run");
+        args.ShouldBe(["--user", "--scope", "--quiet", "--collect", "--unit=u", "/usr/bin/setsid", "/usr/bin/nice", "-n", "10", "/bin/sh", "-c", "echo hi"]);
+    }
+
+    [Fact]
+    public void WithNoSetsidAndNoScopeNiceIsTheProgram()
+    {
+        var (program, args) = DetachedShell.UnixArgv("echo hi", "u", null, null, "/bin/sh", ("/usr/bin/nice", 19));
+
+        program.ShouldBe("/usr/bin/nice");
+        args.ShouldBe(["-n", "19", "/bin/sh", "-c", "echo hi"]);
+    }
+
+    [Fact]
     public void WithNoSetsidItIsTheShellAlone()
     {
         var (program, args) = DetachedShell.UnixArgv("echo hi", "u", null, null);
