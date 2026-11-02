@@ -75,8 +75,8 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var second = Now(8);
         (second.Milestone, second.Title).ShouldBe(("v1", "Shadow the planet"));
         second.Body.ShouldContain("Soft or hard edge?");
-        second.Body.ShouldContain("Split from #2; siblings #9");
-        Now(9).Body.ShouldContain("Split from #2; siblings #8");
+        second.Body.ShouldContain("Split from #2; siblings #2, #9");
+        Now(9).Body.ShouldContain("Split from #2; siblings #2, #8");
         Now(9).Milestone.ShouldBe("v1");
         GitHub.PrioritySets.ShouldBe([(8, IssuePriority.High), (9, IssuePriority.High)]);
         State.Issues().Select(i => i.Number).ShouldContain(8);
