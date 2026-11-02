@@ -182,6 +182,41 @@ public sealed class MergedUnderLegTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task OpenPrRepeatedAfterAPushThatFailedPastTheBaseMergeMergesTheBaseOnce()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Merged(node);
+        (await Send(node, Verbs.PlanLeg, Subject, Plan)).Error.ShouldBeNull();
+        ShouldHaveRung(node, ready);
+        Commit(Plane, "render.txt", "the render");
+        node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "render") with { State = LegState.Done });
+        node.GitHub.Created.Clear();
+
+        // The first open-pr merges the base into the plane, then its push is refused by the remote.
+        var hook = Path.Combine(Origin, "hooks", "pre-receive");
+        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldNotBeNull();
+        node.State.Flights().Single().MergedHead.ShouldBe(_mergedHead);
+        node.GitHub.Created.ShouldBeEmpty();
+        var mergedOnce = Git(Plane, "rev-parse", "HEAD");
+        Git(Plane, "merge-base", "--is-ancestor", "main", "HEAD");
+
+        File.Delete(hook);
+        (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldBeNull();
+
+        var flight = node.State.Flights().Single();
+        node.GitHub.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
+        flight.PullRequest.ShouldBe(71);
+        flight.MergedHead.ShouldBeNull();
+        // The repeat made no second merge: the head is the one the first try left, and the history past the merged head holds one merge.
+        Git(Plane, "rev-parse", "HEAD").ShouldBe(mergedOnce);
+        Git(Plane, "rev-list", "--merges", "--count", $"{_mergedHead}..HEAD").ShouldBe("1");
+        Git(Origin, "rev-parse", "flight/tia1").ShouldBe(mergedOnce);
+        node.State.Cards(openOnly: true).Any(c => c.Kind == FlightCommander.MergedUnderLegKind).ShouldBeFalse();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWhileALegIsPlannedLandsNothingAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
