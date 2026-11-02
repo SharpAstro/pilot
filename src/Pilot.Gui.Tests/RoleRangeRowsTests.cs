@@ -238,8 +238,8 @@ public sealed class RoleRangeRowsTests
         var fleet = new FleetScreen(
         [
             FleetLine.From("node.sock", true, true, null, Summary("s1", "SE1", "DESKTOP-1", Ranges("sonnet-high..opus-medium", "opus-medium..opus-high"))),
-            FleetLine.From("10.0.0.9:47731", false, false, null, Summary("s2", "LE1", "LAPTOP-WITH-A-VERY-LONG-MACHINE-NAME-2", Ranges(long1, "sonnet-low..opus-xhigh"))),
-            FleetLine.From("10.0.0.10:47731", false, false, null, Summary("s3", "RP1", "RASPBERRY-PI-OBSERVATORY-ROOF", Ranges(long1, "opus-low..opus-low"))),
+            FleetLine.From("10.0.0.9:47731", false, false, null, Summary("s2", "LE1", "LAPTOP-2", Ranges(long1, "sonnet-low..opus-xhigh"))),
+            FleetLine.From("10.0.0.10:47731", false, false, null, Summary("s3", "RP1", "PI-ROOF", Ranges(long1, "opus-low..opus-low"))),
         ], Live.At);
 
         foreach (var width in new[] { 700, 1400 })
