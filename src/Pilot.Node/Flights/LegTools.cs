@@ -261,9 +261,12 @@ public sealed class ShellCheckRunner : ICheckRunner
 
     private const int TailLines = 30;
 
+    /// <summary>The priority the check's process tree runs at (#629); Normal keeps the node's own.</summary>
+    public JobPriority Priority { get; init; } = JobPriority.BelowNormal;
+
     public async Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null)
     {
-        using var shell = ShellScript.For(command, cwd);
+        using var shell = ShellScript.For(command, cwd, Priority);
         var start = shell.Start;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
@@ -272,7 +275,7 @@ public sealed class ShellCheckRunner : ICheckRunner
 
         using var process = Process.Start(start) ?? throw new FlightException($"the check `{command}` did not start");
         // Held in a job that ends with the node, so a restart or crash mid-check leaves no test host holding the plane.
-        using var hold = KillOnCloseJob.Hold(process);
+        using var hold = KillOnCloseJob.Hold(process, Priority);
         var lines = new Queue<string>();
         void Keep(string? line)
         {

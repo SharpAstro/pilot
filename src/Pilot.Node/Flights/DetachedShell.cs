@@ -40,18 +40,18 @@ public sealed class DetachedShell : IDisposable
     /// <c>pwsh -Command "...; exit $LASTEXITCODE"</c> is otherwise read twice, and the outer pwsh expands the inner's
     /// <c>$LASTEXITCODE</c> to nothing, so the job ends 0 whatever the line did (TIA1827, 2026-10-25).
     /// </summary>
-    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath)
+    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority = JobPriority.BelowNormal)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new DetachedShell([], () => StartUnix(jobId, command, cwd, logPath, exitPath));
+            return new DetachedShell([], () => StartUnix(jobId, command, cwd, logPath, exitPath, priority));
         }
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
         File.WriteAllText(inner, Utf8Output + "\n" + ShellScript.Body(ShellScript.Unwrap(command)), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
-        return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath));
+        return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
     }
 
     /// <summary>The wrapper script beside a job's own <paramref name="script"/>.</summary>
@@ -100,17 +100,17 @@ public sealed class DetachedShell : IDisposable
 
     private static string ShQuote(string text) => "'" + text.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
 
-    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath)
+    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority)
     {
         File.WriteAllBytes(logPath, []);
-        var start = UnixStart(command, cwd, logPath, exitPath, jobId);
+        var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority);
         // systemd-run --scope execs the command in its own process, so the pid Process.Start returns is the job shell's: the
         // pid the row records stays valid for reattach and for Kill(entireProcessTree) after the scope has been made.
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
     }
 
     /// <summary>What a Linux job starts: the wrapper under <c>setsid /bin/sh -c</c>, in a scope of its own under systemd, in the build environment.</summary>
-    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job")
+    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal)
     {
         // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
         // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
@@ -122,7 +122,8 @@ public sealed class DetachedShell : IDisposable
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
         var scoped = UnderSystemd(out var systemdRun) && ScopeWorks(systemdRun);
-        var (program, args) = UnixArgv(wrapper, ScopeUnit(jobId, logPath), setsid, scoped ? systemdRun : null, bash ?? "/bin/sh");
+        var (program, args) = UnixArgv(wrapper, ScopeUnit(jobId, logPath), setsid, scoped ? systemdRun : null, bash ?? "/bin/sh",
+            priority.Nice() is { } nice && JobPriorities.NicePath() is { } nicePath ? (nicePath, nice) : null);
         var start = new ProcessStartInfo(program);
         foreach (var arg in args)
         {
@@ -138,9 +139,11 @@ public sealed class DetachedShell : IDisposable
     /// --unit=&lt;unit&gt; setsid /bin/sh -c &lt;wrapper&gt;</c>, a transient scope outside the node unit's cgroup, so the unit's default
     /// <c>KillMode=control-group</c> does not take the job down when the node exits. Without it, <c>setsid /bin/sh -c</c> alone.
     /// </summary>
-    internal static (string Program, IReadOnlyList<string> Args) UnixArgv(string wrapper, string unit, string? setsid, string? systemdRun, string shell = "/bin/sh")
+    internal static (string Program, IReadOnlyList<string> Args) UnixArgv(string wrapper, string unit, string? setsid, string? systemdRun, string shell = "/bin/sh", (string Path, int Value)? nice = null)
     {
-        var argv = setsid is null ? new[] { shell, "-c", wrapper } : new[] { setsid, shell, "-c", wrapper };
+        // nice goes before the shell, inside setsid and the scope, so the shell and everything it starts inherit the niceness.
+        var shellArgv = nice is { } n ? new[] { n.Path, "-n", n.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), shell, "-c", wrapper } : new[] { shell, "-c", wrapper };
+        var argv = setsid is null ? shellArgv : [setsid, .. shellArgv];
         if (systemdRun is null)
         {
             return (argv[0], argv[1..]);
@@ -370,7 +373,41 @@ public sealed class DetachedShell : IDisposable
         CloseHandle(job);
     }
 
-    private static Process StartWindows(string jobName, string outer, string cwd, string logPath)
+    private const uint LimitPriorityClass = 0x20;
+    private const int JobObjectBasicLimitInformation = 2;
+
+    // JOBOBJECT_BASIC_LIMIT_INFORMATION
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimits
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public nuint MinimumWorkingSetSize;
+        public nuint MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public nuint Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetInformationJobObject(nint job, int infoClass, ref BasicLimits info, uint length);
+
+    /// <summary>Holds every process of <paramref name="job"/>, those it starts later included, to the priority class; false (and the job runs at normal) when it cannot be set.</summary>
+    private static bool LimitPriority(nint job, JobPriority priority)
+    {
+        var priorityClass = priority.WindowsClass();
+        if (priorityClass == 0)
+        {
+            return true;
+        }
+        var limits = new BasicLimits { LimitFlags = LimitPriorityClass, PriorityClass = priorityClass };
+        return SetInformationJobObject(job, JobObjectBasicLimitInformation, ref limits, (uint)Marshal.SizeOf<BasicLimits>());
+    }
+
+    private static Process StartWindows(string jobName, string outer, string cwd, string logPath, JobPriority priority)
     {
         // The log is opened for writing here and handed to the child as its stdout and stderr (one handle, so one file
         // position: the two never overwrite each other); the node's own copy is closed once the child has it.
@@ -419,7 +456,7 @@ public sealed class DetachedShell : IDisposable
             // Outside the node's job object when it allows it, so ending the node ends nothing here; a job object that does
             // not allow breakaway refuses the flag, and the job then starts without it. Suspended until it is in its own
             // named job object, so nothing it starts can be outside it.
-            var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent;
+            var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent | priority.WindowsClass();
             var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
             if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
             {
@@ -440,6 +477,8 @@ public sealed class DetachedShell : IDisposable
                     stray.Kill(entireProcessTree: true);
                     throw new Win32Exception(error);
                 }
+                // The whole tree (wrapper, pwsh, dotnet, test hosts) is held to the priority; not fatal when it cannot be, the job then runs at normal.
+                LimitPriority(job, priority);
                 // A named object lives only while a handle to it is open: one is put into the wrapper itself (its value is of no
                 // use to it), so the name survives this node and a restarted one opens the job by it until the wrapper ends.
                 if (!DuplicateHandle(GetCurrentProcess(), job, info.Process, out _, 0, false, 2))
