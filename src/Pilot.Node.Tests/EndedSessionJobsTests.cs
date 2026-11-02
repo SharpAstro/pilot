@@ -39,6 +39,7 @@ public sealed class EndedSessionJobsTests : IDisposable
             },
         };
         _tracker.DropJobs = (owners, why) => _jobs.DropQueuedOf(owners, why);
+        _jobs.EndedForGood = _tracker.IsEndedForGood;
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
         _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct).GetAwaiter().GetResult();
     }
@@ -108,6 +109,9 @@ public sealed class EndedSessionJobsTests : IDisposable
         var second = Queue(Verbs.SessionTarget(worker), "echo two");
         await Until(second, j => j.Step?.Contains("queued, 1 ahead") == true);
 
+        // One listing that omits it is a blip; the end counts once the next poll agrees.
+        await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
+        _state.Jobs().Single(j => j.Id == first).State.ShouldBe(JobState.Queued);
         await Poll(endedListing, Live(AgentRows.SessionB, "worker-b", 4343));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
 
@@ -146,6 +150,8 @@ public sealed class EndedSessionJobsTests : IDisposable
         // The old row ends, and a newer live row of the same name is listed after it in the same poll.
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"),
             AgentRows.Background(AgentRows.SessionB, "worker-a", "working", pid: 4343, status: "busy", startedAt: 1792000099000));
+        await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"),
+            AgentRows.Background(AgentRows.SessionB, "worker-a", "working", pid: 4343, status: "busy", startedAt: 1792000099000));
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
 
         await Task.Delay(200, Ct);
@@ -162,6 +168,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         var running = Queue(Verbs.SessionTarget(worker), "sleep 60; echo slept");
         await Until(running, j => j.State == JobState.Running);
 
+        await Poll();
         await Poll();
         _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
         _state.Jobs().Single(j => j.Id == running).State.ShouldBe(JobState.Running);

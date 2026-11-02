@@ -419,6 +419,7 @@ public static partial class NodeApp
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
+                EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());

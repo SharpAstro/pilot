@@ -715,6 +715,12 @@ public sealed class SessionTracker : BackgroundService
         var wasEnded = _rows.TryGetValue(row.Id, out var before) && before.State is SessionState.Ended or SessionState.Failed;
         _rows[row.Id] = row;
         _state.PutSession(row);
+        if (row.State is not (SessionState.Ended or SessionState.Failed))
+        {
+            // Listed live again: the end was a blip, not one.
+            _justEnded.Remove(row.Id);
+            _confirmedEnded.TryRemove(row.Id, out _);
+        }
         if (row.State is SessionState.Ended or SessionState.Failed)
         {
             // Its first end, not one the node made (those cancel their own jobs) and not a resume (a continuation owns the jobs):
@@ -722,15 +728,22 @@ public sealed class SessionTracker : BackgroundService
             if (!wasEnded && !_stopped.ContainsKey(row.Id) && !_resumedAs.ContainsKey(row.Id)
                 && row.EndedBecause?.StartsWith("resumed as", StringComparison.Ordinal) != true)
             {
-                _justEnded[row.Id] = row;
+                _justEnded[row.Id] = (row, 0);
             }
             // The stop that did not take has taken after all: its card has nothing left to ask.
             _state.CloseCardsAbout(Verbs.SessionTarget(row.Id), "the session is seen ended", SessionMessenger.StopUnconfirmedKind);
         }
     }
 
-    // By row id: rows that turned ended on their own since the last poll's end, whose queued jobs are not yet dropped.
-    private readonly Dictionary<string, SessionRow> _justEnded = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
+    // By row id: rows that turned ended on their own, with the polls that have seen them still ended. A single listing that omits a
+    // live session (a node's first poll, a blip) must not cost its jobs: the end holds for a second poll before it counts.
+    private readonly Dictionary<string, (SessionRow Row, int Polls)> _justEnded = new Dictionary<string, (SessionRow, int)>(StringComparer.Ordinal);
+
+    // Row ids whose own end held for two polls and that nothing replaced: what IsEndedForGood answers.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _confirmedEnded = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+
+    /// <summary>Whether the row ended on its own, held so for two polls, and no live session replaced it: nobody waits on its jobs (#327).</summary>
+    public bool IsEndedForGood(string id) => _confirmedEnded.ContainsKey(id);
 
     /// <summary>Drops the queued jobs of rows that ended on their own, unless a live session has taken the row over (a copy Claude Code continued it as): that one owns them now.</summary>
     private void DropJobsOfEnded()
@@ -739,23 +752,33 @@ public sealed class SessionTracker : BackgroundService
         {
             return;
         }
-        var ended = _justEnded.Values.ToList();
-        _justEnded.Clear();
         var all = _state.Sessions();
-        foreach (var row in ended)
+        foreach (var (id, (row, polls)) in _justEnded.ToList())
         {
-            if (!_rows.TryGetValue(row.Id, out var now) || now.State is not (SessionState.Ended or SessionState.Failed)
-                || SessionMessenger.ReplacedBy(row, all) is not null)
+            if (!_rows.TryGetValue(id, out var now) || now.State is not (SessionState.Ended or SessionState.Failed))
             {
-                continue;
+                _justEnded.Remove(id);
             }
-            DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
+            else if (polls + 1 < 2)
+            {
+                _justEnded[id] = (row, polls + 1);
+            }
+            else
+            {
+                _justEnded.Remove(id);
+                if (SessionMessenger.ReplacedBy(row, all) is null)
+                {
+                    _confirmedEnded[id] = 0;
+                    DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
+                }
+            }
         }
     }
 
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
         _justEnded.Remove(id);
+        _confirmedEnded.TryRemove(id, out _);
         _rows.Remove(id);
         _pids.TryRemove(id, out _);
         Attachments?.Remove(id);

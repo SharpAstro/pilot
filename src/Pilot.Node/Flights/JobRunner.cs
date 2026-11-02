@@ -1178,7 +1178,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 target = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
-            else if (EndedNormally(ownerRow) || EndedOnItsOwn(ownerRow))
+            else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
                 state.PutJob(job with { Told = true });
@@ -1233,14 +1233,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         ?? sessions.Where(s => s.SessionId == owner || s.EarlierSessionIds?.Contains(owner) == true).OrderByDescending(s => s.StartedAt).FirstOrDefault();
 
     /// <summary>
-    /// The tracker saw the session end by itself (crashed, finished or its process went), which is the end whose queued jobs it
-    /// drops: no one is waiting on its jobs. A row that is merely not live (no reason recorded, one the node restored) is not
-    /// one, and its jobs still try the session (#327).
+    /// Whether the tracker saw a session end on its own, for good (two polls, nothing replaced it), so no one waits on its jobs.
+    /// A row that is merely not live (one the node restored, a blip) is not one, and its jobs still try the session. Set by the
+    /// node; null in a bare runner (#327).
     /// </summary>
-    private static bool EndedOnItsOwn(SessionRow row) =>
-        row.State == SessionState.Failed
-        || (row.State == SessionState.Ended && row.EndedBecause is { } why
-            && (why.StartsWith("its process went", StringComparison.Ordinal) || why.StartsWith("session ended", StringComparison.Ordinal)));
+    public Func<string, bool>? EndedForGood { get; set; }
 
     private bool EndedNormally(SessionRow row) =>
         WindDown.Why(state, Ledger, row) is not null
