@@ -173,7 +173,7 @@ public sealed class McpParentTests : IDisposable
 
         // The check runs after each message; give a hand-over every chance to start its process, then look at the table.
         await Task.Delay(TimeSpan.FromSeconds(3), Ct);
-        FakeParent.ChildrenOf(child.Pid).ShouldBeEmpty("a server under a pilot mcp is a hand-over child and starts none");
+        FakeParent.PilotChildrenOf(child.Pid).ShouldBeEmpty("a server under a pilot mcp is a hand-over child and starts none");
         await child.SendAsync("""{"jsonrpc":"2.0","id":3,"method":"ping"}""");
         (await child.ReadAsync(Bound)).ShouldContain("\"id\":3");
         child.Log.ShouldContain("never handing over");
@@ -196,11 +196,11 @@ public sealed class McpParentTests : IDisposable
         await root.StandardInput.FlushAsync(Ct);
 
         var deadline = DateTime.UtcNow + Bound;
-        while (FakeParent.ChildrenOf(root.Id).Count == 0 && DateTime.UtcNow < deadline)
+        while (FakeParent.PilotChildrenOf(root.Id).Count == 0 && DateTime.UtcNow < deadline)
         {
             await Task.Delay(100, Ct);
         }
-        var handedOver = FakeParent.ChildrenOf(root.Id);
+        var handedOver = FakeParent.PilotChildrenOf(root.Id);
         _pids.AddRange(handedOver);
         handedOver.ShouldNotBeEmpty();
     }
@@ -346,6 +346,20 @@ public sealed class McpParentTests : IDisposable
                 CloseHandle(handle);
             }
         }
+
+        /// <summary>The pilot processes whose parent is <paramref name="pid"/> (a console host the system gives a console program is not one).</summary>
+        public static List<int> PilotChildrenOf(int pid) => [.. ChildrenOf(pid).Where(id =>
+        {
+            try
+            {
+                using var process = Process.GetProcessById(id);
+                return process.ProcessName.StartsWith("pilot", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+            {
+                return false;
+            }
+        })];
 
         /// <summary>The processes whose parent is <paramref name="pid"/>, by the process table now (a pid reused by an older process is ruled out by start time).</summary>
         public static List<int> ChildrenOf(int pid)
