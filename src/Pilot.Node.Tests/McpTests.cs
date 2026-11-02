@@ -411,6 +411,62 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AServerWhoseParentIsAPilotMcpNeverStartsAChildWhateverTheInstalledVersion()
+    {
+        var started = 0;
+        var version = 0;
+        var log = new StringWriter();
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>($"{Interlocked.Increment(ref version)}.0.0"), watch: TimeSpan.FromMilliseconds(10), log: log,
+            startChild: _ => { Interlocked.Increment(ref started); throw new IOException("must not start"); }, handedOver: false, parentIsMcp: () => true);
+        var running = server.RunAsync(input, output, Ct);
+
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        await Task.Delay(150, Ct);
+        input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+
+        started.ShouldBe(0);
+        log.ToString().ShouldContain("parent process is a pilot mcp");
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+    }
+
+    [Fact]
+    public async Task AServerWhoseParentIsNotAPilotMcpStillHandsOver()
+    {
+        var started = 0;
+        var input = new FedReader();
+        var output = new LineWriter();
+        var server = new McpServer(_node.Folder, node: null, socket: _node.SocketPath,
+            installed: _ => Task.FromResult<string?>("99.0.0"), watch: TimeSpan.FromMilliseconds(10), log: new StringWriter(),
+            startChild: _ => { Interlocked.Increment(ref started); throw new IOException("tried"); }, handedOver: false, parentIsMcp: () => false);
+        var running = server.RunAsync(input, output, Ct);
+
+        input.Feed(Initialize);
+        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
+        await Task.Delay(150, Ct);
+
+        started.ShouldBeGreaterThan(0);
+        input.Dispose();
+        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+    }
+
+    [Theory]
+    [InlineData("C:/x/pilot.exe", "mcp", true)]
+    [InlineData("C:/x/PILOT.EXE", "mcp", true)]
+    [InlineData("/opt/pilot", "mcp", true)]
+    [InlineData("C:/x/pilot.exe~old-1", "mcp", true)]
+    [InlineData("C:/x/pilot-node.exe", "mcp", false)]
+    [InlineData("C:/x/pilot-gui.exe", "mcp", false)]
+    [InlineData("C:/x/pilot.exe", "status", false)]
+    public void TheParentMatchIsNarrow(string image, string argument, bool expected) =>
+        McpParent.Matches(image, ["pilot", argument]).ShouldBe(expected);
+
+    [Fact]
     public async Task ASwapWhoseNewChildDoesNotAnswerInitializeKeepsTheCurrentChildServingAndSaysWhyOnce()
     {
         var children = new TrackedChildren(_node.Folder, _node.SocketPath);

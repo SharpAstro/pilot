@@ -848,7 +848,10 @@ client started watches the installed version (after each message and on a quiet 
 newest binary's `pilot mcp --handed-over` (a hidden option), replays `initialize` to it, sends `tools/list_changed` once
 and relays both ways. It stays at most two processes deep however many updates there are: a hand-over child never looks
 at the installed version nor hands over, and the client-started server swaps its child on each later update, passing on
-the old child's replies still owed (for a bounded wait) before disposing it. A swap that fails (the binary cannot start,
+the old child's replies still owed (for a bounded wait) before disposing it. A server whose parent process is itself a
+`pilot mcp` (the parent's image is `pilot`, also moved aside, with an `mcp` argument) counts as a hand-over child too, so
+a root from before the flag existed cannot grow a chain; for a chain already running, `/mcp` reconnect in the owning
+session replaces it. A swap that fails (the binary cannot start,
 or the new child ends or does not answer `initialize`) keeps the current child serving, logs why once, and is not
 retried for that version.
 
