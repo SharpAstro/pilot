@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken)
+    private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool openConflict = false)
     {
         var (flight, leg) = LegOf(command.Target);
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
@@ -20,10 +20,14 @@ public sealed partial class LegCommander
         {
             throw new FlightException("a go-around needs why: the next worker is told it");
         }
+        // A done leg of a flight whose PR open conflicted goes around too (the node's own send, or the pr-conflicts card's Resolve the
+        // conflict): no PR and no review exist yet, and the round is no answer to a review, so it is not counted as one.
+        var forConflict = leg.State == LegState.Done && flight.PullRequest is null
+            && (openConflict || state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == Verbs.FlightTarget(flight.Code)));
         // A done leg goes around too when the review asked for changes: that is how they are made.
         // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
         // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
-        if (leg.State is not (LegState.Flying or LegState.Failed) && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
+        if (leg.State is not (LegState.Flying or LegState.Failed) && !forConflict && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
             && !(leg.State == LegState.Done && _answeredDesign.ContainsKey(flight.Code))
             && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind is MergeFailed or PrReady && c.Subject == Verbs.FlightTarget(flight.Code) && c.Choices.Any(ch => ch.Verb == Verbs.GoAround))))
         {
@@ -39,13 +43,13 @@ public sealed partial class LegCommander
         // TIA1241 went round six times overnight on review findings, the last ones about its PR's body and milestone (SE1, 2026-10-26).
         // The node's own go-arounds count the same: sent round on every conflict with a main that kept moving, PIL338 went round
         // seven times, its review passing and its PR conflicting again before it could merge (SE1, 2026-10-27).
-        if (leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && (IsWatchtower(command.Who) && command.PersonsWord is null || command.Who == LegWatch.Who))
+        if (!forConflict && leg.State == LegState.Done && leg.ReviewGoArounds >= MaxReviewGoArounds && (IsWatchtower(command.Who) && command.PersonsWord is null || command.Who == LegWatch.Who))
         {
             throw new FlightException(
                 $"{flight.Code}/{leg.Name} has gone around {leg.ReviewGoArounds} times on its review's findings: another is the person's call, as the review may want what no worker can do. Leave the card open for them");
         }
 
-        var loopHeld = leg.State == LegState.Done && ReviewLoopHeld(flight);
+        var loopHeld = !forConflict && leg.State == LegState.Done && ReviewLoopHeld(flight);
         if (loopHeld && !IsPerson(flight, command.Who))
         {
             throw new FlightException(RoundRefusal(flight));
@@ -89,7 +93,7 @@ public sealed partial class LegCommander
             await StopQuietly(job, cancellationToken);
         }
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
-        var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done ? 1 : 0) };
+        var next = leg with { GoArounds = leg.GoArounds + 1, ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done && !forConflict ? 1 : 0) };
         // What the waste rules need: the new worker flies this round, for this reason.
         Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
         RingSpendAlert(flight, leg, next.GoArounds);
@@ -118,6 +122,11 @@ public sealed partial class LegCommander
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);
+                if (forConflict)
+                {
+                    // The worker resolves it; the sweep opens the PR once the leg is done, so no card is left for it to wait on.
+                    state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around to resolve it", PrConflictsKind);
+                }
                 return null;
             });
     }

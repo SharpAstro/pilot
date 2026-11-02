@@ -83,6 +83,45 @@ public sealed partial class LegCommander
     /// <summary>What the watchtower or a worker is told when its flight's PR conflicts with its base.</summary>
     public static string ConflictBrief(string why) => $"the PR conflicts with its base ({why}): {UpdateInstruction}";
 
+    /// <summary>What the node tells the worker it sends round on a conflict that held a flight's PR from opening.</summary>
+    public static string OpenConflictBrief(string why) =>
+        $"{ConflictBrief(why)}. Keep both sides' work; on a version pin line (a PackageVersion in Directory.Packages.props, say) take the higher of the two versions";
+
+    /// <summary>The base head each flight's open conflict was last sent round for: one send a conflict, never a loop.</summary>
+    private readonly ConcurrentDictionary<string, string> _conflictSent = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A flight's PR open that conflicted with its base: the last leg is sent round by the node with the conflict brief, once for
+    /// each head of the base (a second look at the same head finds it sent). Null when sent; else why not, and the caller raises the card.
+    /// </summary>
+    private async Task<string?> SendConflictRoundAsync(FlightRow flight, string why, CancellationToken cancellationToken)
+    {
+        var head = await git.RunAsync(["rev-parse", flight.Base], flight.Worktree, cancellationToken);
+        var key = head.Ok ? head.Output.Trim() : "";
+        if (key.Length == 0)
+        {
+            return "the base head could not be read";
+        }
+        if (_conflictSent.TryGetValue(flight.Code, out var sent) && sent == key)
+        {
+            return $"already sent round for {Short(key)}";
+        }
+        if (state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is not { State: LegState.Done } last)
+        {
+            return "the last leg is not done";
+        }
+        try
+        {
+            await GoAroundAsync(new CommandRequest { Verb = Verbs.GoAround, Target = Verbs.LegTarget(flight.Code, last.Name), Args = [OpenConflictBrief(why)], Who = LegWatch.Who }, cancellationToken, openConflict: true);
+        }
+        catch (FlightException ex)
+        {
+            return ex.Message;
+        }
+        _conflictSent[flight.Code] = key;
+        return null;
+    }
+
     /// <summary>What to do to bring the plane up to date with its base: merge it in, never rebase, never force push.</summary>
     public const string UpdateInstruction = "fetch, then merge origin/<base> into the plane (git merge --no-edit, never a rebase), resolving every conflict so both sides' work stays, rerun the check, and push plain (never --force or --force-with-lease)";
 
