@@ -46,6 +46,12 @@ public sealed class IdeaRepoTests : IDisposable
             Git(repo, "remote", "add", "origin", $"https://github.com/SharpAstro/{name}.git");
             Git(repo, "add", ".");
             Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
+            // The remote stays GitHub's, but a fetch comes from a local bare copy (#462).
+            var bare = Path.Combine(_root, "origins", name + ".git");
+            Git(_root, "clone", "-q", "--bare", repo, bare);
+            Git(repo, "config", $"url.{bare.Replace('\\', '/')}.insteadOf", $"https://github.com/SharpAstro/{name}.git");
+            Git(repo, "fetch", "-q", "origin");
+            Git(repo, "remote", "set-head", "origin", "main");
         }
         var planes = new Planes(new GitCli());
         var flights = new FlightCommander(_state, planes, TimeProvider.System, github: _github);
