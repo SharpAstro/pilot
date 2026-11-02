@@ -141,7 +141,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         var holder = Queue(Verbs.NodeTarget, "sleep 60; echo slept");
         await Until(holder, j => j.State == JobState.Running);
         var queued = Queue(Verbs.SessionTarget(worker), "echo one");
-        await Until(queued, j => j.Step?.Contains("queued") == true);
+        await Until(queued, j => j.Step?.StartsWith("next in line") == true);
 
         // The old row ends, and a newer live row of the same name is listed after it in the same poll.
         await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"),
