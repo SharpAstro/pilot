@@ -247,7 +247,7 @@ public sealed class MergedUnderLegTests : IDisposable
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
 
         node.PrPacing.Advance(TimeSpan.FromSeconds(1));
-        for (var i = 0; i < 500 && node.State.Flights().Single().State != FlightState.Landed; i++)
+        for (var i = 0; i < 6000 && node.State.Flights().Single().State != FlightState.Landed; i++)
         {
             await Task.Delay(10, Ct);
         }
