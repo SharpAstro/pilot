@@ -39,7 +39,12 @@ public sealed class IssueBreakUpCliTests : IDisposable
         Directory.CreateDirectory(repo);
         foreach (var args in new[] { new[] { "init", "-q", "-b", "main" }, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first"] })
         {
-            using var git = Process.Start(new ProcessStartInfo("git") { WorkingDirectory = repo, UseShellExecute = false, ArgumentList = { .. args } })!;
+            var start = new ProcessStartInfo("git") { WorkingDirectory = repo, UseShellExecute = false };
+            foreach (var arg in args)
+            {
+                start.ArgumentList.Add(arg);
+            }
+            using var git = Process.Start(start)!;
             await git.WaitForExitAsync(Ct);
         }
         return repo;
