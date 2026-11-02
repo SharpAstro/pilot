@@ -189,7 +189,7 @@ public sealed class McpParentTests : IDisposable
         var root = StartMcp();
         await root.StandardInput.WriteLineAsync(Initialize);
         await root.StandardInput.FlushAsync(Ct);
-        (await root.StandardOutput.ReadLineAsync(Ct).AsTask().WaitAsync(Bound)).ShouldContain("\"serverInfo\"");
+        (await root.StandardOutput.ReadLineAsync(Ct).AsTask().WaitAsync(Bound, Ct))!.ShouldContain("\"serverInfo\"");
 
         await File.WriteAllTextAsync(Path.Combine(_folder, "VERSION"), "99.0.0 win-x64\n", Ct);
         await root.StandardInput.WriteLineAsync("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
@@ -243,7 +243,7 @@ public sealed class McpParentTests : IDisposable
         }
 
         public async Task<string> ReadAsync(TimeSpan bound) =>
-            await _output.ReadLineAsync().AsTask().WaitAsync(bound) ?? throw new IOException("the child closed its output");
+            await _output.ReadLineAsync().WaitAsync(bound) ?? throw new IOException("the child closed its output");
 
         public void Dispose()
         {
