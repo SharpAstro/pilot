@@ -229,7 +229,9 @@ public sealed class LfsTests : IDisposable
     /// <summary>An LFS server that records every request it gets (lock verification, batch) and fails each, so a skipped check shows as silence.</summary>
     private sealed class LfsServer : IAsyncDisposable
     {
-        private readonly System.Net.HttpListener _listener = new();
+        private const int Attempts = 20;
+
+        private readonly System.Net.HttpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serving;
 
@@ -239,10 +241,30 @@ public sealed class LfsTests : IDisposable
 
         public LfsServer()
         {
-            var prefix = $"http://127.0.0.1:{FreePort()}/";
-            Url = prefix + "lfs";
-            _listener.Prefixes.Add(prefix);
-            _listener.Start();
+            // HttpListener cannot bind port 0, so a probed port can be taken before Start; retry with a fresh port and listener.
+            for (var attempt = 1; ; attempt++)
+            {
+                var prefix = $"http://127.0.0.1:{FreePort()}/";
+                var listener = new System.Net.HttpListener();
+                listener.Prefixes.Add(prefix);
+                try
+                {
+                    listener.Start();
+                }
+                catch (System.Net.HttpListenerException) when (attempt < Attempts)
+                {
+                    listener.Close();
+                    continue;
+                }
+                catch
+                {
+                    listener.Close();
+                    throw;
+                }
+                _listener = listener;
+                Url = prefix + "lfs";
+                break;
+            }
             _serving = Task.Run(async () =>
             {
                 while (!_stop.IsCancellationRequested)
@@ -279,6 +301,30 @@ public sealed class LfsTests : IDisposable
         var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
         return port;
+    }
+
+    [Fact]
+    public async Task FiftyFakeLfsServersStartedAtOnceAllComeUp()
+    {
+        var servers = await Task.WhenAll(Enumerable.Range(0, 50).Select(_ => Task.Run(() => new LfsServer(), TestContext.Current.CancellationToken)));
+        try
+        {
+            servers.Select(s => s.Url).Distinct().Count().ShouldBe(50);
+            using var http = new HttpClient();
+            foreach (var server in servers)
+            {
+                using var response = await http.PostAsync(server.Url + "/locks/verify", new StringContent(""), TestContext.Current.CancellationToken);
+                ((int)response.StatusCode).ShouldBe(500);
+                server.Seen.ShouldNotBeEmpty();
+            }
+        }
+        finally
+        {
+            foreach (var server in servers)
+            {
+                await server.DisposeAsync();
+            }
+        }
     }
 
     [Fact]
