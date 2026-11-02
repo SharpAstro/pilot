@@ -45,7 +45,7 @@ namespace Pilot.Commands;
 /// <param name="log">Where the line saying what it did about a new version goes (default: standard error, as stdout is the protocol's).</param>
 /// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
 /// <param name="handedOver">True for a server started by another one's hand-over: it never looks at the installed version nor hands over.</param>
-/// <param name="parentIsMcp">Whether this process's parent is a <c>pilot mcp</c> (default: <see cref="McpParent.IsPilotMcp"/>); a server whose parent is one counts as a hand-over child too.</param>
+/// <param name="parentIsMcp">Whether this process's parent is a <c>pilot mcp</c> (default: <see cref="McpParent.IsPilotMcp()"/>); a server whose parent is one counts as a hand-over child too.</param>
 internal sealed class McpServer(string cwd, string? node, string? socket,
     Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
     Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null)
