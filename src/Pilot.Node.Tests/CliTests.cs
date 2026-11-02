@@ -516,6 +516,19 @@ public sealed class CliTests : IAsyncLifetime
         again.Exit.ShouldBe(1);
     }
 
+    /// <summary><c>issue priority</c> reaches the node as <see cref="Verbs.SetPriority"/> on the issue, with its level: the test repo is not on GitHub, so the node refuses, and the refusal names the verb and the issue.</summary>
+    [Fact]
+    public async Task IssuePriorityIsSentToTheNodeAsSetPriorityOnTheIssue()
+    {
+        var (exit, output, error) = await Pilot(Repo, "issue", "priority", "#12", "high");
+
+        exit.ShouldBe(1);
+        (output + error).ShouldContain("refused: set-priority issue/");
+        (output + error).ShouldContain("tianwen/#12");
+        (await Pilot(Repo, "issue", "priority", "--help")).Output.ShouldContain("none to clear it");
+        (await Pilot(Repo, "issue", "priority", "nonsense", "high")).Exit.ShouldNotBe(0);
+    }
+
     /// <summary>The node under test is not a pilot-node, so it refuses: the refusal shows <c>node restart</c> reached the node as <see cref="Verbs.RestartNode"/>, why words and all.</summary>
     [Fact]
     public async Task NodeRestartIsSentToTheNodeWhichRefusesWhenItIsNotAPilotNode()
