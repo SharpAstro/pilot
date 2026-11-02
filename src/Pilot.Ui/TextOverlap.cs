@@ -39,13 +39,40 @@ internal sealed record TextFault(TextFaultKind Kind, string Text, Rect<float> Bo
 /// <summary>
 /// The one check that a page's text is not drawn over other text, shared by the tests and the live GUI: it reads the arranged
 /// nodes (<see cref="Layout.Engine.Arrange"/>), so it sees what the painter is given and nothing else.
+/// <para>
+/// A popover hides what it covers: text of an <see cref="Layout.Node.Overlay"/>'s base that lies within a node of its top layer
+/// with an opaque <see cref="Layout.Node.Background"/> is not drawn, so where it meets other text under the cover it is no overlap. Text of the
+/// top layer is still held against its own layer and against base text no opaque background covers (a bar's corner text drawn
+/// over its header, with no background, is a fault).
+/// </para>
 /// </summary>
 internal static class TextOverlap
 {
     /// <summary>Pixels two texts may share without it counting: the rounding of a measure, as the chat's row tests allowed.</summary>
     public const float Tolerance = 0.5f;
 
-    private readonly record struct Leaf(string Text, Rect<float> Bounds, int Scroll, Rect<float> Visible);
+    private readonly record struct Leaf(string Text, Rect<float> Bounds, int Scroll, Rect<float> Visible, List<Rect<float>>? Covers);
+
+    // An Overlay the walk is inside: its depth, where its base's leaves start, where its top's start (-1 before the top), and children seen.
+    private readonly record struct OverlayWalk(int Depth, int BaseStart, int TopStart, int Children);
+
+    private static bool HiddenBy(List<Rect<float>>? covers, Rect<float> area, float tol)
+    {
+        if (covers is null)
+        {
+            return false;
+        }
+
+        foreach (var c in covers)
+        {
+            if (area.X >= c.X - tol && area.Y >= c.Y - tol && area.X + area.Width <= c.X + c.Width + tol && area.Y + area.Height <= c.Y + c.Height + tol)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Every fault in <paramref name="arranged"/>: two non-empty text leaves sharing a pixel, and a text leaf outside the
@@ -67,6 +94,7 @@ internal static class TextOverlap
         // The scrolls the walk is inside: the arranged index, the viewport, and what shows of it through the ones around it.
         var scrolls = new Stack<(int Depth, int Index, Rect<float> Viewport, Rect<float> Shown)>();
         var leaves = new List<Leaf>();
+        var overlays = new Stack<OverlayWalk>();
         for (var i = 0; i < arranged.Length; i++)
         {
             var (node, bounds) = arranged[i];
@@ -77,6 +105,50 @@ internal static class TextOverlap
             }
 
             var rect = Rectangle(bounds);
+
+            // The overlays the walk is inside: which of its two children (base, then top) this node starts or sits in.
+            while (overlays.Count > 0 && overlays.Peek().Depth >= depth)
+            {
+                overlays.Pop();
+            }
+
+            if (overlays.Count > 0 && overlays.Peek().Depth == depth - 1)
+            {
+                var ov = overlays.Pop();
+                ov = ov with { Children = ov.Children + 1 };
+                if (ov.Children == 2)
+                {
+                    ov = ov with { TopStart = leaves.Count };
+                }
+
+                overlays.Push(ov);
+            }
+
+            // An opaque node in an overlay's top layer hides the base's text it covers: it is not drawn over, it is not drawn.
+            if (node.Background is { Alpha: 255 })
+            {
+                foreach (var ov in overlays)
+                {
+                    if (ov.TopStart < 0)
+                    {
+                        continue;
+                    }
+
+                    for (var k = ov.BaseStart; k < ov.TopStart; k++)
+                    {
+                        if (Intersect(rect, leaves[k].Bounds) is { Width: > 0, Height: > 0 })
+                        {
+                            (leaves[k].Covers ?? (leaves[k] = leaves[k] with { Covers = [] }).Covers!).Add(rect);
+                        }
+                    }
+                }
+            }
+
+            if (node is Layout.Node.Overlay)
+            {
+                overlays.Push(new OverlayWalk(depth, leaves.Count, -1, 0));
+            }
+
             if (node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } text })
             {
                 if (string.IsNullOrWhiteSpace(text.Value) || leaves.Count >= maxLeaves)
@@ -98,7 +170,7 @@ internal static class TextOverlap
                     faults.Add(new TextFault(TextFaultKind.Outside, text.Value, rect, inScroll ? "scroll" : "page", inside.Viewport));
                 }
 
-                leaves.Add(new Leaf(text.Value, rect, inside.Index, visible));
+                leaves.Add(new Leaf(text.Value, rect, inside.Index, visible, null));
                 continue;
             }
 
@@ -124,6 +196,13 @@ internal static class TextOverlap
                 if (ra.X < rb.X + rb.Width - tolerance && rb.X < ra.X + ra.Width - tolerance
                     && ra.Y < rb.Y + rb.Height - tolerance && rb.Y < ra.Y + ra.Height - tolerance)
                 {
+                    // Where the two meet is under an opaque card of the top layer: the card hides the base text there.
+                    var meet = Intersect(ra, rb);
+                    if (HiddenBy(leaves[a].Covers, meet, tolerance) || HiddenBy(leaves[b].Covers, meet, tolerance))
+                    {
+                        continue;
+                    }
+
                     faults.Add(new TextFault(TextFaultKind.Overlap, leaves[a].Text, leaves[a].Bounds, leaves[b].Text, leaves[b].Bounds));
                 }
             }

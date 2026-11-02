@@ -30,7 +30,11 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
-    public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
+    /// <summary>The window of card c10787: 2880 x 1814 at DPI 1.5, a 2352 wide page beside the rail and the cards panel.</summary>
+    private const int BigWidth = 2880, BigHeight = 1814;
+    private const float BigDpi = 1.5f;
+
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases()
     {
         foreach (var page in Pages)
         {
@@ -40,48 +44,50 @@ public sealed class PageTextOverlapTests
                 {
                     foreach (var dpi in Dpis)
                     {
-                        yield return new TheoryDataRow<string, string, int, float>(page, state, width, dpi)
-                        {
-                            TestDisplayName = Key(page, state, width, dpi),
-                        };
+                        yield return Row(page, state, width, dpi, Height);
                     }
                 }
+                yield return Row(page, state, BigWidth, BigDpi, BigHeight);
             }
         }
     }
 
-    internal static string Key(string page, string state, int width, float dpi) => $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    private static TheoryDataRow<string, string, int, float, int> Row(string page, string state, int width, float dpi, int height) =>
+        new(page, state, width, dpi, height) { TestDisplayName = Key(page, state, width, dpi, height) };
+
+    internal static string Key(string page, string state, int width, float dpi, int height = Height) =>
+        $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)}" + (height == Height ? "" : $" | {height} high");
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi)
+    public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi, int height)
     {
-        var faults = await FaultsOf(page, state, width, dpi);
+        var faults = await FaultsOf(page, state, width, dpi, height);
         var dump = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_DUMP");
         if (dump is { Length: > 0 })
         {
             // One line a fault, for classifying a run: the case, then the fault's own line.
             lock (DumpLock)
             {
-                File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi)}\t{f.Line}"));
+                File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi, height)}\t{f.Line}"));
             }
         }
-        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi)} [{faults.Count} faults]");
+        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi, height)} [{faults.Count} faults]");
     }
 
     private static readonly Lock DumpLock = new();
 
     /// <summary>The check over <paramref name="page"/> in <paramref name="state"/>, arranged as the chrome arranges it: the page in the room the rail and the panel leave.</summary>
-    internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi)
+    internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi, int height = Height)
     {
-        using var prepared = await Prepare(page, state, width, dpi);
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
     }
 
-    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
+    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
-        using var prepared = await Prepare(page, state, width, dpi, setup);
+        using var prepared = await Prepare(page, state, width, dpi, setup, height);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
     }
@@ -118,9 +124,9 @@ public sealed class PageTextOverlapTests
         [Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box"), Idea(380, "Rail count", ""), Idea(370, "Old plan", "", IdeaState.Planned)],
         [], ["pilot", "tianwen"], "live from the node", PageData.Now);
 
-    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
+    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
-        var renderer = new RgbaImageRenderer((uint)width, Height);
+        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var data = PageData.For(state);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
         chrome.Play.ShowEverything();
@@ -137,7 +143,7 @@ public sealed class PageTextOverlapTests
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = data.Cards;
-        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend);
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         Frame();
         if (page == "cards panel" && chrome.CardsDropped)
         {

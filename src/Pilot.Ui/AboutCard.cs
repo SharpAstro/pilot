@@ -119,6 +119,12 @@ internal sealed class AboutCard
             Layout.Builder.Anchored(Card(night), Layout.DockSide.Right, margin: 12f).WStar().HStar()))
         : page;
 
+    /// <summary>
+    /// The card's width, a little over its widest row (the keys list): fixed, so the engine clamps it to the window on a narrow one and the
+    /// values, which trim at their start, give way. Left to measure itself, its rows kept their natural width past the window's edge.
+    /// </summary>
+    public const float CardWidth = 840f;
+
     private Layout.Node Card(Palette? night)
     {
         var bright = night?.Bright ?? Bright;
@@ -148,20 +154,20 @@ internal sealed class AboutCard
         {
             rows.Add(IconLine(marks, what, night));
         }
-        return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WAuto().HAuto();
+        return Layout.Builder.VStack([.. rows]).WithGap(2f).Pad(14f, 10f).Bg(night?.MenuBg ?? CardBg).WFixed(CardWidth).HAuto();
     }
 
     private static Layout.Node IconLine(Layout.IconKind[] marks, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.HStack([.. marks.Select(m => Layout.Builder.Icon(m, 12f, night?.Bright ?? Bright).WAuto())]).WithGap(8f).WFixed(140f),
-                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
+                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WStar())
             .WithGap(10f)
             .RowH(20f);
 
     private static Layout.Node Line(string label, string value, Palette? night) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, night?.Dim ?? Dim).WFixed(140f),
-                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WAuto())
+                Layout.Builder.Text(value, 12f, night?.Body ?? Body, trim: TextTrim.Start).WStar())
             .WithGap(10f)
             .RowH(20f);
 }
