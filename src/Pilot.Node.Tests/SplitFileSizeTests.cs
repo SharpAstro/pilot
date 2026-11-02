@@ -23,6 +23,9 @@ public sealed class SplitFileSizeTests
         "src/Pilot.Node/NodeState*.cs",
         "src/Pilot.Node/NodeApp*.cs",
         "src/Pilot.Commands/PilotCommand*.cs",
+        "src/Pilot.Ui/PullRequestsView*.cs",
+        "src/Pilot.Ui/IdeasView*.cs",
+        "src/Pilot.Ui/FlightsView*.cs",
     ];
 
     private static string FindRoot()
