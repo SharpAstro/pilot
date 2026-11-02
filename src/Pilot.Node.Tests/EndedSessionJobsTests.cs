@@ -134,6 +134,27 @@ public sealed class EndedSessionJobsTests : IDisposable
         QueuedBehindARunningJob(AgentRows.Background(AgentRows.SessionA, "worker-a", "failed"));
 
     [Fact]
+    public async Task AnEndedSessionsQueuedJobsStayWhenALiveCopyOfItIsListed()
+    {
+        var worker = AgentRows.SessionA[..8];
+        await Poll(Live(AgentRows.SessionA, "worker-a", 4242));
+        var holder = Queue(Verbs.NodeTarget, "sleep 60; echo slept");
+        await Until(holder, j => j.State == JobState.Running);
+        var queued = Queue(Verbs.SessionTarget(worker), "echo one");
+        await Until(queued, j => j.Step?.Contains("queued") == true);
+
+        // The old row ends, and a newer live row of the same name is listed after it in the same poll.
+        await Poll(AgentRows.Background(AgentRows.SessionA, "worker-a", "done"),
+            AgentRows.Background(AgentRows.SessionB, "worker-a", "working", pid: 4343, status: "busy", startedAt: 1792000099000));
+        _state.Sessions().Single(s => s.Id == worker).State.ShouldBeOneOf(SessionState.Ended, SessionState.Failed);
+
+        await Task.Delay(200, Ct);
+        _state.Jobs().Single(j => j.Id == queued).State.ShouldBe(JobState.Queued);
+
+        await Release(holder);
+    }
+
+    [Fact]
     public async Task ARunningJobOfAnEndedUnreplacedSessionWakesNobodyWhenItEnds()
     {
         var worker = AgentRows.SessionA[..8];

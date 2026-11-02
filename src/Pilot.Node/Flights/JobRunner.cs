@@ -465,6 +465,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 _queue.RemoveAt(at);
                 CancelBeforeItsTurn(waiting, withdrawn.Who, withdrawn.Dropped);
                 break;
+            case Withdrawn { Dropped: true } dropRace when _running.ContainsKey(dropRace.Id):
+                // A drop is for queued jobs only: this one started first, and runs on.
+                break;
             case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
                 // It started before the cancel reached the dispatcher: stop it as any running job.
                 _cancelled[withdrawn.Id] = withdrawn.Who;

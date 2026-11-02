@@ -440,6 +440,7 @@ public sealed class SessionTracker : BackgroundService
             }
         }
 
+        DropJobsOfEnded();
         CheckModels();
         _logger.LogDebug("Polled {Count} sessions in {Elapsed} ms (listing {Listing} ms)", listed.Count, (long)clock.Elapsed.TotalMilliseconds, (long)listing.TotalMilliseconds);
     }
@@ -717,19 +718,44 @@ public sealed class SessionTracker : BackgroundService
         if (row.State is SessionState.Ended or SessionState.Failed)
         {
             // Its first end, not one the node made (those cancel their own jobs) and not a resume (a continuation owns the jobs):
-            // the queued jobs it owned leave the queue (#327).
+            // noted here, and decided once the poll's whole listing is tracked, since a copy that continues it may be listed after it (#327).
             if (!wasEnded && !_stopped.ContainsKey(row.Id) && !_resumedAs.ContainsKey(row.Id)
                 && row.EndedBecause?.StartsWith("resumed as", StringComparison.Ordinal) != true)
             {
-                DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
+                _justEnded[row.Id] = row;
             }
             // The stop that did not take has taken after all: its card has nothing left to ask.
             _state.CloseCardsAbout(Verbs.SessionTarget(row.Id), "the session is seen ended", SessionMessenger.StopUnconfirmedKind);
         }
     }
 
+    // By row id: rows that turned ended on their own since the last poll's end, whose queued jobs are not yet dropped.
+    private readonly Dictionary<string, SessionRow> _justEnded = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
+
+    /// <summary>Drops the queued jobs of rows that ended on their own, unless a live session has taken the row over (a copy Claude Code continued it as): that one owns them now.</summary>
+    private void DropJobsOfEnded()
+    {
+        if (_justEnded.Count == 0)
+        {
+            return;
+        }
+        var ended = _justEnded.Values.ToList();
+        _justEnded.Clear();
+        var all = _state.Sessions();
+        foreach (var row in ended)
+        {
+            if (!_rows.TryGetValue(row.Id, out var now) || now.State is not (SessionState.Ended or SessionState.Failed)
+                || SessionMessenger.ReplacedBy(row, all) is not null)
+            {
+                continue;
+            }
+            DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");
+        }
+    }
+
     private void Forget(string id, string sessionId, bool keepStale = false)
     {
+        _justEnded.Remove(id);
         _rows.Remove(id);
         _pids.TryRemove(id, out _);
         Attachments?.Remove(id);

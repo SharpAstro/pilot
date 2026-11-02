@@ -114,6 +114,30 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AReviewerThatGaveItsVerdictHasItsQueuedJobsDroppedWithoutWakingAnyone()
+    {
+        var jobs = StartJobs();
+        var flight = await NewFlight("73", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        var reviewer = F(flight.Code).Review.ShouldNotBeNull().ReviewerJob.ShouldNotBeNull();
+        SessionFor(reviewer, flight.Code, "review");
+        var holder = Queue(jobs, Verbs.NodeTarget, "sleep 60; echo slept");
+        await Until(holder, j => j.State == JobState.Running);
+        var first = Queue(jobs, Verbs.SessionTarget(reviewer), "echo one");
+        var second = Queue(jobs, Verbs.SessionTarget(reviewer), "echo two");
+        await Until(second, j => j.Step?.Contains("queued, 1 ahead") == true);
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+
+        await ShouldBeDropped(first, "its reviewer was done");
+        await ShouldBeDropped(second, "its reviewer was done");
+        _said.ShouldBeEmpty();
+
+        await Release(jobs, holder);
+    }
+
+    [Fact]
     public async Task AFinishedLegDropsItsWorkersQueuedJobsWithoutWakingAnyone()
     {
         var jobs = StartJobs();
