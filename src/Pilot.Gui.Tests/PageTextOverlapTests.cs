@@ -79,9 +79,9 @@ public sealed class PageTextOverlapTests
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
     }
 
-    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
+    internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
-        using var prepared = await Prepare(page, state, width, dpi, setup);
+        using var prepared = await Prepare(page, state, width, dpi, setup, height);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
     }
@@ -118,9 +118,9 @@ public sealed class PageTextOverlapTests
         [Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box"), Idea(380, "Rail count", ""), Idea(370, "Old plan", "", IdeaState.Planned)],
         [], ["pilot", "tianwen"], "live from the node", PageData.Now);
 
-    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null)
+    private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
-        var renderer = new RgbaImageRenderer((uint)width, Height);
+        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var data = PageData.For(state);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
         chrome.Play.ShowEverything();
@@ -137,7 +137,7 @@ public sealed class PageTextOverlapTests
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = data.Cards;
-        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, Height), data.Machines, null, data.Spend);
+        void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         Frame();
         if (page == "cards panel" && chrome.CardsDropped)
         {
