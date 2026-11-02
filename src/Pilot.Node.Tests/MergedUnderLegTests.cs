@@ -191,6 +191,9 @@ public sealed class MergedUnderLegTests : IDisposable
         Commit(Plane, "render.txt", "the render");
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "render") with { State = LegState.Done });
         node.GitHub.Created.Clear();
+        // Main moves on past the squash, so the base's merge into the plane is a real merge commit whatever the commit ids are.
+        Commit(Repo, "later.txt", "later work on main");
+        Git(Repo, "push", "-q", "origin", "main");
 
         // The first open-pr merges the base into the plane, then its push is refused by the remote.
         var hook = Path.Combine(Origin, "hooks", "pre-receive");
