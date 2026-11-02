@@ -627,12 +627,14 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             var nodes = role.Nodes.Select(n => (Layout.Node)Layout.Builder.Text(
                     n.Odd ? $"differs: {n.Machine}: {n.Range} ({n.Source})" : $"{n.Machine}: {n.Range}", 11f, n.Odd ? Ringing : Dim).Selectable().WAuto());
             var row = Layout.Builder.HStack(
-                    Layout.Builder.Text(role.Role, 14f, Bright).Selectable().WFixed(110f).RowH(22f),
+                    // RowH sets the width to Star as well as the height, so the fixed width must come after it: set before, the role
+                    // took half the row and the fleet and node lines began far right of it, or under it when the Star split lost (#633).
+                    Layout.Builder.Text(role.Role, 14f, Bright).Selectable().RowH(22f).WFixed(110f),
                     Layout.Builder.VStack(
                             Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
                             Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar())
                         .WStar().HAuto())
-                .WithGap(14f).Pad(8f, 6f).HAuto();
+                .WithGap(14f).Pad(8f, 6f).HAuto().WStar();
             yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
         }
     }
