@@ -198,6 +198,10 @@ public sealed class MergedUnderLegTests : IDisposable
         // The first open-pr merges the base into the plane, then its push is refused by the remote.
         var hook = Path.Combine(Origin, "hooks", "pre-receive");
         File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
         (await Send(node, Verbs.OpenPr, Subject)).Error.ShouldNotBeNull();
         node.State.Flights().Single().MergedHead.ShouldBe(_mergedHead);
         node.GitHub.Created.ShouldBeEmpty();
