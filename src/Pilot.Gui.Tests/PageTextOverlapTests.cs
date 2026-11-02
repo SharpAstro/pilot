@@ -30,7 +30,11 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
-    public static IEnumerable<TheoryDataRow<string, string, int, float>> Cases()
+    /// <summary>The window of card c10787: 2880 x 1814 at DPI 1.5, a 2352 wide page beside the rail and the cards panel.</summary>
+    private const int BigWidth = 2880, BigHeight = 1814;
+    private const float BigDpi = 1.5f;
+
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases()
     {
         foreach (var page in Pages)
         {
@@ -40,41 +44,43 @@ public sealed class PageTextOverlapTests
                 {
                     foreach (var dpi in Dpis)
                     {
-                        yield return new TheoryDataRow<string, string, int, float>(page, state, width, dpi)
-                        {
-                            TestDisplayName = Key(page, state, width, dpi),
-                        };
+                        yield return Row(page, state, width, dpi, Height);
                     }
                 }
+                yield return Row(page, state, BigWidth, BigDpi, BigHeight);
             }
         }
     }
 
-    internal static string Key(string page, string state, int width, float dpi) => $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    private static TheoryDataRow<string, string, int, float, int> Row(string page, string state, int width, float dpi, int height) =>
+        new(page, state, width, dpi, height) { TestDisplayName = Key(page, state, width, dpi, height) };
+
+    internal static string Key(string page, string state, int width, float dpi, int height = Height) =>
+        $"{page} | {state} | {width} wide | DPI {dpi.ToString(System.Globalization.CultureInfo.InvariantCulture)}" + (height == Height ? "" : $" | {height} high");
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi)
+    public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi, int height)
     {
-        var faults = await FaultsOf(page, state, width, dpi);
+        var faults = await FaultsOf(page, state, width, dpi, height);
         var dump = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_DUMP");
         if (dump is { Length: > 0 })
         {
             // One line a fault, for classifying a run: the case, then the fault's own line.
             lock (DumpLock)
             {
-                File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi)}\t{f.Line}"));
+                File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi, height)}\t{f.Line}"));
             }
         }
-        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi)} [{faults.Count} faults]");
+        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi, height)} [{faults.Count} faults]");
     }
 
     private static readonly Lock DumpLock = new();
 
     /// <summary>The check over <paramref name="page"/> in <paramref name="state"/>, arranged as the chrome arranges it: the page in the room the rail and the panel leave.</summary>
-    internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi)
+    internal static async Task<IReadOnlyList<TextFault>> FaultsOf(string page, string state, int width, float dpi, int height = Height)
     {
-        using var prepared = await Prepare(page, state, width, dpi);
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
     }
