@@ -28,11 +28,15 @@ public sealed partial class ShellScript : IDisposable
     /// The shell to run <paramref name="command"/> in. On Windows the line goes through <see cref="Unwrap"/> first, so every
     /// caller, the node's jobs (<c>JobRunner</c>) as much as a leg's check, gets a <c>pwsh -Command "…"</c> wrapper read once.
     /// </summary>
-    public static ShellScript For(string command, string cwd)
+    public static ShellScript For(string command, string cwd, JobPriority priority = JobPriority.Normal)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new ShellScript(BuildEnvironment.Apply(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd }), null);
+            // nice in front of the shell, so the shell and what it starts share the niceness; plain /bin/sh at Normal or without nice.
+            var unixStart = priority.Nice() is { } nice && JobPriorities.NicePath() is { } nicePath
+                ? new ProcessStartInfo(nicePath) { ArgumentList = { "-n", nice.ToString(System.Globalization.CultureInfo.InvariantCulture), "/bin/sh", "-c", command }, WorkingDirectory = cwd }
+                : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command }, WorkingDirectory = cwd };
+            return new ShellScript(BuildEnvironment.Apply(unixStart), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(script, Body(Unwrap(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));

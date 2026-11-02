@@ -111,7 +111,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory, job-priority, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, watchtower-range, worker-range, planner-range, reviewer-range, worker-ladder")]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
@@ -205,6 +205,17 @@ public sealed class SettingsTests : IDisposable
 
         var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["max-jobs", "lots"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
         refused.Error.ShouldBe("max-jobs takes a number, 1 to 64");
+        // The job priority is in force at once, is read back, is refused when bad, and is on the page with its label and choices.
+        var priority = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-priority", "idle"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        priority.Way.ShouldNotBeNull().ShouldStartWith("job-priority saved as idle, and in force now");
+        node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Priority.ShouldBe(Pilot.Node.Flights.JobPriority.Idle);
+        NodeSettings.Read(node.Options.SettingsFile).JobPriority.ShouldBe(Pilot.Node.Flights.JobPriority.Idle);
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPriorityKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("idle"), s => s.Saved.ShouldBe("idle"), s => s.Label.ShouldBe("Job priority"),
+            s => s.Choices.ShouldBe(["below-normal", "idle", "normal"]), s => s.Pending.ShouldBeFalse());
+        var badPriority = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-priority", "high"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        badPriority.Error.ShouldBe("job-priority takes below-normal, idle, normal");
+
         var watchtower = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["lan", "on"], Who = $"{node.Options.Machine.ToLowerInvariant()}-watchtower" }, Ct)).Response.ShouldNotBeNull();
         watchtower.Error.ShouldNotBeNull().ShouldContain("is the controller's");
     }
