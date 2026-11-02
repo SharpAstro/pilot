@@ -41,6 +41,7 @@ public sealed class GoAroundCapTests : LegHoldTestsBase
         refused.Error.ShouldNotBeNull().ShouldContain("cap is 5");
         L("parser").GoArounds.ShouldBe(5);
         var card = Cap().ShouldNotBeNull();
+        card.Kind.ShouldBe(LegCommander.GoAroundCapKind);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Subject.ShouldBe("flight/TIA1/parser");
         for (var round = 1; round <= 5; round++)
