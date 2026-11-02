@@ -103,7 +103,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var result = await Run(Verbs.BreakUpIssue, Issue(7));
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("closed");
+        result.Error!.ShouldContain("closed");
         Splitter.Asked.ShouldBeEmpty();
     }
 
@@ -119,7 +119,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var result = await Run(Verbs.BreakUpIssue, Issue(2));
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("PIL2");
+        result.Error!.ShouldContain("PIL2");
         Splitter.Asked.ShouldBeEmpty();
 
         State.PutFlight(State.Flights().Single() with { State = FlightState.Landed });
@@ -135,7 +135,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var result = await Accept(Issue(2), proposal);
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("changed");
+        result.Error!.ShouldContain("changed");
         GitHub.Edits.ShouldBeEmpty();
         GitHub.IssuesCreated.ShouldBeEmpty();
     }
@@ -146,7 +146,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var result = await Run(Verbs.AcceptBreakUp, Issue(2), DateTimeOffset.UtcNow.ToString("O"));
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("break-up-issue first");
+        result.Error!.ShouldContain("break-up-issue first");
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public sealed class IssueBreakUpTests : IssueBoardFixture
         var result = await Run(Verbs.BreakUpIssue, Issue(2));
 
         result.Ok.ShouldBeFalse();
-        result.Error.ShouldContain("no luck");
+        result.Error!.ShouldContain("no luck");
         (await Run(Verbs.AcceptBreakUp, Issue(2), DateTimeOffset.UtcNow.ToString("O"))).Ok.ShouldBeFalse();
     }
 
