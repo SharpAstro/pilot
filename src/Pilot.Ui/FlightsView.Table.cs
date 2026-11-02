@@ -172,7 +172,11 @@ internal sealed partial class FlightsView<TSurface>
                 Whole(Layout.Builder.Text(line.RowDetail ?? "", 11f, failed ? P.FailedText : (line.Row.State == FlightState.Held || line.Queued is not null) && line.Stale is null ? Body : Dim).RowH(18f), line.RowDetail ?? "", StateDetailFits)),
             LegsCell(line, landed),
             ListTable.Top(Layout.Builder.Text(line.Branch, 12f, dim)),
-            ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
+            line.TokensText is { } spent
+                ? Layout.Builder.VStack(
+                    Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body).RowH(22f),
+                    Whole(Layout.Builder.Text(spent, 11f, dim).RowH(18f), spent, 0))
+                : ListTable.Top(Layout.Builder.Text(line.Sessions, 13f, landed ? Dim : Body)),
         };
         if (marked)
         {

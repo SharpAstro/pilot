@@ -6,6 +6,10 @@ namespace Pilot.Ui;
 /// <summary>What the Flights page shows: the flights, and where they come from.</summary>
 internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Source, DateTimeOffset AsOf)
 {
+    /// <summary>The page with each flight's tokens so far taken from <paramref name="tokens"/> (a flight not in it shows none), as read after the snapshot.</summary>
+    public FlightsScreen WithTokens(IReadOnlyDictionary<string, long> tokens) =>
+        this with { Lines = [.. Lines.Select(l => l with { Row = l.Row with { Tokens = tokens.TryGetValue(l.Code, out var spent) && spent > 0 ? spent : null } })] };
+
     /// <summary>What the node said of its Opus count and cap (the line Home and the page show); null from a node that says none, and for a snapshot written before it did.</summary>
     public AdmissionRow? Admission { get; init; }
 
