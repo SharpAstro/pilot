@@ -13,6 +13,24 @@ public enum JobPriority
 
 public static class JobPriorities
 {
+    /// <summary>The names a setting takes, default first.</summary>
+    public static IReadOnlyList<string> Names { get; } = ["below-normal", "idle", "normal"];
+
+    public static string Name(this JobPriority priority) => priority switch
+    {
+        JobPriority.Idle => "idle",
+        JobPriority.Normal => "normal",
+        _ => "below-normal",
+    };
+
+    public static JobPriority? Parse(string? text) => text?.Trim().ToLowerInvariant() switch
+    {
+        "below-normal" => JobPriority.BelowNormal,
+        "idle" => JobPriority.Idle,
+        "normal" => JobPriority.Normal,
+        _ => null,
+    };
+
     /// <summary>The Windows priority class: IDLE_PRIORITY_CLASS 0x40, BELOW_NORMAL_PRIORITY_CLASS 0x4000; 0 for Normal (none is set).</summary>
     public static uint WindowsClass(this JobPriority priority) => priority switch
     {

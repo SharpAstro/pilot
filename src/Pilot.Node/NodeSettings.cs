@@ -25,6 +25,7 @@ public sealed record NodeSettings
     public const string UpdateChannelKey = "update-channel";
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
+    public const string JobPriorityKey = "job-priority";
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -59,7 +60,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a model and an effort per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -107,6 +108,7 @@ public sealed record NodeSettings
     public int? MaxJobs { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
+    public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
 
     public string? MergeMethod { get; init; }
 
@@ -277,6 +279,7 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
+                    JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
                     _ => JsonValue.Create(values[0]),
                 };
@@ -320,6 +323,7 @@ public sealed record NodeSettings
         UpdatePolicyKey => UpdatePolicy is { } policy ? [policy.Name()] : null,
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
+        JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
@@ -477,6 +481,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var jobs) && jobs is >= 1 and <= 64
                     ? (settings with { MaxJobs = jobs }, null)
                     : (null, "max-jobs takes a number, 1 to 64");
+            case JobPriorityKey:
+                if (clear)
+                {
+                    return (settings with { JobPriority = null }, null);
+                }
+                return Pilot.Node.Flights.JobPriorities.Parse(One()) is { } jobPriority
+                    ? (settings with { JobPriority = jobPriority }, null)
+                    : (null, $"job-priority takes {string.Join(", ", Pilot.Node.Flights.JobPriorities.Names)}");
             case JobMemoryKey:
                 if (clear)
                 {
@@ -741,6 +753,7 @@ public static class NodeSettingsMerge
             UpdateChannel = Free(NodeSettings.UpdateChannelKey) && saved.UpdateChannel is { } channel ? channel : options.UpdateChannel,
             MaxJobs = Free(NodeSettings.MaxJobsKey) && saved.MaxJobs is { } jobs ? jobs : options.MaxJobs,
             JobMemoryGigabytes = Free(NodeSettings.JobMemoryKey) && saved.JobMemoryGigabytes is { } memory ? memory : options.JobMemoryGigabytes,
+            JobPriority = saved.JobPriority is { } savedPriority ? savedPriority : options.JobPriority,
             Saved = saved,
             CommandLineKeys = given,
         };

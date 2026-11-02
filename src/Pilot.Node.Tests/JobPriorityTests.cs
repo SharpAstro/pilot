@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
+using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
 using Xunit;
@@ -92,5 +94,45 @@ public sealed class JobPriorityTests : JobTestsBase
 
         run.Passed.ShouldBeTrue(run.Tail);
         ShouldRunAt(run.Tail, JobPriority.BelowNormal);
+    }
+
+    // A job the node's own runner runs, after a set through the node's client: a node of its own, so the runner is the one the set reached.
+    private static async Task<string> JobOutputOnAsync(NodeHarness node)
+    {
+        var runner = node.App.Services.GetRequiredService<JobRunner>();
+        node.State.PutSession(new SessionRow
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "se1-tia1-parser", Kind = SessionKind.Background, Cwd = node.Folder,
+            Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
+            SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        });
+        var id = runner.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [node.Folder, "0", Probe], Who = "se1-tia1-parser" }).Made!;
+        for (var i = 0; i < 600; i++)
+        {
+            if (node.State.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job)
+            {
+                return ReadLog(job.LogPath);
+            }
+            await Task.Delay(100, Ct);
+        }
+        throw new TimeoutException($"job {id} did not end");
+    }
+
+    [Fact]
+    public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var runner = node.App.Services.GetRequiredService<JobRunner>();
+        runner.Priority.ShouldBe(JobPriority.BelowNormal);
+
+        var idle = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-priority", "idle"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        idle.Error.ShouldBeNull();
+        runner.Priority.ShouldBe(JobPriority.Idle);
+        ShouldRunAt(await JobOutputOnAsync(node), JobPriority.Idle);
+
+        var normal = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-priority", "normal"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        normal.Error.ShouldBeNull();
+        runner.Priority.ShouldBe(JobPriority.Normal);
+        ShouldRunAt(await JobOutputOnAsync(node), JobPriority.Normal);
     }
 }
