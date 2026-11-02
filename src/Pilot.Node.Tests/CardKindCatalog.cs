@@ -32,6 +32,13 @@ internal static class CardKindCatalog
     private const string Move = "Flights/LegCommander.Move.cs";
     private const string Checks = "Flights/PrChecks.cs";
     private const string Reviews = "Flights/PrReviews.cs";
+    private const string PrReviewsFixer = "Flights/PrReviews.Fixer.cs";
+    private const string PrReviewsFixerRounds = "Flights/PrReviews.FixerRounds.cs";
+    private const string PrReviewsQueue = "Flights/PrReviews.Queue.cs";
+    private const string PrReviewsStart = "Flights/PrReviews.Start.cs";
+    private const string PrReviewsStatus = "Flights/PrReviews.Status.cs";
+    private const string PrReviewsSweep = "Flights/PrReviews.Sweep.cs";
+    private const string PrReviewsVerdicts = "Flights/PrReviews.Verdicts.cs";
     private const string Recheck = "Flights/PrRecheck.cs";
     private const string Tower = "Flights/Watchtower.cs";
 
@@ -99,7 +106,7 @@ internal static class CardKindCatalog
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver"),
-        new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", Reviews], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
+        new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "ForYou|Handled", [Flight, Move, LegOpenPr, "Flights/RepoSetup.cs"], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "Ring", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
@@ -116,28 +123,28 @@ internal static class CardKindCatalog
         new("moved-away", "Handled", [Move], "FlightMoveTests.AHandMoveOutsideMaintenanceMovesTheFlightAsWell"),
 
         // PRs of the person's own, reviewed and rechecked.
-        new("pr-review-ready", "ForYou", [Reviews], "PrReviewTests.OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses"),
-        new("pr-review-waiting", "Handled|ForYou", [Reviews], "AdmissionReviewTests.APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce"),
-        new("pr-fix-pushed-unreviewed", "ForYou", [Reviews], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
-        new("pr-review-started", "Handled", [Reviews], "PrReviewTests.APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead"),
-        new("pr-review-left", "Handled", [Reviews], "RemovalQueueTests.AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry"),
-        new("pr-review-restarted", "Handled", [Reviews], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
-        new("pr-review-lost", "ForYou", [Reviews], "PrReviewTests.AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain"),
-        new("pr-review-posted", "Handled", [Reviews], "PrReviewTests.PostsItselfOnAnOpenPr"),
-        new("pr-review-queued", "Handled", [Reviews], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
-        new("pr-review-merge", "ForYou", [Reviews], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
-        new("pr-review-queue-refused", "ForYou", [Reviews], SourcePinned),
-        new("pr-review-design", "Ring", [Reviews], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer"),
-        new("pr-review-design-settled", "Handled", [Reviews], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
-        new("pr-review-no-fixer", "Ring", [Reviews], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves"),
-        new("pr-fix-started", "Handled", [Reviews], "PrFixTests.AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch"),
-        new("pr-fix-offer", "ForYou", [Reviews], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),
-        new("pr-fix-failed", "ForYou", [Reviews], SourcePinned),
-        new("pr-fix-capped", "Ring", [Reviews], "PrFixTests.ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer"),
-        new("pr-fix-ended", "ForYou", [Reviews], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
-        new("pr-fix-left", "ForYou", [Reviews], SourcePinned),
-        new("pr-fix-follow-up", "Handled", [Reviews], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),
-        new("pr-fix-follow-up-failed", "ForYou", [Reviews], "FixFollowUpTests.APushGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch"),
+        new("pr-review-ready", "ForYou", [PrReviewsVerdicts], "PrReviewTests.OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses"),
+        new("pr-review-waiting", "Handled|ForYou", [Reviews, PrReviewsSweep], "AdmissionReviewTests.APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce"),
+        new("pr-fix-pushed-unreviewed", "ForYou", [PrReviewsFixerRounds], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
+        new("pr-review-started", "Handled", [PrReviewsStart], "PrReviewTests.APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead"),
+        new("pr-review-left", "Handled", [PrReviewsSweep], "RemovalQueueTests.AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry"),
+        new("pr-review-restarted", "Handled", [PrReviewsSweep], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),
+        new("pr-review-lost", "ForYou", [PrReviewsSweep], "PrReviewTests.AReviewLostInARestartThatCannotStartAgainTakesItsStatusAndLabelBackAndRaisesACardWithReviewAgain"),
+        new("pr-review-posted", "Handled", [PrReviewsVerdicts], "PrReviewTests.PostsItselfOnAnOpenPr"),
+        new("pr-review-queued", "Handled", [PrReviewsQueue], "PrReviewTests.ACleanCommentOnOnesOwnPrQueuesItAtTheReviewedHeadOnceAndSaysSo"),
+        new("pr-review-merge", "ForYou", [PrReviewsQueue], "PrReviewTests.ABaseWithoutAMergeQueueRaisesTheMergeCard"),
+        new("pr-review-queue-refused", "ForYou", [PrReviewsQueue], SourcePinned),
+        new("pr-review-design", "Ring", [PrReviewsFixer], "PrFixTests.ADesignQuestionRingsAndStartsNoFixer"),
+        new("pr-review-design-settled", "Handled", [PrReviewsFixerRounds], "DesignSettledTests.AMergedPrDowngradesItsRingingDesignCardToANoticeNamingIt"),
+        new("pr-review-no-fixer", "Ring", [PrReviewsFixer], "PrRecheckTests.ARecheckOfAChangesReviewWithNoFixerRingsTheOwnerOnceAndADismissalSticksUntilTheHeadMoves"),
+        new("pr-fix-started", "Handled", [PrReviewsFixer], "PrFixTests.AChangesVerdictOnAnOwnPrInATrackedRepoStartsOneFixerOnThePrsBranch"),
+        new("pr-fix-offer", "ForYou", [PrReviewsFixer], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),
+        new("pr-fix-failed", "ForYou", [PrReviewsFixer, PrReviewsFixerRounds], SourcePinned),
+        new("pr-fix-capped", "Ring", [PrReviewsFixer], "PrFixTests.ChangesOnRoundThreeRingsTheRoundsAndStartsNoFourthFixer"),
+        new("pr-fix-ended", "ForYou", [PrReviewsFixerRounds], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
+        new("pr-fix-left", "ForYou", [PrReviewsFixerRounds], SourcePinned),
+        new("pr-fix-follow-up", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),
+        new("pr-fix-follow-up-failed", "ForYou", [PrReviewsFixerRounds], "FixFollowUpTests.APushGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch"),
         new("pr-recheck", "Handled", [Recheck], SourcePinned),
         new("pr-recheck-failed", "ForYou", [Recheck], "PrRecheckTests.AReviewThatCannotStartKeepsTheLabelAndRaisesAForYouCard"),
         new("pr-recheck-conflicts", "ForYou", [Recheck], "PrRecheckTests.AReviewedPrThatConflictsGetsAForYouCardAndTheConflictsLabel"),
@@ -183,7 +190,7 @@ internal static class CardKindCatalog
         "Flights/LegWatch.cs|cardKind",
         "Flights/StartGate.cs|kind",
         "Flights/FlightCommander.cs|card.Kind",
-        "Flights/PrReviews.cs|kind",
+        "Flights/PrReviews.Cards.cs|kind",
     ];
 
     /// <summary>
@@ -197,7 +204,7 @@ internal static class CardKindCatalog
         ["Flights/LegCommander.Overlap.cs|title"] = "the overlap title built in LegCommander.Overlap names both flights, the files they share and the choice",
         ["Flights/LegCommander.Move.cs|title"] = "the move's own failure text: its first part is the reason, built where the move is refused",
         ["Flights/LegCommander.Move.cs|text"] = "the move's own line: who handed the flight to whom",
-        ["Flights/PrReviews.cs|title"] = "the parameter of PrReviews.RaiseOnce, whose titles are the literals at each RaiseOnce( call, which the guard reads as it reads RaiseCard",
+        ["Flights/PrReviews.Cards.cs|title"] = "the parameter of PrReviews.RaiseOnce, whose titles are the literals at each RaiseOnce( call, which the guard reads as it reads RaiseCard",
         ["Flights/PackageWatch.cs|late.Title"] = "PackageWatch.LateAsync names the package, its version and the run",
         ["Flights/FlightCommander.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
         ["Flights/FlightCommander.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
