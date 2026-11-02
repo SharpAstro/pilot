@@ -46,12 +46,17 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{repaired.Code}'s plane holds {dirty}: commit {(dirty.StartsWith("1 ", StringComparison.Ordinal) ? "it" : "them")}, then open the PR, which merges {repaired.Base} into the plane");
                 }
-                await git.RunAsync(["fetch", "--quiet", "origin"], repaired.Worktree, cancellationToken);
-                var onto = await git.RunAsync(["merge", "--no-edit", repaired.Base], repaired.Worktree, cancellationToken);
-                if (!onto.Ok)
+                // A repeat after a push that threw (MergedHead is cleared only by the later Record) finds the base already in HEAD: no second merge.
+                var taken = await git.RunAsync(["merge-base", "--is-ancestor", repaired.Base, "HEAD"], repaired.Worktree, cancellationToken);
+                if (!taken.Ok)
                 {
-                    await git.RunAsync(["merge", "--abort"], repaired.Worktree, cancellationToken);
-                    throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+                    await git.RunAsync(["fetch", "--quiet", "origin"], repaired.Worktree, cancellationToken);
+                    var onto = await git.RunAsync(["merge", "--no-edit", repaired.Base], repaired.Worktree, cancellationToken);
+                    if (!onto.Ok)
+                    {
+                        await git.RunAsync(["merge", "--abort"], repaired.Worktree, cancellationToken);
+                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+                    }
                 }
                 repaired = repaired with { MergedHead = null };
                 mergedBase = true;

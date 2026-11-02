@@ -90,7 +90,13 @@ public sealed partial class LegCommander
         // A go-around on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the go-around.
         // This turns a passed review back too, so the block below finds it Changes and leaves it.
         await TakeMergeBackAsync(flight, Verbs.GoAround, why, cancellationToken);
-        flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        // The lock was let go for GitHub: the leg is read again, as it is now, so one that moved meanwhile is refused here.
+        var stateBefore = leg.State;
+        (flight, leg) = LegOf(command.Target);
+        if (leg.State != stateBefore || flight.State != FlightState.Flying)
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} moved while its merge was taken back ({leg.State.ToString().ToLowerInvariant()}); go around again");
+        }
         // The person's go-around at a held loop is their word for one more round: the finished worker's review must start.
         // Recorded only once nothing before it can refuse the go-around, so a refused one allows no round.
         if (loopHeld)

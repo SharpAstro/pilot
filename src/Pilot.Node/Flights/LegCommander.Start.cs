@@ -35,7 +35,12 @@ public sealed partial class LegCommander
 
         // A new leg on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the start.
         await TakeMergeBackAsync(flight, Verbs.StartLeg, $"{leg.Name} started", cancellationToken);
-        flight = FlightOf(Verbs.FlightTarget(flight.Code));
+        // The lock was let go for GitHub: the leg is read again, as it is now, so one that moved meanwhile is refused here.
+        (flight, leg) = LegOf(command.Target);
+        if (leg.State != LegState.Planned || flight.State != FlightState.Flying || state.Legs(flight.Code).Any(l => l.State == LegState.Flying))
+        {
+            throw new FlightException($"{flight.Code}/{leg.Name} moved while its merge was taken back ({leg.State.ToString().ToLowerInvariant()}); start it again");
+        }
 
         // A person's start, or the sweep's once the 5-hour window allows it: the week only rings.
         Gate.RingWeek(Models.WeekLimit);

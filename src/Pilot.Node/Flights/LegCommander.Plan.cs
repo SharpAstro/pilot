@@ -110,6 +110,13 @@ public sealed partial class LegCommander
         }
         // More work on a flight whose merge is armed or queued: the merge is taken back first, and a refusal refuses the leg.
         await TakeMergeBackAsync(flight, Verbs.PlanLeg, $"a new leg, {name}, was planned", cancellationToken);
+        // The lock was let go for GitHub: the legs are read again, as they are now.
+        legs = state.Legs(flight.Code);
+        known = legs.FirstOrDefault(l => l.Name == name);
+        if (known is not null && known.State != LegState.Planned)
+        {
+            throw new FlightException($"{flight.Code}/{name} is {known.State.ToString().ToLowerInvariant()}; only a planned leg is planned again");
+        }
         // Planned again, the leg is validated afresh: its row is replaced, and a no-go that rang about it is moot.
         if (known is not null)
         {

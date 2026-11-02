@@ -236,6 +236,37 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AMergeTakenBackHeldInGitHubLeavesAnotherFlightsCommandsAnsweringAtOnceAndASecondPlanLegOfItsFlightIsRefused()
+    {
+        var (flight, _) = await Passed("1");
+        var other = await OtherFlight();
+        // A merge armed on the node and on GitHub, which plan-leg takes back.
+        _state.PutFlight(F(flight.Code) with { MergeWhenGreen = [_github.Pr!.Head, "squash"] });
+        _github.AutoMergeArmed.Add((_github.Pr!.Number, _github.Pr!.Head, "squash"));
+        var gate = new Gate();
+        _github.OnCall = call => call == nameof(IGitHub.PullRequestAsync) ? gate.PassAsync() : Task.CompletedTask;
+        string[] plan = ["name=render", "goal=Draw the planets", "done-when=The capture shows them", "item=Draw them"];
+
+        var first = Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", plan);
+        await Within(gate.Reached, "the take-back asked GitHub for the PR");
+
+        await AnOtherFlightsCommandsAnswerAtOnce(other, first);
+        var second = await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", plan);
+        second.Ok.ShouldBeFalse();
+        second.Error.ShouldNotBeNull().ShouldContain("taking its merge back");
+
+        _github.OnCall = null;
+        gate.Open();
+        var done = await first;
+
+        done.Ok.ShouldBeTrue(done.Error);
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+        _github.AutoMergeDisarmed.ShouldContain(_github.Pr!.Number);
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.MergeTakenBackKind && c.Subject == Verbs.FlightTarget(flight.Code));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AVerdictWhoseFlightChangedWhileItsPrWasBeingMarkedDraftIsNotKept()
     {
         var flight = await NewFlight("1", "parser");
