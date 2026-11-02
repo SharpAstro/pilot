@@ -227,6 +227,25 @@ public sealed class MergedUnderLegTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AMergedFlightPutAfterStartStaysFlyingPastTheLoopsIntervalUntilATestLooks()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Merged(node);
+
+        // The live loop looks every 30 s; a test node's never does by itself, however far its pacing clock moves.
+        node.PrPacing.Advance(TimeSpan.FromHours(1));
+        await Task.Delay(300, Ct);
+        node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
+        Directory.Exists(Plane).ShouldBeTrue();
+        new PrChecks(node.State, node.GitHub, TimeProvider.System).Interval.ShouldBe(TimeSpan.FromSeconds(30));
+
+        await Look(node);
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergeSeenWithCommitsPastTheMergedHeadKeepsThePlaneAndRings()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

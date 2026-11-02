@@ -47,7 +47,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     // A flight and head the autopilot has asked to merge: once, not every look.
     private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
 
-    public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>How long the loop waits between looks. A test node sets <see cref="Timeout.InfiniteTimeSpan"/> after its first look, so a look comes only when the test asks (<see cref="LookAsync"/>).</summary>
+    public TimeSpan Interval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The clock the wait between looks runs on; the node's own time when null. A test node gives it one of its own, so only it paces the loop.</summary>
+    public TimeProvider? Pacing { get; set; }
 
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
     public const string QueueDropped = "queue-dropped";
@@ -73,7 +77,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     await LookAsync(stopping);
                     _firstLook.TrySetResult();
-                    await Task.Delay(Interval, time, stopping);
+                    await Task.Delay(Interval, Pacing ?? time, stopping);
                 }
                 catch (OperationCanceledException) when (stopping.IsCancellationRequested)
                 {
@@ -83,7 +87,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     _firstLook.TrySetResult();
                     await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
-                    await Task.Delay(Interval, time, stopping);
+                    await Task.Delay(Interval, Pacing ?? time, stopping);
                 }
             }
         }
