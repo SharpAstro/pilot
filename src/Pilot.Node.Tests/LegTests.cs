@@ -639,7 +639,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
     public MergeQueueState? Queue { get; set; }
 
-    public Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Queue);
+    public async Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        await Called(nameof(MergeQueueAsync));
+        return Queue;
+    }
 
     /// <summary>Every dequeue the node asked for, by PR number.</summary>
     public List<int> Dequeued { get; } = [];
