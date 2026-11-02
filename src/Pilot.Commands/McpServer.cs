@@ -31,7 +31,9 @@ namespace Pilot.Commands;
 /// <c>notifications/tools/list_changed</c> once, and relays every line both ways until either end closes, so
 /// <see cref="RunAsync"/> ends only when the client or the child does.</para>
 /// <para>The relay is one level deep, however many updates there are: a server started as a hand-over child never looks at
-/// the installed version nor hands over, and the client-started server stays the only relay. On a later update it swaps: it
+/// the installed version nor hands over, and the client-started server stays the only relay. A server whose parent process is
+/// itself a <c>pilot mcp</c> counts as a hand-over child too, whatever flags it was started with, so a root from before the
+/// flag existed cannot grow a chain; the remedy for a chain already running is <c>/mcp</c> reconnect in the owning session. On a later update it swaps: it
 /// starts the newest binary's server the same way, sends the client's lines to it from then on, still passes on the old
 /// child's replies to requests already sent to it (for a bounded wait), then disposes the old child. A swap that fails (the
 /// binary cannot start, or the new child ends or does not answer <c>initialize</c>) disposes the half-started child, keeps
@@ -43,9 +45,10 @@ namespace Pilot.Commands;
 /// <param name="log">Where the line saying what it did about a new version goes (default: standard error, as stdout is the protocol's).</param>
 /// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
 /// <param name="handedOver">True for a server started by another one's hand-over: it never looks at the installed version nor hands over.</param>
+/// <param name="parentIsMcp">Whether this process's parent is a <c>pilot mcp</c> (default: <see cref="McpParent.IsPilotMcp"/>); a server whose parent is one counts as a hand-over child too.</param>
 internal sealed class McpServer(string cwd, string? node, string? socket,
     Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
-    Func<string[], McpChild>? startChild = null, bool handedOver = false)
+    Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null)
 {
     /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
     internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
@@ -110,6 +113,12 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     public async Task RunAsync(TextReader input, TextWriter output, CancellationToken cancellationToken)
     {
         var source = installed ?? InstalledMarkerAsync;
+        var isChild = handedOver;
+        if (!isChild && (parentIsMcp ?? McpParent.IsPilotMcp)())
+        {
+            isChild = true;
+            Say("the parent process is a pilot mcp: serving as a hand-over child, never handing over");
+        }
         var every = watch ?? DefaultWatch;
         var reading = input.ReadLineAsync(cancellationToken).AsTask();
         Link? link = null;
@@ -159,7 +168,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
                     await PassOnAsync(link, line, output, cancellationToken);
                     link.Reading = link.Child.Output.ReadLineAsync(cancellationToken).AsTask();
                 }
-                if (!handedOver && await ReplacedAsync(source, link?.Version ?? Running, cancellationToken) is { } now && now != _failed)
+                if (!isChild && await ReplacedAsync(source, link?.Version ?? Running, cancellationToken) is { } now && now != _failed)
                 {
                     if (await SwapAsync(now, link, output, cancellationToken) is { } swapped)
                     {
