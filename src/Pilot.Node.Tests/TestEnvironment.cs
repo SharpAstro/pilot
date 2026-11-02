@@ -25,7 +25,7 @@ internal static class TestEnvironment
         Environment.SetEnvironmentVariable("GCM_INTERACTIVE", "never");
 
         var count = int.TryParse(Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT"), out var n) && n >= 0 ? n : 0;
-        var nowhere = Path.Combine(Path.GetTempPath(), "pilot-tests-no-github-" + "offline").Replace('\\', '/');
+        var nowhere = Path.Combine(Path.GetTempPath(), "pilot-tests-no-github-offline").Replace('\\', '/');
         Environment.SetEnvironmentVariable($"GIT_CONFIG_KEY_{count}", $"url.{nowhere}/.insteadOf");
         Environment.SetEnvironmentVariable($"GIT_CONFIG_VALUE_{count}", "https://github.com/");
         Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", (count + 1).ToString());

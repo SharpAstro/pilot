@@ -33,9 +33,11 @@ public sealed class GitOfflineTests : IDisposable
 
         run.Ok.ShouldBeFalse();
         watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+        (run.Error + run.Output).ShouldContain("pilot-tests-no-github-offline");
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task APerRepoInsteadOfToALocalBareCopyStillFetches()
     {
         const string Url = "https://github.com/SharpAstro/tianwen.git";
