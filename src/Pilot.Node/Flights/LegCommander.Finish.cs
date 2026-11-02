@@ -28,13 +28,24 @@ public sealed partial class LegCommander
         }
         if (outcome == "accepted")
         {
-            if (leg.State != LegState.Failed)
+            // The go-around cap card's Accept also takes a leg that is flying or done as it stands: the person's word only.
+            var capCardOpen = state.Cards(openOnly: true).Any(c => c.Kind == GoAroundCapKind && c.Subject == Verbs.LegTarget(flight.Code, leg.Name));
+            if (leg.State != LegState.Failed && !(capCardOpen && leg.State is LegState.Flying or LegState.Done))
             {
                 throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}: only a failed leg is marked done anyway");
             }
             if (IsWatchtower(command.Who) && command.PersonsWord is null || string.Equals(command.Who, leg.Worker, StringComparison.Ordinal))
             {
                 throw new FlightException($"marking {flight.Code}/{leg.Name} done anyway is the controller's, not {command.Who}'s");
+            }
+            if (leg.State == LegState.Done)
+            {
+                state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} accepted as it stands", GoAroundCapKind);
+                return;
+            }
+            if (leg.State == LegState.Flying && leg.WorkerJob is { } flyingJob)
+            {
+                await StopQuietly(flyingJob, cancellationToken);
             }
             var accepted = $"failed, marked done anyway by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
             state.PutLeg(leg with { State = LegState.Done, Report = leg.Report is { Length: > 0 } was ? $"{accepted}\n{was}" : accepted });

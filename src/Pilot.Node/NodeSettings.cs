@@ -43,6 +43,9 @@ public sealed record NodeSettings
     public const string RepoTrackersKey = "repo-trackers";
     public const string NoAutoMergeReposKey = "no-auto-merge-repos";
     public const string PrWatchIdleKey = "pr-watch-idle";
+    /// <summary>How many go-arounds a leg may have, whatever their reasons, before the watchtower and the node send it round no more.</summary>
+    public const string MaxGoAroundsKey = "max-go-arounds";
+    public const int DefaultMaxGoArounds = 5;
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
@@ -60,7 +63,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -106,6 +109,9 @@ public sealed record NodeSettings
     public UpdateChannel? UpdateChannel { get; init; }
 
     public int? MaxJobs { get; init; }
+
+    /// <summary>The cap on a leg's go-arounds (<see cref="MaxGoAroundsKey"/>); <see cref="DefaultMaxGoArounds"/> unless set.</summary>
+    public int? MaxGoArounds { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
     public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
@@ -280,6 +286,7 @@ public sealed record NodeSettings
                     WorkerLadderKey => JsonValue.Create(WorkerLadder),
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
+                    MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
@@ -325,6 +332,7 @@ public sealed record NodeSettings
         UpdatePolicyKey => UpdatePolicy is { } policy ? [policy.Name()] : null,
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
+        MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
@@ -483,6 +491,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var jobs) && jobs is >= 1 and <= 64
                     ? (settings with { MaxJobs = jobs }, null)
                     : (null, "max-jobs takes a number, 1 to 64");
+            case MaxGoAroundsKey:
+                if (clear)
+                {
+                    return (settings with { MaxGoArounds = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var goArounds) && goArounds is >= 1 and <= 50
+                    ? (settings with { MaxGoArounds = goArounds }, null)
+                    : (null, "max-go-arounds takes a number, 1 to 50");
             case JobPriorityKey:
                 if (clear)
                 {

@@ -88,6 +88,7 @@ internal static class CardKindCatalog
         new("package-late", "Ring", ["Flights/PackageWatch.cs"], "PackageWaitTests.APublishRunThatFailedRaisesTheCardAtOnce"),
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
         new("spend-alert", "Ring", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
+        new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason"),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
         new("review-loop", "ForYou", [LegReview], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings"),

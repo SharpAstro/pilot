@@ -257,6 +257,13 @@ house rules (work in the plane, commit, never push). A leg is done only with eve
 by the node in the plane, passing. A go-around stops the worker and starts a fresh one told why and what the plane
 holds (its commits and diff), never the last worker's conversation. A worker's row is measured against its leg's
 budget.
+**Go-around cap.** A leg's go-arounds are capped whatever their reason (a failed check, a conflict, red CI, a review): 5 by
+default, set with `pilot set node max-go-arounds <n>` (1 to 50, in force at once). Each round's reason and sender is kept on the
+leg (`GoAroundReasons`). Past the cap the watchtower and the node's own sends (the lookout of legs, the open-conflict send) are
+refused with the count and the cap, and a Ring `go-around-cap` card on the leg lists what each round said, with **Go around**
+and **Accept** (the leg as it stands: a failed leg is marked done anyway, a flying one stopped and marked done, a done one kept)
+that only the person may press. A person's own go-around passes the cap. The review's own cap (`MaxReviewGoArounds`, 3 rounds
+on its findings) stays as it is.
 
 **A stale sibling is said before the leg starts.** A repo's `UseLocal*` properties compile against the sibling clones
 beside it (`../DIR.Lib`) whatever state they are in, so a clone behind its origin fails a leg's check with errors that
