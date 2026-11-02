@@ -48,6 +48,7 @@ public abstract class IssueBoardFixture : IDisposable
     internal readonly FakeGitHub GitHub = new();
     internal readonly FakeIssueReadinessChecker Checker = new();
     internal readonly FakeMilestoneSuggester Suggester = new();
+    internal readonly FakeIssueSplitter Splitter = new();
     internal readonly IdeaCommander Commander;
 
     protected IssueBoardFixture()
@@ -61,7 +62,7 @@ public abstract class IssueBoardFixture : IDisposable
         var planes = new Planes(new GitCli());
         var flights = new FlightCommander(State, planes, TimeProvider.System, github: GitHub);
         var catalog = new RepoCatalog(State, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
-        Commander = new IdeaCommander(State, planes, catalog, GitHub, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System, null, Checker, Suggester);
+        Commander = new IdeaCommander(State, planes, catalog, GitHub, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System, null, Checker, Suggester, Splitter);
         GitHub.AddMilestone(Repo, IdeaIds.Milestone, openIssues: 3);
         GitHub.AddMilestone(Repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", openIssues: 1);
         GitHub.AddMilestone(Repo, "v2");

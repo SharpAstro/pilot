@@ -93,7 +93,7 @@ public static class IdeaRows
 /// last read it, and leaves the node's rows as GitHub then has them.
 /// </summary>
 public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCatalog repos, IGitHub github, IIdeaMerger merger, IIdeaTidier tidier, IIdeaRepoChooser chooser, FlightCommander flights, TimeProvider time, IIdeaMilestoner? milestoner = null,
-    IIssueReadinessChecker? readiness = null, IMilestoneSuggester? suggester = null)
+    IIssueReadinessChecker? readiness = null, IMilestoneSuggester? suggester = null, IIssueSplitter? splitter = null)
 {
     // Two plans of one idea must not both make a flight.
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -136,12 +136,12 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     }
 
     public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone or Verbs.PinIssue or Verbs.SetPriority
-        or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones;
+        or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones or Verbs.BreakUpIssue or Verbs.AcceptBreakUp;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         // Proposing, checking and suggesting write nothing to GitHub, so they must not queue behind (or hold up) the verbs that do: they run Claude for minutes.
-        if (command.Verb is Verbs.ProposeMilestone or Verbs.CheckReady or Verbs.SuggestMilestones)
+        if (command.Verb is Verbs.ProposeMilestone or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.BreakUpIssue)
         {
             try
             {
@@ -149,6 +149,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
                 {
                     Verbs.CheckReady => await CheckReadyAsync(command, cancellationToken),
                     Verbs.SuggestMilestones => await SuggestMilestonesAsync(command, cancellationToken),
+                    Verbs.BreakUpIssue => await BreakUpIssueAsync(command, cancellationToken),
                     _ => await ProposeAsync(command, cancellationToken),
                 };
             }
@@ -172,6 +173,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
                 Verbs.PinIssue => await PinAsync(command, cancellationToken),
                 Verbs.SetPriority => await SetPriorityAsync(command, cancellationToken),
                 Verbs.AcceptMilestones => await AcceptMilestonesAsync(command, cancellationToken),
+                Verbs.AcceptBreakUp => await AcceptBreakUpAsync(command, cancellationToken),
                 _ => await DropAsync(command, cancellationToken),
             };
         }

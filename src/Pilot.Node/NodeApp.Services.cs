@@ -166,6 +166,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<IIdeaMilestoner, ClaudeIdeaMilestoner>();
         builder.Services.AddSingleton<IIssueReadinessChecker, ClaudeIssueReadinessChecker>();
         builder.Services.AddSingleton<IMilestoneSuggester, ClaudeMilestoneSuggester>();
+        builder.Services.AddSingleton<IIssueSplitter>(services => new ClaudeIssueSplitter(services.GetService<Attachments>()));
         builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
         builder.Services.AddSingleton(services =>
         {
