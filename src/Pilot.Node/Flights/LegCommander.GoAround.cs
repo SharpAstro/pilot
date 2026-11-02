@@ -122,7 +122,7 @@ public sealed partial class LegCommander
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
                 state.CloseCardsAbout(target, $"went around: {why}");
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around for it", ReviewChanges, ReviewLoopKind, MergeFailed, PrReady);
-                if (forConflict)
+                if (forConflict || flight.PullRequest is null)
                 {
                     // The worker resolves it; the sweep opens the PR once the leg is done, so no card is left for it to wait on.
                     state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{leg.Name} went around to resolve it", PrConflictsKind);
