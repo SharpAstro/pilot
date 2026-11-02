@@ -84,6 +84,7 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
             }
+            DropQueuedJobsOf(last, "its reviewer was replaced");
             await StopQuietly(last, cancellationToken);
         }
         // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being

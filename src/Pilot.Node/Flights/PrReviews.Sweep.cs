@@ -210,8 +210,21 @@ public sealed partial class PrReviews
         }
     }
 
+    /// <summary>Takes the queued jobs of the given session ids off the queue, told (owners, why); null where there is no job runner (#327).</summary>
+    public Func<IReadOnlyCollection<string>, string, int>? DropJobs { get; set; }
+
     private async Task StopQuietly(string job, CancellationToken cancellationToken)
     {
+        // A reviewer or fixer being stopped leaves no queued job of its own behind, and nobody is woken for it.
+        if (DropJobs is not null)
+        {
+            var ids = new List<string> { job };
+            if (state.Sessions().FirstOrDefault(s => s.Id == job || s.SessionId == job) is { } row)
+            {
+                ids.AddRange([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []]);
+            }
+            DropJobs([.. ids.Where(i => !string.IsNullOrEmpty(i)).Distinct(StringComparer.Ordinal)], "its worker ended");
+        }
         try
         {
             await workers.StopAsync(job, SessionEndReasons.Landed, "pr reviews", cancellationToken);

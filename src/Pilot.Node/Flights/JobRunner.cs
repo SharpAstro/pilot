@@ -133,7 +133,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly List<JobRow> _queue = [];
     // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
-    private readonly Dictionary<string, string> _withdrawnEarly = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Who, string? Dropped)> _withdrawnEarly = new(StringComparer.Ordinal);
     // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
@@ -155,7 +155,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     internal sealed record HandedOver(JobRow Job) : Signal;
 
-    internal sealed record Withdrawn(string Id, string Who) : Signal;
+    internal sealed record Withdrawn(string Id, string Who, string? Dropped = null) : Signal;
 
     internal sealed record LookAgain : Signal
     {
@@ -455,7 +455,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         switch (signal)
         {
             case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
-                CancelBeforeItsTurn(handed.Job, by);
+                CancelBeforeItsTurn(handed.Job, by.Who, by.Dropped);
                 break;
             case HandedOver handed:
                 _queue.Add(handed.Job);
@@ -463,7 +463,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             case Withdrawn withdrawn when _queue.FindIndex(j => j.Id == withdrawn.Id) is var at and >= 0:
                 var waiting = _queue[at];
                 _queue.RemoveAt(at);
-                CancelBeforeItsTurn(waiting, withdrawn.Who);
+                CancelBeforeItsTurn(waiting, withdrawn.Who, withdrawn.Dropped);
                 break;
             case Withdrawn withdrawn when _running.TryGetValue(withdrawn.Id, out var process):
                 // It started before the cancel reached the dispatcher: stop it as any running job.
@@ -472,7 +472,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
             case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
                 // Its hand-over is still behind this in the channel: cancel it when it comes.
-                _withdrawnEarly[withdrawn.Id] = withdrawn.Who;
+                _withdrawnEarly[withdrawn.Id] = (withdrawn.Who, withdrawn.Dropped);
                 break;
         }
 
@@ -566,12 +566,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return true;
     }
 
-    private void CancelBeforeItsTurn(JobRow job, string who)
+    private void CancelBeforeItsTurn(JobRow job, string who, string? dropped = null)
     {
-        var cancelled = job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() };
+        // A dropped job (its worker went around or ended) leaves the queue told: nobody is woken for it (#327).
+        var cancelled = dropped is null
+            ? job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() }
+            : job with { State = JobState.Cancelled, Error = $"dropped: {dropped}", Step = null, EndedAt = time.GetUtcNow(), Told = true };
         state.PutJob(cancelled);
         Finish(cancelled, null);
-        _ = TellAsync(cancelled, _stopping);
+        if (dropped is null)
+        {
+            _ = TellAsync(cancelled, _stopping);
+        }
     }
 
     /// <summary>
@@ -814,6 +820,22 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 count++;
             }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Takes the queued (not running) jobs owned by any of <paramref name="owners"/> (a session's row id, session id or earlier ids)
+    /// off the queue, each ending Cancelled as <c>dropped: why</c> and told, so nobody is woken. A running job is left alone: its
+    /// end goes to the replacement (#601). Returns how many were withdrawn.
+    /// </summary>
+    public int DropQueuedOf(IReadOnlyCollection<string> owners, string why)
+    {
+        var count = 0;
+        foreach (var job in state.Jobs().Where(j => j.State == JobState.Queued && j.Owner is not null && owners.Contains(j.Owner, StringComparer.Ordinal)).ToList())
+        {
+            _signals.Writer.TryWrite(new Withdrawn(job.Id, "the node", why));
+            count++;
         }
         return count;
     }

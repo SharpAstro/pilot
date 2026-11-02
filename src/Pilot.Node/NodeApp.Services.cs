@@ -219,6 +219,7 @@ public static partial class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();
             legs.Releases = services.GetRequiredService<PackageReleases>();
@@ -245,6 +246,7 @@ public static partial class NodeApp
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
+            reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
