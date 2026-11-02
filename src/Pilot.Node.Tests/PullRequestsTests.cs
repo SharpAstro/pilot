@@ -2,6 +2,7 @@ using System.Text.Json;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -633,7 +634,7 @@ public sealed class PullRequestsTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
         github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
-        var time = new ManualTime(Noon);
+        var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
         watch.Interval.ShouldBe(TimeSpan.FromSeconds(60));
 
@@ -876,7 +877,7 @@ public sealed class PullRequestsTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
         github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
-        var time = new ManualTime(Noon);
+        var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
         (await watch.RefreshAsync(Ct))!.Note.ShouldBeNull();
 
@@ -919,7 +920,7 @@ public sealed class PullRequestsTests : IDisposable
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
         github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
-        var time = new ManualTime(Noon);
+        var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
 
         await watch.StartAsync(Ct);
@@ -947,7 +948,7 @@ public sealed class PullRequestsTests : IDisposable
         // gh could not say when: the watch waits a fixed while, not a minute.
         var unknown = new FakeGitHub { RateLimited = (true, null) };
         var state2 = new NodeState(new InMemoryJournal(), TimeProvider.System);
-        var time2 = new ManualTime(Noon);
+        var time2 = new TimerTime(Noon);
         var limited = (await Watch(state2, unknown, time2).RefreshAsync(Ct))!;
         limited.Note.ShouldBe($"Rate-limited by GitHub until {Noon.Add(PullRequestWatch.UnknownReset):HH:mm} UTC: showing what was last read, reading again then");
     }
@@ -976,97 +977,6 @@ public sealed class PullRequestsTests : IDisposable
         {
             DateTime.UtcNow.ShouldBeLessThan(until, "the watch did not get there");
             await Task.Delay(10, Ct);
-        }
-    }
-
-    /// <summary>A clock the test moves: <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/> on it ends when <see cref="Advance"/> passes its time.</summary>
-    private sealed class ManualTime(DateTimeOffset start) : TimeProvider
-    {
-        private readonly object _gate = new();
-        private readonly List<ManualTimer> _timers = [];
-        private DateTimeOffset _now = start;
-
-        /// <summary>The timers set and not yet fired or disposed.</summary>
-        public int Waiting
-        {
-            get
-            {
-                lock (_gate)
-                {
-                    return _timers.Count(t => t.Due is not null);
-                }
-            }
-        }
-
-        public override DateTimeOffset GetUtcNow()
-        {
-            lock (_gate)
-            {
-                return _now;
-            }
-        }
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            var timer = new ManualTimer(this, callback, state);
-            timer.Change(dueTime, period);
-            lock (_gate)
-            {
-                _timers.Add(timer);
-            }
-            return timer;
-        }
-
-        public void Advance(TimeSpan by)
-        {
-            List<ManualTimer> due;
-            lock (_gate)
-            {
-                _now += by;
-                due = [.. _timers.Where(t => t.Due <= _now)];
-            }
-            foreach (var timer in due)
-            {
-                timer.Fire();
-            }
-        }
-
-        private sealed class ManualTimer(ManualTime owner, TimerCallback callback, object? state) : ITimer
-        {
-            public DateTimeOffset? Due { get; private set; }
-
-            public bool Change(TimeSpan dueTime, TimeSpan period)
-            {
-                lock (owner._gate)
-                {
-                    Due = dueTime == Timeout.InfiniteTimeSpan ? null : owner._now + dueTime;
-                }
-                return true;
-            }
-
-            public void Fire()
-            {
-                lock (owner._gate)
-                {
-                    Due = null;
-                }
-                callback(state);
-            }
-
-            public void Dispose()
-            {
-                lock (owner._gate)
-                {
-                    Due = null;
-                    owner._timers.Remove(this);
-                }
-            }
-
-            public ValueTask DisposeAsync()
-            {
-                Dispose();
-                return ValueTask.CompletedTask;
-            }
         }
     }
 }

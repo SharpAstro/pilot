@@ -60,8 +60,8 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>GitHub: what it says is the test's.</summary>
     public FakeGitHub GitHub { get; private init; } = new();
 
-    /// <summary>The clock the PR loop's wait between looks runs on; its interval is infinite, so advancing it never makes a look.</summary>
-    public ManualTime PrPacing { get; private init; } = new(DateTimeOffset.UtcNow);
+    /// <summary>The clock the PR loop's wait between looks runs on; the loop keeps the live 30 s interval on it, so a look comes only when a test advances it (or asks, PrChecks.LookAsync).</summary>
+    public TimerTime PrPacing { get; private init; } = new(DateTimeOffset.UtcNow);
 
     /// <summary>The idea milestone proposal: what it answers is the test's; Claude is never run.</summary>
     public FakeIdeaMilestoner Milestoner { get; private init; } = new();
@@ -141,12 +141,11 @@ internal sealed class NodeHarness : IAsyncDisposable
                     TimeSpan.FromMilliseconds(100),
                     SessionTrackerOptions.DefaultEndedRetention));
             });
-            // The PR loop looks once at start and then only when a test asks (PrChecks.LookAsync): its 30 s look on a slow runner
+            // The PR loop looks once at start and then on a clock only a test moves: its 30 s look on a slow runner
             // landed a merged flight before the leg a test put after start reached it (pilot #427).
             var prChecks = app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>();
-            var prPacing = new ManualTime(DateTimeOffset.UtcNow);
+            var prPacing = new TimerTime(DateTimeOffset.UtcNow);
             prChecks.Pacing = prPacing;
-            prChecks.Interval = Timeout.InfiniteTimeSpan;
             await app.StartAsync(cancellationToken);
             // The PR loop's first look happens at start; a test's state is put only after it, so it never lands a half-made flight.
             await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);

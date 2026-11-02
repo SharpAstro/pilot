@@ -232,15 +232,25 @@ public sealed class MergedUnderLegTests : IDisposable
         await using var node = await NodeHarness.StartAsync(Ct);
         Merged(node);
 
-        // The live loop looks every 30 s; a test node's never does by itself, however far its pacing clock moves.
-        node.PrPacing.Advance(TimeSpan.FromHours(1));
+        // The loop keeps the live 30 s interval, on a clock only the test moves: nothing looks until it does.
         await Task.Delay(300, Ct);
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
         Directory.Exists(Plane).ShouldBeTrue();
-        new PrChecks(node.State, node.GitHub, TimeProvider.System).Interval.ShouldBe(TimeSpan.FromSeconds(30));
 
-        await Look(node);
+        // The loop sets its wait just after its first look; an Advance before that would be lost.
+        while (node.PrPacing.Waiting == 0)
+        {
+            await Task.Delay(10, Ct);
+        }
+        node.PrPacing.Advance(TimeSpan.FromSeconds(29));
+        await Task.Delay(300, Ct);
+        node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
 
+        node.PrPacing.Advance(TimeSpan.FromSeconds(1));
+        for (var i = 0; i < 500 && node.State.Flights().Single().State != FlightState.Landed; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
     }
 
