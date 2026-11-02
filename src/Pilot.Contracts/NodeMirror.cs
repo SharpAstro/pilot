@@ -185,7 +185,10 @@ public sealed class NodeMirror
                 _flights[added.Flight.Code] = added.Flight;
                 break;
             case FlightChangedEvent changed:
-                _flights[changed.Flight.Code] = changed.Flight;
+                // The tokens ride the snapshot only; a changed row keeps what the last one said.
+                _flights[changed.Flight.Code] = changed.Flight.Tokens is null && _flights.TryGetValue(changed.Flight.Code, out var before)
+                    ? changed.Flight with { Tokens = before.Tokens }
+                    : changed.Flight;
                 break;
             case LegAddedEvent added:
                 _legs[(added.Leg.Flight, added.Leg.Name)] = added.Leg;

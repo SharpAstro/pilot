@@ -144,6 +144,7 @@ public sealed partial class SpendLedger
                 }
                 var entry = new SpendEntry(message.Id, sessionId, name, role.Flight, role.Leg, roleName, message.Model, message.Effort, kept, message.Usage, message.At ?? held?.At ?? now);
                 _entries[message.Id] = entry;
+                _byFlight = null;
                 text.Append(Line(entry)).Append('\n');
             }
             if (text.Length > 0)
@@ -202,6 +203,19 @@ public sealed partial class SpendLedger
         }
         var last = mine.OrderBy(e => e.At).Last();
         return new LegSpend(mine.Sum(e => e.Tokens), mine.Sum(e => e.Usage.WeightedTwentieths) * 100.0 / total, last.Model, last.Effort);
+    }
+
+    private Dictionary<string, long>? _byFlight;
+
+    /// <summary>Every flight's tokens so far (keyed by code, case-insensitive), one pass over the ledger kept until a message changes it.</summary>
+    public IReadOnlyDictionary<string, long> TokensByFlight()
+    {
+        lock (_lock)
+        {
+            return _byFlight ??= _entries.Values.Where(e => e.Flight is not null)
+                .GroupBy(e => e.Flight!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Sum(e => e.Tokens), StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>

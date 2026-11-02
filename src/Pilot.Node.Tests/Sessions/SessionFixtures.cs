@@ -55,6 +55,97 @@ internal sealed class ManualTime(DateTimeOffset start) : TimeProvider
     public void Advance(TimeSpan by) => _now += by;
 }
 
+/// <summary>A clock a test moves whose timers really fire: Advance fires the due ones, and Waiting counts those set.</summary>
+internal sealed class TimerTime(DateTimeOffset start) : TimeProvider
+{
+    private readonly object _gate = new();
+    private readonly List<TimerTimer> _timers = [];
+    private DateTimeOffset _now = start;
+
+    /// <summary>The timers set and not yet fired or disposed.</summary>
+    public int Waiting
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _timers.Count(t => t.Due is not null);
+            }
+        }
+    }
+
+    public override DateTimeOffset GetUtcNow()
+    {
+        lock (_gate)
+        {
+            return _now;
+        }
+    }
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        var timer = new TimerTimer(this, callback, state);
+        timer.Change(dueTime, period);
+        lock (_gate)
+        {
+            _timers.Add(timer);
+        }
+        return timer;
+    }
+
+    public void Advance(TimeSpan by)
+    {
+        List<TimerTimer> due;
+        lock (_gate)
+        {
+            _now += by;
+            due = [.. _timers.Where(t => t.Due <= _now)];
+        }
+        foreach (var timer in due)
+        {
+            timer.Fire();
+        }
+    }
+
+    internal sealed class TimerTimer(TimerTime owner, TimerCallback callback, object? state) : ITimer
+    {
+        public DateTimeOffset? Due { get; private set; }
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (owner._gate)
+            {
+                Due = dueTime == Timeout.InfiniteTimeSpan ? null : owner._now + dueTime;
+            }
+            return true;
+        }
+
+        public void Fire()
+        {
+            lock (owner._gate)
+            {
+                Due = null;
+            }
+            callback(state);
+        }
+
+        public void Dispose()
+        {
+            lock (owner._gate)
+            {
+                Due = null;
+                owner._timers.Remove(this);
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
+}
+
 /// <summary>
 /// A Claude profile folder of a test's own, with made-up sessions in them: nothing here is a real
 /// transcript, and nothing reads this machine's.

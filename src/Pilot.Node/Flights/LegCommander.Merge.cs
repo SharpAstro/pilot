@@ -34,8 +34,11 @@ public sealed partial class LegCommander
         }
         if (underWay)
         {
-            // The entry is the job row: live while it is open and moved within StuckAfter. Asked again, the merge answers ok and the entry is left as it is.
-            if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is { Open: true } live && time.GetUtcNow() - live.ChangedAt < StuckAfter)
+            // A command that holds the flight (_active) drives its entry. Waiting for a turn behind another flight, or for checks, can
+            // outlast StuckAfter with the entry unmoved and is not stuck: only an entry the command is updating or merging, unmoved for
+            // StuckAfter, is (a gh call that never returns). Asked again, the merge answers ok and the entry and card are left as they are.
+            if (state.Merges().FirstOrDefault(m => m.Flight == asked.Code) is not { Open: true, State: MergeEntryState.Updating or MergeEntryState.Merging } live
+                || time.GetUtcNow() - live.ChangedAt < StuckAfter)
             {
                 // The repeat's own head and method are ignored: the first merge's stand. Its Way says "not merged, no news" to callers.
                 return (false, AlreadyInProgress, MergeWays.InProgress);
@@ -47,9 +50,9 @@ public sealed partial class LegCommander
         var holder = _held.Value ?? new HeldTurn();
         holder.Code = asked.Code;
         Enqueue(asked, askedHead, askedMethod, by);
-        await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
         try
         {
+            await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
             if (Models.MergeBatch)
             {
                 await OffLockAsync(null, () => BatchAsync(asked.Code, asked.Repo, cancellationToken));
@@ -74,6 +77,11 @@ public sealed partial class LegCommander
             {
                 SetEntry(asked.Code, MergeEntryState.Merging, result.Made);
             }
+            // Armed or queued, the card says so in place of "merging": the caller's card answer does the same, from the same words.
+            if (result.Way is MergeWays.Armed or MergeWays.Queued)
+            {
+                ShowMerge(Verbs.FlightTarget(asked.Code), result.Made, result.Way);
+            }
             return result;
         }
         catch (FlightException ex)
@@ -83,6 +91,13 @@ public sealed partial class LegCommander
             {
                 DropMerge(asked.Code, ex.Message);
             }
+            RestoreMerge(asked.Code);
+            throw;
+        }
+        catch
+        {
+            // Given up or failed outright: the card offers the Merge it offered before.
+            RestoreMerge(asked.Code);
             throw;
         }
     }
@@ -127,11 +142,14 @@ public sealed partial class LegCommander
         }
         if (checks?.Status == ChoiceStatus.Pending)
         {
+            var pending = Math.Max(checks.Total - checks.Done, 0);
+            SetEntry(flight.Code, MergeEntryState.Checks, $"waiting for checks ({pending} pending)", cardNote: $"waiting for checks ({pending} pending)");
             return await ArmAsync(flight, pr, method, checks, null, command.Who == "node", cancellationToken);
         }
         if (mergeState is { AwaitsCheck: true })
         {
             // Every check shown is green, GitHub blocks it for a required check not created yet: arm, and the merge goes through once it passes.
+            SetEntry(flight.Code, MergeEntryState.Checks, "waiting for a required check to report", cardNote: "waiting for a required check to report");
             return await ArmAsync(flight, pr, method, checks, AwaitingCheckLine, command.Who == "node", cancellationToken);
         }
         if (flight.MergeWhenGreen is not null)
@@ -354,6 +372,7 @@ public sealed partial class LegCommander
             var code = target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? target[Verbs.FlightTargetPrefix.Length..] : target;
             var flight = state.Flights().FirstOrDefault(f => f.Code == code);
             var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
+            _beforeMerging.TryRemove(card.Id, out _);
             // The line says how far the checks are, or where in the queue: the choice carries it too, for a client to put on the button.
             note ??= way == MergeWays.Queued ? System.Text.RegularExpressions.Regex.Match(line ?? "", @"position \d+") is { Success: true } place ? place.Value : null : ArmedProgress.Read(line);
             // A card says what is set on GitHub: armed only where GitHub's auto-merge is, otherwise the node waits and then queues or merges.
@@ -365,6 +384,43 @@ public sealed partial class LegCommander
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
                     : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.");
+        }
+    }
+
+    /// <summary>
+    /// While the flight's merge command is under way, its open pr-ready or merge-failed cards show the Merge choice as
+    /// <see cref="ChoiceStatus.Merging"/> with <paramref name="note"/> saying what it waits for. Title and detail stay; the choice
+    /// the card offered is kept for <see cref="RestoreMerge"/>. Not a button: a press is answered as in progress.
+    /// </summary>
+    public void ShowMerging(string code, string note)
+    {
+        var target = Verbs.FlightTarget(code);
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
+        {
+            var merge = card.Choices.First(ch => ch.Verb == Verbs.Merge);
+            if (merge.Status == ChoiceStatus.Merging)
+            {
+                if (merge.Note == note)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                _beforeMerging[card.Id] = merge;
+            }
+            state.UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.Merging, Note = note } : c)]);
+        }
+    }
+
+    /// <summary>A merge command that ended refused: every card it marked Merging offers the Merge it offered before.</summary>
+    private void RestoreMerge(string code)
+    {
+        var target = Verbs.FlightTarget(code);
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status == ChoiceStatus.Merging)))
+        {
+            _beforeMerging.TryRemove(card.Id, out var before);
+            state.UpdateChoices(card.Id, [.. card.Choices.Select(c => c.Verb == Verbs.Merge && c.Status == ChoiceStatus.Merging ? before ?? c with { Status = null, Note = null } : c)]);
         }
     }
 

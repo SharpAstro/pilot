@@ -30,6 +30,14 @@ public sealed partial class NodeState
             }
             var now = _time.GetUtcNow();
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
+            // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
+            if (bin != CardBin.Handled && kind == LegCommander.PrReady)
+            {
+                foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
+                {
+                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now } });
+                }
+            }
             var card = new CardRow
             {
                 Id = $"c{number}",
@@ -167,6 +175,8 @@ public sealed partial class NodeState
         }
     }
 
+    private static bool IsMergeKind(string kind) => kind is LegCommander.PrReady or LegCommander.MergeFailed;
+
     /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
     public void ReopenCard(string id)
     {
@@ -174,6 +184,11 @@ public sealed partial class NodeState
         {
             if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
             {
+                // A newer open merge card of the same flight is the one card now: the older stays closed.
+                if (IsMergeKind(card.Kind) && _cards.Values.Any(c => c.State == CardState.Open && c.Id != id && IsMergeKind(c.Kind) && c.Subject == card.Subject))
+                {
+                    return;
+                }
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null } });
             }
         }

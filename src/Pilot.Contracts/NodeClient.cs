@@ -161,6 +161,9 @@ public sealed class NodeClient : IDisposable
         GetEnvelopeAsync($"{NodeWire.SpendWasteRoute}?window={Uri.EscapeDataString(window)}", PilotJsonContext.Default.ResponseEnvelopeSpendWasteReport, cancellationToken);
 
     /// <summary>One flight's spend so far, per leg and round.</summary>
+    public Task<ResponseEnvelope<Dictionary<string, long>>> GetSpendTokensAsync(CancellationToken cancellationToken) =>
+        GetEnvelopeAsync(NodeWire.SpendTokensRoute, PilotJsonContext.Default.ResponseEnvelopeDictionaryStringInt64, cancellationToken);
+
     public Task<ResponseEnvelope<SpendFlightReport>> GetSpendFlightAsync(string code, CancellationToken cancellationToken) =>
         GetEnvelopeAsync($"{NodeWire.SpendFlightRoute}?code={Uri.EscapeDataString(code)}", PilotJsonContext.Default.ResponseEnvelopeSpendFlightReport, cancellationToken);
 

@@ -47,7 +47,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     // A flight and head the autopilot has asked to merge: once, not every look.
     private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
 
+    /// <summary>How long the loop waits between looks.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The clock the wait between looks runs on; the node's own time when null. Only the test harness sets it (so a test node looks again only when a test moves that clock); the live node never does.</summary>
+    public TimeProvider? Pacing { get; set; }
 
     /// <summary>The card of a flight whose PR left its merge queue unmerged: why, and Merge to queue it again.</summary>
     public const string QueueDropped = "queue-dropped";
@@ -73,7 +77,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     await LookAsync(stopping);
                     _firstLook.TrySetResult();
-                    await Task.Delay(Interval, time, stopping);
+                    await Task.Delay(Interval, Pacing ?? time, stopping);
                 }
                 catch (OperationCanceledException) when (stopping.IsCancellationRequested)
                 {
@@ -83,7 +87,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 {
                     _firstLook.TrySetResult();
                     await Error.WriteLineAsync($"pr checks: one look failed, looking again: {ex.Message}");
-                    await Task.Delay(Interval, time, stopping);
+                    await Task.Delay(Interval, Pacing ?? time, stopping);
                 }
             }
         }
@@ -642,6 +646,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             // An armed merge is MergeWhenGreenAsync's: GitHub is read there, and what it says is put on the card there.
             if (flight.MergeWhenGreen is not null)
+            {
+                continue;
+            }
+            // A merge command under way (waiting its turn, or for checks) says what it does on the card: the look leaves it be.
+            if (legs is not null && legs.IsMerging(flight.Code))
             {
                 continue;
             }

@@ -484,9 +484,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, MergeAsync refuses any head other than the first it took, as a queue does a PR pushed since, whose checks have not run.</summary>
     public bool MergeRefusesLaid { get; set; }
 
+    /// <summary>When set, MergeAsync refuses with it, as GitHub does a PR that is behind or conflicts.</summary>
+    public string? MergeRefuses { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefuses is not null)
+        {
+            throw new FlightException(MergeRefuses);
+        }
         if (MergeRefusesLaid && Pr is { } shown && head != shown.Head)
         {
             throw new FlightException("the merge queue takes no PR whose required checks have not passed");
@@ -639,7 +646,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>
     public MergeQueueState? Queue { get; set; }
 
-    public Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult(Queue);
+    public async Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        await Called(nameof(MergeQueueAsync));
+        return Queue;
+    }
 
     /// <summary>Every dequeue the node asked for, by PR number.</summary>
     public List<int> Dequeued { get; } = [];

@@ -92,6 +92,9 @@ internal sealed record FlightLine
     /// <summary>The state's detail as every page shows it: the stale mark first, then <see cref="RowDetail"/>.</summary>
     public string? ShownDetail => StaleMark is { } mark ? (RowDetail is null ? mark : $"{mark} · {RowDetail}") : RowDetail;
 
+    /// <summary>What its sessions have spent so far, <c>1,234,567 tokens so far</c>; null when the node has no spend for it.</summary>
+    public string? TokensText => Row.Tokens is > 0 and var tokens ? FlightTokens.Text(tokens) : null;
+
     /// <summary>The line as a dump writes it.</summary>
     public string ToDumpLine()
     {
@@ -170,4 +173,10 @@ internal sealed record FlightLine
                 .ThenByDescending(s => s.LastResponseAt)],
         };
     }
+}
+
+/// <summary>A flight's tokens so far in words, one wording for the status line, the Flights row and the Home line.</summary>
+internal static class FlightTokens
+{
+    public static string Text(long tokens) => $"{tokens.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} tokens so far";
 }

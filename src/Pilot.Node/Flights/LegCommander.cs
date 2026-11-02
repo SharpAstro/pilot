@@ -36,6 +36,26 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>Takes the queued jobs owned by any of the given session ids off the queue, told (owners, why); null where there is no job runner (#327).</summary>
+    public Func<IReadOnlyCollection<string>, string, int>? DropJobs { get; set; }
+
+    /// <summary>The queued jobs of a worker, reviewer or fixer that is being stopped or replaced leave the queue, and nobody is woken for them.</summary>
+    internal void DropQueuedJobsOf(string job, string why)
+    {
+        if (DropJobs is null)
+        {
+            return;
+        }
+        var ids = new List<string> { job };
+        if (state.Sessions().FirstOrDefault(s => s.Id == job || s.SessionId == job) is { } row)
+        {
+            ids.Add(row.Id);
+            ids.Add(row.SessionId);
+            ids.AddRange(row.EarlierSessionIds ?? []);
+        }
+        DropJobs([.. ids.Where(i => !string.IsNullOrEmpty(i)).Distinct(StringComparer.Ordinal)], why);
+    }
+
     /// <summary>The node's log (logs/node.log): a line for each move asked for, naming who asked and how it ended.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
@@ -378,6 +398,13 @@ public sealed partial class LegCommander(
                 {
                     error = updated;
                 }
+            }
+            // The command is done with the card: what SetEntry marked Merging while it updated is not a merge anyone runs now.
+            // The conflict mark set above is the card's own state, put back over the Merge it offered before.
+            RestoreMerge(code);
+            if (conflicting)
+            {
+                MarkMerge(command.Target, ChoiceStatus.Conflicting);
             }
         }
 
