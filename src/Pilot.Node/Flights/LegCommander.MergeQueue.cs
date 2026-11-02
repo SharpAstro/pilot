@@ -158,6 +158,15 @@ public sealed partial class LegCommander
     /// <summary>Takes the entry out of its queue with <paramref name="why"/>: a conflict, a failed check, a refusal.</summary>
     public void DropMerge(string code, string why) => state.EndMerge(code, MergeEntryState.Dropped, why);
 
+    /// <summary>Whether a merge command of the flight is under way: its cards say Merging, and the PR look leaves them alone.</summary>
+    public bool IsMerging(string code)
+    {
+        lock (_turns)
+        {
+            return _active.Contains(code);
+        }
+    }
+
     /// <summary>
     /// Whether a merge command of <paramref name="repo"/> is under way: one asked there now would wait for the repo's turn inside its
     /// command (for as long as a batch's CI runs), so the node's own look asks it at a later look instead of waiting on it.

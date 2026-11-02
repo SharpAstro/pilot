@@ -162,6 +162,47 @@ public sealed class MergingCardTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ThePrLookLeavesAMergingCardAloneWhileTheMergeWaitsItsTurn()
+    {
+        var (a, headA, _) = Ready("TIA1", 63);
+        var (b, headB, cardB) = Ready("TIA2", 64);
+        _github.Summary = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+        var legs = Commander();
+        var (open, reached) = Hold(nameof(IGitHub.MergeAsync));
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        var first = Press(legs, a.Code, headA);
+        await Reaches(reached);
+        var waiting = Press(legs, b.Code, headB);
+        var shown = await ShowsMerging(cardB);
+
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, legs).LookAsync(Ct);
+
+        var after = _state.Cards().Single(c => c.Id == cardB.Id);
+        var choice = after.Choices.Single(c => c.Verb == Verbs.Merge);
+        (choice.Status, choice.Note).ShouldBe((ChoiceStatus.Merging, shown.Note));
+        open.SetResult();
+        await first;
+        await waiting;
+    }
+
+    [Theory]
+    [InlineData("the PR is behind its base", ChoiceStatus.Passing)]
+    [InlineData("the PR conflicts with its base", ChoiceStatus.Conflicting)]
+    public async Task AMergeRefusedAsBehindOrConflictingEndsWithNoMergingChipLeft(string refusal, string expected)
+    {
+        // The plane does not exist, so bringing it up to date fails and the entry is dropped: the card must not stay on Merging.
+        var (flight, head, card) = Ready("TIA1", 63, ChoiceStatus.Passing);
+        _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+        _github.MergeRefuses = refusal;
+
+        var result = await Press(Commander(), flight.Code, head);
+
+        result.Ok.ShouldBeFalse();
+        MergeChoice(card).Status.ShouldBe(expected);
+        _state.Cards(openOnly: true).Count(c => c.Id == card.Id).ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AnEntryThatNothingDrivesAnyMoreIsRefusedAsBeingMergedAlready()
     {
         // Held in the merge call itself, unmoved past the limit: a call that never returns is stuck, not waiting for a turn or checks.
