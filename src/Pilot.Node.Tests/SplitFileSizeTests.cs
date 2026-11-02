@@ -16,6 +16,12 @@ public sealed class SplitFileSizeTests
     private static readonly string[] Globs =
     [
         "src/Pilot.Node/Flights/LegCommander*.cs",
+        "src/Pilot.Node/Flights/LegTools*.cs",
+        "src/Pilot.Node/Flights/PrReviews*.cs",
+        "src/Pilot.Node/Flights/FlightCommander*.cs",
+        "src/Pilot.Node/Flights/Briefs*.cs",
+        "src/Pilot.Node/NodeState*.cs",
+        "src/Pilot.Node/NodeApp*.cs",
     ];
 
     private static string FindRoot()
