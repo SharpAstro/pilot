@@ -264,7 +264,32 @@ public sealed class DefenderTests : IDisposable
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'MSBuild.exe'");
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'VBCSCompiler.exe'");
         elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'testhost.exe'");
+        elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'git.exe'");
+        elevated.ShouldContain("Add-MpPreference -ExclusionProcess 'git-lfs.exe'");
         elevated.ShouldNotContain("'dotnet.exe'");
+    }
+
+    /// <summary>The test runners built under the repo roots join the list by name, once each, and only from a bin folder.</summary>
+    [Fact]
+    public void TheWantedProcessesAddEveryTestRunnerBuiltUnderTheRoots()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_data, "repos")).FullName;
+        foreach (var exe in new[]
+        {
+            "pilot/src/Pilot.Node.Tests/bin/Release/net10.0/Pilot.Node.Tests.exe",
+            "pilot/.claude/worktrees/pil1/src/Pilot.Node.Tests/bin/Debug/net10.0/Pilot.Node.Tests.exe",
+            "tianwen/src/TianWen.Lib.Tests.Functional/bin/Release/net10.0/TianWen.Lib.Tests.Functional.exe",
+            "tianwen/src/TianWen.Lib.Tests/obj/Release/net10.0/TianWen.Lib.Tests.exe",
+        })
+        {
+            var path = Path.Combine(root, exe.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "");
+        }
+
+        var wanted = DefenderExclusions.WantedProcesses([root, Path.Combine(_data, "missing")]);
+
+        wanted.ShouldBe([.. DefenderExclusions.Processes, "Pilot.Node.Tests.exe", "TianWen.Lib.Tests.Functional.exe"], ignoreOrder: true);
     }
 
     [Fact]

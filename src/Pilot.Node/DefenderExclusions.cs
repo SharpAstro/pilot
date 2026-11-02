@@ -11,8 +11,36 @@ namespace Pilot.Node;
 /// </summary>
 public static class DefenderExclusions
 {
-    /// <summary>The processes <c>--processes</c> excludes: the node itself and what a build and its tests start.</summary>
-    public static readonly string[] Processes = ["pilot-node.exe", "dotnet.exe", "MSBuild.exe", "VBCSCompiler.exe", "testhost.exe"];
+    /// <summary>
+    /// The processes <c>--processes</c> excludes: the node itself, what a build and its tests start, and git with the helpers a
+    /// fetch, push and LFS transfer start (every leg, check and test runs dozens of git commands).
+    /// </summary>
+    public static readonly string[] Processes = ["pilot-node.exe", "dotnet.exe", "MSBuild.exe", "VBCSCompiler.exe", "testhost.exe",
+        "git.exe", "git-lfs.exe", "git-remote-https.exe"];
+
+    /// <summary>
+    /// <see cref="Processes"/> and the test runners built under <paramref name="roots"/>: every <c>*Tests*.exe</c> in a <c>bin</c>
+    /// folder (xunit.v3 test projects are their own executables, as <c>Pilot.Node.Tests.exe</c>), by name, each once.
+    /// A folder that cannot be read is passed over.
+    /// </summary>
+    public static List<string> WantedProcesses(IEnumerable<string> roots)
+    {
+        var walk = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System };
+        var names = new List<string>(Processes);
+        foreach (var root in roots.Where(Directory.Exists))
+        {
+            foreach (var exe in Directory.EnumerateFiles(root, "*Tests*.exe", walk))
+            {
+                var name = Path.GetFileName(exe);
+                if (exe.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                    && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    names.Add(name);
+                }
+            }
+        }
+        return names;
+    }
 
     /// <summary>What Get-MpPreference gives a process that is not elevated, in place of the list: Defender hides its exclusions from it.</summary>
     private const string Hidden = "N/A";
