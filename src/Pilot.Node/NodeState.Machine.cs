@@ -1,0 +1,180 @@
+using System.Text.Json;
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+
+namespace Pilot.Node;
+
+public sealed partial class NodeState
+{
+    /// <summary>The account's usage as last read; null before any.</summary>
+    public UsageRow? Usage()
+    {
+        lock (_gate)
+        {
+            return _usage;
+        }
+    }
+
+    /// <summary>
+    /// Puts the usage read, merged with the held figures so a stale writer never wins (<see cref="UsageRow.Newest"/>),
+    /// when the figures changed, or when the same ones were written again 10 minutes after those held: a status line
+    /// rewrites them each minute, and a delta for each would fill the journal with nothing.
+    /// </summary>
+    public void PutUsage(UsageRow read)
+    {
+        lock (_gate)
+        {
+            var usage = UsageRow.Newest(_usage, read);
+            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
+                && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
+            {
+                return;
+            }
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+        }
+    }
+
+    /// <summary>The machine as last sampled; null before any.</summary>
+    public MachineRow? Machine()
+    {
+        lock (_gate)
+        {
+            return _machine;
+        }
+    }
+
+    /// <summary>The admission as last put; null before any.</summary>
+    public AdmissionRow? Admission()
+    {
+        lock (_gate)
+        {
+            return _admission;
+        }
+    }
+
+    /// <summary>Puts the admission when it differs from the one held, so a sweep that finds the same count adds no delta.</summary>
+    public void PutAdmission(AdmissionRow row)
+    {
+        lock (_gate)
+        {
+            // Nothing held and nothing to say (no session counted, no priority flight, no peer left out): a node that has just started and swept
+            // adds no event, so a client's first snapshot is the same as before the sweep ran at start.
+            if (_admission is null && row.OpusCount == 0 && row.Counted.Length == 0 && row.Priority.Length == 0 && row.PeersNotCounted is null)
+            {
+                return;
+            }
+            if (_admission is { } held && held.OpusCount == row.OpusCount && held.OpusCap == row.OpusCap && held.OneFlightPerRepo == row.OneFlightPerRepo
+                && held.PeersNotCounted == row.PeersNotCounted && held.Counted.SequenceEqual(row.Counted) && held.Priority.SequenceEqual(row.Priority))
+            {
+                return;
+            }
+            Publish(new AdmissionChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Admission = row });
+        }
+    }
+
+    /// <summary>Every open PR of the repos pilot works in as last read; null before any.</summary>
+    public PullRequestsRow? PullRequests()
+    {
+        lock (_gate)
+        {
+            return _pullRequests;
+        }
+    }
+
+    /// <summary>
+    /// Puts the machine sampled when it changed meaningfully (<see cref="Pilot.Node.Flights.MachineSampler.Differs"/>): a sample every few
+    /// seconds would otherwise put a delta for each, and the journal would fill with CPU jitter.
+    /// </summary>
+    public void PutMachine(MachineRow sampled)
+    {
+        lock (_gate)
+        {
+            if (_machine is { } held && !Pilot.Node.Flights.MachineSampler.Differs(held, sampled))
+            {
+                return;
+            }
+            Publish(new MachineChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Machine = sampled });
+        }
+    }
+
+    // Compared as written, read times aside: a status holds arrays (worktrees, PRs, ideas), which a record compares by reference.
+    private static bool SameRepos(ReposRow held, ReposRow read) =>
+        held.Repos.Length == read.Repos.Length
+        && held.Repos.Zip(read.Repos).All(pair => System.Text.Json.JsonSerializer.Serialize(pair.First with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus)
+            == System.Text.Json.JsonSerializer.Serialize(pair.Second with { UpdatedAt = default }, PilotJsonContext.Default.RepoStatus));
+
+    /// <summary>What the node last said it is (<see cref="NodeRow"/>); null before any.</summary>
+    public NodeRow? Node()
+    {
+        lock (_gate)
+        {
+            return _node;
+        }
+    }
+
+    /// <summary>
+    /// Puts what the node says it is when it differs meaningfully (<see cref="NodeRow.Differs"/>): the watchtower's clock-driven
+    /// figures alone would otherwise put a delta each tick and fill the journal.
+    /// </summary>
+    public void PutNode(NodeRow said)
+    {
+        lock (_gate)
+        {
+            if (_node is { } held && !NodeRow.Differs(held, said))
+            {
+                return;
+            }
+            Publish(new NodeChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = said });
+        }
+    }
+
+    /// <summary>
+    /// Puts the PRs read, when they differ from those held, or when the held read is 2 minutes old: a read every minute that finds
+    /// nothing new would fill the journal with a row of every PR, yet a client dates the row by its read and marks one over 5
+    /// minutes old stale, so the read time is renewed well within that.
+    /// </summary>
+    public void PutPullRequests(PullRequestsRow read)
+    {
+        lock (_gate)
+        {
+            if (_pullRequests is { } held && held.Orgs.SequenceEqual(read.Orgs) && held.Errors.SequenceEqual(read.Errors) && held.Note == read.Note
+                && held.PullRequests.SequenceEqual(read.PullRequests) && read.ReadAt - held.ReadAt < TimeSpan.FromMinutes(2))
+            {
+                return;
+            }
+            Publish(new PullRequestsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+
+    /// <summary>Where every repo the node knows stands as last read, or marked not read yet; null before any.</summary>
+    public ReposRow? Repos()
+    {
+        lock (_gate)
+        {
+            return _repos;
+        }
+    }
+
+    /// <summary>
+    /// Puts the repos read, when their statuses differ from those held (their own read times aside), or when the held read is 2
+    /// minutes old: a read every few minutes that finds nothing new would fill the journal with a row of every repo, yet a
+    /// client dates the row by its read, so the read time is renewed well within that.
+    /// </summary>
+    public void PutRepos(ReposRow read)
+    {
+        lock (_gate)
+        {
+            // A node that knows no repos and has said nothing has nothing to say.
+            if (_repos is null && read.Repos.Length == 0)
+            {
+                return;
+            }
+            if (_repos is { } held && held.ReadAt is { } heldAt && read.ReadAt is { } readAt && readAt - heldAt < TimeSpan.FromMinutes(2)
+                && SameRepos(held, read))
+            {
+                return;
+            }
+            Publish(new ReposChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Row = read });
+        }
+    }
+}

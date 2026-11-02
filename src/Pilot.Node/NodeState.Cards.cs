@@ -1,0 +1,199 @@
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+
+namespace Pilot.Node;
+
+public sealed partial class NodeState
+{
+    /// <summary>The cards, newest first; open ones only when <paramref name="openOnly"/>.</summary>
+    public CardRow[] Cards(bool openOnly = false)
+    {
+        lock (_gate)
+        {
+            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.At).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
+    /// Raises a card, numbered by the node; returns it. A card of the same kind about the same subject still open is
+    /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
+    /// </summary>
+    /// <param name="link">The page the card is about (a flight's PR), opened from the card.</param>
+    /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null)
+    {
+        lock (_gate)
+        {
+            if (bin != CardBin.Handled && _cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
+            {
+                return open;
+            }
+            var now = _time.GetUtcNow();
+            var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
+            var card = new CardRow
+            {
+                Id = $"c{number}",
+                Bin = bin,
+                Kind = kind,
+                Subject = subject,
+                Title = title,
+                Detail = detail,
+                Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
+                Choices = [.. choices ?? []],
+                Link = link,
+                AskedBy = askedBy,
+                Why = why,
+                At = now,
+                State = bin == CardBin.Handled ? CardState.Closed : CardState.Open,
+                Outcome = bin == CardBin.Handled ? "handled" : null,
+                ClosedBy = bin == CardBin.Handled ? "node" : null,
+                ClosedAt = bin == CardBin.Handled ? now : null,
+            };
+            Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
+            return card;
+        }
+    }
+
+    /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
+    public bool CloseCard(string id, string outcome, string closedBy)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var now = _time.GetUtcNow();
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
+            return true;
+        }
+    }
+
+    /// <summary>Gives an open card new choices (a merge's checks turned green, say); false when it is not open or nothing changed.</summary>
+    public bool UpdateChoices(string id, IReadOnlyList<CardChoice> choices, IReadOnlyList<CardChoice>? ifStill = null)
+    {
+        lock (_gate)
+        {
+            // With ifStill, a compare-and-set: written only while the card still holds the choices the caller read, so a press
+            // that armed the merge between that read and this write is not undone.
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open || card.Choices.SequenceEqual(choices)
+                || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = [.. choices] } });
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Turns an open card into what its thing has become (a merge armed, then failed on one check), keeping its place and id:
+    /// one <see cref="CardChangedEvent"/>, none when nothing changed. A <paramref name="kind"/> given is the card's new kind.
+    /// False when the card is not open or nothing changed.
+    /// </summary>
+    public bool UpdateCard(string id, string title, string? detail, IReadOnlyList<CardChoice> choices, string? link, string? kind = null, string? summary = null)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var next = card with { Title = title, Detail = detail, Choices = [.. choices], Link = link, Kind = kind ?? card.Kind };
+            // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
+            next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
+            if (next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
+                && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = next });
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Marks the Merge choice of every card about <paramref name="subject"/> that offers one, open or closed already, as merged
+    /// (<see cref="ChoiceStatus.Merged"/>): the card reads Merged on every client for the few seconds it lingers, as the answer that
+    /// merged it closes it, or the landing does. One <see cref="CardChangedEvent"/> per card changed.
+    /// </summary>
+    public void MarkMerged(string subject)
+    {
+        lock (_gate)
+        {
+            foreach (var card in _cards.Values.Where(c => c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Status != ChoiceStatus.Merged)).ToList())
+            {
+                // Closed within the last minute only: an older card's Merge says what it said when it closed.
+                if (card.State == CardState.Closed && (card.ClosedAt is not { } at || _time.GetUtcNow() - at > TimeSpan.FromMinutes(1)))
+                {
+                    continue;
+                }
+                Publish(new CardChangedEvent
+                {
+                    Seq = _seq + 1, At = _time.GetUtcNow(),
+                    Card = card with { Choices = [.. card.Choices.Select(ch => ch.Verb == Verbs.Merge ? ch with { Status = ChoiceStatus.Merged, Note = null } : ch)] },
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Says what the choice a card closed with came to (a review posted, by its id), and where to see it; nothing when the
+    /// card is not closed.
+    /// </summary>
+    public void NoteOutcome(string id, string outcome, string? link = null)
+    {
+        lock (_gate)
+        {
+            if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
+            {
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Outcome = outcome, Link = link ?? card.Link } });
+            }
+        }
+    }
+
+    /// <summary>Adds <paramref name="who"/> to the sessions an open ask card tells what became of it; false when it is not open or they are on it.</summary>
+    public bool AddAsker(string id, string who)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open
+                || string.Equals(card.AskedBy, who, StringComparison.OrdinalIgnoreCase) || card.AlsoAskedBy.Contains(who, StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { AlsoAskedBy = [.. card.AlsoAskedBy, who] } });
+            return true;
+        }
+    }
+
+    /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
+    public void ReopenCard(string id)
+    {
+        lock (_gate)
+        {
+            if (_cards.TryGetValue(id, out var card) && card.State == CardState.Closed)
+            {
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null } });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes every open card about <paramref name="subject"/> or anything under it (a flight's cards include its legs'),
+    /// of the given kinds or all: its thing is done, so its card leaves.
+    /// </summary>
+    public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
+    {
+        lock (_gate)
+        {
+            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open
+                && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))
+                && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
+            {
+                var now = _time.GetUtcNow();
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = "node", ClosedAt = now } });
+            }
+        }
+    }
+}
