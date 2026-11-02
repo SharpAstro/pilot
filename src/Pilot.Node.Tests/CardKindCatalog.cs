@@ -28,7 +28,11 @@ internal static class CardKindCatalog
     private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Watch = "Flights/LegWatch.cs";
-    private const string Flight = "Flights/FlightCommander.cs";
+    private const string FlightCommanderConnect = "Flights/FlightCommander.Connect.cs";
+    private const string FlightCommanderCreate = "Flights/FlightCommander.Create.cs";
+    private const string FlightCommanderLand = "Flights/FlightCommander.Land.cs";
+    private const string FlightCommanderReceive = "Flights/FlightCommander.Receive.cs";
+    private const string FlightCommanderRoute = "Flights/FlightCommander.Route.cs";
     private const string Move = "Flights/LegCommander.Move.cs";
     private const string Checks = "Flights/PrChecks.cs";
     private const string Reviews = "Flights/PrReviews.cs";
@@ -72,7 +76,7 @@ internal static class CardKindCatalog
         new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
         new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard"),
-        new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, Flight], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive"),
+        new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, FlightCommanderCreate], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive"),
         new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
         new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
         new("planner-started", "Handled", [LegPlanners], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
@@ -98,7 +102,7 @@ internal static class CardKindCatalog
         new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
         new("merge-taken-back", "Handled", [LegMerge], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
-        new("merged-under-leg", "Ring", [Flight], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),
+        new("merged-under-leg", "Ring", [FlightCommanderLand], "MergedUnderLegTests.ADoneLegGoesToANewPrWithTheMergedBaseMergedInAndPushedPlain"),
         new("not-landed", "Ring", [Checks], "MergedUnderLegTests.AMergeSeenWithUncommittedChangesKeepsThePlaneAndRings"),
         new("closed-landed", "Handled", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithNothingOfItsOwnLeftLandsAndOneWithWorkRings"),
         new("closed-with-work", "Ring", [Checks], "ReviewTests.AFlightWhosePrWasClosedWithWorkOfItsOwnRingsOnceAndStaysFlying"),
@@ -107,17 +111,17 @@ internal static class CardKindCatalog
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
         new("autopilot-merge-refused", "Ring", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver"),
         new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
-        new("node-label-refused", "ForYou|Handled", [Flight, Move, LegOpenPr, "Flights/RepoSetup.cs"], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
+        new("node-label-refused", "ForYou|Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "Ring", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
-        new("landed", "Handled", [Flight], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
-        new("issue-left-open", "ForYou", [Flight], SourcePinned),
-        new("plane-left", "ForYou|Handled", [Flight, Move], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
-        new("folded", "Handled", [Flight], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),
-        new("routed", "Handled", [Flight], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
-        new("connection-released", "Handled", [Flight], "ConnectReleaseTests.ALandWithoutAPrReleasesTheWaiterFromThatFlightOnly"),
-        new("disconnected", "Handled", [Flight], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
-        new("received", "Handled", [Flight], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
+        new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
+        new("issue-left-open", "ForYou", [FlightCommanderLand], SourcePinned),
+        new("plane-left", "ForYou|Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
+        new("folded", "Handled", [FlightCommanderLand], "OverlapTests.FoldRetiresTheAskingFlightLandedAndMarkedFoldedWithNoLegsAndItsPlaneGoneButItsBranchKept"),
+        new("routed", "Handled", [FlightCommanderRoute], "FleetRoutingTests.ARoutedFlightIsMadeOnTheWillingPeerWithItsOwnCheckoutAndSaysWhere"),
+        new("connection-released", "Handled", [FlightCommanderConnect], "ConnectReleaseTests.ALandWithoutAPrReleasesTheWaiterFromThatFlightOnly"),
+        new("disconnected", "Handled", [FlightCommanderConnect], "DisconnectTests.TheDroppedConnectionStaysDroppedWhenTheJournalIsReplayed"),
+        new("received", "Handled", [FlightCommanderReceive], "FlightMoveTests.AHandedFlightArrivesWithItsLegsReportsPrReviewAndOpenCardsOnAPlaneAtThePushedHead"),
         new("move-failed", "Ring", [Move], "FlightMoveTests.APushBehindTheRemoteLeavesTheFlightHereWithTheReasonAndARetryThatRunsTheMoveAgain"),
         new("planner-ended", "Handled", ["Flights/LegCommander.Planners.cs"], "PlannerWindDownTests.AnIdlePlannerOfAFlightWhoseLegFliesIsEndedAsPlannedAndItsSlotGoesToTheNextFlightOnTheSweep"),
         new("moved-away", "Handled", [Move], "FlightMoveTests.AHandMoveOutsideMaintenanceMovesTheFlightAsWell"),
@@ -189,7 +193,7 @@ internal static class CardKindCatalog
         "Flights/LegWatch.cs|kind",
         "Flights/LegWatch.cs|cardKind",
         "Flights/StartGate.cs|kind",
-        "Flights/FlightCommander.cs|card.Kind",
+        "Flights/FlightCommander.Receive.cs|card.Kind",
         "Flights/PrReviews.Cards.cs|kind",
     ];
 
@@ -206,8 +210,9 @@ internal static class CardKindCatalog
         ["Flights/LegCommander.Move.cs|text"] = "the move's own line: who handed the flight to whom",
         ["Flights/PrReviews.Cards.cs|title"] = "the parameter of PrReviews.RaiseOnce, whose titles are the literals at each RaiseOnce( call, which the guard reads as it reads RaiseCard",
         ["Flights/PackageWatch.cs|late.Title"] = "PackageWatch.LateAsync names the package, its version and the run",
-        ["Flights/FlightCommander.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
-        ["Flights/FlightCommander.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
+        ["Flights/FlightCommander.Receive.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
+        ["Flights/FlightCommander.Route.cs|way"] = "the line the routing or the move wrote: where the flight went and why",
         ["NodeCommands.cs|title"] = "the title the person, the watchtower or a session gave to pilot raise",
         ["NodeSettingsCommands.cs|line"] = "the line the restart wrote: who restarted the node and how",
         ["Updates/NodeUpdater.cs|line"] = "the line the install wrote: the version installed and the node restarted",
