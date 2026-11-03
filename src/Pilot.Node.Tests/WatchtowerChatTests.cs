@@ -331,6 +331,51 @@ public sealed class WatchtowerChatTests : IDisposable
         answered.Choices.ShouldBeNull();
     }
 
+    private async Task<ChatPage> PageAfter(string reply)
+    {
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        _profile.Append(_profile.TranscriptPath(First), Asked("m1", reply));
+        return _chat.Page(-1);
+    }
+
+    [Fact]
+    public async Task ChoicesNumberedInlineInOneParagraphAreSeparateChoices()
+    {
+        var page = await PageAfter(@"SE1 overlaps an open PR. 1. Plan both in parallel. It flies beside it. 2. Connect one of them. The other waits.");
+
+        page.PendingQuestion.ShouldBe("SE1 overlaps an open PR.");
+        page.Choices.ShouldBe(["Plan both in parallel. It flies beside it.", "Connect one of them. The other waits."]);
+    }
+
+    [Fact]
+    public async Task ChoicesNumberedOnTheirOwnLinesAreSeparateChoices()
+    {
+        var page = await PageAfter(@"Which way?\n1. Go ahead\n2) Hold off");
+
+        page.PendingQuestion.ShouldBe("Which way?");
+        page.Choices.ShouldBe(["Go ahead", "Hold off"]);
+    }
+
+    [Fact]
+    public async Task ANumberInsideASentenceWithNoRunFromOneIsNoChoice()
+    {
+        var page = await PageAfter(@"Was PR 2. was merged before version 1.2 shipped? Say which.");
+
+        page.PendingQuestion.ShouldBe("Was PR 2. was merged before version 1.2 shipped? Say which.");
+        page.Choices.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheParserKeepsDashLinesAndLeavesVersionNumbersAlone()
+    {
+        var (question, choices) = AskChoices.Split("Q?\n- a\n- b");
+        question.ShouldBe("Q?");
+        choices.ShouldBe(["a", "b"]);
+        AskChoices.Split("Version 1.2 is out").Choices.ShouldBeEmpty();
+        AskChoices.Split("PR 2. was merged").Choices.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task ACardTheNodeSaysWhileAQuestionWaitsLeavesItPending()
     {
@@ -494,6 +539,9 @@ public sealed class WatchtowerChatTests : IDisposable
         // A choice names what it acts on: "Leave it" after a list of six items left nobody sure which (2026-10-27).
         brief.ShouldContain("Leave PIL338's leg waits-are-said alone for now");
         brief.ShouldContain("<ask>");
+        // One choice per `- ` line: numbered or inline choices once left the answer box empty (PIL662).
+        brief.ShouldContain("Every choice goes on its own `- ` line: never number them");
+        brief.ShouldContain("never run several choices together in one line");
         brief.ShouldContain("Allow card");
         brief.ShouldContain("Never go round it with gh or git directly");
     }

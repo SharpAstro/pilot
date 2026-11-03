@@ -154,6 +154,8 @@ public static partial class Briefs
         text.AppendLine("  - tianwen");
         text.AppendLine("  - pilot");
         text.AppendLine("  </ask>");
+        text.AppendLine("  Every choice goes on its own `- ` line: never number them (`1.`, `2)`) and never run several choices together in one line or");
+        text.AppendLine("  paragraph, or the buttons come out wrong.");
         text.AppendLine("  One question per block, about one thing, and each choice says in full what it does to which flight, leg, PR or job, so it");
         text.AppendLine("  reads right on its own: \"Leave PIL338's leg waits-are-said alone for now\", \"Redo leg waits-are-said once more\", never");
         text.AppendLine("  \"Leave it\" or \"Yes\". After a reply that listed several open items, ask about one of them by name, not all at once.");

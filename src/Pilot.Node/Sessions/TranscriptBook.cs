@@ -809,9 +809,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         {
             return null;
         }
-        var lines = block.Groups["body"].Value.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var choices = lines.Where(l => l.StartsWith("- ", StringComparison.Ordinal)).Select(l => l[2..].Trim()).Where(l => l.Length > 0).ToArray();
-        var question = string.Join(" ", lines.Where(l => !l.StartsWith("- ", StringComparison.Ordinal)));
+        var (question, choices) = AskChoices.Split(block.Groups["body"].Value);
         return question.Length == 0 ? null : (question, choices);
     }
 
