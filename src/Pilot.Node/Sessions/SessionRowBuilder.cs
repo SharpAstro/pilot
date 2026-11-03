@@ -68,7 +68,11 @@ public static class SessionRowBuilder
             hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
         }
         SessionReport? reported = null;
-        if (report is not null && agent.Pid is not null && (hook is null || report.At > hook.At)
+        // A blocked report is followed by the turn's own Stop (or an idle_prompt): those only say the turn ended, which is
+        // what a blocked session does, so they must not clear it. Only work taken up again, a newer report or an end does.
+        var endOfTurn = hook is { State: SessionState.Idle, ApiError: null, Event: "Stop" or "Notification" };
+        if (report is not null && agent.Pid is not null
+            && (hook is null || report.At > hook.At || (report.State == ReportBook.Blocked && endOfTurn))
             && report.State is ReportBook.Idle or ReportBook.Working or ReportBook.Blocked)
         {
             reported = report;

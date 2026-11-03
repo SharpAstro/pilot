@@ -60,7 +60,7 @@ public sealed class SessionReportTests
 
     [Theory]
     [InlineData("UserPromptSubmit", SessionState.Working)]
-    [InlineData("Stop", SessionState.Idle)]
+    [InlineData("PreToolUse", SessionState.Working)]
     public void AHookNewerThanTheReportOverridesIt(string hookEvent, SessionState hooked)
     {
         var hook = new HookState(hookEvent, T0.AddSeconds(5), hooked, null, null);
@@ -73,6 +73,26 @@ public sealed class SessionReportTests
 
         // A hook older than the report loses to it.
         Build(Agent(4343), hook with { At = T0.AddSeconds(-5) }, Blocked()).State.ShouldBe(SessionState.Waiting);
+    }
+
+    [Theory]
+    [InlineData("Stop")]
+    [InlineData("Notification")]
+    public void TheTurnsOwnStopAfterABlockedReportDoesNotClearIt(string hookEvent)
+    {
+        // PreToolUse at T0 (the report command itself), report blocked at T1, then the turn ends: Stop at T2.
+        var hook = new HookState(hookEvent, T0.AddSeconds(5), SessionState.Idle, null, null);
+
+        var row = Build(Agent(4343, status: "idle"), hook, Blocked());
+
+        row.State.ShouldBe(SessionState.Waiting);
+        row.Reported.ShouldBe("blocked");
+        row.WaitingFor.ShouldBe("needs the VPN");
+
+        // A Stop clears a working report, and an ended session clears a blocked one.
+        Build(Agent(4343), hook, new SessionReport(ReportBook.Working, null, 1, T0)).State.ShouldBe(SessionState.Idle);
+        var ended = new HookState("SessionEnd", T0.AddSeconds(5), SessionState.Ended, null, null);
+        Build(Agent(null, status: null), ended, Blocked()).Reported.ShouldBeNull();
     }
 
     [Fact]

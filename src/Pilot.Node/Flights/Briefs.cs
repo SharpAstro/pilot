@@ -72,9 +72,8 @@ public static partial class Briefs
 
     /// <summary>What every pilot-started session is told about saying it needs the person: it reports blocked, so every client shows it so.</summary>
     internal static string ReportRule(string run) =>
-        $"- When you need the person to decide something and cannot go on, run `{run} session report blocked \"<what you need>\"` (the MCP tool\n" +
-        "  `session_report` works the same) and end your turn. When you take up the work again the node sees it from your next hook, so no\n" +
-        "  report is needed.";
+        $"- When you need the person to decide something and cannot go on, run `{run} session report blocked \"<what you need>\"` and end your turn.\n" +
+        "  When you take up the work again the node sees it from your next hook, so no report is needed.";
 
     /// <summary>
     /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node

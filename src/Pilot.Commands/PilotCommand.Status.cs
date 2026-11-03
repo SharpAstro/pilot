@@ -142,13 +142,13 @@ public static partial class PilotCommand
         return text.ToString();
     }
 
-    /// <summary>Every session, a line each: name, role and flight, state, model, context and spend.</summary>
     /// <summary>The state as the listing writes it: a session that reported itself blocked is <c>blocked: message</c>, any other its state.</summary>
     private static string StateWord(SessionRow row) =>
         row.State == SessionState.Waiting && row.Reported == "blocked"
             ? (row.WaitingFor is { Length: > 0 } why ? $"blocked: {why}" : "blocked")
             : row.State.ToString().ToLowerInvariant();
 
+    /// <summary>Every session, a line each: name, role and flight, state, model, context and spend.</summary>
     internal static string Sessions(IReadOnlyList<SessionRow> rows, string? machine = null)
     {
         var text = new System.Text.StringBuilder();

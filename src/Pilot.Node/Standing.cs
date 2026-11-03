@@ -205,7 +205,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         var wanted = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : command.SessionId;
         // No session named yet: the command's own refusal says so.
         return wanted is not { Length: > 0 }
-            || state.Sessions().FirstOrDefault(s => string.Equals(s.Id, wanted, StringComparison.OrdinalIgnoreCase) || string.Equals(s.SessionId, wanted, StringComparison.OrdinalIgnoreCase)) is not { } row
+            || state.Sessions().FirstOrDefault(s => string.Equals(s.Id, wanted, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(s.SessionId, wanted, StringComparison.OrdinalIgnoreCase)
+                || s.EarlierSessionIds?.Contains(wanted, StringComparer.OrdinalIgnoreCase) == true) is not { } row
             || string.Equals(row.Name, command.Who, StringComparison.Ordinal);
     }
 
