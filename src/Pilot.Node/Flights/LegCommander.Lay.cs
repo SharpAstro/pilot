@@ -166,24 +166,26 @@ public sealed partial class LegCommander
         {
             // The laid head is new, so the queue is joined once there.
             // Asked of GitHub directly, at the head just pushed: its PR may still show the old one for a moment, which a merge command would refuse.
-            try
+            if (flight.PullRequest is { } queued)
             {
-                if (flight.PullRequest is { } queued)
+                var outcome = await LandPrAsync(github, flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
+                if (outcome.Kind is LandKind.RetryLater)
                 {
-                    await github.MergeAsync(flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
+                    // GitHub did not answer: the node waits on the laid head and asks again at its next look, with no card.
+                    Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
                 }
-            }
-            catch (FlightException ex)
-            {
-                // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
-                // once they pass. The laid head is the node's own, never marked as a GitHub drop.
-                RaiseReadyAtLaid(flight, laid, ex.Message);
-                // Where the repo's queue needs the checks first (auto-merge off, enqueue refused until they report), the node waits for
-                // them on the laid head and joins the queue then, as for any armed merge.
-                Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
-                if (_dropRung.TryAdd($"{code} {laid}", true))
+                else if (outcome.Kind is LandKind.Refused)
                 {
-                    state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", ex.Message);
+                    // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
+                    // once they pass. The laid head is the node's own, never marked as a GitHub drop.
+                    RaiseReadyAtLaid(flight, laid, outcome.Said ?? "");
+                    // Where the repo's queue needs the checks first (auto-merge off, enqueue refused until they report), the node waits for
+                    // them on the laid head and joins the queue then, as for any armed merge.
+                    Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
+                    if (_dropRung.TryAdd($"{code} {laid}", true))
+                    {
+                        state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", outcome.Said);
+                    }
                 }
             }
             return true;

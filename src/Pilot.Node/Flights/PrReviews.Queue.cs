@@ -99,14 +99,17 @@ public sealed partial class PrReviews
                 [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
-        try
+        var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+        if (outcome.Kind == LandKind.RetryLater)
         {
-            await github.MergeAsync(review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+            // GitHub did not answer: no note and no card, so the next sweep asks again.
+            return;
         }
-        catch (FlightException ex)
+        if (outcome.Kind == LandKind.Refused)
         {
-            state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {ex.Message}" });
-            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(ex.Message)}", ex.Message,
+            var said = outcome.Said ?? "GitHub refused";
+            state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
+            state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
                 [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {review.Head[..Math.Min(8, review.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
@@ -136,7 +139,12 @@ public sealed partial class PrReviews
         {
             throw new FlightException($"{pr}'s head moved to {read.Head[..Math.Min(8, read.Head.Length)]} past the {head[..7]} reviewed: review it again");
         }
-        var queued = await github.MergeAsync(review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        if (!outcome.Done)
+        {
+            throw new FlightException(outcome.Said ?? "GitHub did not answer the merge: try again");
+        }
+        var queued = outcome.Kind == LandKind.Queued;
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.", link: review.Url);

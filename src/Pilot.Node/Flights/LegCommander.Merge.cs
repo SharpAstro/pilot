@@ -158,26 +158,24 @@ public sealed partial class LegCommander
         }
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
-        var queueHead = await ShapeForMergeAsync(flight, pr.Head, method, cancellationToken);
-        try
+        var outcome = await LandFlightAsync(flight, pr, method, cancellationToken);
+        var laid = !string.Equals(outcome.Head, pr.Head, StringComparison.OrdinalIgnoreCase);
+        switch (outcome.Kind)
         {
-            return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
-                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
-                : (true, null, null);
-        }
-        catch (MergeRefusedException refusal) when (refusal.Kind == MergeAnswerKind.NotRebaseable)
-        {
-            // Shaped already and GitHub still cannot rebase it: the same head merges by squash, else merge, said on the flight, no card.
-            return await MergeWhenNotRebaseableAsync(flight, pr.Number, queueHead, refusal, cancellationToken)
-                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
-                : (true, null, null);
-        }
-        catch (FlightException ex) when (!string.Equals(queueHead, pr.Head, StringComparison.OrdinalIgnoreCase))
-        {
-            // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
-            // merge waits for the checks there, as for any head whose checks run.
-            RaiseReadyAtLaid(flight, queueHead, ex.Message);
-            return await ArmAsync(flight, pr with { Head = queueHead }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
+            case LandKind.Merged:
+                return (true, null, null);
+            case LandKind.Queued:
+                return (false, QueuedLine(flight.Code), MergeWays.Queued);
+            case LandKind.RetryLater:
+                // GitHub did not answer: the merge waits on the flight and the node asks again at its next look, with no card.
+                return await ArmAsync(flight, pr with { Head = outcome.Head }, method, null, $"GitHub did not answer the merge ({OneLine(outcome.Said ?? "no answer")}); the node asks again", command.Who == "node", cancellationToken);
+            case LandKind.Refused when laid && outcome.Answer is not (MergeAnswerKind.Behind or MergeAnswerKind.Conflicts or MergeAnswerKind.HeadMoved):
+                // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
+                // merge waits for the checks there, as for any head whose checks run.
+                RaiseReadyAtLaid(flight, outcome.Head, outcome.Said ?? "");
+                return await ArmAsync(flight, pr with { Head = outcome.Head }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
+            default:
+                throw RefusalOf(pr.Number, outcome);
         }
     }
 

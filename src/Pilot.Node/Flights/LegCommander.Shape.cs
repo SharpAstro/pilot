@@ -137,24 +137,4 @@ public sealed partial class LegCommander
         await LeasePushAsync(plane, flight.Branch, old, cancellationToken);
         return (shaped, old, null);
     }
-
-    /// <summary>
-    /// GitHub said the branch "can't be rebased" at <paramref name="head"/> even after it was shaped: merges the same head by squash,
-    /// else by merge, as the repo allows. Said on the flight in words; no card rings. Returns whether it joined a queue (as
-    /// <see cref="IGitHub.MergeAsync"/>). Throws the refusal when no other method is allowed.
-    /// </summary>
-    private async Task<bool> MergeWhenNotRebaseableAsync(FlightRow flight, int number, string head, MergeRefusedException refusal, CancellationToken cancellationToken)
-    {
-        var allowed = await OffLockAsync(null, () => github.AllowedMergeMethodsAsync(flight.RepoPath, cancellationToken));
-        foreach (var other in new[] { "squash", "merge" })
-        {
-            if (allowed is not null && !allowed.Allows(other))
-            {
-                continue;
-            }
-            SetEntry(flight.Code, MergeEntryState.Merging, $"GitHub could not rebase {Short(head)}, so #{number} merges by {other} at the same head");
-            return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, number, head, other, cancellationToken));
-        }
-        throw refusal;
-    }
 }
