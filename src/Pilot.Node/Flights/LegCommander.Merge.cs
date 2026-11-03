@@ -108,6 +108,8 @@ public sealed partial class LegCommander
     private async Task<(bool Merged, string? Made, string? Way)> MergeEntryAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var (flight, head, method) = Mergeable(command);
+        // A fallback note belongs to the merge that made it: one left by a merge that failed would show on this one.
+        _mergeFallbacks.TryRemove(flight.Code, out _);
         // Every ask of GitHub and git is made with the lock let go (PIL338): the flight is this command's meanwhile, and what it
         // found is recorded only if the flight is still as it was decided on.
         using var call = Calling(flight.Code, "being merged");

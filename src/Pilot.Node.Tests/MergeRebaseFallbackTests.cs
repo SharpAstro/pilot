@@ -58,6 +58,16 @@ public sealed class MergeRebaseFallbackTests
         node.State.Merges().Single().State.ShouldBe(MergeEntryState.Merged);
     }
 
+    // The entry and the card show these words while the merge runs; landing ends the entry with no note, so the words are pinned here.
+    [Fact]
+    public void TheNoteSaysWhichMethodTookOverFromTheRebase()
+    {
+        MergeFallback.Note("squash").ShouldContain("rebase was refused");
+        MergeFallback.Note("squash").ShouldContain("merging with squash instead");
+        MergeFallback.PreferredNote("merge").ShouldContain("holds a merge commit");
+        MergeFallback.PreferredNote("merge").ShouldContain("merging with merge instead");
+    }
+
     [Fact]
     public async Task ARepoThatAllowsOnlyMergeCommitsIsRetriedWithMerge()
     {
