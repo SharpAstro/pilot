@@ -207,6 +207,24 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheFlightsResourceCarriesAHoldingFlightsReasonAsItsStatusReadsIt()
+    {
+        _node.State.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "o/r", RepoPath = "r", Issue = 1, Branch = "flight/tia1", Worktree = "w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+            Holding = new FlightHolding { Reason = "the watchtower is making the review's small fixes", Since = DateTimeOffset.UnixEpoch, By = "node" },
+        });
+
+        var replies = await Serve(Server(), Initialize,
+            """{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"pilot://flights"}}""");
+
+        var text = replies[1].GetProperty("result").GetProperty("contents")[0].GetProperty("text").GetString()!;
+        var flight = JsonDocument.Parse(text).RootElement.EnumerateArray().Single().Deserialize(PilotJsonContext.Default.FlightRow)!;
+        FlightWaiting.HoldingText(flight).ShouldBe("holding: the watchtower is making the review's small fixes");
+    }
+
+    [Fact]
     public async Task WithNoNodeACallAndARead_SaySo()
     {
         var server = new McpServer(_node.Folder, node: null, socket: Path.Combine(_node.Folder, "none.sock"));

@@ -674,9 +674,52 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// A flight whose review passed at its PR's head, every leg done, with no merge card open and none closed for that head, is
+    /// given its PR-ready card (holding-aware): autopilot merges only from one, and a node that restarted between the stored
+    /// verdict and the card left PIL682 flying for six hours (2026-11-03).
+    /// </summary>
+    private async Task RestorePassedWithoutCardAsync(CancellationToken cancellationToken)
+    {
+        if (legs is null)
+        {
+            return;
+        }
+        var carded = state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, MergeWhenGreen: null, Review: { State: ReviewState.Passed, ReviewedHead: not null } }
+            && !carded.Contains(Verbs.FlightTarget(f.Code))))
+        {
+            var flown = state.Legs(flight.Code);
+            if (flown.Length == 0 || flown.Any(l => l.State != LegState.Done) || legs.IsMerging(flight.Code))
+            {
+                continue;
+            }
+            try
+            {
+                var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+                if (pr is { State: "OPEN" } && pr.Number == flight.PullRequest && string.Equals(pr.Head, flight.Review!.ReviewedHead, StringComparison.OrdinalIgnoreCase))
+                {
+                    // A PR the merge queue holds, or let go unmerged, is LookAtQueuesAsync's (queued, or its drop handled): no new merge card.
+                    var queue = await github.MergeQueueAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
+                    if (queue is { State: "OPEN" } && (queue.Queued
+                        || (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))))
+                    {
+                        continue;
+                    }
+                    await legs.RestorePrReadyAsync(flight.Code, pr.Head, cancellationToken);
+                }
+            }
+            catch (FlightException ex)
+            {
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s PR-ready card could not be restored: {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        await RestorePassedWithoutCardAsync(cancellationToken);
         LookAtHolds();
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
