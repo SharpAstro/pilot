@@ -145,7 +145,10 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
         var wait = card.Choices.Single(c => c.Label == "Wait");
-        (await Run(wait.Verb, wait.Target, "me", [.. wait.Args])).Error.ShouldBeNull();
+        // Dismiss is the node's own verb (NodeCommands), not the leg commander's: close the card as it does.
+        wait.Verb.ShouldBe(Verbs.Dismiss);
+        wait.Target.ShouldBe(Verbs.CardTarget(card.Id));
+        _state.CloseCard(card.Id, "waiting for the watchtower", "me");
         clock.Advance(TimeSpan.FromMinutes(10));
         await checks.LookAsync(Ct);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
