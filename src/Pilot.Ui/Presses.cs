@@ -21,6 +21,9 @@ internal sealed class Presses
     /// <summary>How long a taken mark stands without a read showing the outcome: the row cannot say "reviewing" for a review that never ran.</summary>
     public TimeSpan TakenFor { get; set; } = TimeSpan.FromMinutes(2);
 
+    /// <summary>How long the button of a press that ended shows its done or refused mark before it returns to rest; separate from <see cref="TakenFor"/>, which pages read through <see cref="IsTaken"/>.</summary>
+    public TimeSpan DoneFor { get; set; } = TimeSpan.FromSeconds(3);
+
     /// <summary>Asked for a redraw at the press and at the answer (the host's <c>RequestRedraw</c>, or the page's own Changed).</summary>
     public Action? Changed { get; set; }
 
@@ -29,6 +32,8 @@ internal sealed class Presses
     private ImmutableDictionary<string, string> _refused = ImmutableDictionary.Create<string, string>(StringComparer.Ordinal);
     // Stopwatch timestamps of the presses the node took.
     private ImmutableDictionary<string, long> _taken = ImmutableDictionary.Create<string, long>(StringComparer.Ordinal);
+
+    private ImmutableDictionary<string, PressMark> _marks = ImmutableDictionary.Create<string, PressMark>(StringComparer.Ordinal);
 
     private static readonly ConcurrentDictionary<string, byte> MadeIds = new(StringComparer.Ordinal);
 
@@ -88,6 +93,7 @@ internal sealed class Presses
             return null;
         }
         NoteRefused(key, null);
+        ImmutableInterlocked.TryRemove(ref _marks, key, out _);
         // Said on the button at once: a press with nothing to show for it reads as a press that missed.
         Changed?.Invoke();
         string? refused;
@@ -112,9 +118,47 @@ internal sealed class Presses
             refused = say is null ? refused : say(refused);
             NoteRefused(key, refused);
         }
-        Changed?.Invoke();
+        ImmutableInterlocked.AddOrUpdate(ref _marks, key, new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()), (_, _) =>
+            new PressMark(hit, refused is not null, System.Diagnostics.Stopwatch.GetTimestamp()));
+        var changed = Changed;
+        changed?.Invoke();
+        if (changed is not null && DoneFor > TimeSpan.Zero)
+        {
+            // The button returns to rest without a click: one more redraw when the window lapses. Nothing waits on a thread.
+            _ = Task.Delay(DoneFor, CancellationToken.None).ContinueWith(_ => (Changed ?? changed)(), TaskScheduler.Default);
+        }
         return refused;
     }
+
+    /// <summary>The brief outcome mark of a press: which button was pressed, whether the node refused it, and when it ended.</summary>
+    public readonly record struct PressMark(string Hit, bool Refused, long At);
+
+    /// <summary>The outcome mark of the last press of <paramref name="key"/> while it is within <see cref="DoneFor"/>, else null.</summary>
+    public PressMark? MarkOf(string key)
+    {
+        if (!Volatile.Read(ref _marks).TryGetValue(key, out var mark))
+        {
+            return null;
+        }
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(mark.At) < DoneFor)
+        {
+            return mark;
+        }
+        ImmutableInterlocked.TryRemove(ref _marks, key, out _);
+        return null;
+    }
+
+    /// <summary>The done or refused word of <paramref name="key"/> as a dimmed line, for a page whose button goes away after the press; null outside the window.</summary>
+    public Layout.Node? DoneLine(string key, float size) =>
+        MarkOf(key) is { } mark && PendingOf(key) is null
+            ? Layout.Builder.Text(mark.Refused ? RefusedWord : DoneWord, size, Palette.Current.Dim).Selectable().RowH(18f)
+            : null;
+
+    private const string DoneWord = "done";
+    private const string RefusedWord = "refused";
+
+    private static Layout.Node Mark(bool refused) =>
+        Layout.Builder.Text(refused ? RefusedWord : DoneWord, 12f, Palette.Current.Dim, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(Palette.Current.MenuBg);
 
     /// <summary>
     /// A node-bound button: <paramref name="idle"/> (made with <paramref name="hit"/>) while nothing of <paramref name="key"/> is with the
@@ -123,17 +167,25 @@ internal sealed class Presses
     public Layout.Node Button(string key, string hit, Func<Layout.Node> idle, Func<bool, Layout.Node> working)
     {
         MadeIds.TryAdd(hit, 0);
-        return PendingOf(key) is { } pressed ? working(pressed == hit) : idle();
+        if (PendingOf(key) is { } pressed)
+        {
+            return working(pressed == hit);
+        }
+        return MarkOf(key) is { } mark && mark.Hit == hit ? Mark(mark.Refused) : idle();
     }
 
     /// <summary>
     /// As <see cref="Button"/>, for a press that another page's <see cref="Presses"/> runs (a row's Merge asks through its card): the
     /// working state is read from <paramref name="pendingOf"/>, the hit id of the press with the node now or null.
     /// </summary>
-    public static Layout.Node ButtonOf(string hit, Func<string?> pendingOf, Func<Layout.Node> idle, Func<bool, Layout.Node> working)
+    public static Layout.Node ButtonOf(string hit, Func<string?> pendingOf, Func<Layout.Node> idle, Func<bool, Layout.Node> working, Func<PressMark?>? markOf = null)
     {
         MadeIds.TryAdd(hit, 0);
-        return pendingOf() is { } pressed ? working(pressed == hit || pressed.Length > 0) : idle();
+        if (pendingOf() is { } pressed)
+        {
+            return working(pressed == hit || pressed.Length > 0);
+        }
+        return markOf?.Invoke() is { } mark && mark.Hit == hit ? Mark(mark.Refused) : idle();
     }
 
     /// <summary>The refusal of <paramref name="key"/> as a wrapped line in <paramref name="color"/>, or null while a press is with the node or when nothing was refused.</summary>

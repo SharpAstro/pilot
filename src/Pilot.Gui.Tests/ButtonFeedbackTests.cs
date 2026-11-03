@@ -52,6 +52,7 @@ public sealed class ButtonFeedbackTests
     public async Task AButtonIsItsWorkingLabelWithNoHitWhilePendingAndItsOwnAgainAfter()
     {
         var presses = Counting(out _);
+        presses.DoneFor = TimeSpan.Zero;
         var node = new TaskCompletionSource<string?>();
         Layout.Node Make(string key) => presses.Button(key, $"{key}:go",
             () => Layout.Builder.Text("Go", 12f).Clickable(new HitResult.ButtonHit($"{key}:go"), _ => { }),

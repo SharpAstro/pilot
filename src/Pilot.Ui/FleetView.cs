@@ -668,7 +668,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.VStack(
                             Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
                             Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar(),
-                            Presses.RefusalLine($"range:{role.Role}", 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f))
+                            Presses.RefusalLine($"range:{role.Role}", 11f, Ringing, 3) ?? Presses.DoneLine($"range:{role.Role}", 11f) ?? Layout.Builder.Spacer().RowH(0f))
                         .WStar().HAuto())
                 .WithGap(14f).Pad(8f, 6f).HAuto().WStar();
             yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
