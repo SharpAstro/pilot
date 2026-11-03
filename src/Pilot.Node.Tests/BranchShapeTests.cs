@@ -102,6 +102,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
     public async Task ANotRebaseableAnswerMergesTheSameHeadBySquashAndRingsNothing()
     {
         _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
         _github.MergeScript.Enqueue("GraphQL: This branch can't be rebased (mergePullRequest)");
         var (flight, _) = await MergedBaseFlight();
 
@@ -120,6 +121,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
     {
         _github.MergeQueueMethod = "REBASE";
         _github.AllowedMethods = new AllowedMergeMethods(Squash: false, Rebase: true, Merge: true);
+        _github.Queues = true;
         _github.MergeScript.Enqueue("GraphQL: This branch can't be rebased (mergePullRequest)");
         var (flight, _) = await MergedBaseFlight();
 
@@ -142,7 +144,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         merge.Error.ShouldBeNull();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(old);
         Git(Repo, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(old);
-        _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(old);
+        _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(_github.Pr.Head);
         _legs.RebaseProbes.ShouldBe(0);
     }
 }
