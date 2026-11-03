@@ -309,6 +309,69 @@ public sealed class RoleRangeRowsTests
         }
     }
 
+    private static NodeInfo InfoWith(string range) => new()
+    {
+        WireVersion = 6, Version = "2.0.9", MachineName = "DESKTOP-1", MachinePrefix = "SE1", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = "s1",
+        Ranges = [new RoleRangeInfo("worker", range, SettingSources.ThisNode)],
+    };
+
+    [Fact]
+    public async Task AfterATakeThisNodesLineShowsTheTakenRangeAndNoTakeButtonRemains()
+    {
+        // The node answers its old range at first, then the taken one, as it does once the set went through.
+        var answers = new Queue<string>(["opus-low..opus-low", "sonnet-low..opus-low"]);
+        await using var feed = new NodeFeed(new FakeNode().Open, "node.sock", nodeInfo: _ => Task.FromResult(InfoWith(answers.Dequeue())));
+        await feed.RefreshNodeAsync(Ct);
+
+        FleetScreen Screen() => new(
+        [
+            FleetLine.From("node.sock", true, true, null, feed.Summary(Live.At)),
+            FleetLine.From("10.0.0.9:47731", false, false, null, Summary("s2", "LE1", "LAPTOP-2", new RoleRangeInfo("worker", "sonnet-low..opus-low", SettingSources.ThisNode))),
+        ], Live.At);
+
+        using var renderer = new RgbaImageRenderer(1600, 1500);
+        var chrome = Chrome(renderer);
+        // The same helper both hosts call, its take standing in for the node's client.
+        chrome.Fleet.OnTakeRange = (_, _, _, _) => FleetCommands.ThenRefreshAsync(() => Task.FromResult<(string?, string)>((null, "done")), feed, Ct).ContinueWith(t => t.Result.Refused, Ct);
+        chrome.Show(PilotPage.Fleet);
+
+        string[] Texts()
+        {
+            var screen = Screen();
+            chrome.Fleet.Table.PageWidth = 1600;
+            return Look(chrome.Fleet.Tree(screen), renderer, 1600).Texts;
+        }
+
+        Texts().ShouldContain("Take LE1's");
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, Screen(), new RectF32(0, 0, 1600, 1500));
+        var regions = new List<ClickableRegion>();
+        chrome.Fleet.CollectPaintedRegions(regions);
+        regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == "fleet:10.0.0.9:47731:take:worker").OnClick!.Invoke(InputModifier.None);
+
+        for (var i = 0; i < 200 && answers.Count > 0; i++)
+        {
+            await Task.Delay(25, Ct);
+        }
+        var after = Texts();
+        after.ShouldContain(t => t.Contains("SE1 · DESKTOP-1: sonnet-low..opus-low"));
+        after.ShouldNotContain(t => t.StartsWith("Take ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ARefreshThatThrowsKeepsTheLastNodeInfoAndARefusedTakeDoesNotRefresh()
+    {
+        var asked = 0;
+        await using var feed = new NodeFeed(new FakeNode().Open, "node.sock", nodeInfo: _ =>
+            ++asked == 1 ? Task.FromResult(InfoWith("opus-low..opus-low")) : throw new IOException("node gone"));
+        await feed.RefreshNodeAsync(Ct);
+        await feed.RefreshNodeAsync(Ct);
+        asked.ShouldBe(2);
+        feed.Node!.Ranges!.Single().Range.ShouldBe("opus-low..opus-low");
+
+        await FleetCommands.ThenRefreshAsync(() => Task.FromResult<(string?, string)>(("refused", "refused")), feed, Ct);
+        asked.ShouldBe(2);
+    }
+
     [Fact]
     public void TakeRangeSendsTheRoleRangeKeyAndFleetOnlyForTheFleetLayer()
     {
