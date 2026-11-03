@@ -362,6 +362,9 @@ public sealed record PackageWait
 /// <summary>What a held flight waits for, in one place for every client's <c>held, waiting for …</c>.</summary>
 public static class FlightWaiting
 {
+    /// <summary>What a flight in a holding pattern says in place of its merge stage (<c>holding: the watchtower is making the review's small fixes</c>); null when it is not holding.</summary>
+    public static string? HoldingText(FlightRow flight) => flight.Holding is { } holding ? $"holding: {holding.Reason}" : null;
+
     /// <summary>A wait as a status line says it: <c>Drawboard.Core 1.2 on nuget.org</c>.</summary>
     public static string Text(PackageWait wait) => $"{wait.Id} {wait.Line} on nuget.org";
 
