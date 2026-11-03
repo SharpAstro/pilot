@@ -878,11 +878,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             .HAuto();
     }
 
-    /// <summary>
-    /// The title of a card about an open PR (<see cref="PullRequestLinks.Of(CardRow)"/>): a link that opens the Pull requests page on that
-    /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
-    /// card, a PR the node does not list (merged or closed by now), or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
-    /// </summary>
+    /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
     private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)
     {
         // The whole title is on hover where the cap (three lines) could cut it.
@@ -906,6 +902,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return Whole(WrappedProse.Of(Titled(card), 14f, Bright, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
     }
 
+    /// <summary>
+    /// The title of a card about an open PR (<see cref="PullRequestLinks.Of(CardRow)"/>): a link that opens the Pull requests page on that
+    /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
+    /// card, a PR the node does not list (merged or closed by now), or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
+    /// </summary>
     private Layout.Node? PullRequestTitle(CardRow card)
     {
         if (OnPullRequest is not { } route || PullRequestLinks.Of(card) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))

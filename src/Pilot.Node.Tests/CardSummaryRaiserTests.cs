@@ -83,6 +83,21 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AMergeThatFailedWithALongLegNameAndALongReasonStaysWithinTheSummaryCap()
+    {
+        var (_, _, checks) = await ArmedPassedFlight("46", "a-leg-with-a-very-long-name-for-the-cap");
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, new string('x', 120), "https://github.com/x/tianwen/actions/runs/1/job/2");
+
+        await checks.LookAsync(Ct);
+
+        var summary = Open().Single(c => c.Kind == LegCommander.MergeFailed).Summary.ShouldNotBeNull();
+        // The panel shows at most 240 characters of a summary (CardsView.SummaryChars): a longer one is cut there, with the whole text on hover.
+        // Pinned so the reason's cap (MaxBecause) and the leg name together are noticed if they ever grow past it.
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AChecksFailedRingForASendBackTheNodeRefusedDoesNotSayTheLegGoesAround()
     {
         var (flight, _, checks) = await ArmedPassedFlight("44");

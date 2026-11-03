@@ -589,16 +589,23 @@ public sealed partial class LegCommander
         {
             offers.Add("the merge can be tried once more as the PR stands");
         }
-        // The panel shows 240 characters of a summary: a long reason is cut here, whole in the detail.
+        // The panel shows 240 characters of a summary: the reason gets what the rest of the sentence leaves (at most MaxBecause, at
+        // least MinBecause), and a longer one is cut here, whole in the detail. A long leg name takes room from it, not from the offers.
         var said = because is { Length: > 0 } ? because : rerun ? "because the PR's checks failed" : null;
-        var why = said is null ? "" : " " + (said.Length > MaxBecause ? said[..(MaxBecause - 3)].TrimEnd() + "..." : said);
+        var rest = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
+        var room = Math.Clamp(PanelSummaryChars - rest.Length - 1, MinBecause, MaxBecause);
+        var why = said is null ? "" : " " + (said.Length > room ? said[..(room - 3)].TrimEnd() + "..." : said);
         var summary = $"The merge of {code} did not go through{why}.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary, CardBin.Ring);
         return true;
     }
 
-    // The longest reason a merge-failed summary says, so the summary with its choices stays inside the panel's 240 characters.
+    // The longest reason a merge-failed summary says, and the shortest it is cut to, so the summary with its choices stays inside the panel's 240 characters.
     private const int MaxBecause = 70;
+    private const int MinBecause = 12;
+
+    // What the For-you panel shows of a summary (CardsView.SummaryChars, in Pilot.Ui, which the node does not reference).
+    private const int PanelSummaryChars = 240;
 
     // "a", "a or b", "a, b or c".
     private static string JoinOffers(IReadOnlyList<string> offers) =>
