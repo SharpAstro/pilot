@@ -49,7 +49,7 @@ public sealed class DetachedShell : IDisposable
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-        File.WriteAllText(inner, Utf8Output + "\n" + ShellScript.Body(ShellScript.Unwrap(command)), utf8);
+        File.WriteAllText(inner, Utf8Output + "\n" + ShellScript.Body(ShellScript.Prepared(command)), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
         return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
     }

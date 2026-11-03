@@ -341,6 +341,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return state.Complete(command, refusal);
         }
+        // A bash or sh line runs Git Bash on Windows, never WSL's launcher; with none found it is refused here, running nothing.
+        if (GitBash.Refusal(line) is { } noGitBash)
+        {
+            return state.Complete(command, noGitBash);
+        }
 
         SessionRow? owner = null;
         if (command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))

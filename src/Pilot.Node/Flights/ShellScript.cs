@@ -39,7 +39,7 @@ public sealed partial class ShellScript : IDisposable
             return new ShellScript(BuildEnvironment.Apply(unixStart), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(script, Body(Unwrap(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(script, Body(Prepared(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = cwd };
         foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script })
         {
@@ -71,14 +71,35 @@ public sealed partial class ShellScript : IDisposable
     /// </para>
     /// </summary>
     public static string Unwrap(string command)
-    {
-        if (PwshCommand().Match(command) is not { Success: true } match)
+    {        if (PwshCommand().Match(command) is not { Success: true } match)
         {
             return command;
         }
         return match.Groups["sbody"].Success
             ? match.Groups["sbody"].Value.Replace("''", "'", StringComparison.Ordinal)
             : UnquoteDouble(match.Groups["dbody"].Value);
+    }
+
+    /// <summary>
+    /// The line a Windows script holds: <see cref="Unwrap"/>ped, and with a <c>bash</c> or <c>sh</c> head run by Git Bash
+    /// (<see cref="GitBash"/>), never System32's WSL launcher. One place for <see cref="For"/> and <see cref="DetachedShell.For"/>,
+    /// so a check and a job read a line alike. Throws <see cref="InvalidOperationException"/> with <see cref="GitBash.NotFound"/>
+    /// when the line needs Git Bash and there is none.
+    /// </summary>
+    public static string Prepared(string command) => Prepared(command, null, resolve: true);
+
+    /// <summary><see cref="Prepared(string)"/> with the Git Bash a test names; null means none was found.</summary>
+    internal static string Prepared(string command, string? gitBash) => Prepared(command, gitBash, resolve: false);
+
+    private static string Prepared(string command, string? gitBash, bool resolve)
+    {
+        var line = Unwrap(command);
+        if (!GitBash.NeedsGitBash(line))
+        {
+            return line;
+        }
+        var path = resolve ? GitBash.Resolve() : gitBash;
+        return GitBash.Rewrite(line, path ?? throw new InvalidOperationException(GitBash.NotFound));
     }
 
     /// <summary>
