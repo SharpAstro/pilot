@@ -347,6 +347,33 @@ public sealed class WatchtowerTests : IDisposable
         await restarted.LookAsync(Ct);
         _said.Count.ShouldBe(2);
         restarted.Untold().ShouldBeEmpty();
+
+        // Another RetellAfter on: only the file keeps it from being told a third time.
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await restarted.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ACardToldOnceIsSummarisedInAFreshBriefAndNotSaidToTheLiveFreshSessionAfterRetellAfter()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(20));
+
+        await _tower.RestartAsync("test", Ct);
+        _workers.Started[^1].Brief.ShouldContain("TIA9's review asks for changes");
+        var said = _said.Count;
+
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _tower.Untold().ShouldBeEmpty();
+        _said.Count(s => s.Args.Length > 0 && s.Args[0].Contains("A card opened") && s.Args[0].Contains("TIA9's review asks for changes")).ShouldBe(1);
+        _said.Count.ShouldBe(said);
     }
 
     [Fact]

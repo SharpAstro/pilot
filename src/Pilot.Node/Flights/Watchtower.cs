@@ -873,11 +873,11 @@ public sealed class Watchtower(
 
         var folder = options.WatchtowerFolder;
         string fingerprint;
+        HashSet<string> alreadyTold;
         try
         {
             Directory.CreateDirectory(folder);
             // Read before TellAllOpen runs: which cards an earlier watchtower already had, so the brief lists them as a summary (#665).
-            HashSet<string> alreadyTold;
             lock (_tellsLock)
             {
                 alreadyTold = [.. Tells().Keys];
@@ -915,6 +915,7 @@ public sealed class Watchtower(
         KeepChurnCard(Health());
         RecordBrief(fingerprint);
         TellAllOpen();
+        CountSummaryAsRetell(alreadyTold);
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
         await StopOthersAsync(_job, cancellationToken);
@@ -1153,6 +1154,31 @@ public sealed class Watchtower(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Kept in memory all the same; a restarted node then finds no record and starts one afresh.
+        }
+    }
+
+    /// <summary>
+    /// The brief's summary block told a fresh watchtower the cards in <paramref name="listed"/>, promising it would not hear them
+    /// again, so each counts as re-told: no later look says it to the new session as a card that opened.
+    /// </summary>
+    private void CountSummaryAsRetell(HashSet<string> listed)
+    {
+        lock (_tellsLock)
+        {
+            var tells = Tells();
+            var changed = false;
+            foreach (var id in listed)
+            {
+                if (tells.TryGetValue(id, out var told) && !told.Retold)
+                {
+                    tells[id] = (told.At, true);
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                SaveTells();
+            }
         }
     }
 
