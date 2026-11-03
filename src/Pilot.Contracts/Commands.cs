@@ -342,6 +342,17 @@ public static class Verbs
     public const string Run = "run";
 
     /// <summary>
+    /// <c>bench session/&lt;id&gt;|node &lt;repo&gt; --ref &lt;ref&gt; | --baseline &lt;ref&gt; --candidate &lt;ref&gt; [--fetch &lt;cmd&gt;] [--pr &lt;n&gt;]
+    /// [--timeout &lt;seconds&gt;] -- &lt;command…&gt;</c>: one exclusive (<see cref="JobKind.Bench"/>) job that runs the command on a ref, or on a
+    /// baseline and then a candidate, each in its own detached worktree, and posts BenchmarkDotNet's tables on a card and, with
+    /// <c>--pr</c>, on the PR. The result's <see cref="CommandResult.Made"/> is the job's id.
+    /// </summary>
+    public const string Bench = "bench";
+
+    /// <summary>The leading argument of <c>run</c> that asks for the node to itself (a benchmark, <see cref="JobKind.Bench"/>).</summary>
+    public const string AloneArg = "--alone";
+
+    /// <summary>
     /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
     /// kills the job's wrapper and every process the node has seen under it at once, with no grace.
     /// </summary>

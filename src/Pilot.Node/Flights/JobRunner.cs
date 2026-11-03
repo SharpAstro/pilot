@@ -100,6 +100,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The machine's CPU use now in percent, or null when it is not sampled: a check's saturation is counted from it. A test puts its own.</summary>
     public Func<double?>? MachineCpu { get; init; }
 
+    /// <summary>The machine CPU percent a benchmark (<see cref="JobKind.Bench"/>) needs at most to start: above it the machine is not quiet.</summary>
+    public double BenchQuietCpu { get; set; } = 15;
+
     /// <summary>The share of the looks at a check that found the machine's CPU above <see cref="SaturatedAbove"/> percent, over which the machine counts as saturated.</summary>
     public const double SaturatedShare = 0.5;
 
@@ -138,6 +141,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CheckRun>> _checkWaiters = new(StringComparer.Ordinal);
+    // The benchmarks a caller awaits (QueueBench), by job id: completed with the ended row when the job ends however it ends.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JobRow>> _benchWaiters = new(StringComparer.Ordinal);
     // The running checks' kill-on-close job objects (Windows): a node that crashes ends them, as a check never outlives its node.
     private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
     // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
@@ -303,6 +308,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public CommandResult Run(CommandRequest command)
     {
         var args = command.Args ?? [];
+        // A leading --alone asks for the node to itself (a benchmark); the rest is as for any run.
+        var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
+        if (alone)
+        {
+            args = [.. args.Skip(1)];
+        }
         if (args.Length < 3)
         {
             return state.Complete(command, "run takes the folder, the timeout in seconds (0 for the default) and the command");
@@ -359,6 +370,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             OwnerName = owner?.Name,
             Flight = owner?.Flight,
             Leg = owner?.Leg,
+            Kind = alone ? JobKind.Bench : JobKind.Run,
             State = JobState.Queued,
             LogPath = logPath,
             ExitPath = ExitPathOf(logPath),
@@ -419,8 +431,50 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
+    /// <summary>
+    /// Queues a benchmark as a job of kind <see cref="JobKind.Bench"/> (the node to itself) and returns its id and a task that
+    /// completes with the ended row when the job ends however it ends. <paramref name="owner"/>, when given, is woken as for any job.
+    /// </summary>
+    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner)
+    {
+        var jobId = state.NextJobId();
+        var folder = Path.Combine(options.DataFolder, "jobs");
+        Directory.CreateDirectory(folder);
+        var logPath = Path.Combine(folder, $"{jobId}.log");
+        var now = time.GetUtcNow();
+        var job = new JobRow
+        {
+            Id = jobId,
+            Command = command,
+            Cwd = cwd,
+            Owner = owner?.Id,
+            OwnerName = owner?.Name,
+            Flight = owner?.Flight,
+            Leg = owner?.Leg,
+            Kind = JobKind.Bench,
+            State = JobState.Queued,
+            LogPath = logPath,
+            ExitPath = ExitPathOf(logPath),
+            Timeout = timeout,
+            StartedAt = now,
+            QueuedAt = now,
+            MemoryKey = JobKey.Of(command, cwd).ToString(),
+        };
+        var done = new TaskCompletionSource<JobRow>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _benchWaiters[jobId] = done;
+        _mine[jobId] = 0;
+        state.PutJob(job);
+        _signals.Writer.TryWrite(new HandedOver(job));
+        return (jobId, done.Task);
+    }
+
     private void Finish(JobRow ended, string[]? last)
     {
+        if (_benchWaiters.TryRemove(ended.Id, out var bench))
+        {
+            bench.TrySetResult(ended);
+            return;
+        }
         if (!_checkWaiters.TryRemove(ended.Id, out var waiter))
         {
             return;
@@ -456,6 +510,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
                 CancelBeforeItsTurn(handed.Job, by.Who, by.Dropped);
+                break;
+            case HandedOver { Job.Kind: JobKind.Bench } handed:
+                // A benchmark goes ahead of the other jobs, so the drain it waits for is not endless; benchmarks keep their own order.
+                _queue.Insert(_queue.FindLastIndex(j => j.Kind == JobKind.Bench) + 1, handed.Job);
                 break;
             case HandedOver handed:
                 _queue.Add(handed.Job);
@@ -495,7 +553,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Each waiting job says where it stands.
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
+            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
             state.PutJob(_queue[i]);
         }
 
@@ -590,6 +648,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     private string? WhyWait(JobRow job)
     {
+        if (job.Kind == JobKind.Bench)
+        {
+            if (!_running.IsEmpty)
+            {
+                return _running.Count == 1 ? "a benchmark runs alone: another job is running" : $"a benchmark runs alone: {_running.Count} jobs are running";
+            }
+            return (MachineCpu is { } read ? read() : state.Machine()?.CpuPercent) is { } cpu && cpu > BenchQuietCpu
+                ? $"a benchmark waits for a quiet CPU ({cpu:0}% now, {BenchQuietCpu:0}% at most)"
+                : null;
+        }
+        if (BenchHold(job) is { } holds)
+        {
+            return holds;
+        }
         if (_running.Count >= MaxRunning)
         {
             var slots = MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
@@ -604,6 +676,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return FreeMemory() is { } free && free < need
             ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
+    }
+
+    /// <summary>Why a job other than a benchmark may not start: a benchmark runs, or heads the queue waiting for quiet. Null when none does.</summary>
+    private string? BenchHold(JobRow job)
+    {
+        if (job.Kind == JobKind.Bench)
+        {
+            return null;
+        }
+        var bench = state.Jobs().FirstOrDefault(j => j.Kind == JobKind.Bench && j.State == JobState.Running && _running.ContainsKey(j.Id))
+            ?? (_queue.Count > 0 && _queue[0].Kind == JobKind.Bench ? _queue[0] : null);
+        return bench is null ? null : $"a benchmark ({bench.Id}) holds the node";
     }
 
     private MemoryEstimate EstimateOf(JobRow job) => JobMemory.Estimate(state.Jobs(), JobKey.Parse(job.MemoryKey) ?? JobKey.Of(job.Command, job.Cwd));

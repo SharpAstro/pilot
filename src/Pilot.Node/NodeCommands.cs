@@ -359,6 +359,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return Get<JobRunner>().Run(command);
         }
+        if (command.Verb == Verbs.Bench)
+        {
+            return await Get<BenchRun>().RunAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.CancelJob)
         {
             return Get<JobRunner>().Cancel(command);

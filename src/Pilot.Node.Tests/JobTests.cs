@@ -61,6 +61,11 @@ public abstract class JobTestsBase : IDisposable
         _jobs.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
+            // Git's object files are read-only, and a test that made a repo here would fail the delete.
+            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
             Directory.Delete(_root, recursive: true);
         }
         catch (IOException)

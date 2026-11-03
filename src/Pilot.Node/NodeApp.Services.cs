@@ -426,6 +426,9 @@ public static partial class NodeApp
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
+        builder.Services.AddSingleton(services => new BenchRun(
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<NodeOptions>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(),
+            services.GetRequiredService<IGit>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<JobRunner>()));
     }
 
     /// <summary>The sweep that advances every flying flight.</summary>
