@@ -91,7 +91,7 @@ public static partial class PilotCommand
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",
-                _ => "flying",
+                _ => FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
             };
             var level = flight.HasPriorityField && flight.IssuePriority is { } set ? $", priority {IssuePriorities.Name(set).ToLowerInvariant()}" : "";
             text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state}{level})");

@@ -677,6 +677,21 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public void StatusSaysAHoldingFlightIsHoldingWithItsReason()
+    {
+        var flight = new FlightRow
+        {
+            Code = "TIA1", Repo = "o/r", RepoPath = "r", Issue = 1, Branch = "flight/tia1", Worktree = "w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+            Holding = new FlightHolding { Reason = "the watchtower is making the review's small fixes", Since = DateTimeOffset.UnixEpoch, By = "node" },
+        };
+        var snapshot = SnapshotWith(null) with { Flights = [flight] };
+
+        PilotCommand.Status(snapshot).ShouldContain("flying, holding: the watchtower is making the review's small fixes");
+        StatusMarkdown.Build(snapshot).ShouldContain("flying, holding: the watchtower is making the review's small fixes");
+    }
+
+    [Fact]
     public void StatusSaysTheRedoAndModelOfALegsCurrentWorker()
     {
         var flight = new FlightRow

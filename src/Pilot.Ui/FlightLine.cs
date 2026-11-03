@@ -160,6 +160,7 @@ internal sealed record FlightLine
                 FlightState.Landed when flight.MovedTo is { } to => to.Text,
                 FlightState.Landed when flight.LandedAt is { } at => SessionLine.Ago(now - at),
                 // Merged through a queue is not landed yet: it waits for the queue's checks.
+                FlightState.Flying when FlightWaiting.HoldingText(flight) is { } holding => holding,
                 FlightState.Flying when flight.MergeQueue is { } queue => queue,
                 _ => null,
             },
