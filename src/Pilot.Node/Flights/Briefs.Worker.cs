@@ -139,6 +139,7 @@ public static partial class Briefs
         text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
             + " never the full log, so a suite's output cannot fill your context.");
         text.AppendLine(WaitRule(run));
+        text.AppendLine(ReportRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
         // loop, a pilot run handed a shell's -Command string. The worker recovers by splitting it, a turn lost each time
         // (TIA1781's cross-structure, SE1 2026-10-25).

@@ -218,6 +218,27 @@ public sealed class SessionsViewTests
     }
 
     [Fact]
+    public void AReportedBlockShowsAsBlockedWithItsMessageAndAnUnreportedWaitStaysWaiting()
+    {
+        var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
+        var waiting = snapshot.Sessions.First(s => s.State == SessionState.Waiting);
+        var plain = SessionsCapture.ScreenFor(snapshot, "sample");
+        var blocked = waiting with { Reported = "blocked", WaitingFor = "which branch should this land on?" };
+        var screen = SessionsCapture.ScreenFor(snapshot with { Sessions = [.. snapshot.Sessions.Select(s => s.Id == waiting.Id ? blocked : s)] }, "sample");
+
+        var line = screen.Lines.Single(l => l.Row.Id == waiting.Id);
+        line.State.ShouldBe("blocked");
+        line.WaitingFor.ShouldBe("which branch should this land on?");
+        line.IsWaiting.ShouldBeTrue();
+        SessionsCapture.RowsText(screen).ShouldContain("blocked (which branch should this land on?)");
+        plain.Lines.Single(l => l.Row.Id == waiting.Id).State.ShouldBe("waiting on you");
+        SessionsCapture.RowsText(plain).ShouldContain("waiting on you");
+        screen.Lines.Where(l => l.Row.Id != waiting.Id).Select(l => l.State).ShouldBe(plain.Lines.Where(l => l.Row.Id != waiting.Id).Select(l => l.State));
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        SessionsCapture.Render(renderer, screen);
+    }
+
+    [Fact]
     public void CaptureWritesThePngAndTheRowsBesideIt()
     {
         var folder = Directory.CreateTempSubdirectory("pilot-gui-tests-");
