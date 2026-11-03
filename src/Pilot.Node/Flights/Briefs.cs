@@ -70,6 +70,12 @@ public static partial class Briefs
         "  your turn; the node wakes you once when the file exists or the time comes. Never wait with a `run` job that sleeps or polls:\n" +
         "  it holds a slot of the queue and blocks every job behind it.";
 
+    /// <summary>What every pilot-started session is told about saying it needs the person: it reports blocked, so every client shows it so.</summary>
+    internal static string ReportRule(string run) =>
+        $"- When you need the person to decide something and cannot go on, run `{run} session report blocked \"<what you need>\"` (the MCP tool\n" +
+        "  `session_report` works the same) and end your turn. When you take up the work again the node sees it from your next hook, so no\n" +
+        "  report is needed.";
+
     /// <summary>
     /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node
     /// never smudges them, and one <c>git lfs pull</c> fills the shared store. Nothing for a repo without LFS.
