@@ -93,7 +93,14 @@ public sealed partial class LegCommander
             throw;
         }
         var (repaired, pr, mergedBase) = opened;
-        Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
+        // A push that moved the head of a holding flight ends the hold: the fresh review and checks gate the merge as for any push.
+        var pushedPastHold = FlightOf(Verbs.FlightTarget(flight.Code)) is { Holding: not null, Review.ReviewedHead: { Length: > 0 } reviewedHead }
+            && !string.Equals(reviewedHead, pr.Head, StringComparison.OrdinalIgnoreCase);
+        Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead, Holding = pushedPastHold ? null : f.Holding });
+        if (pushedPastHold)
+        {
+            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the fixes were pushed", ReviewNotesKind);
+        }
         // The PR opened, so a conflict that held its opening is resolved.
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR opened", PrConflictsKind);
         if (mergedBase)

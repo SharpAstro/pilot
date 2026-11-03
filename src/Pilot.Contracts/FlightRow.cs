@@ -243,6 +243,27 @@ public sealed record FlightRow
     /// it says it holds the flight (then it moved) or, past the settling time, says it does not (then <see cref="MoveFailure"/>). Null otherwise.
     /// </summary>
     public FlightMoveUnknown? MoveUnknown { get; init; }
+
+    /// <summary>
+    /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the watchtower is making
+    /// the small fixes. Autopilot's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
+    /// (<c>flight clear</c>) or pushes (<c>flight pr</c>). Null otherwise. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FlightHolding? Holding { get; init; }
+}
+
+/// <summary>A flight's holding pattern (<see cref="FlightRow.Holding"/>): why the merge is held, since when, and who put it there.</summary>
+public sealed record FlightHolding
+{
+    /// <summary>Why the merge is held, in a line.</summary>
+    public required string Reason { get; init; }
+
+    /// <summary>When the hold began.</summary>
+    public required DateTimeOffset Since { get; init; }
+
+    /// <summary>Who put the flight in the hold (the node, for a pass with notes); null when not said.</summary>
+    public string? By { get; init; }
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>

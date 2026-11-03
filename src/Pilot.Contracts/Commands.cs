@@ -376,6 +376,12 @@ public static class Verbs
     public const string AllowRound = "allow-round";
 
     /// <summary>
+    /// <c>clear flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that a flight held in a holding pattern (a
+    /// review passed with notes) is cleared to land: autopilot's merge and the PR-ready card's Merge are no longer held.
+    /// </summary>
+    public const string Clear = "clear";
+
+    /// <summary>
     /// <c>review flight/&lt;code&gt; pass|changes &lt;report…&gt;</c>: the reviewer's verdict. A pass offers the merge; changes
     /// ring with a go-around. The controller may pass a review that asked for changes ("ready anyway").
     /// </summary>

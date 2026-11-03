@@ -798,6 +798,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     {
         if (legs is not { Models.Autopilot: true } || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
+            // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
+            || flight.Holding is not null
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
