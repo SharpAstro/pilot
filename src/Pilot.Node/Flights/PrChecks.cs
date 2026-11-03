@@ -699,6 +699,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
                 if (pr is { State: "OPEN" } && pr.Number == flight.PullRequest && string.Equals(pr.Head, flight.Review!.ReviewedHead, StringComparison.OrdinalIgnoreCase))
                 {
+                    // A PR the merge queue holds, or let go unmerged, is LookAtQueuesAsync's (queued, or its drop handled): no new merge card.
+                    var queue = await github.MergeQueueAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
+                    if (queue is { State: "OPEN" } && (queue.Queued
+                        || (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))))
+                    {
+                        continue;
+                    }
                     await legs.RestorePrReadyAsync(flight.Code, pr.Head, cancellationToken);
                 }
             }
