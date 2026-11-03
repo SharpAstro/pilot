@@ -33,10 +33,12 @@ public sealed class CardHoverTests
     [Fact]
     public void ALongDetailAndALongTitleCarryTheirWholeTextOnHover()
     {
-        var tips = Tooltips(Card("TIA1818/details-width compiles against stale siblings", LongDetail));
+        // Past three lines of the panel at its narrowest (a title wraps, pilot#677): the whole is on hover.
+        const string longTitle = "TIA1818/details-width compiles against stale siblings of the flight, and the build of the renderer family stays red";
+        var tips = Tooltips(Card(longTitle, LongDetail));
 
         tips.ShouldContain(LongDetail);
-        tips.ShouldContain("TIA1818/details-width compiles against stale siblings");
+        tips.ShouldContain(longTitle);
     }
 
     [Fact]

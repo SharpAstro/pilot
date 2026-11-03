@@ -36,7 +36,7 @@ public sealed class MergingChipTests
 
     private static void ShouldBeAChip(ImmutableArray<Layout.ArrangedNode<float>> arranged)
     {
-        Words(arranged).ShouldContain(Chip);
+        ArrangedText.Concat(arranged).ShouldContain(Chip);
         var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
         actions.ShouldNotContain("card:c9:1");
         actions.ShouldContain("card:c9:dismiss");
@@ -100,7 +100,7 @@ public sealed class MergingChipTests
         chrome.Render(new SessionsScreen([], "test", Now), screen, CardsScreen.From([Card()]), new RectF32(0, 0, width, 900));
 
         var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi));
-        Words(arranged).ShouldContain(Chip);
+        ArrangedText.Concat(arranged).ShouldContain(Chip);
         var regions = new List<ClickableRegion>();
         flights.CollectPaintedRegions(regions);
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: "flight:TIA1611:merge-card" }).ShouldBeFalse();

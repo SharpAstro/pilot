@@ -256,7 +256,7 @@ public sealed class FlyingTests
         chrome.Cards.CollectPaintedRegions(regions);
         // The title is the link, and the only one: no button that could read as "raise a PR".
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: "card:c5:open" }).ShouldBeFalse();
-        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "card:c5:title" }).OnClick!.Invoke(InputModifier.None);
+        regions.First(r => r.Result is HitResult.ButtonHit { Action: "card:c5:title" }).OnClick!.Invoke(InputModifier.None);
         opened.ShouldBe(["https://github.com/SharpAstro/DIR.Lib/pull/138"]);
     }
 
