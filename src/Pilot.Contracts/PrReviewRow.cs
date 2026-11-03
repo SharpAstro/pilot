@@ -95,6 +95,12 @@ public sealed record PrReviewRow
     /// <summary>The fixer's worktree, <c>&lt;clone&gt;/.claude/worktrees/fix-&lt;repo&gt;-&lt;n&gt;</c>, on the PR's own branch.</summary>
     public string? FixWorktree { get; init; }
 
+    /// <summary>True when the fixer works in a worktree that was already there (the PR's branch was checked out in it); the node never removes it. Null otherwise; optional on the wire.</summary>
+    public bool? FixWorktreeBorrowed { get; init; }
+
+    /// <summary>True when the fixer's worktree is detached at the branch head, the branch being checked out in another worktree. Null otherwise; optional on the wire.</summary>
+    public bool? FixDetached { get; init; }
+
     /// <summary>Which round of fixing the fixer is on, 1 for the first; null while there is no fixer.</summary>
     public int? FixRound { get; init; }
 

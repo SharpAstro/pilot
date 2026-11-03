@@ -316,10 +316,33 @@ public sealed partial class PrReviews
         var name = Slug(pr.Name);
         var plane = $"fix-{name}-{pr.Number}";
         var worktree = Path.Combine(clone, ".claude", "worktrees", plane);
-        await planes.EnsureAsync(clone, worktree, branch, cancellationToken);
+        var borrowed = false;
+        var detached = false;
+        if (await HolderOfBranchAsync(clone, worktree, branch, cancellationToken) is { } holder)
+        {
+            if (await CanBorrowAsync(clone, holder, branch, cancellationToken))
+            {
+                worktree = holder;
+                plane = Path.GetFileName(holder);
+                borrowed = true;
+            }
+            else
+            {
+                await planes.DetachAsync(clone, worktree, $"refs/remotes/origin/{branch}", cancellationToken);
+                detached = true;
+            }
+        }
+        else
+        {
+            await planes.EnsureAsync(clone, worktree, branch, cancellationToken);
+        }
 
         var fixer = $"{options.Machine.ToLowerInvariant()}-fix-{name}-{pr.Number}";
-        var fixing = review with { Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1 };
+        var fixing = review with
+        {
+            Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1,
+            FixWorktreeBorrowed = borrowed ? true : null, FixDetached = detached ? true : null,
+        };
         string job;
         var counting = new object();
         Slots.Begin("fix-pr:" + fixer, counting, fixer, null, AdmissionRole.Fixer, Models.Model(RoleModels.Worker));
@@ -330,7 +353,11 @@ public sealed partial class PrReviews
         }
         catch (FlightException)
         {
-            await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
+            // A borrowed worktree is someone else's and stays.
+            if (!borrowed)
+            {
+                await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
+            }
             throw;
         }
         finally
@@ -343,6 +370,41 @@ public sealed partial class PrReviews
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
         return $"started {fixer} at {Short(read.Head)}";
+    }
+
+    // Another worktree of the clone (not the fix plane's own folder) that has the branch checked out, or null.
+    private async Task<string?> HolderOfBranchAsync(string clone, string fixPlane, string branch, CancellationToken cancellationToken)
+    {
+        if (await planes.WorktreesAsync(clone, cancellationToken) is not { } listed)
+        {
+            return null;
+        }
+        return listed.FirstOrDefault(w => !w.Prunable && w.Branch == branch && !SamePath(w.Path, fixPlane)) is { } w2 ? Path.GetFullPath(w2.Path) : null;
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    // A holder is borrowed when it is clean, at origin/<branch>, directly under <clone>/.claude/worktrees, and no live session is in it.
+    private async Task<bool> CanBorrowAsync(string clone, string holder, string branch, CancellationToken cancellationToken)
+    {
+        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(holder)));
+        if (parent is null || !SamePath(parent, Path.Combine(clone, ".claude", "worktrees")))
+        {
+            return false;
+        }
+        if (state.Sessions().Any(s => s.State != SessionState.Ended && s.Cwd is { Length: > 0 } cwd && SamePath(cwd, holder)))
+        {
+            return false;
+        }
+        if (await planes.IsDirtyAsync(holder, cancellationToken) != false)
+        {
+            return false;
+        }
+        var head = await git.RunAsync(["rev-parse", "HEAD"], holder, cancellationToken);
+        var tip = await git.RunAsync(["rev-parse", $"refs/remotes/origin/{branch}"], clone, cancellationToken);
+        return head.Ok && tip.Ok && string.Equals(head.Output.Trim(), tip.Output.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
