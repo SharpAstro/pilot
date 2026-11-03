@@ -656,6 +656,10 @@ public sealed class SessionTracker : BackgroundService
 
             foreach (var archived in rows)
             {
+                if (!undo)
+                {
+                    Reports.Forget(archived.SessionId);
+                }
                 // Its copies go with it: the artifacts stay listed, without what they kept.
                 if (!undo && archived.Artifacts is { Length: > 0 } kept && kept.Any(a => a.Attachment is not null))
                 {

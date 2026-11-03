@@ -43,4 +43,20 @@ public sealed class ReportBook
         });
         return accepted;
     }
+
+    /// <summary>
+    /// Drops a blocked report once the session takes up work again: a prompt (the person's answer, or a message to it) or
+    /// its end. The report command's own tool hooks and the turn's Stop leave it, since they come with the report itself.
+    /// </summary>
+    public void Heard(string sessionId, HookState hook)
+    {
+        if (hook.Event is "UserPromptSubmit" or "SessionEnd"
+            && _bySession.TryGetValue(sessionId, out var last) && last.State == Blocked && last.At <= hook.At)
+        {
+            _bySession.TryRemove(new KeyValuePair<string, SessionReport>(sessionId, last));
+        }
+    }
+
+    /// <summary>Forgets what <paramref name="sessionId"/> reported: its row is archived.</summary>
+    public void Forget(string sessionId) => _bySession.TryRemove(sessionId, out _);
 }

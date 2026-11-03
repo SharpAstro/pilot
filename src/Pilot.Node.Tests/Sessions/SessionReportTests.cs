@@ -96,6 +96,56 @@ public sealed class SessionReportTests
     }
 
     [Fact]
+    public void ABlockedReportTheyAnsweredDoesNotComeBackAtTheNextTurnsStop()
+    {
+        // The whole sequence through the books, as the hook route and the report command play it.
+        var reports = new ReportBook();
+        var hooks = new HookBook { Reports = reports };
+        var agent = ClaudeAgentsJson.Parse(AgentRows.List(AgentRows.Background(AgentRows.SessionA, "x", "done", pid: 4343, status: "idle")))!.Single();
+        SessionRow Row() => SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, hooks.Of(AgentRows.SessionA), reports.Of(AgentRows.SessionA));
+
+        hooks.Apply(HookBookTests.HookOf("PreToolUse"), T0);
+        reports.Accept(AgentRows.SessionA, ReportBook.Blocked, "needs the VPN", seq: null, T0.AddSeconds(1)).ShouldBeTrue();
+        hooks.Apply(HookBookTests.HookOf("PostToolUse"), T0.AddSeconds(1.5));
+        hooks.Apply(HookBookTests.HookOf("Stop"), T0.AddSeconds(2));
+        var blocked = Row();
+        blocked.State.ShouldBe(SessionState.Waiting);
+        blocked.Reported.ShouldBe("blocked");
+        blocked.WaitingFor.ShouldBe("needs the VPN");
+
+        // The person answers.
+        hooks.Apply(HookBookTests.HookOf("UserPromptSubmit"), T0.AddSeconds(3));
+        var working = Row();
+        working.State.ShouldBe(SessionState.Working);
+        working.Reported.ShouldBeNull();
+
+        // The turn ends: idle, not the old block again.
+        hooks.Apply(HookBookTests.HookOf("Stop"), T0.AddSeconds(4));
+        var idle = Row();
+        idle.State.ShouldBe(SessionState.Idle);
+        idle.Reported.ShouldBeNull();
+        idle.WaitingFor.ShouldBeNull();
+        reports.Of(AgentRows.SessionA).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AnEndDropsABlockedReportAndAnArchiveForgetsAnyReport()
+    {
+        var reports = new ReportBook();
+        var hooks = new HookBook { Reports = reports };
+        reports.Accept(AgentRows.SessionA, ReportBook.Blocked, "why", seq: null, T0);
+        hooks.Apply(HookBookTests.HookOf("SessionEnd"), T0.AddSeconds(1));
+        reports.Of(AgentRows.SessionA).ShouldBeNull();
+
+        // A working report is left to the hooks, which already outrank it; an archive forgets it.
+        reports.Accept(AgentRows.SessionA, ReportBook.Working, null, seq: null, T0.AddSeconds(2));
+        hooks.Apply(HookBookTests.HookOf("UserPromptSubmit"), T0.AddSeconds(3));
+        reports.Of(AgentRows.SessionA).ShouldNotBeNull();
+        reports.Forget(AgentRows.SessionA);
+        reports.Of(AgentRows.SessionA).ShouldBeNull();
+    }
+
+    [Fact]
     public void AReportWithASeqNotAboveTheLastAcceptedOneIsIgnored()
     {
         var book = new ReportBook();

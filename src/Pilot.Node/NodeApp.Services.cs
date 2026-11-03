@@ -59,8 +59,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton<IClaudeAgents, ClaudeCliAgents>();
         var relayFolder = RelayFolder(options);
         builder.Services.AddSingleton(SessionTrackerOptions.FromEnvironment() with { HiddenFolders = [relayFolder] });
-        builder.Services.AddSingleton<HookBook>();
         builder.Services.AddSingleton<ReportBook>();
+        builder.Services.AddSingleton(services => new HookBook { Reports = services.GetRequiredService<ReportBook>() });
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
     }
 
