@@ -52,17 +52,17 @@ public static partial class CardSummaries
             LegWatch.Failed or LegWatch.Missing => $"The worker of {what} is gone. Tell it to carry on if it is still there, or start a fresh worker on the leg.",
             LegWatch.OverBudget => $"The worker of {what} is past its budget but keeps working. Let it spend more, or start a fresh worker on the leg.",
             LegWatch.ReviewStalled => $"The reviewer of {what} stalled twice. Start a fresh reviewer, or dismiss this once it moves.",
-            LegWatch.ValidationStalled => $"The validator of {what} stalled. Start the leg without its validation, or drop the leg.",
+            LegWatch.ValidationStalled => $"The validator of {what} stalled. Start the leg without its validation, or remove the leg.",
             LegCommander.NoGoKind => $"The validator of {what} reports the tree is not as its brief assumes. Start the leg as the tree is, drop it, or plan the flight again.",
             LegCommander.WaitLateKind => $"{what} waits on a file that has not come in time. Look at what it waits for, or start a fresh worker on the leg.",
             LegCommander.NextStepKind => $"The node tried {what}'s next step and was refused. Do the step now to ask it again.",
             LegCommander.StartFailedKind => $"A session of {what} did not start and the node does not retry it by itself. Start it again from the card.",
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, or with a flight that held a card on it too, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
-            StopGate.Kind => $"A session of {what} stopped with files not committed after being told once. Tell it again to commit or drop them.",
+            StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
             LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
-            "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused (the title says why). The branch is in the base; land the flight by hand, then dismiss this.",
+            "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
             "worker-nudged" => $"The worker of {what} went idle with its leg unfinished and the node nudged it. Nothing to do unless it goes idle again.",
             "worker-waiting-job" => $"The worker of {what} is idle because it waits on a job of its own, which wakes it. Nothing to do.",
             "worker-compacted" => $"The worker of {what} went idle with its context nearly full, so the node compacted it instead of nudging it. Nothing to do.",
@@ -96,7 +96,7 @@ public static partial class CardSummaries
             FlightCommander.MergedUnderLegKind => $"GitHub merged the PR of {what} before the new leg's work could join it. The new leg's work goes to a new PR once the legs are done; nothing to do.",
             "checks-rerun" => $"Failed checks of {what}'s PR were run again once before its leg is sent round. Nothing to do unless they fail again.",
             PrChecks.ClosedLanded => $"{what}'s PR was closed without a merge and its plane held nothing of its own, so the flight landed. Nothing to do.",
-            PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or drop the work and land the flight.",
+            PrChecks.ClosedWithWork => $"{what}'s PR was closed without a merge but its plane holds work of its own. Reopen the PR, or open a new one for that work, then land the flight.",
             PrChecks.QueueDropped => $"GitHub took the PR of {what} out of the merge queue. The card's choice queues it again once the cause is dealt with.",
             PrChecks.MergeDropped => $"The merge of {what} did not go through. Merge it again once the cause is dealt with.",
             PrChecks.AutopilotMergeRefused => $"The autopilot's merge of {what}'s PR was refused. Merge once more after dealing with what the title says, or merge by hand.",
@@ -131,7 +131,7 @@ public static partial class CardSummaries
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => "The review of a flight passed with notes that do not block. The watchtower makes the small ones in the plane; no leg goes round.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The watchtower fixes the small ones in the plane; nothing for you to do.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session the node did not start and that matches no role, leg, flight or PR. Stop it if it is a stray; a role's current session never rings here.",
@@ -170,6 +170,30 @@ public static partial class CardSummaries
         };
     }
 
+    /// <summary>
+    /// The sentence of a landing refused after its PR merged: the refusal's own reason (<paramref name="why"/>, the plane's folder
+    /// said as "its plane", cut to fit the panel's 240 characters), not "the title says why". The choice is Land it, not repeated here.
+    /// </summary>
+    public static string NotLanded(string code, int number, string why, string worktree)
+    {
+        // The summary already says the PR merged, so the refusal's own "TIA1 merged at 1a2b3c4d, but" opening is left out.
+        var reason = LegCommander.OneLine(MergedOpening().Replace(why.Replace(worktree, "its plane", StringComparison.OrdinalIgnoreCase), ""));
+        return $"The PR #{number} of {code} merged on GitHub, but the flight did not land: {reason}. Its branch is in the base; the flight lands once that is dealt with.";
+    }
+
+    /// <summary>
+    /// The sentence of a review that passed with notes that do not block: what they are (how many, and the first in its own words)
+    /// and that nothing is asked of the person. No word of how the node sends a leg round.
+    /// </summary>
+    public static string ReviewNotes(string code, IReadOnlyList<string> notes)
+    {
+        var first = notes.Select(n => n.Trim().TrimStart('-', '*', ' ')).FirstOrDefault(n => n.Length > 0) ?? "";
+        first = first.ReplaceLineEndings(" ");
+        first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
+        var example = first.Length > 0 ? $", for example: {first}" : "";
+        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The watchtower fixes the small ones in the plane; nothing for you to do.";
+    }
+
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)
     {
         var line = title.Trim().TrimEnd('.', ':', ';');
@@ -184,6 +208,9 @@ public static partial class CardSummaries
         var parts = subject.Split('/');
         return parts.Length >= 2 && parts[0] == "flight" ? string.Join('/', parts.Skip(1)) : subject;
     }
+
+    [GeneratedRegex(@"^\S+ merged at [0-9a-f]+, but ", RegexOptions.IgnoreCase)]
+    private static partial Regex MergedOpening();
 
     [GeneratedRegex(@"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\b\d{1,2}:\d{2}:\d{2}\b|^\s+at\s+\S+|\b[A-Za-z]:\\|(?:/[\w.-]+){3,}|\\[\w.-]+\\[\w.-]+", RegexOptions.Multiline)]
     private static partial Regex LooksLikeLog();

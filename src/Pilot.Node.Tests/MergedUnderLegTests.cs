@@ -269,6 +269,55 @@ public sealed class MergedUnderLegTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ALandingRefusedAfterTheMergeSaysTheRealReasonAndOffersLandIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        Merged(node);
+        File.WriteAllText(Path.Combine(Plane, "half.txt"), "not done\n");
+
+        await Look(node);
+
+        var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == "not-landed");
+        var summary = ring.Summary.ShouldNotBeNull();
+        // The refusal's own reason, not a pointer to a title; and no word of dropping what is in the plane.
+        summary.ShouldContain("half.txt");
+        summary.ShouldContain("not committed");
+        summary.ShouldNotContain("the title says why");
+        summary.ShouldNotContain("by hand");
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+        summary.ShouldNotContain(Plane);
+        ring.Detail.ShouldNotBeNull().ShouldNotContain("drop");
+        var land = ring.Choices.ShouldHaveSingleItem();
+        land.Label.ShouldBe("Land it");
+        land.Verb.ShouldBe(Verbs.Land);
+        land.Target.ShouldBe(Subject);
+        summary.ShouldNotContain(land.Label);
+
+        // Once what stood in the way is dealt with, Land it lands the flight and the ring closes with it.
+        File.Delete(Path.Combine(Plane, "half.txt"));
+        (await Send(node, land.Verb, land.Target, land.Args)).Ok.ShouldBeTrue();
+
+        node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "not-landed");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeFailedCardOfAFlightThatLandedCloses()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ready = Merged(node);
+        // Landed where the node does not look at it (on the node it moved to): the PR-ready card of the flight is still open here.
+        node.State.PutFlight(node.State.Flights().Single() with { State = FlightState.Landed, LandedAt = DateTimeOffset.UtcNow, PullRequest = null });
+        node.State.UpdateCard(ready.Id, ready.Title, ready.Detail, ready.Choices, ready.Link, LegCommander.MergeFailed);
+
+        await Look(node);
+
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Id == ready.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AMergedFlightPutAfterStartStaysFlyingPastTheLoopsIntervalUntilATestLooks()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

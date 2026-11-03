@@ -503,9 +503,10 @@ public sealed partial class LegCommander
     /// Turns an armed merge's card, open still, into what failed: <paramref name="title"/> and <paramref name="detail"/> say why, its
     /// link the failed check's page, and it offers a go-around of the flight's last leg, a re-run of the failed checks
     /// (<paramref name="rerun"/>, when checks failed rather than the head moved) and the merge again. False when the flight has no
-    /// such card, and nothing is changed.
+    /// such card, and nothing is changed. <paramref name="because"/> is why it is unmergeable, as a clause that follows "did not go
+    /// through" ("because check build failed", "because the PR conflicts with main"): the summary says it, never only that it failed.
     /// </summary>
-    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy, bool mergeAgain = true, string kind = MergeFailed)
+    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy, bool mergeAgain = true, string kind = MergeFailed, string? because = null)
     {
         var target = Verbs.FlightTarget(code);
         // A go-around card (no Merge) is the one a conflicting PR already turned; it is turned again for the head it conflicts on.
@@ -541,11 +542,16 @@ public sealed partial class LegCommander
         {
             offers.Add("the merge can be tried once more as the PR stands");
         }
-        var why = rerun ? " because the PR's checks failed" : "";
+        // The panel shows 240 characters of a summary: a long reason is cut here, whole in the detail.
+        var said = because is { Length: > 0 } ? because : rerun ? "because the PR's checks failed" : null;
+        var why = said is null ? "" : " " + (said.Length > MaxBecause ? said[..(MaxBecause - 3)].TrimEnd() + "..." : said);
         var summary = $"The merge of {code} did not go through{why}.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary, CardBin.Ring);
         return true;
     }
+
+    // The longest reason a merge-failed summary says, so the summary with its choices stays inside the panel's 240 characters.
+    private const int MaxBecause = 70;
 
     // "a", "a or b", "a, b or c".
     private static string JoinOffers(IReadOnlyList<string> offers) =>

@@ -460,7 +460,7 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
             string.Join('\n', notes),
             link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} passed with {notes.Count} not blocking {(notes.Count == 1 ? "note" : "notes")}. The watchtower makes the small ones in the plane ({flight.Worktree}) and commits them; no leg goes round.");
+            summary: CardSummaries.ReviewNotes(flight.Code, notes));
     }
 
     /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>

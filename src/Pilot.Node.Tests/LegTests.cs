@@ -2294,9 +2294,9 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
             await Leg(Verbs.Check, "flight/TIA1/parser", i.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        // A file not committed: the leg is not done until it is committed or dropped.
+        // A file not committed: the leg is not done until it is committed.
         File.WriteAllText(Path.Combine(flight.Worktree, "parser.cs"), "class Parser {}\n");
-        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Error.ShouldBe("TIA1/parser's plane has 1 file not committed (?? parser.cs): commit them (or drop them), then finish");
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Error.ShouldBe("TIA1/parser's plane has 1 file not committed (?? parser.cs): commit them, then finish");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the parser");
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done")).Ok.ShouldBeTrue();
