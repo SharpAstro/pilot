@@ -315,7 +315,16 @@ public sealed partial class LegCommander
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, ReviewLoopKind, LegWatch.ReviewStalled);
             var reviewed = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
-            await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            // The verdict is kept already: a card that could not be raised (gh failing, the node stopping) is the sweep's to restore,
+            // never a reason to throw the pass away (PIL682, 2026-11-03: a restart mid-verdict left a passed flight with no merge card).
+            try
+            {
+                await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            }
+            catch (Exception ex) when (ex is FlightException or OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"review: {flight.Code}'s PR-ready card was not raised, the next look restores it: {ex.Message}");
+            }
             if (notes is not null)
             {
                 RaiseReviewNotes(flight, notes);
@@ -449,6 +458,52 @@ public sealed partial class LegCommander
             summary: holding
                 ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {HoldingReason}. Merge is refused until it is cleared or the fixes are pushed."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
+    }
+
+    /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
+    public const string PrReadyRestoredKind = "pr-ready-restored";
+
+    /// <summary>
+    /// A flight whose review passed at <paramref name="head"/>, every leg done and its PR open, but with no merge card (the node
+    /// went away between the stored verdict and the card, PIL682): its PR-ready card is raised as the verdict would have, holding
+    /// flights getting the holding card and their notes card. A flight whose PR-ready card for that head was closed (dismissed,
+    /// answered, merged into a queue) is left alone. True when a card was raised.
+    /// </summary>
+    internal async Task<bool> RestorePrReadyAsync(string code, string head, CancellationToken cancellationToken)
+    {
+        var call = await EnterAsync(code, "having its PR-ready card restored", cancellationToken);
+        try
+        {
+            var subject = Verbs.FlightTarget(code);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed } review, MergeWhenGreen: null } flight
+                || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
+                || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
+            {
+                return false;
+            }
+            // Any merge card of this head, open or closed: a person's dismissal, an answered or queued merge, is not undone.
+            if (state.Cards(openOnly: false).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
+                && (c.ClosedAt is null ||c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase)))))
+            {
+                return false;
+            }
+            var report = flight.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
+            var notes = flight.Holding is not null ? ReviewFindings.Read(report).NotBlocking : [];
+            var phrase = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
+            await RaisePrReadyAsync(flight, report, notes.Count > 0 ? $"{phrase}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}" : phrase, cancellationToken);
+            if (flight.Holding is not null && notes.Count > 0 && !state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == ReviewNotesKind))
+            {
+                RaiseReviewNotes(FlightOf(subject), notes);
+            }
+            state.RaiseCard(CardBin.Handled, PrReadyRestoredKind, subject, $"{code}'s PR-ready card was restored",
+                "its review passed but no merge card was open (the node went away between the verdict and the card)");
+            return true;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
     }
 
     /// <summary>Whether a command comes from this node's watchtower, which the person's own words are not.</summary>
