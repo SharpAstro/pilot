@@ -1473,4 +1473,77 @@ public sealed class PullRequestsPageTests
         page.SelectedUrl.ShouldBe("https://github.com/SharpAstro/pilot/pull/258");
         page.Selected.ShouldNotBe(before);
     }
+
+    private const string HoldingRefusal = "review fix SharpAstro/DIR.Lib#301 refused: SharpAstro/pilot#677 is holding: the watchtower is looking at the fleet, so no flight merges until it says clear (holding pattern, PIL677)";
+
+    // The pills, the search box and the refusal (when there is one), as the page arranges them at a width.
+    private static async Task<(Rect<float> Mine, Rect<float> Flights, Rect<float> NeedsMe, Rect<float> Search, ImmutableArray<Layout.ArrangedNode<float>> Arranged)> ToolbarAt(float width, bool refused)
+    {
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (_, page) = Chrome(renderer);
+        var screen = Screen();
+        if (refused)
+        {
+            page.OnFixReview = (_, _) => throw new InvalidOperationException(HoldingRefusal.Substring(HoldingRefusal.IndexOf("refused: ", StringComparison.Ordinal) + 9));
+            await page.FixReviewAsync(screen.Row!.PullRequests.Single(p => p.Number == 301));
+            page.Refusal().ShouldBe(HoldingRefusal);
+        }
+        var arranged = Arrange(renderer, page, screen, width);
+        return (Button(arranged, "prs:filter:mine"), Button(arranged, "prs:filter:flights"), Button(arranged, "prs:filter:needs-me"),
+            arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds, arranged);
+    }
+
+    [Theory]
+    [InlineData(600f)]
+    [InlineData(700f)]
+    [InlineData(1400f)]
+    public async Task ALongRefusalStaysRightOfTheSearchBoxInsideThePageWholeOnHoverAndMovesNothing(float width)
+    {
+        var without = await ToolbarAt(width, refused: false);
+        var with = await ToolbarAt(width, refused: true);
+
+        (with.Mine, with.Flights, with.NeedsMe, with.Search).ShouldBe((without.Mine, without.Flights, without.NeedsMe, without.Search));
+        var text = with.Arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == HoldingRefusal);
+        text.Bounds.X.ShouldBeGreaterThanOrEqualTo(with.Search.X + with.Search.Width);
+        (text.Bounds.X + text.Bounds.Width).ShouldBeLessThanOrEqualTo(width + 0.01f);
+        text.Bounds.X.ShouldBeGreaterThanOrEqualTo(0f);
+        text.Node.Tooltip.ShouldBe(HoldingRefusal);
+        // Drawn from its left edge: a far-aligned run wider than its slot grows leftwards, over the pills, whatever its bounds say.
+        ((Layout.Content.Text)((Layout.Node.Leaf)text.Node).Content).HAlign.ShouldBe(TextAlign.Near);
+        TextOverlap.Faults(with.Arranged).Select(f => f.Text).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheRefusalCaptureIsWrittenAtANarrowAndAWideWidth()
+    {
+        var given = Environment.GetEnvironmentVariable("PILOT_PR_CAPTURES");
+        var folder = given is { Length: > 0 } ? Directory.CreateDirectory(given) : Directory.CreateTempSubdirectory("pilot-pr-");
+        var suffix = Environment.GetEnvironmentVariable("PILOT_PR_CAPTURE_SUFFIX") ?? "";
+        try
+        {
+            foreach (var width in new[] { 700, 1400 })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, 520);
+                var (chrome, page) = Chrome(renderer);
+                var screen = Screen();
+                page.OnFixReview = (_, _) => throw new InvalidOperationException(HoldingRefusal.Substring(HoldingRefusal.IndexOf("refused: ", StringComparison.Ordinal) + 9));
+                await page.FixReviewAsync(screen.Row!.PullRequests.Single(p => p.Number == 301));
+                chrome.Show(PilotPage.PullRequests);
+                for (var i = 0; i < 2; i++)
+                {
+                    chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, null, screen, new RectF32(0, 0, width, 520));
+                }
+                var png = Path.Combine(folder.FullName, $"pr-refusal-{width}{suffix}.png");
+                File.WriteAllBytes(png, SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, 520));
+                File.ReadAllBytes(png).Take(4).ShouldBe(new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G' });
+            }
+        }
+        finally
+        {
+            if (given is not { Length: > 0 })
+            {
+                folder.Delete(recursive: true);
+            }
+        }
+    }
 }
