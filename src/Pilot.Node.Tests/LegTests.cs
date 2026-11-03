@@ -490,9 +490,25 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
     public string? MergeAnswers { get; set; }
 
+    /// <summary>When set, MergeAsync refuses only <see cref="MergeRefusesMethod"/> with it, as GitHub does a rebase of a branch with merges in it; other methods merge.</summary>
+    public string? MergeRefusesWith { get; set; }
+
+    /// <summary>The method <see cref="MergeRefusesWith"/> applies to.</summary>
+    public string MergeRefusesMethod { get; set; } = "rebase";
+
+    /// <summary>The methods AllowedMergeMethodsAsync answers, as GitHub's repo settings allow them.</summary>
+    public List<string> AllowedMergeMethods { get; set; } = ["squash", "merge", "rebase"];
+
+    public Task<IReadOnlyList<string>> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<string>>([.. AllowedMergeMethods]);
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeRefusesWith is not null && string.Equals(method, MergeRefusesMethod, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException(MergeRefusesWith);
+        }
         if (MergeAnswers is not null)
         {
             return GhCli.AlreadyQueued(MergeAnswers) ? true : throw new FlightException(MergeAnswers);

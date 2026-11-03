@@ -48,6 +48,63 @@ public sealed partial class GhCli
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
 
+    // Per repo folder: the methods GitHub said the repo allows and when, as _autoMerge is kept.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (IReadOnlyList<string> Methods, DateTimeOffset At)> _mergeMethods = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<IReadOnlyList<string>> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (_mergeMethods.TryGetValue(repoPath, out var known) && DateTimeOffset.UtcNow - known.At < AutoMergeAllowedFor)
+        {
+            return known.Methods;
+        }
+        var (exit, output, _) = await RunAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            // A call that failed is no answer: not kept, so the next Merge asks again.
+            return [];
+        }
+        var methods = ParseAllowedMergeMethods(output);
+        _mergeMethods[repoPath] = (methods, DateTimeOffset.UtcNow);
+        return methods;
+    }
+
+    /// <summary>
+    /// <c>gh api repos/{owner}/{repo}</c>'s output: the methods whose <c>allow_squash_merge</c>, <c>allow_merge_commit</c> and
+    /// <c>allow_rebase_merge</c> are true, as <c>squash</c>, <c>merge</c>, <c>rebase</c> in that order. Empty when it is no JSON.
+    /// </summary>
+    internal static IReadOnlyList<string> ParseAllowedMergeMethods(string repoJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(repoJson);
+            var root = doc.RootElement;
+            bool On(string name) => root.ValueKind == JsonValueKind.Object && root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+            var methods = new List<string>(3);
+            if (On("allow_squash_merge"))
+            {
+                methods.Add("squash");
+            }
+            if (On("allow_merge_commit"))
+            {
+                methods.Add("merge");
+            }
+            if (On("allow_rebase_merge"))
+            {
+                methods.Add("rebase");
+            }
+            return methods;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Whether GitHub's refusal of a merge says the branch cannot be replayed as a rebase ("This branch can't be rebased", "cannot be rebased").</summary>
+    internal static bool CannotBeRebased(string said) =>
+        said.Contains("can't be rebased", StringComparison.OrdinalIgnoreCase) || said.Contains("can’t be rebased", StringComparison.OrdinalIgnoreCase)
+        || said.Contains("cannot be rebased", StringComparison.OrdinalIgnoreCase);
+
     // Not kept: it is asked only when a merge batch would form, and a rule added since must stop the next batch's push.
     public async Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {

@@ -101,7 +101,7 @@ public sealed partial class PrReviews
         }
         try
         {
-            await github.MergeAsync(review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
+            await MergeFallback.MergeAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
         }
         catch (FlightException ex)
         {
@@ -136,9 +136,9 @@ public sealed partial class PrReviews
         {
             throw new FlightException($"{pr}'s head moved to {read.Head[..Math.Min(8, read.Head.Length)]} past the {head[..7]} reviewed: review it again");
         }
-        var queued = await github.MergeAsync(review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        var (queued, instead) = await MergeFallback.MergeAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
-            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.", link: review.Url);
+            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.{(instead is null ? "" : $" {MergeFallback.Note(instead)}.")}", link: review.Url);
     }
 }
