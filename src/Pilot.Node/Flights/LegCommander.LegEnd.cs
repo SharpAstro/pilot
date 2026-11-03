@@ -111,6 +111,7 @@ public sealed partial class LegCommander
             // A pair answered parallel is never rung again: its new shared files are recorded on its row (PIL589).
             var quiet = new List<(Touched Other, string[] Files)>();
             var prParallel = new List<(Touched Other, string[] Files)>();
+            var mutual = new List<(Touched Other, string[] Files)>();
             foreach (var other in others.Where(o => o.Files is not null))
             {
                 var unforeseen = Unforeseen(flight, own, other);
@@ -124,6 +125,11 @@ public sealed partial class LegCommander
                 {
                     quiet.Add((other, unforeseen));
                 }
+                else if (other.Node is null && other.FlightCode is not null && HoldsPendingRowAbout(other.FlightCode, flight.Code))
+                {
+                    // Both hold a card on each other (PIL664): the node plans them in parallel itself, on both sides.
+                    mutual.Add((other, unforeseen));
+                }
                 else if (other.FlightCode is null)
                 {
                     // A PR no flight owns has no flight to connect to: the node answers parallel itself and leaves a note.
@@ -134,7 +140,7 @@ public sealed partial class LegCommander
                     (best, bestFiles) = (other, unforeseen);
                 }
             }
-            if (best is null && quiet.Count == 0 && prParallel.Count == 0)
+            if (best is null && quiet.Count == 0 && prParallel.Count == 0 && mutual.Count == 0)
             {
                 return;
             }
@@ -155,9 +161,39 @@ public sealed partial class LegCommander
                 {
                     now = AnswerPrParallel(now, leg.Name, other, files);
                 }
+                var goOn = new List<(FlightRow Other, OverlapRow Row)>();
+                foreach (var (other, files) in mutual)
+                {
+                    // Looked at again under the lock: the other's row may have been answered since.
+                    if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, other.FlightCode, StringComparison.OrdinalIgnoreCase)) is { } theirs
+                        && theirs.Overlaps.FirstOrDefault(o => IsPendingAbout(o, now.Code)) is { } pending)
+                    {
+                        (now, var released) = AnswerMutualParallel(now, leg.Name, theirs, pending, files);
+                        goOn.Add((released, pending));
+                    }
+                    else
+                    {
+                        best ??= other;
+                        if (best == other)
+                        {
+                            bestFiles = files;
+                        }
+                    }
+                }
                 if (best is not null)
                 {
                     RingLegEnd(now, leg.Name, best, bestFiles);
+                }
+                foreach (var (released, row) in goOn)
+                {
+                    try
+                    {
+                        await GoOnAfterParallelAnswerAsync(released, row, $"{released.Code} is planned in parallel with {now.Code} by the node", cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        await Error.WriteLineAsync($"leg-end overlap: {released.Code} could not go on after the mutual parallel answer: {ex.Message}");
+                    }
                 }
             }
             finally
@@ -271,6 +307,46 @@ public sealed partial class LegCommander
             + $"A PR has no flight to connect to, so the node answered plan in parallel itself and {flight.Code} goes on. The second to land resolves the conflicts. Both change: {string.Join(", ", names)}.");
         Error.WriteLine($"leg-end overlap: {flight.Code} shares {string.Join(", ", files)} with open PR {code}; answered parallel by the node, no card rang");
         return updated;
+    }
+
+    private static bool IsPendingAbout(OverlapRow row, string code) =>
+        row.Node is null && row.Answer == OverlapAnswer.Pending && string.Equals(row.Other, code, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the local flight <paramref name="holder"/> has a pending overlap row naming <paramref name="about"/>.</summary>
+    private bool HoldsPendingRowAbout(string holder, string about) =>
+        state.Flights().FirstOrDefault(f => string.Equals(f.Code, holder, StringComparison.OrdinalIgnoreCase))?.Overlaps.Any(o => IsPendingAbout(o, about)) == true;
+
+    /// <summary>
+    /// Two flights of this node hold an overlap card on each other (PIL664): the other's pending row becomes <see cref="OverlapAnswer.Separate"/>
+    /// and its overlap card closes, this flight records a Separate row, and one handled card names both flights and the shared files.
+    /// Returns this flight as recorded and the other as released; the caller lets the other go on.
+    /// </summary>
+    private (FlightRow Now, FlightRow Released) AnswerMutualParallel(FlightRow flight, string leg, FlightRow other, OverlapRow pending, string[] files)
+    {
+        var shared = OverlapChoice.Normalise([.. pending.Files ?? [], .. files]).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var released = other with { Overlaps = [.. other.Overlaps.Select(o => ReferenceEquals(o, pending) ? o with { Answer = OverlapAnswer.Separate, Files = shared, At = time.GetUtcNow() } : o)] };
+        state.PutFlight(released);
+        state.CloseCardsAbout(Verbs.FlightTarget(other.Code), $"the node planned {other.Code} in parallel with {flight.Code} itself, as both held a card on the other", OverlapKind);
+
+        var union = OverlapChoice.Normalise([.. flight.Overlaps.Where(o => string.Equals(o.Other, other.Code, StringComparison.OrdinalIgnoreCase)).SelectMany(o => o.Files ?? []), .. shared])
+            .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var row = new OverlapRow
+        {
+            Other = other.Code, Node = null, Files = union, Pick = Verbs.OverlapPickConnect,
+            Why = $"after {leg} the plane changes {string.Join(", ", ShortNames(files))}, which {other.Code} changes too; the node answered a mutual overlap parallel, as {other.Code} held a card on {flight.Code} as well",
+            Answer = OverlapAnswer.Separate, AfterLeg = leg, At = time.GetUtcNow(),
+        };
+        var updated = flight with { Overlaps = [.. flight.Overlaps.Where(o => !string.Equals(o.Other, other.Code, StringComparison.OrdinalIgnoreCase)), row] };
+        state.PutFlight(updated);
+
+        var names = ShortNames(shared);
+        var named = names.Length > OverlapNamed ? $"{string.Join(", ", names.Take(OverlapNamed))} and {names.Length - OverlapNamed} more" : string.Join(", ", names);
+        state.RaiseCard(CardBin.Handled, OverlapParallelKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code} and {other.Code} planned in parallel ({named})",
+            $"Found at {leg}: {flight.Code} and {other.Code} each held an overlap card on the other for files their plans did not foresee. "
+            + $"The node answered plan in parallel itself on both sides and both go on. The second to land resolves the conflicts. Both change: {string.Join(", ", names)}.");
+        Error.WriteLine($"leg-end overlap: {flight.Code} and {other.Code} held a card on each other for {string.Join(", ", shared)}; answered parallel by the node, no card rang");
+        return (updated, released);
     }
 
     /// <summary>Records the pending overlap (added, or an answered pair's row made pending again with the new files) and raises its card.</summary>

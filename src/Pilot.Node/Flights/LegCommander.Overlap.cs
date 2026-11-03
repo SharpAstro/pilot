@@ -256,13 +256,25 @@ public sealed partial class LegCommander
 
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
-        if (known.AfterLeg is not null)
+        return await GoOnAfterParallelAnswerAsync(flight, known,
+            known.AfterLeg is not null
+                ? $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on"
+                : $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer", cancellationToken);
+    }
+
+    /// <summary>
+    /// After a parallel answer on <paramref name="answered"/>: a leg-end row goes on (<see cref="GoOnAfterLegEndAnswerAsync"/>), a
+    /// planner-asked row has its planner stopped and a fresh one started. Called under the lock.
+    /// </summary>
+    private async Task<string> GoOnAfterParallelAnswerAsync(FlightRow flight, OverlapRow answered, string told, CancellationToken cancellationToken)
+    {
+        if (answered.AfterLeg is not null)
         {
-            return await GoOnAfterLegEndAnswerAsync(flight, $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on", cancellationToken);
+            return await GoOnAfterLegEndAnswerAsync(flight, told, cancellationToken);
         }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
-        return $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer";
+        return told;
     }
 
     /// <summary>
