@@ -159,7 +159,13 @@ public sealed partial class LegCommander
         {
             Record(flight.Code, f => f with { MergeWhenGreen = null });
         }
-        SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
+        // A branch that holds a merge of its base cannot be rebased by GitHub: it is merged by squash (or merge) from the start (PIL690).
+        if (await MethodForMergeCommitsAsync(flight, pr.Head, method, cancellationToken) is { } preferred)
+        {
+            method = preferred;
+            _mergeFallbacks[flight.Code] = MergeFallback.PreferredNote(preferred);
+        }
+        SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})", cardNote: _mergeFallbacks.TryGetValue(flight.Code, out var chosen) ? chosen : null);
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
         var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
         try
@@ -182,6 +188,26 @@ public sealed partial class LegCommander
             RaiseReadyAtLaid(flight, queueHead, ex.Message);
             return await ArmAsync(flight, pr with { Head = queueHead }, method, null, "laid on its base; merging when checks pass on the new head", command.Who == "node", cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// For a rebase merge on a base with no merge queue: the method to use instead when the PR's branch holds a merge commit since its
+    /// base (<c>git rev-list --merges --count origin/&lt;base&gt;..&lt;head&gt;</c> in the plane), squash or else merge, whichever the repo allows;
+    /// null to keep <paramref name="method"/> (no merge commit, no plane, git failed, or neither method allowed). Asks git and GitHub: never under the lock.
+    /// </summary>
+    private async Task<string?> MethodForMergeCommitsAsync(FlightRow flight, string head, string method, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(method, "rebase", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(flight.Worktree)
+            || await OffLockAsync(null, () => github.MergeQueueMethodAsync(flight.RepoPath, BaseBranch(flight), cancellationToken)) is not null)
+        {
+            return null;
+        }
+        var merges = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--merges", "--count", $"origin/{BaseBranch(flight)}..{head}"], flight.Worktree, cancellationToken));
+        if (!merges.Ok || !int.TryParse(merges.Output.Trim(), out var count) || count == 0)
+        {
+            return null;
+        }
+        return MergeFallback.Replacement(await OffLockAsync(null, () => github.AllowedMergeMethodsAsync(flight.RepoPath, cancellationToken)));
     }
 
     /// <summary>What an armed merge says while every check shown is green and one GitHub requires has yet to be created.</summary>

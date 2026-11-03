@@ -39,4 +39,7 @@ internal static class MergeFallback
 
     /// <summary>What the merge entry and its card say once rebase was refused and <paramref name="instead"/> merges the PR.</summary>
     internal static string Note(string instead) => $"rebase was refused (the branch can't be rebased); merging with {instead} instead";
+
+    /// <summary>What the merge entry and its card say when the branch holds a merge commit, so <paramref name="instead"/> is used and rebase is never tried.</summary>
+    internal static string PreferredNote(string instead) => $"the branch holds a merge commit, which a rebase cannot replay; merging with {instead} instead";
 }
