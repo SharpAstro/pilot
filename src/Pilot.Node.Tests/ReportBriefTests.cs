@@ -24,7 +24,7 @@ public sealed class ReportBriefTests
         {
             brief.ShouldContain("pilot session report blocked \"<what you need>\"");
             brief.ShouldContain("When you need the person to decide something and cannot go on");
-            brief.ShouldContain("no\n  report is needed");
+            brief.ShouldContain("so no report is needed");
         }
     }
 
