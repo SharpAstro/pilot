@@ -92,7 +92,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
     public const string ClosedBy = "node";
 
     // Cards about a PR: closed once the PR has merged or closed, whatever else they said.
-    private static readonly HashSet<string> PrCards = [LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind];
+    private static readonly HashSet<string> PrCards = [LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind, LegCommander.HoldingTimeoutKind];
 
     private const string ConflictKind = "pr-conflicts";
     private const string ChecksFailedKind = "pr-checks-failed";
@@ -101,7 +101,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
     // anyway, an ask, a cap, a digest, a usage window, an update), and what a landing leaves for the person (plane-left, landed).
     private static readonly HashSet<string> FlightCards =
     [
-        LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind,
+        LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.QueueDropped, PrChecks.MergeDropped, ConflictKind, ChecksFailedKind, LegCommander.HoldingTimeoutKind,
         LegWatch.ReviewStalled, LegWatch.ValidationStalled, LegWatch.Stopped, LegWatch.Idle, LegWatch.OverBudget, "leg-failed", LegCommander.PushBlockedKind, LegCommander.NextStepKind,
     ];
 

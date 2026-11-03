@@ -81,7 +81,7 @@ internal static class StatusMarkdown
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",
-                _ => "flying",
+                _ => FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
             };
             text.AppendLine($"### {flight.Code} · {Text(flight.Title ?? flight.Item.Noun)}").AppendLine();
             var issue = $"{flight.Repo} {flight.Item.Display}";
