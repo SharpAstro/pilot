@@ -222,8 +222,9 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
         entry.Open.ShouldBeTrue();
         entry.State.ShouldNotBe(MergeEntryState.Dropped);
         _github.Merged.ShouldBeEmpty();
-        // The only Ring card is the PR-ready one the flight had before the merge: nothing new rang for the owner.
-        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Id).ShouldBe(ringBefore);
+        // Bringing the branch up to date closes the old PR-ready card and raises it again for the new head; nothing else rings for the owner.
+        ringBefore.ShouldNotBeEmpty();
+        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Kind).ShouldAllBe(k => k == LegCommander.PrReady);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
     }
 }
