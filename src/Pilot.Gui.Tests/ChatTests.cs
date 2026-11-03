@@ -375,6 +375,24 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task ANodeNoteOrAHandBackAfterTheAskLeavesTheCardOpen()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var asking = Asking();
+        TranscriptEntry[] note = [.. asking, new() { Index = 6, Kind = TranscriptKind.User, Note = true, Text = "A card opened: c1 rings", At = At.AddMinutes(7) }];
+        TranscriptEntry[] handBack = [.. asking, new() { Index = 6, Kind = TranscriptKind.User, Note = true, From = "some-agent", Text = "done", At = At.AddMinutes(7) }];
+
+        foreach (var entries in new[] { note, handBack })
+        {
+            var chat = NewChat(renderer, Page(entries, question: "Which repo?", choices: ["tianwen", "pilot"]));
+            await Read(chat, 7);
+            Described(chat).ShouldContain("tianwen");
+            Arranged(chat).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal))
+                .ShouldBe(["chat:choice:1", "chat:choice:2"]);
+        }
+    }
+
+    [Fact]
     public async Task AnInlineNumberedQuestionWithNoChoicesFromAnOldNodeShowsPillsAndAClickSendsTheFirst()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);

@@ -735,8 +735,9 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Layout.Node? asked = null;
         // A message from the person after the watchtower's last words answers the ask: the card closes, and only a newer ask
         // (the watchtower speaking again) reopens it.
+        // Only the person's own line counts: a node note or a hand-back (Note, or From set) leaves the ask pending.
         var answeredAlready = held.Entries.Count > 0
-            && held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.User) is var lastUser and >= 0
+            && held.Entries.FindLastIndex(e => e is { Kind: TranscriptKind.User, From: null, Note: false }) is var lastUser and >= 0
             && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
         if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
