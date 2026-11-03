@@ -535,7 +535,7 @@ public sealed partial class LegCommander
         }
         if (rerun)
         {
-            offers.Add("the failed checks can be run again, in case it was a flake");
+            offers.Add("the checks can be run again");
         }
         if (mergeAgain)
         {

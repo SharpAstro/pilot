@@ -66,6 +66,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var card = Open().Single(c => c.Kind == LegCommander.MergeFailed);
         var summary = card.Summary.ShouldNotBeNull();
         summary.ShouldContain("TIA43/parser");
+        // The panel shows at most 240 characters of a summary (CardsView.SummaryChars).
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
         summary.ShouldContain("fresh worker can fix the last leg");
         summary.ShouldContain("checks can be run again");
         summary.ShouldContain("merge can be tried once more");
