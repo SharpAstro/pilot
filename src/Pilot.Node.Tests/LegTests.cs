@@ -490,12 +490,29 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
     public string? MergeAnswers { get; set; }
 
+    /// <summary>One GitHub text per merge call, in order (empty: that call merges); a call past the end merges.</summary>
+    public Queue<string> MergeScript { get; } = new();
+
+    /// <summary>What AllowedMergeMethodsAsync answers; all three by default.</summary>
+    public AllowedMergeMethods? AllowedMethods { get; set; } = new(true, true, true);
+
+    public Task<AllowedMergeMethods?> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AllowedMethods);
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
         if (MergeAnswers is not null)
         {
-            return GhCli.AlreadyQueued(MergeAnswers) ? true : throw new FlightException(MergeAnswers);
+            var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", MergeAnswers);
+            return answer.Kind == MergeAnswerKind.Done ? true : throw new MergeRefusedException(answer.Kind, answer.Message, MergeAnswers);
+        }
+        lock (MergeScript)
+        {
+            if (MergeScript.Count > 0 && MergeScript.Dequeue() is { Length: > 0 } scripted)
+            {
+                var answer = Pilot.Node.Flights.MergeAnswers.Classify(1, "", scripted);
+                return answer.Kind == MergeAnswerKind.Done ? Queues : throw new MergeRefusedException(answer.Kind, answer.Message, scripted);
+            }
         }
         if (MergeRefuses is not null)
         {

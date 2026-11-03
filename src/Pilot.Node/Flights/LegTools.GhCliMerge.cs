@@ -6,6 +6,55 @@ namespace Pilot.Node.Flights;
 
 public sealed partial class GhCli
 {
+    /// <summary>How gh is run for a merge call; null is the real gh. Tests script it.</summary>
+    internal Func<IReadOnlyList<string>, string, CancellationToken, Task<(int Exit, string Output, string Error)>>? Runner { get; init; }
+
+    /// <summary>The wait before a transient answer is retried; tests make it instant.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
+
+    private const int MergeAttempts = 4;
+
+    private async Task<(int Exit, string Output, string Error)> GhAsync(IReadOnlyList<string> args, string repoPath, CancellationToken cancellationToken)
+    {
+        if (Runner is { } run)
+        {
+            return await run(args, repoPath, cancellationToken);
+        }
+        try
+        {
+            return await RunAsync(args, repoPath, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // gh's own time budget ran out: a timeout the table treats as transient.
+            return (-1, "", "gh timed out");
+        }
+    }
+
+    // One merge-shaped call, sorted by MergeAnswers: a transient answer is asked again (3 retries after 1 s, 2 s, 4 s), anything
+    // else comes back for the caller to act on.
+    private async Task<MergeAnswer> AnswerAsync(IReadOnlyList<string> args, string repoPath, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var (exit, output, error) = await GhAsync(args, repoPath, cancellationToken);
+            var answer = MergeAnswers.Classify(exit, output, error);
+            if (answer.Kind != MergeAnswerKind.Transient || attempt >= MergeAttempts)
+            {
+                return answer;
+            }
+            await Delay(TimeSpan.FromSeconds(1 << (attempt - 1)), cancellationToken);
+        }
+    }
+
+    private static void Require(MergeAnswer answer, string what)
+    {
+        if (answer.Kind != MergeAnswerKind.Done)
+        {
+            throw new MergeRefusedException(answer.Kind, answer.Message, $"gh could not {what}: {answer.Message}");
+        }
+    }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         // gh pr merge reaches a merge queue only through auto-merge, which the repos keep off: "Auto merge is not allowed for
@@ -15,12 +64,9 @@ public sealed partial class GhCli
             await EnqueueAsync(repoPath, number, id, head, cancellationToken);
             return true;
         }
-        var (exit, output, error) = await RunAsync(
+        var answer = await AnswerAsync(
             ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
-        if (exit != 0)
-        {
-            throw new FlightException($"gh could not merge #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
+        Require(answer, $"merge #{number}");
         return false;
     }
 
@@ -47,6 +93,24 @@ public sealed partial class GhCli
 
     /// <summary><c>gh api repos/{owner}/{repo} --jq .allow_auto_merge</c>'s output: true only for <c>true</c>; <c>false</c>, <c>null</c> (a token that cannot see the setting) and nothing are off.</summary>
     internal static bool ParseAllowAutoMerge(string output) => output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (AllowedMergeMethods Methods, DateTimeOffset At)> _methods = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<AllowedMergeMethods?> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        if (_methods.TryGetValue(repoPath, out var known) && DateTimeOffset.UtcNow - known.At < AutoMergeAllowedFor)
+        {
+            return known.Methods;
+        }
+        var (exit, output, _) = await GhAsync(["api", "repos/{owner}/{repo}"], repoPath, cancellationToken);
+        var methods = exit == 0 ? AllowedMergeMethods.Parse(output) : null;
+        // A call that failed is no answer: not kept.
+        if (methods is not null)
+        {
+            _methods[repoPath] = (methods, DateTimeOffset.UtcNow);
+        }
+        return methods;
+    }
 
     // Not kept: it is asked only when a merge batch would form, and a rule added since must stop the next batch's push.
     public async Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
@@ -141,12 +205,9 @@ public sealed partial class GhCli
         {
             throw new FlightException($"GitHub will not arm auto-merge on #{number}: it is in {status?.ToLowerInvariant()} status, so it has no required check to wait for");
         }
-        (exit, output, error) = await RunAsync(
+        var armed = await AnswerAsync(
             ["api", "graphql", "-f", $"query={EnableAutoMergeMutation}", "-f", $"id={id}", "-f", $"method={method.ToUpperInvariant()}", "-f", $"head={head}"], repoPath, cancellationToken);
-        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal)) && !AlreadyArmed(error + " " + output))
-        {
-            throw new FlightException($"gh could not arm auto-merge on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
-        }
+        Require(armed, $"arm auto-merge on #{number}");
     }
 
     private const string EnableAutoMergeMutation =
@@ -256,9 +317,9 @@ public sealed partial class GhCli
 
     // The PR's node id when its base has a merge queue, else null; a GitHub that will not say is no queue, and gh pr merge
     // then says what is wrong.
-    private static async Task<string?> QueuedPullRequestAsync(string repoPath, int number, CancellationToken cancellationToken)
+    private async Task<string?> QueuedPullRequestAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(
+        var (exit, output, _) = await GhAsync(
             ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", $"number={number.ToString(System.Globalization.CultureInfo.InvariantCulture)}", "-f", $"query={QueueQuery}"],
             repoPath, cancellationToken);
         return exit == 0 ? QueuedPullRequest(output) : null;
@@ -286,30 +347,8 @@ public sealed partial class GhCli
 
     // Joins the queue, refused by GitHub unless the PR's head is still the one reviewed (expectedHeadOid, as
     // --match-head-commit is for gh pr merge).
-    private static async Task EnqueueAsync(string repoPath, int number, string id, string head, CancellationToken cancellationToken)
-    {
-        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken);
-        var said = (error.Trim().Length > 0 ? error : output).Trim();
-        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal)) && !AlreadyQueued(said) && !AlreadyQueued(output))
-        {
-            throw new FlightException($"gh could not queue #{number} to merge: {said}");
-        }
-    }
-
-    /// <summary>
-    /// Whether GitHub's answer to enqueuePullRequest says the PR is in the queue already ("gh: Pull request is already in the
-    /// queue", or "GraphQL: Pull request is already in the queue (enqueuePullRequest)"): the state wanted, so not a refusal.
-    /// </summary>
-    internal static bool AlreadyQueued(string said) =>
-        said.Contains("already in the queue", StringComparison.OrdinalIgnoreCase) || said.Contains("already queued", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Whether GitHub's answer to enablePullRequestAutoMerge says auto-merge is armed already ("Pull request auto merge is
-    /// already enabled"): the state wanted, so not a refusal. Kept narrow so no other "already" answer passes.
-    /// </summary>
-    internal static bool AlreadyArmed(string said) =>
-        (said.Contains("auto-merge", StringComparison.OrdinalIgnoreCase) || said.Contains("auto merge", StringComparison.OrdinalIgnoreCase))
-        && said.Contains("already enabled", StringComparison.OrdinalIgnoreCase);
+    private async Task EnqueueAsync(string repoPath, int number, string id, string head, CancellationToken cancellationToken) =>
+        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken), $"queue #{number} to merge");
 
     private const string DequeueMutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}";
 
@@ -320,15 +359,8 @@ public sealed partial class GhCli
         {
             return;
         }
-        var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken);
-        var said = (error.Trim().Length > 0 ? error : output).Trim();
-        // Not queued (or merged, or closed) already is the state wanted.
-        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal))
-            && !said.Contains("not in the merge queue", StringComparison.OrdinalIgnoreCase) && !said.Contains("not queued", StringComparison.OrdinalIgnoreCase)
-            && !said.Contains("not currently", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new FlightException($"gh could not take #{number} out of the merge queue: {said}");
-        }
+        // Not queued (or merged, or closed) already is the state wanted: a Done row of the table.
+        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken), $"take #{number} out of the merge queue");
     }
 
     public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
