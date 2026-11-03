@@ -442,14 +442,34 @@ public sealed class LfsTests : IDisposable
         }
 
         File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+        foreach (var (name, text) in PlaneBriefs().Concat(WorktreeBriefs()))
+        {
+            text.ShouldContain("already filled", customMessage: name);
+            text.ShouldContain("no pull is needed", customMessage: name);
+            text.ShouldNotContain("git lfs pull", customMessage: name);
+        }
+
+        // A recorded missing path (the record the fill leaves in the git dir) is named, with the one pull line for it.
+        var gitDir = Path.Combine(plane, ".git");
+        Directory.CreateDirectory(gitDir);
+        File.WriteAllText(Path.Combine(gitDir, "pilot-lfs-missing.txt"), "assets/big.bin\nassets/other.bin\n");
         foreach (var (name, text) in PlaneBriefs())
         {
-            text.ShouldContain("run `git lfs pull` once in the plane", customMessage: name);
+            text.ShouldContain("assets/big.bin", customMessage: name);
+            text.ShouldContain("run `git lfs pull --include=assets/big.bin,assets/other.bin` once in the plane", customMessage: name);
         }
         foreach (var (name, text) in WorktreeBriefs())
         {
-            text.ShouldContain("run `git lfs pull` once in the worktree", customMessage: name);
+            text.ShouldContain("assets/big.bin", customMessage: name);
+            text.ShouldContain("run `git lfs pull --include=assets/big.bin,assets/other.bin` once in the worktree", customMessage: name);
         }
         Briefs.LfsRule(plane).ShouldContain("never per file or per build");
+
+        // A long list is capped with a count of the rest.
+        File.WriteAllLines(Path.Combine(gitDir, "pilot-lfs-missing.txt"), Enumerable.Range(1, 25).Select(i => $"f{i}.bin"));
+        var capped = Briefs.LfsRule(plane);
+        capped.ShouldContain("and 5 more");
+        capped.ShouldContain("f20.bin");
+        capped.ShouldNotContain("f21.bin");
     }
 }
