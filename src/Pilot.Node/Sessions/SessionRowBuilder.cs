@@ -52,7 +52,8 @@ public static class SessionRowBuilder
     /// <param name="role">Its role, flight, leg and budget.</param>
     /// <param name="hook">The session's latest hook, which has the last word on a running session's state: it fired on
     /// the transition itself, where the listing is read every few seconds.</param>
-    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null)
+    /// <param name="report">What the session reported of itself: applied only while its process lives and it is newer than the hook.</param>
+    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null, SessionReport? report = null)
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
@@ -65,6 +66,34 @@ public static class SessionRowBuilder
             state = hooked;
             hookWaiting = hook.WaitingFor;
             hookWaitingAt = hooked == SessionState.Waiting ? hook.At : null;
+        }
+        SessionReport? reported = null;
+        // A blocked report is followed by the turn's own Stop (or an idle_prompt): those only say the turn ended, which is
+        // what a blocked session does, so they must not clear it. Only work taken up again, a newer report or an end does.
+        var endOfTurn = hook is { State: SessionState.Idle, ApiError: null, Event: "Stop" or "Notification" };
+        if (report is not null && agent.Pid is not null
+            && (hook is null || report.At > hook.At || (report.State == ReportBook.Blocked && endOfTurn))
+            && report.State is ReportBook.Idle or ReportBook.Working or ReportBook.Blocked)
+        {
+            reported = report;
+            switch (report.State)
+            {
+                case ReportBook.Working:
+                    state = SessionState.Working;
+                    hookWaiting = null;
+                    hookWaitingAt = null;
+                    break;
+                case ReportBook.Idle:
+                    state = SessionState.Idle;
+                    hookWaiting = null;
+                    hookWaitingAt = null;
+                    break;
+                default:
+                    state = SessionState.Waiting;
+                    hookWaiting = report.Message ?? "blocked (no reason given)";
+                    hookWaitingAt = report.At;
+                    break;
+            }
         }
         var waiting = state == SessionState.Waiting;
         var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook) : null;
@@ -107,6 +136,8 @@ public static class SessionRowBuilder
             EndedBecause = endedBecause,
             RemoteControlUrl = record?.BridgeSessionId is { Length: > 0 } bridge ? $"https://claude.ai/code/{bridge}" : null,
             StartedAt = agent.StartedAt ?? DateTimeOffset.UnixEpoch,
+            Reported = reported?.State,
+            ReportedAt = reported?.At,
         };
     }
 

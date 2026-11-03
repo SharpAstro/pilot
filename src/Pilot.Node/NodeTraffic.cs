@@ -44,7 +44,7 @@ public sealed class NodeTraffic
     private readonly SortedDictionary<DateTimeOffset, Bucket> _hours = [];
     private DateTimeOffset? _logged;
     private long _httpIn, _httpOut, _childBytes;
-    private int _gitRuns, _ghRuns;
+    private int _gitRuns, _ghRuns, _networkGitRuns;
 
     private TimeProvider _time = TimeProvider.System;
     private DateTimeOffset _startedHour = HourOf(TimeProvider.System.GetUtcNow());
@@ -69,6 +69,9 @@ public sealed class NodeTraffic
     public int GitRunsSinceStart => Volatile.Read(ref _gitRuns);
 
     public int GhRunsSinceStart => Volatile.Read(ref _ghRuns);
+
+    /// <summary>Git runs started that can use the network (fetch, pull, push, lfs pull...), by <see cref="GitCli.UsesNetwork"/>; a test reads it to prove a step stayed offline.</summary>
+    public int NetworkGitRunsSinceStart => Volatile.Read(ref _networkGitRuns);
 
     /// <summary>Whether a child's bytes can be read on this platform (Windows job objects); elsewhere they are unknown.</summary>
     public static bool CanMeasureChildren => OperatingSystem.IsWindows();
@@ -227,6 +230,10 @@ public sealed class NodeTraffic
     public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start, bool canUseNetwork = true)
     {
         var process = Process.Start(start) ?? throw new InvalidOperationException($"{tool} did not start");
+        if (canUseNetwork && tool == "git")
+        {
+            Interlocked.Increment(ref _networkGitRuns);
+        }
         return (process, new Child(this, tool, process, canUseNetwork));
     }
 }

@@ -637,9 +637,106 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private CardRow? ShowingMerge(string subject) =>
         state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge));
 
+    /// <summary>How long a flight circles in a holding pattern before a card asks the person to merge as it is or wait.</summary>
+    public TimeSpan HoldingBound { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>Whether the watchtower is live now; null reads as live (a node built without one is not asked).</summary>
+    public Func<bool>? WatchtowerLive { get; set; }
+
+    // When the holding-timeout card of a hold (flight code and Holding.Since) was last raised: once per hold, again only a bound after a Wait.
+    private readonly Dictionary<string, DateTimeOffset> _holdingRung = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A flight in a holding pattern never circles forever: with no live watchtower, or once the hold is older than
+    /// <see cref="HoldingBound"/>, a Ring card asks the person to merge as it is or wait. Closed when the hold ends.
+    /// </summary>
+    private void LookAtHolds()
+    {
+        var now = time.GetUtcNow();
+        var cards = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.HoldingTimeoutKind).ToList();
+        var flights = state.Flights();
+        foreach (var card in cards)
+        {
+            var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
+            if (flights.FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: not null })
+            {
+                state.CloseCard(card.Id, "the hold ended", "node");
+            }
+        }
+        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, Holding: not null, PullRequest: not null }))
+        {
+            var holding = flight.Holding!;
+            var key = $"{flight.Code} {holding.Since.UtcTicks}";
+            var subject = Verbs.FlightTarget(flight.Code);
+            var live = WatchtowerLive?.Invoke() ?? true;
+            if ((live && now - holding.Since < HoldingBound)
+                || cards.Any(c => c.Subject == subject)
+                || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
+                || state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { Args: [{ } head, ..] })
+            {
+                continue;
+            }
+            _holdingRung[key] = now;
+            var why = live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
+            var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still holding: {why}",
+                $"{LegCommander.HoldingReason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
+                link: flight.PullRequestUrl,
+                summary: $"{flight.Code} has circled in a holding pattern and {why}. Merge as it is clears the hold and merges at the reviewed head; Wait keeps it holding and asks again later.");
+            state.UpdateChoices(card.Id,
+            [
+                new CardChoice { Label = "Merge as it is", Verb = Verbs.Merge, Target = subject, Args = [head, legs?.Models.MergeMethod ?? "squash", LegCommander.MergeAsIs] },
+                new CardChoice { Label = "Wait", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
+            ]);
+        }
+    }
+
+    /// <summary>
+    /// A flight whose review passed at its PR's head, every leg done, with no merge card open and none closed for that head, is
+    /// given its PR-ready card (holding-aware): autopilot merges only from one, and a node that restarted between the stored
+    /// verdict and the card left PIL682 flying for six hours (2026-11-03).
+    /// </summary>
+    private async Task RestorePassedWithoutCardAsync(CancellationToken cancellationToken)
+    {
+        if (legs is null)
+        {
+            return;
+        }
+        var carded = state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, MergeWhenGreen: null, Review: { State: ReviewState.Passed, ReviewedHead: not null } }
+            && !carded.Contains(Verbs.FlightTarget(f.Code))))
+        {
+            var flown = state.Legs(flight.Code);
+            if (flown.Length == 0 || flown.Any(l => l.State != LegState.Done) || legs.IsMerging(flight.Code))
+            {
+                continue;
+            }
+            try
+            {
+                var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+                if (pr is { State: "OPEN" } && pr.Number == flight.PullRequest && string.Equals(pr.Head, flight.Review!.ReviewedHead, StringComparison.OrdinalIgnoreCase))
+                {
+                    // A PR the merge queue holds, or let go unmerged, is LookAtQueuesAsync's (queued, or its drop handled): no new merge card.
+                    var queue = await github.MergeQueueAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
+                    if (queue is { State: "OPEN" } && (queue.Queued
+                        || (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))))
+                    {
+                        continue;
+                    }
+                    await legs.RestorePrReadyAsync(flight.Code, pr.Head, cancellationToken);
+                }
+            }
+            catch (FlightException ex)
+            {
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s PR-ready card could not be restored: {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        await RestorePassedWithoutCardAsync(cancellationToken);
+        LookAtHolds();
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
         {
@@ -820,6 +917,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     {
         if (legs is not { Models.Autopilot: true } || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
+            // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
+            || flight.Holding is not null
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)

@@ -30,6 +30,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(FlightMoved))]
 [JsonSerializable(typeof(FlightMovedTo))]
 [JsonSerializable(typeof(FlightMoveUnknown))]
+[JsonSerializable(typeof(FlightHolding))]
 [JsonSerializable(typeof(FlightMove))]
 [JsonSerializable(typeof(OverlapRow))]
 [JsonSerializable(typeof(FoldedIssue))]

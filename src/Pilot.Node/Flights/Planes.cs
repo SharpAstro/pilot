@@ -60,7 +60,9 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
             }
             return a switch
             {
-                "fetch" or "pull" or "push" or "clone" or "ls-remote" or "lfs" => true,
+                // Offline lfs verbs read and write the local store only (PIL685); pull, fetch and push talk to the server.
+                "lfs" => !(i + 1 < args.Count && args[i + 1] is "checkout" or "ls-files" or "status" or "env" or "version"),
+                "fetch" or "pull" or "push" or "clone" or "ls-remote" => true,
                 "remote" => args.Skip(i + 1).Contains("update"),
                 _ => false,
             };
@@ -313,6 +315,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             throw new FlightException($"git could not make {code}'s plane: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(worktree);
+        await LfsFill.FillAsync(git, worktree, cancellationToken);
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
@@ -341,6 +344,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             throw new FlightException($"git could not make {code}'s plane from {pushed}: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(worktree);
+        await LfsFill.FillAsync(git, worktree, cancellationToken);
         return new Plane(repoPath, branch, worktree, baseRef);
     }
 
@@ -475,6 +479,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             throw new FlightException($"git could not check out the plane {branch} at {worktree} again: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(worktree);
+        await LfsFill.FillAsync(git, worktree, cancellationToken);
     }
 
     /// <summary>
@@ -519,7 +524,36 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} at {path}: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(path);
+        await LfsFill.FillAsync(git, path, cancellationToken);
         return path;
+    }
+
+    /// <summary>
+    /// Makes the worktree at <paramref name="worktree"/> detached at <paramref name="commit"/>, for a branch that is checked out
+    /// in another worktree and so cannot be checked out twice. A leftover folder of a torn-down one goes first, as in <see cref="EnsureAsync"/>.
+    /// </summary>
+    public async Task DetachAsync(string repoPath, string worktree, string commit, CancellationToken cancellationToken)
+    {
+        if (await IsRegisteredAsync(repoPath, worktree, cancellationToken))
+        {
+            if (await RemoveAsync(repoPath, worktree, cancellationToken, force: true) is { } held)
+            {
+                throw new FlightException(held);
+            }
+        }
+        await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+        if (queue is not null && queue.Contains(worktree) && !queue.TryOne(worktree))
+        {
+            throw new FlightException($"{worktree} is queued for removal at the node's next start and a process still holds it; the plane cannot be checked out there until it lets go");
+        }
+        DeleteLeftover(worktree);
+        var add = await git.RunAsync(["worktree", "add", "--detach", worktree, commit], repoPath, cancellationToken);
+        if (!add.Ok)
+        {
+            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} detached at {worktree}: {add.Why}");
+        }
+        PlaneSettings.DisableRepoMcpServers(worktree);
+        await LfsFill.FillAsync(git, worktree, cancellationToken);
     }
 
     /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>

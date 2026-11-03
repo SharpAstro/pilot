@@ -17,8 +17,21 @@ public static partial class Briefs
         var title = review.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You fix PR {pr}{title} ({review.Url}).");
         text.AppendLine();
-        text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. A reviewer read the PR at");
-        text.AppendLine($"{review.Head[..Math.Min(8, review.Head.Length)]} and asked for changes. Its report:");
+        var shortHead = review.Head[..Math.Min(8, review.Head.Length)];
+        if (review.FixDetached == true)
+        {
+            text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree detached at the head of the PR's branch `{branch}` (the branch is checked out in another worktree, so it cannot be checked out here).");
+            text.AppendLine($"Commit on the detached HEAD and push with `git push origin HEAD:refs/heads/{branch}`, plainly and never with force: it is a fast-forward, refused if the branch moved. A reviewer read the PR at");
+        }
+        else if (review.FixWorktreeBorrowed == true)
+        {
+            text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. The folder belongs to someone else: keep it on `{branch}`, switch no branch and remove nothing. A reviewer read the PR at");
+        }
+        else
+        {
+            text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. A reviewer read the PR at");
+        }
+        text.AppendLine($"{shortHead} and asked for changes. Its report:");
         text.AppendLine();
         text.AppendLine((review.Report ?? "").Trim());
         if (review.Findings.Length > 0)
@@ -65,7 +78,9 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("## Rules");
         text.AppendLine($"- Bring the base in by merging `origin/{review.Base}` into the branch (`git fetch origin` then `git merge origin/{review.Base}`); never rebase it.");
-        text.AppendLine($"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
+        text.AppendLine(review.FixDetached == true
+            ? $"- Push plainly (`git push origin HEAD:refs/heads/{branch}`), never with force: other people may have the branch."
+            : $"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
         text.AppendLine("- If GitHub refuses a push because the PR has merged (or is in a merge queue and is merging), the node follows up a merged PR's commits: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");

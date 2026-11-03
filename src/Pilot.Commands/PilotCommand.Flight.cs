@@ -84,6 +84,10 @@ public static partial class PilotCommand
             var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
                 (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
 
+            var clearWhy = Words("why", "Why the flight is cleared to land", required: false);
+            var clear = Action(new Command("clear", "Clear a flight held in a holding pattern (its review passed with notes) to land: its merge is no longer held") { Arguments = { code, clearWhy } },
+                (p, client, ct) => Send(client, Verbs.Clear, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(clearWhy) ?? [], who, ct));
+
             // plan: a planner worker plans the legs from the issue; planned: what it says when it is done.
             var planFlight = Action(new Command("plan", "Start a planner in the plane: it reads the issue and the code and plans the legs") { Arguments = { code } },
                 (p, client, ct) => Send(client, Verbs.PlanFlight, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -105,7 +109,7 @@ public static partial class PilotCommand
             var connectOverlap = Action(new Command("connect-overlap", "Answer an overlap by connecting the flight to the other (on this node or another): it holds until the other has landed, and a fresh planner is started, told the answer") { Arguments = { code, other } },
                 (p, client, ct) => Send(client, Verbs.ConnectOverlap, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(other)!], who, ct));
             var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, pr, reviewStart, allowRound, merge, land } };
+                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, pr, reviewStart, allowRound, clear, merge, land } };
 
             return flight;
         }

@@ -191,7 +191,8 @@ public sealed partial class PrReviews
         {
             await StopQuietly(job, cancellationToken);
         }
-        if (review.FixWorktree is { } worktree)
+        // A borrowed worktree is someone else's: only the row's fix fields are cleared.
+        if (review.FixWorktree is { } worktree && review.FixWorktreeBorrowed != true)
         {
             string? held;
             try
@@ -215,7 +216,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
         if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
         {
-            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixWorktree = null });
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
         }
         return true;
     }

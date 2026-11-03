@@ -131,7 +131,10 @@ public static partial class CardSummaries
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The watchtower fixes the small ones in the plane; nothing for you to do.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while the watchtower fixes the small ones in the plane; nothing for you to do.",
+            LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
+            LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
+            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session the node did not start and that matches no role, leg, flight or PR. Stop it if it is a stray; a role's current session never rings here.",
@@ -150,6 +153,7 @@ public static partial class CardSummaries
             StartGate.WeekKind => "The 7-day usage window is largely spent. Pause flights by hand if the week should last; nothing is stopped by itself.",
             RemovalQueueStart.Kind => "Folders of landed flights or closed reviews are still held open by Windows. The node removes them once they are let go; close whatever holds them.",
             JobRunner.IdleKind => "A job holds the machine's slot but uses almost no CPU. Cancel it if it is only waiting; its owner can wait with pilot leg wait.",
+            BenchRun.CardKind => "A benchmark ended and its tables are on the card, per ref. Read them, then dismiss it; nothing is waiting on you.",
             JobRunner.UntoldKind => "A job ended but its owner's session refused to be told. Tell the owner yourself.",
             LockWait.QueuedKind => "A command that waited for a lock has run or was refused. Nothing to do; the title says which.",
             PackageWatch.LateKind => "A package a leg waits for is late on nuget.org. The card's choice says what to do about it.",
@@ -191,7 +195,7 @@ public static partial class CardSummaries
         first = first.ReplaceLineEndings(" ");
         first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
-        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The watchtower fixes the small ones in the plane; nothing for you to do.";
+        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits while the watchtower fixes them in the plane; nothing for you to do.";
     }
 
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)

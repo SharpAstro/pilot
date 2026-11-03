@@ -296,6 +296,10 @@ public sealed partial class LegCommander
         Record(flight.Code, f => f with
         {
             Review = f.Review is { } held ? held with { State = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes, Report = kept, FinishedAt = now } : null,
+            // Notes put the flight in a holding pattern; a pass or changes without notes ends any hold.
+            Holding = notes is not null
+                ? new FlightHolding { Reason = HoldingReason, Since = now, By = "node" }
+                : null,
             ReviewRounds = f.Review is { } judged
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
@@ -311,7 +315,16 @@ public sealed partial class LegCommander
         {
             state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, ReviewLoopKind, LegWatch.ReviewStalled);
             var reviewed = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
-            await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            // The verdict is kept already: a card that could not be raised (gh failing, the node stopping) is the sweep's to restore,
+            // never a reason to throw the pass away (PIL682, 2026-11-03: a restart mid-verdict left a passed flight with no merge card).
+            try
+            {
+                await RaisePrReadyAsync(flight, kept, notes is null ? reviewed : $"{reviewed}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}", cancellationToken);
+            }
+            catch (Exception ex) when (ex is FlightException or OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"review: {flight.Code}'s PR-ready card was not raised, the next look restores it: {ex.Message}");
+            }
             if (notes is not null)
             {
                 RaiseReviewNotes(flight, notes);
@@ -433,14 +446,64 @@ public sealed partial class LegCommander
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
+        var holding = flight.Holding is not null;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))
             ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
-            $"{flight.Code}'s PR #{pr.Number} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}.",
+            holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {HoldingReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}."
+                + (holding ? " The merge is held until the watchtower clears it or pushes its fixes." : ""),
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
-            summary: $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
+            summary: holding
+                ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {HoldingReason}. Merge is refused until it is cleared or the fixes are pushed."
+                : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
+    }
+
+    /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
+    public const string PrReadyRestoredKind = "pr-ready-restored";
+
+    /// <summary>
+    /// A flight whose review passed at <paramref name="head"/>, every leg done and its PR open, but with no merge card (the node
+    /// went away between the stored verdict and the card, PIL682): its PR-ready card is raised as the verdict would have, holding
+    /// flights getting the holding card and their notes card. A flight whose PR-ready card for that head was closed (dismissed,
+    /// answered, merged into a queue) is left alone. True when a card was raised.
+    /// </summary>
+    internal async Task<bool> RestorePrReadyAsync(string code, string head, CancellationToken cancellationToken)
+    {
+        var call = await EnterAsync(code, "having its PR-ready card restored", cancellationToken);
+        try
+        {
+            var subject = Verbs.FlightTarget(code);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed } review, MergeWhenGreen: null } flight
+                || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
+                || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
+            {
+                return false;
+            }
+            // Any merge card of this head, open or closed: a person's dismissal, an answered or queued merge, is not undone.
+            if (state.Cards(openOnly: false).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
+                && (c.ClosedAt is null ||c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase)))))
+            {
+                return false;
+            }
+            var report = flight.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
+            var notes = flight.Holding is not null ? ReviewFindings.Read(report).NotBlocking : [];
+            var phrase = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
+            await RaisePrReadyAsync(flight, report, notes.Count > 0 ? $"{phrase}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}" : phrase, cancellationToken);
+            if (flight.Holding is not null && notes.Count > 0 && !state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == ReviewNotesKind))
+            {
+                RaiseReviewNotes(FlightOf(subject), notes);
+            }
+            state.RaiseCard(CardBin.Handled, PrReadyRestoredKind, subject, $"{code}'s PR-ready card was restored",
+                "its review passed but no merge card was open (the node went away between the verdict and the card)");
+            return true;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
     }
 
     /// <summary>Whether a command comes from this node's watchtower, which the person's own words are not.</summary>
@@ -458,10 +521,49 @@ public sealed partial class LegCommander
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
-            string.Join('\n', notes),
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} "
+                + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
             link: flight.PullRequestUrl,
             summary: CardSummaries.ReviewNotes(flight.Code, notes));
     }
+
+    /// <summary>The Handled card kind that says a flight was cleared to land.</summary>
+    public const string HoldingClearedKind = "holding-cleared";
+
+    /// <summary>Why a flight whose review passed with notes holds its merge.</summary>
+    public const string HoldingReason = "the watchtower is making the review's small fixes";
+
+    /// <summary>
+    /// The watchtower's word, or the person's, that a flight in a holding pattern is cleared to land: the hold ends, the notes card
+    /// closes and a Handled card says so. Autopilot then merges it at its next look as for any passed review.
+    /// </summary>
+    private void ClearHolding(CommandRequest command)
+    {
+        var flight = FlightOf(command.Target);
+        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
+        {
+            throw new FlightException("only the watchtower or the person may clear a flight in a holding pattern");
+        }
+        if (flight.Holding is null)
+        {
+            throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to clear");
+        }
+        ReleaseHolding(flight, command.Who, string.Join(' ', command.Args ?? []).Trim());
+    }
+
+    private void ReleaseHolding(FlightRow flight, string? who, string why)
+    {
+        Record(flight.Code, f => f with { Holding = null });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{who} cleared it to land", ReviewNotesKind, HoldingTimeoutKind);
+        state.RaiseCard(CardBin.Handled, HoldingClearedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is cleared to land",
+            why.Length > 0 ? $"{who}: {why}" : $"cleared by {who}");
+    }
+
+    /// <summary>The Ring card kind of a holding flight the watchtower has not cleared in time, or whose watchtower is not live.</summary>
+    public const string HoldingTimeoutKind = "holding-timeout";
+
+    /// <summary>The third merge argument of the holding-timeout card's Merge as it is: the person's word that the hold ends with the merge.</summary>
+    public const string MergeAsIs = "as-is";
 
     /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>
     public const string ReviewNotesKind = "review-notes";

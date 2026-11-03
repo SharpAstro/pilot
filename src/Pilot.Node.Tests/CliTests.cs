@@ -382,6 +382,39 @@ public sealed class CliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        // The machine running the suite is not quiet: the test is about the flag, not the CPU.
+        runner.BenchQuietCpu = 100;
+        await Ok(_root, "run", "--alone", "--", "echo benched");
+        var job = _node.State.Jobs().Single();
+        // Let it end before the folder goes, or its log is still held.
+        for (var i = 0; _node.State.Jobs().Single().EndedAt is null; i++)
+        {
+            i.ShouldBeLessThan(300, "the bench job did not end");
+            await Task.Delay(100, Ct);
+        }
+        job.Kind.ShouldBe(JobKind.Bench);
+        global::Pilot.Commands.PilotCommand.JobLine(job).ShouldContain("bench");
+    }
+
+    [Theory]
+    [InlineData("--ref", "main", "--baseline", "main")]
+    [InlineData("--baseline", "main")]
+    [InlineData("--candidate", "main")]
+    [InlineData("--fetch", "true")]
+    public async Task PilotBenchWithBothOrNeitherOfARefAndAPairIsAUsageError(params string[] flags)
+    {
+        var (exit, output, error) = await Pilot(_root, ["bench", "tianwen", .. flags, "--", "echo", "x"]);
+
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain("bench takes one --ref, or a --baseline and a --candidate together");
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
@@ -641,6 +674,21 @@ public sealed class CliTests : IAsyncLifetime
         machine.Line().ShouldBe("cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
         PilotCommand.Status(SnapshotWith(machine)).ShouldContain("machine  cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
         StatusMarkdown.Build(SnapshotWith(machine)).ShouldContain("- **machine** cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB");
+    }
+
+    [Fact]
+    public void StatusSaysAHoldingFlightIsHoldingWithItsReason()
+    {
+        var flight = new FlightRow
+        {
+            Code = "TIA1", Repo = "o/r", RepoPath = "r", Issue = 1, Branch = "flight/tia1", Worktree = "w", Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+            Holding = new FlightHolding { Reason = "the watchtower is making the review's small fixes", Since = DateTimeOffset.UnixEpoch, By = "node" },
+        };
+        var snapshot = SnapshotWith(null) with { Flights = [flight] };
+
+        PilotCommand.Status(snapshot).ShouldContain("flying, holding: the watchtower is making the review's small fixes");
+        StatusMarkdown.Build(snapshot).ShouldContain("flying, holding: the watchtower is making the review's small fixes");
     }
 
     [Fact]
