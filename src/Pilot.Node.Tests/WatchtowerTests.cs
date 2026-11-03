@@ -363,6 +363,24 @@ public sealed class WatchtowerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFreshWatchtowerAfterAReplacementGetsTheToldCardOnceInItsBriefAndNeverSaidToIt()
+    {
+        // Told, then re-told once: nothing is left to say to any later session.
+        await TellAndRetell();
+
+        await _tower.RestartAsync("test", Ct);
+        var brief = _workers.Started[^1].Brief;
+        brief.ShouldContain("told to an earlier watchtower");
+        brief.ShouldContain("TIA9's review asks for changes");
+        brief.ShouldNotContain("as if the node had just said them");
+
+        _time.Advance(TimeSpan.FromMinutes(31));
+        await _tower.LookAsync(Ct);
+        _tower.Untold().ShouldBeEmpty();
+        _said.Count(s => s.Args.Length > 0 && s.Args[0].Contains("A card opened") && s.Args[0].Contains("TIA9's review asks for changes")).ShouldBe(2);
+    }
+
+    [Fact]
     public async Task ACardToldOnceBeforeANodeRestartIsRetoldAtMostOnceAfterIt()
     {
         await _tower.LookAsync(Ct);

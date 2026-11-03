@@ -876,7 +876,13 @@ public sealed class Watchtower(
         try
         {
             Directory.CreateDirectory(folder);
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
+            // Read before TellAllOpen runs: which cards an earlier watchtower already had, so the brief lists them as a summary (#665).
+            HashSet<string> alreadyTold;
+            lock (_tellsLock)
+            {
+                alreadyTold = [.. Tells().Keys];
+            }
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold);
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.

@@ -10,6 +10,40 @@ public class WatchtowerBriefTests
     /// <summary>The brief with line breaks folded to spaces, so a sentence wrapped across lines still matches.</summary>
     private static string Brief() => string.Join(' ', Briefs.Watchtower("wt", [], [], [], "pilot").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
 
+    private static Pilot.Contracts.CardRow Card(string id, Pilot.Contracts.CardBin bin, string title = "a card") =>
+        new() { Id = id, Bin = bin, Kind = "k", Subject = "flight/X", Title = title, At = DateTimeOffset.UnixEpoch, State = Pilot.Contracts.CardState.Open };
+
+    [Fact]
+    public void CardsAlreadyToldAreOneSummaryBlockApartFromTheNewOnes()
+    {
+        var cards = new[] { Card("c1", Pilot.Contracts.CardBin.ForYou), Card("c2", Pilot.Contracts.CardBin.Ring), Card("c3", Pilot.Contracts.CardBin.Ring) };
+        var brief = Briefs.Watchtower("wt", [], [], cards, "pilot", alreadyTold: new HashSet<string> { "c1", "c2" });
+        var told = brief.IndexOf("told to an earlier watchtower", StringComparison.Ordinal);
+        told.ShouldBeGreaterThan(0);
+        brief.ShouldContain("as if the node had just said them");
+        var now = brief.IndexOf("as if the node had just said them", StringComparison.Ordinal);
+        brief.IndexOf("- c3 ", StringComparison.Ordinal).ShouldBeInRange(now, told);
+        brief.IndexOf("- c2 ", StringComparison.Ordinal).ShouldBeGreaterThan(told);
+        brief.IndexOf("- c2 ", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("- c1 ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WhenEveryOpenCardWasToldThereIsNoAsIfJustSaidWording()
+    {
+        var brief = Briefs.Watchtower("wt", [], [], [Card("c1", Pilot.Contracts.CardBin.Ring)], "pilot", alreadyTold: new HashSet<string> { "c1" });
+        brief.ShouldContain("told to an earlier watchtower");
+        brief.ShouldNotContain("as if the node had just said them");
+    }
+
+    [Fact]
+    public void TheSummaryBlockKeepsTheLineCap()
+    {
+        var cards = Enumerable.Range(0, 2000).Select(i => Card($"c{i}", Pilot.Contracts.CardBin.Ring, new string('x', 150))).ToArray();
+        var brief = Briefs.Watchtower("wt", [], [], cards, "pilot", alreadyTold: cards.Select(c => c.Id).ToHashSet());
+        brief.Length.ShouldBeLessThan(32_767);
+        brief.ShouldContain("more: `pilot cards` lists them.");
+    }
+
     [Fact]
     public void TheBriefTellsItToAnswerWithTheirWordsAsWhy()
     {
