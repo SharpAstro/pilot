@@ -291,7 +291,8 @@ public sealed class MergedUnderLegTests : IDisposable
         land.Label.ShouldBe("Land it");
         land.Verb.ShouldBe(Verbs.Land);
         land.Target.ShouldBe(Subject);
-        summary.ShouldNotContain(land.Label);
+        // The button's own label is not repeated (the refusal's lower-case "then land it" is its own words).
+        summary.ShouldNotContain(land.Label, Case.Sensitive);
 
         // Once what stood in the way is dealt with, Land it lands the flight and the ring closes with it.
         File.Delete(Path.Combine(Plane, "half.txt"));
