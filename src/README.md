@@ -657,6 +657,8 @@ The cache is read every three minutes once something has asked (a node nobody as
 pilot status [--all]                           # flights in the air, their legs and artifacts, and the live sessions; --all adds landed ones
 pilot status --output-format markdown          # the same as Markdown (see Output formats)
 pilot sessions
+pilot session wait <session> [--until blocked|idle|ended] [--timeout <span>]   # holds on the node's event stream until the session is blocked (waiting, or idle after an API error) or idle, then prints its state and last words; replaces polling `pilot sessions`
+# Ended always ends the wait, and a resumed copy is followed. The default timeout is 10m (30s, 10m, 2h); at it the command exits 4 and names the state it last saw.
 pilot repos [--all] [--refresh] [--output-format markdown]   # each tracked repo: branch, worktrees (flight, diff stat) and open PRs; --all adds untracked ones
 pilot repos sync                               # fetch -p --all, then fast-forward each tracked repo's default branch; prints each repo's outcome
 pilot issue create <title> [--body <text>] [--repo <path>]   # a new issue through gh; prints its number

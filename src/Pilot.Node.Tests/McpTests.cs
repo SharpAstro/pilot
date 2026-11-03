@@ -104,6 +104,11 @@ public sealed class McpTests : IAsyncLifetime
         tools.Keys.ShouldContain("job_resume");
         tools.Keys.ShouldNotContain("mcp");
 
+        // session wait: the tool of the command that replaces polling pilot sessions, its options in the schema.
+        var wait = tools["session_wait"].GetProperty("inputSchema").GetProperty("properties");
+        wait.GetProperty("until").GetProperty("enum").EnumerateArray().Select(e => e.GetString()).Order().ShouldBe(["blocked", "ended", "idle"]);
+        wait.TryGetProperty("timeout", out _).ShouldBeTrue();
+
         var plan = tools["leg_plan"];
         plan.GetProperty("description").GetString().ShouldBe("Plan a leg at the end of the flight's order (pilot leg plan)");
         var schema = plan.GetProperty("inputSchema");
