@@ -210,6 +210,7 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
         MainMoves();
         _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
         var before = Git(flight.Worktree, "rev-parse", "HEAD");
+        var ringBefore = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Id).ToArray();
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "node", _github.Pr!.Head, "rebase");
 
@@ -221,7 +222,8 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
         entry.Open.ShouldBeTrue();
         entry.State.ShouldNotBe(MergeEntryState.Dropped);
         _github.Merged.ShouldBeEmpty();
-        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).ShouldBeEmpty();
+        // The only Ring card is the PR-ready one the flight had before the merge: nothing new rang for the owner.
+        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Id).ShouldBe(ringBefore);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
     }
 }
