@@ -746,7 +746,21 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             // list counts whole surface units, the content rounded up and the viewport down), which drew a full-height
             // thumb on every card. The bar waits until the body overflows by more than that, as of the last frame.
             _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
-            asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
+            // An older node sent no choices: read them from the question text with the shared parser.
+            var choices = held.Choices;
+            var shown = question;
+            if (choices.Length == 0)
+            {
+                var (head, parsed) = Pilot.Contracts.AskChoices.Split(question);
+                if (parsed.Length > 0)
+                {
+                    choices = parsed;
+                    shown = head.Length > 0 ? head : question;
+                }
+            }
+            var saidAlready = said is not null
+                && (said.Contains(question, StringComparison.Ordinal) || said.Contains(shown, StringComparison.Ordinal));
+            asked = Question(shown, saidAlready, choices);
         }
         var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.Where == here && m.State is OutState.Queued or OutState.Sending);
         if (held.Working || sending)
@@ -825,7 +839,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var body = new List<Layout.Node>();
         if (saidAlready)
         {
-            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim).Selectable());
+            body.Add(Layout.Builder.Text(choices.Length > 0 ? "Pick one, or answer in your own words" : "Answer in your own words", 11f, Dim).Selectable());
         }
         else
         {

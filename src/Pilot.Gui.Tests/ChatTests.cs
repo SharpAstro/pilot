@@ -339,6 +339,46 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task AnInlineNumberedQuestionWithNoChoicesFromAnOldNodeShowsPillsAndAClickSendsTheFirst()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var sent = new List<string>();
+        var chat = NewChat(renderer, Page(question: "Which way? 1. Plan both in parallel. 2. Connect one of them."), send: text =>
+        {
+            sent.Add(text);
+            return Task.FromResult<string?>(null);
+        });
+        await Read(chat, 6);
+
+        Arranged(chat).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal))
+            .ShouldBe(["chat:choice:1", "chat:choice:2"]);
+        var text = Described(chat);
+        text.ShouldContain("Plan both in parallel.");
+        text.ShouldContain("Connect one of them.");
+
+        Click(chat, "chat:choice:1");
+        for (var i = 0; i < 100 && sent.Count == 0; i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+        sent.Count.ShouldBe(1);
+        sent[0].ShouldStartWith("Plan both in parallel.");
+    }
+
+    [Fact]
+    public async Task AQuestionWithNoParsableChoicesShowsNoPickOneLineAndNoPills()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        var chat = NewChat(renderer, Page(question: "Shall I go on? Note 1.2 is out."));
+        await Read(chat, 6);
+
+        var text = Described(chat);
+        text.ShouldNotContain("Pick one");
+        Arranged(chat).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)
+            .Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal)).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AChoiceIsRunThroughTheHostsTracker()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
