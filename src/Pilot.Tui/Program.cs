@@ -303,6 +303,15 @@ fleet.OnMaintenance = (line, on) => Task.Run<string?>(async () =>
 // The Settings page: this machine's node only, as its route is.
 if (remote is null)
 {
+    // Take another node's range for a role, on this window's own node.
+    fleet.OnTakeRange = (node, role, range, fleetRange) => Task.Run<string?>(async () =>
+    {
+        var (refused, said) = await FleetCommands.TryTakeRangeAsync(client, role, range, fleetRange, Who, stop.Token);
+        fleet.Said = said.ReplaceLineEndings(" ").Trim();
+        sessions.SayStatus = fleet.Said;
+        Redraw();
+        return refused;
+    });
     settings.Load = async ct => (await client.GetSettingsAsync(ct)) is { Success: true, Response: { } page }
         ? page
         : throw new InvalidOperationException("the node did not send its settings");

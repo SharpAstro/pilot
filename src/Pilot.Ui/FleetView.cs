@@ -220,7 +220,16 @@ internal sealed record FleetLine
 internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffset AsOf)
 {
     /// <summary>One node's range for a role, and whether it is not the fleet's.</summary>
-    internal sealed record RoleNode(string Machine, string Range, string Source, bool Odd);
+    /// <remarks>
+    /// <paramref name="Where"/> and <paramref name="Here"/> name the line's node; <paramref name="Differs"/> is whether its range is not
+    /// the range of the node this window flies (false for that node's own line, and for every line when no such line has the role),
+    /// which is what a Take button needs. <paramref name="Odd"/> stays against the fleet's range.
+    /// </remarks>
+    internal sealed record RoleNode(string Machine, string Range, string Source, bool Odd, string Where = "", bool Here = false, bool Differs = false)
+    {
+        /// <summary>The machine's short prefix (<c>SE1</c> of <c>SE1 · DESKTOP-1</c>), else the machine name whole.</summary>
+        public string Prefix => Machine.IndexOf(" · ", StringComparison.Ordinal) is > 0 and var cut ? Machine[..cut] : Machine;
+    }
 
     /// <summary>A role's row: the fleet's range and each node's, the odd ones out marked.</summary>
     internal sealed record RoleRow(string Role, string Fleet, IReadOnlyList<RoleNode> Nodes)
@@ -243,7 +252,9 @@ internal sealed record FleetScreen(IReadOnlyList<FleetLine> Lines, DateTimeOffse
                 var nodes = Lines.Select(l => (Line: l, Range: l.Ranges.FirstOrDefault(r => r.Role == role))).Where(n => n.Range is not null).ToList();
                 var fleet = nodes.Where(n => n.Range!.Source == SettingSources.Fleet).Select(n => n.Range!.Range).FirstOrDefault()
                     ?? nodes.GroupBy(n => n.Range!.Range).OrderByDescending(g => g.Count()).ThenBy(g => nodes.FindIndex(n => n.Range!.Range == g.Key)).First().Key;
-                rows.Add(new RoleRow(role, fleet, [.. nodes.Select(n => new RoleNode(n.Line.Machine, n.Range!.Range, n.Range.Source, n.Range.Range != fleet))]));
+                var here = nodes.FirstOrDefault(n => n.Line.Here).Range?.Range;
+                rows.Add(new RoleRow(role, fleet, [.. nodes.Select(n => new RoleNode(n.Line.Machine, n.Range!.Range, n.Range.Source, n.Range.Range != fleet,
+                    n.Line.Where, n.Line.Here, here is not null && !n.Line.Here && n.Range.Range != here))]));
             }
             return rows;
         }
@@ -474,6 +485,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
     }
 
+    // A Take press through the helper, keyed by the role so its working word and refusal read in the role's row.
+    private void PressTake(string role, string hit, Func<Task<string?>> send) => _ = Presses.PressAsync($"range:{role}", hit, _ => send());
+
     // A button of a row that asks the node: its working word while any press of the row is with the node (the others dimmed, no hit).
     private Layout.Node NodeButton(FleetLine line, string label, string kind, string working, Action onClick)
     {
@@ -501,6 +515,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// this window's node and on a node this user holds a grant for, and only while it answers. Null (the default) shows no such button.
     /// </summary>
     public Func<FleetLine, bool, Task<string?>>? OnMaintenance { get; set; }
+
+    /// <summary>
+    /// Sets this window's node's <c>&lt;role&gt;-range</c> to another node's: called with that node's line, the role, its range and
+    /// whether the range is the fleet layer's (then the set is for the fleet). Only a window that flies its own node sets it; null (the
+    /// default) shows no Take button. There is no Push to the other node: a node takes no settings change from the LAN but maintenance.
+    /// </summary>
+    public Func<FleetScreen.RoleNode, string, string, bool, Task<string?>>? OnTakeRange { get; set; }
 
     /// <summary>What the last Open, Connect, Forget or Maintenance said, under the header.</summary>
     public string? Said { get; set; }
@@ -624,15 +645,30 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         for (var i = 0; i < roles.Count; i++)
         {
             var role = roles[i];
-            var nodes = role.Nodes.Select(n => (Layout.Node)Layout.Builder.Text(
-                    n.Odd ? $"differs: {n.Machine}: {n.Range} ({n.Source})" : $"{n.Machine}: {n.Range}", 11f, n.Odd ? Ringing : Dim).Selectable().WAuto());
+            var nodes = role.Nodes.Select(n =>
+            {
+                var text = Layout.Builder.Text(
+                    n.Odd ? $"differs: {n.Machine}: {n.Range} ({n.Source})" : $"{n.Machine}: {n.Range}", 11f, n.Odd ? Ringing : Dim).Selectable().WAuto();
+                if (!n.Differs || OnTakeRange is not { } take)
+                {
+                    return (Layout.Node)text;
+                }
+                var roleName = role.Role;
+                var hit = $"fleet:{n.Where}:take:{roleName}";
+                var label = $"Take {n.Prefix}'s";
+                var button = Presses.Button($"range:{roleName}", hit,
+                    () => Pill(label, hit, () => PressTake(roleName, hit, () => take(n, roleName, n.Range, n.Source == SettingSources.Fleet))),
+                    pressed => CardsView<TSurface>.Dead(pressed ? "taking…" : label));
+                return Layout.Builder.HStack(text, button).WithGap(8f).WAuto();
+            });
             var row = Layout.Builder.HStack(
                     // RowH sets the width to Star as well as the height, so the fixed width must come after it: set before, the role
                     // took half the row and the fleet and node lines began far right of it, or under it when the Star split lost (#633).
                     Layout.Builder.Text(role.Role, 14f, Bright).Selectable().RowH(22f).WFixed(110f),
                     Layout.Builder.VStack(
                             Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
-                            Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar())
+                            Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar(),
+                            Presses.RefusalLine($"range:{role.Role}", 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f))
                         .WStar().HAuto())
                 .WithGap(14f).Pad(8f, 6f).HAuto().WStar();
             yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
@@ -811,6 +847,19 @@ internal static class FleetCommands
     /// </summary>
     public static async Task<string> SetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken) =>
         (await TrySetMaintenanceAsync(clients, line, on, who, cancellationToken)).Said;
+
+    /// <summary>
+    /// <c>set &lt;role&gt;-range &lt;range&gt; [--fleet]</c> on this window's own node, to what another node runs; the node's refusal in its words
+    /// (null when it took it) and what it said.
+    /// </summary>
+    public static async Task<(string? Refused, string Said)> TryTakeRangeAsync(NodeClient here, string role, string range, bool fleet, string who, CancellationToken cancellationToken)
+    {
+        var reply = await SettingsCommands.SendAsync(here, Verbs.Set, TakeArgs(role, range, fleet), who, cancellationToken);
+        return (reply.Kind == ReplyKind.Done ? null : reply.Line, reply.Line);
+    }
+
+    /// <summary>The <c>set</c> arguments of a Take: the role's range key and value, and <c>--fleet</c> for a range of the fleet layer.</summary>
+    internal static string[] TakeArgs(string role, string range, bool fleet) => fleet ? [$"{role}-range", range, "--fleet"] : [$"{role}-range", range];
 
     /// <summary>As <see cref="SetMaintenanceAsync"/>, and the node's refusal in its words (null when it took it), for the row's button to say where it was pressed.</summary>
     public static async Task<(string? Refused, string Said)> TrySetMaintenanceAsync(FleetClients clients, FleetLine line, bool on, string who, CancellationToken cancellationToken)

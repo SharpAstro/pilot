@@ -1251,6 +1251,10 @@ in: worker `sonnet..opus-xhigh`, watchtower `sonnet..sonnet-high`, planner and r
 is this node's own, else the fleet's, else the built-in. `set node <range> <value> --fleet` sets the fleet layer instead,
 pushed to every node and kept in the `fleet-ranges` field of `settings.json`; a peer may only set a node's fleet layer,
 never its own range, so a peer's push needs `--fleet`. A leg's own `--model` or `--effort` still wins for its worker.
+The fleet view's "Model ranges by role" lists each node's range; on a window that flies its own node, a line of another node
+that differs from this node's gets a "Take <prefix>'s" button that sets this node's `<role>-range` to it (with `--fleet`
+when that node's range comes from the fleet layer). There is no "Push to" button: a node takes no settings change from the
+LAN except maintenance (`NodeApp.MaintenanceSwitch`), so a push to a peer would only be refused.
 Settings from before ranges are migrated when read: each role's `-model` and `-effort` become the nearest range, with
 `worker-model-max`/`worker-effort-max` and `reviewer-deep-model`/`reviewer-deep-effort` as the max. A reviewer pinned to
 Sonnet with no `reviewer-deep-*` keys now runs its deep reviews on the built-in max (opus-high), on purpose: that settles

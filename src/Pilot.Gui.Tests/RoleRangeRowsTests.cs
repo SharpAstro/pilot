@@ -217,6 +217,106 @@ public sealed class RoleRangeRowsTests
         }
     }
 
+    // This node (SE1) runs its own opus-low; LE1 differs on its own setting, RP1 differs on the fleet layer, MT1 matches this node.
+    private static FleetScreen TakeFleet() => new(
+    [
+        FleetLine.From("node.sock", true, true, null, Summary("s1", "SE1", "DESKTOP-1", new RoleRangeInfo("worker", "opus-low..opus-low", SettingSources.ThisNode))),
+        FleetLine.From("10.0.0.9:47731", false, false, null, Summary("s2", "LE1", "LAPTOP-2", new RoleRangeInfo("worker", "sonnet-low..opus-low", SettingSources.ThisNode))),
+        FleetLine.From("10.0.0.10:47731", false, false, null, Summary("s3", "RP1", "PI-ROOF", new RoleRangeInfo("worker", "sonnet-high..opus-medium", SettingSources.Fleet))),
+        FleetLine.From("10.0.0.11:47731", false, false, null, Summary("s4", "MT1", "MATCH-4", new RoleRangeInfo("worker", "opus-low..opus-low", SettingSources.BuiltIn))),
+    ], Live.At);
+
+    [Fact]
+    public void ADifferingLineOfAnotherNodeShowsTakeAndNoPushAndThisNodesOwnAndMatchingLinesShowNone()
+    {
+        var roles = TakeFleet().Roles;
+        roles[0].Nodes.Select(n => n.Differs).ShouldBe([false, true, true, false]);
+        foreach (var width in new[] { 700, 1400 })
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, 1500);
+            var chrome = Chrome(renderer);
+            chrome.Show(PilotPage.Fleet);
+            chrome.Fleet.Table.PageWidth = width;
+            chrome.Fleet.OnTakeRange = (_, _, _, _) => Task.FromResult<string?>(null);
+            var (texts, faults) = Look(chrome.Fleet.Tree(TakeFleet()), renderer, width);
+
+            texts.ShouldContain("Take LE1's");
+            texts.ShouldContain("Take RP1's");
+            texts.ShouldNotContain("Take SE1's");
+            texts.ShouldNotContain("Take MT1's");
+            texts.ShouldNotContain(t => t.StartsWith("Push", StringComparison.Ordinal));
+            faults.ShouldBeEmpty();
+        }
+
+        // No callback, no button.
+        using var bare = new RgbaImageRenderer(1400, 1500);
+        var plain = Chrome(bare);
+        plain.Show(PilotPage.Fleet);
+        plain.Fleet.Table.PageWidth = 1400;
+        Look(plain.Fleet.Tree(TakeFleet()), bare, 1400).Texts.ShouldNotContain(t => t.StartsWith("Take ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PressingTakeCallsTheViewWithTheRangeAndFleetWhenItsSourceIsTheFleetLayer()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 1500);
+        var chrome = Chrome(renderer);
+        var taken = new List<(string Where, string Role, string Range, bool Fleet)>();
+        chrome.Fleet.OnTakeRange = (node, role, range, fleet) =>
+        {
+            lock (taken)
+            {
+                taken.Add((node.Where, role, range, fleet));
+            }
+            return Task.FromResult<string?>(null);
+        };
+        chrome.Show(PilotPage.Fleet);
+        var screen = TakeFleet();
+        void Press(string where)
+        {
+            chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, screen, new RectF32(0, 0, 1600, 1500));
+            var regions = new List<ClickableRegion>();
+            chrome.Fleet.CollectPaintedRegions(regions);
+            regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == $"fleet:{where}:take:worker").OnClick!.Invoke(InputModifier.None);
+        }
+
+        async Task Count(int n)
+        {
+            for (var i = 0; i < 200; i++)
+            {
+                lock (taken)
+                {
+                    if (taken.Count >= n)
+                    {
+                        return;
+                    }
+                }
+                await Task.Delay(25, Ct);
+            }
+            taken.Count.ShouldBeGreaterThanOrEqualTo(n);
+        }
+
+        Press("10.0.0.9:47731");
+        await Count(1);
+        // The first press is over (taken), so the page takes a second.
+        await Task.Delay(50, Ct);
+        Press("10.0.0.10:47731");
+        await Count(2);
+        lock (taken)
+        {
+            taken[0].ShouldBe(("10.0.0.9:47731", "worker", "sonnet-low..opus-low", false));
+            taken[1].ShouldBe(("10.0.0.10:47731", "worker", "sonnet-high..opus-medium", true));
+        }
+    }
+
+    [Fact]
+    public void TakeRangeSendsTheRoleRangeKeyAndFleetOnlyForTheFleetLayer()
+    {
+        // The args are built from role and range exactly as the Settings page's own set does.
+        FleetCommands.TakeArgs("worker", "sonnet-low..opus-low", false).ShouldBe(["worker-range", "sonnet-low..opus-low"]);
+        FleetCommands.TakeArgs("planner", "opus..opus-high", true).ShouldBe(["planner-range", "opus..opus-high", "--fleet"]);
+    }
+
     private static IEnumerable<Layout.Node> Descendants(Layout.Node node) => node switch
     {
         Layout.Node.Stack s => s.Children.SelectMany(c => Descendants(c).Prepend(c)),
