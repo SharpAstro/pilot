@@ -820,6 +820,19 @@ if (feed is not null && client is not null && clients is not null)
         loop.RequestRedraw();
         return refused;
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
+    // Take another node's range for a role: this window's own node only, as the Settings page is gated.
+    if (remoteEndpoint is null)
+    {
+        chrome.Fleet.OnTakeRange = (node, role, range, fleetRange) => Tracked(async () =>
+        {
+            var (refused, said) = await FleetCommands.TryTakeRangeAsync(client, role, range, fleetRange, GuiSay.Who, cts.Token);
+            chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
+            view.SayStatus = chrome.Fleet.Said;
+            Note($"pilot-gui: took {node.Machine}'s {role}-range {range}{(fleetRange ? " for the fleet" : "")}: {chrome.Fleet.Said}");
+            loop.RequestRedraw();
+            return refused;
+        }, $"take {role}-range from {node.Where}");
+    }
     // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
     // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
     // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.

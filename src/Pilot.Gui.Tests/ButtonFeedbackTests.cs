@@ -220,6 +220,7 @@ public sealed class ButtonFeedbackTests
                 chrome.Fleet.OnConnect = _ => Took();
                 chrome.Fleet.OnForget = _ => Took();
                 chrome.Fleet.OnMaintenance = (_, _) => Took();
+                chrome.Fleet.OnTakeRange = (_, _, _, _) => Took();
                 chrome.Sessions.OnAction = _ => Took();
                 chrome.Sessions.OnConnect = _ => Took();
                 chrome.Flights.OnAction = _ => Took();
