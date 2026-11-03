@@ -43,6 +43,10 @@ public sealed record CommandRequest
     /// </summary>
     public string? Why { get; init; }
 
+    /// <summary>The Claude session id of the caller (<c>CLAUDE_CODE_SESSION_ID</c>), sent by a verb that acts on the caller's own session (<see cref="Verbs.ReportState"/>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SessionId { get; init; }
+
     /// <summary>
     /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
     /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
@@ -706,6 +710,14 @@ public static class Verbs
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.
     /// </summary>
     public const string EndSession = "end-session";
+
+    /// <summary>
+    /// <c>report-state session/&lt;id&gt; &lt;idle|working|blocked&gt; [seq] [message]</c> (<c>pilot session report</c>): a session says its
+    /// own state, and the node prefers that over the listing and transcripts while it is the newest word. The target is
+    /// <c>node</c> with <see cref="CommandRequest.SessionId"/> set when the caller is the session itself. An empty seq is the
+    /// node's receive time in ms; a seq not above the last accepted one is ignored.
+    /// </summary>
+    public const string ReportState = "report-state";
 
     /// <summary>
     /// <c>archive session/&lt;id&gt; [undo]</c>: puts an ended session away, out of the lists; <c>archive sessions</c> does

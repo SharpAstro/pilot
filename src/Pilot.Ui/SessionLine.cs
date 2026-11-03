@@ -151,7 +151,7 @@ internal sealed partial record SessionLine
             LastResponse = row.LastResponseAt is { } at ? Ago(now - at) : "none yet",
             Compacted = row.LastCompactedAt is { } compactedAt ? $"compacted {Span(now - compactedAt)} ago" : null,
             CompactedBecause = row.LastCompactedAt is null ? null : row.CompactedBecause,
-            State = IsStopped(row) ? "stopped" : StateText(row.State),
+            State = IsStopped(row) ? "stopped" : IsBlocked(row) ? "blocked" : StateText(row.State),
             WaitingFor = IsStopped(row) ? StopText(row, now) : row.State == SessionState.Waiting ? row.WaitingFor : null,
             EndedBecause = row.EndedBecause,
             WaitingSince = row.State == SessionState.Waiting ? row.WaitingSince : null,
@@ -230,6 +230,10 @@ internal sealed partial record SessionLine
     /// rather than as idle, which is how such a session otherwise looks while its work sits half done.
     /// </summary>
     internal static bool IsStopped(SessionRow row) => row.ApiError is not null && row.State != SessionState.Working;
+
+    /// <summary>Whether the session reported itself blocked (<c>pilot session report blocked</c>) and the node still waits on that: shown as blocked, with its message.</summary>
+    internal static bool IsBlocked(SessionRow row) =>
+        row.State == SessionState.Waiting && !row.Gone && row.Reported == "blocked" && !IsStopped(row);
 
     /// <summary>Why it stopped and when its limit resets: <c>usage limit · resets in 2h 10m</c>.</summary>
     internal static string StopText(SessionRow row, DateTimeOffset now)

@@ -115,6 +115,17 @@ public sealed record SessionRow
     public string? Asking { get; init; }
 
     /// <summary>
+    /// What the session reported of itself (<c>pilot session report</c>): idle, working or blocked, when that report is the one
+    /// <see cref="State"/> follows. Null when it never reported, or a newer hook or a gone process overrode the report.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Reported { get; init; }
+
+    /// <summary>When the applied report was received; null whenever <see cref="Reported"/> is.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ReportedAt { get; init; }
+
+    /// <summary>
     /// A Waiting or Idle row whose process is gone: Claude Code's listing still says waiting (or idle, for a session stopped
     /// from outside with <c>claude stop</c>), but no process runs, so the row is not live and holds no role.
     /// <see cref="State"/> stays the last state it was in. False for every other row.
