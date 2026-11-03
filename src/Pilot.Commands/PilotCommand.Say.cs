@@ -45,7 +45,18 @@ public static partial class PilotCommand
                     var seq = p.GetValue(reportSeq)?.ToString(CultureInfo.InvariantCulture) ?? "";
                     return Send(client, Verbs.ReportState, named is { Length: > 0 } ? Verbs.SessionTarget(named) : Verbs.NodeTarget, [state, seq, Join(p, reportMessage)], who, ct);
                 });
-            var sessionCommand = new Command("session", "Act on one session") { Subcommands = { endCommand, reportCommand } };
+
+            // session wait: one command in place of polling pilot sessions, built on the node's event stream.
+            var waitSession = Arg("session", "The session's row id, or the name of the one live session with it");
+            var waitUntil = new Option<string?>("--until") { Description = "blocked (waiting, or idle after an API error), idle or ended; default blocked or idle. Ended always ends the wait" };
+            waitUntil.AcceptOnlyFromAmong("blocked", "idle", "ended");
+            var waitTimeout = new Option<string>("--timeout") { Description = "How long to wait, as 30s, 10m or 2h; default 10m. At the timeout it exits 4", DefaultValueFactory = _ => "10m" };
+            var waitCommand = Action(new Command("wait", "Wait until a session is blocked or idle (or ended), then print its state and last words: replaces polling pilot sessions")
+                { Arguments = { waitSession }, Options = { waitUntil, waitTimeout } },
+                (p, client, ct) => TryDuration(p.GetValue(waitTimeout)!, out var span)
+                    ? SessionWait.RunAsync(client, p.GetValue(waitSession)!, p.GetValue(waitUntil), span, output, error, ct)
+                    : throw new UsageException($"--timeout takes a span as 30s, 10m or 2h; not '{p.GetValue(waitTimeout)}'"));
+            var sessionCommand = new Command("session", "Act on one session") { Subcommands = { endCommand, reportCommand, waitCommand } };
 
             // say-all: the same say to each session the filters pick, one Send each; the picking is SayAllFilter's, shared with the Sessions page.
             var sayAllText = Words("text", "What to say to each");

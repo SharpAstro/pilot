@@ -322,8 +322,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// ("There is no session de1-pilot-4d", 2026-10-28), though pilot sessions shows it and the intercom finds a session by it.
     /// </summary>
     public static SessionRow? Find(SessionRow[] rows, string idOrName) =>
-        rows.FirstOrDefault(r => r.Id == idOrName)
-        ?? (rows.Where(r => r.Name == idOrName && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ToList() is [var only] ? only : null);
+        SessionNames.Find(rows, idOrName);
 
     /// <summary>
     /// The row a relayed message's answer goes to: the sender's, when it is a live session on this node other than the
