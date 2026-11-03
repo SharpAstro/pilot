@@ -143,7 +143,7 @@ public sealed partial class GhCli
         }
         (exit, output, error) = await RunAsync(
             ["api", "graphql", "-f", $"query={EnableAutoMergeMutation}", "-f", $"id={id}", "-f", $"method={method.ToUpperInvariant()}", "-f", $"head={head}"], repoPath, cancellationToken);
-        if (exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal))
+        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal)) && !AlreadyArmed(error + " " + output))
         {
             throw new FlightException($"gh could not arm auto-merge on #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
@@ -289,11 +289,27 @@ public sealed partial class GhCli
     private static async Task EnqueueAsync(string repoPath, int number, string id, string head, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken);
-        if (exit != 0)
+        var said = (error.Trim().Length > 0 ? error : output).Trim();
+        if ((exit != 0 || output.Contains("\"errors\"", StringComparison.Ordinal)) && !AlreadyQueued(said) && !AlreadyQueued(output))
         {
-            throw new FlightException($"gh could not queue #{number} to merge: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            throw new FlightException($"gh could not queue #{number} to merge: {said}");
         }
     }
+
+    /// <summary>
+    /// Whether GitHub's answer to enqueuePullRequest says the PR is in the queue already ("gh: Pull request is already in the
+    /// queue", or "GraphQL: Pull request is already in the queue (enqueuePullRequest)"): the state wanted, so not a refusal.
+    /// </summary>
+    internal static bool AlreadyQueued(string said) =>
+        said.Contains("already in the queue", StringComparison.OrdinalIgnoreCase) || said.Contains("already queued", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether GitHub's answer to enablePullRequestAutoMerge says auto-merge is armed already ("Pull request auto merge is
+    /// already enabled"): the state wanted, so not a refusal. Kept narrow so no other "already" answer passes.
+    /// </summary>
+    internal static bool AlreadyArmed(string said) =>
+        (said.Contains("auto-merge", StringComparison.OrdinalIgnoreCase) || said.Contains("auto merge", StringComparison.OrdinalIgnoreCase))
+        && said.Contains("already enabled", StringComparison.OrdinalIgnoreCase);
 
     private const string DequeueMutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}";
 

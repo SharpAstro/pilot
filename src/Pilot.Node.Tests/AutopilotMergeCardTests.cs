@@ -49,6 +49,37 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AMergeGitHubAnswersWithAlreadyInTheQueueEndsQueuedAndRingsNothing()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (flight, _) = await Passed("43");
+        _github.MergeAnswers = "gh: Pull request is already in the queue";
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Way.ShouldBe(MergeWays.Queued);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeGitHubRefusesForARealReasonStillFailsTheMerge()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var (flight, _) = await Passed("44");
+        _github.MergeAnswers = "gh: Head sha didn't match expected head oid";
+
+        var result = await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8]);
+
+        result.Ok.ShouldBeFalse();
+        result.Way.ShouldNotBe(MergeWays.Queued);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task OnAutopilotAMergeWhoseChecksFailRings()
     {
         AutopilotOn();

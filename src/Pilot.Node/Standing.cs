@@ -177,6 +177,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return $"{command.Verb} {Verbs.AnywayFlag} undoes the controller's answer to an overlap: it is theirs, not {(Kind == StandingKind.Lookout ? "the watchtower's" : "a flight session's")}";
             case StandingKind.Lookout when yourOnly && !AnswersRing(command, state) || LookoutNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them";
+            // A session says its own state only; the person and the watchtower may say any session's.
+            case StandingKind.FlightSession or StandingKind.Assistant when command.Verb == Verbs.ReportState && !ReportsOwn(command, state):
+                return "a session reports its own state only: run report-state from the session it is about";
             case StandingKind.FlightSession when yourOnly || FlightSessionNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not a flight session's: leave it to them";
             case StandingKind.FlightSession when OutsideItsFlight(command.Target):
@@ -194,6 +197,18 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 // NodeCommands.RunAsync: a confirm card with it off, a direct run recorded as such with it on (see Autopilot).
                 return null;
         }
+    }
+
+    /// <summary>Whether the session a <see cref="Verbs.ReportState"/> is about is the sender's own (its row's name is <see cref="CommandRequest.Who"/>).</summary>
+    private static bool ReportsOwn(CommandRequest command, NodeState state)
+    {
+        var wanted = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : command.SessionId;
+        // No session named yet: the command's own refusal says so.
+        return wanted is not { Length: > 0 }
+            || state.Sessions().FirstOrDefault(s => string.Equals(s.Id, wanted, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(s.SessionId, wanted, StringComparison.OrdinalIgnoreCase)
+                || s.EarlierSessionIds?.Contains(wanted, StringComparer.OrdinalIgnoreCase) == true) is not { } row
+            || string.Equals(row.Name, command.Who, StringComparison.Ordinal);
     }
 
     private static bool DropsOverlapAnswer(CommandRequest command) =>

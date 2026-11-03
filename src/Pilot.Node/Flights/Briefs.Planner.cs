@@ -36,6 +36,7 @@ public static partial class Briefs
         text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
         text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
         text.AppendLine(WaitRule(run));
+        text.AppendLine(ReportRule(run));
         if (flight.FromIdea is { Length: > 0 } idea)
         {
             text.AppendLine();

@@ -111,6 +111,7 @@ public static partial class Briefs
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
         text.AppendLine(AttachmentRule(run));
+        text.AppendLine(ReportRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");
         text.AppendLine($"- Ready: `{run} review pass \"<what you checked, in a line or two>\"`. With only not blocking findings, still `pass`, and");

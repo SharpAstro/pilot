@@ -487,9 +487,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, MergeAsync refuses with it, as GitHub does a PR that is behind or conflicts.</summary>
     public string? MergeRefuses { get; set; }
 
+    /// <summary>When set, a merge is answered with this GitHub text: "already in the queue" counts as queued, anything else refuses.</summary>
+    public string? MergeAnswers { get; set; }
+
     public async Task<bool> MergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         await Called(nameof(MergeAsync));
+        if (MergeAnswers is not null)
+        {
+            return GhCli.AlreadyQueued(MergeAnswers) ? true : throw new FlightException(MergeAnswers);
+        }
         if (MergeRefuses is not null)
         {
             throw new FlightException(MergeRefuses);
