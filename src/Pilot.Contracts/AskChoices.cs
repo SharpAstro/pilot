@@ -36,8 +36,9 @@ public static partial class AskChoices
                 run.Add(m);
             }
         }
-        // A lone "1." counts only as a numbered line of its own, not as a number inside a sentence.
-        if (run.Count == 0 || (run.Count == 1 && run[0].Index != 0 && text[run[0].Index - 1] != '\n'))
+        // A lone "1." counts only as a numbered line of its own after some question text, not as a number inside a sentence; with
+        // nothing before it, the text is the ask itself and stays the question rather than being dropped.
+        if (run.Count == 0 || (run.Count == 1 && (run[0].Index == 0 || text[run[0].Index - 1] != '\n')))
         {
             return (Collapse(text), []);
         }

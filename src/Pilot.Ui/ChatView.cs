@@ -733,7 +733,12 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         // the reply it ends, cutting its last lines, and scrolled away with the feed. Here it always shows, and the feed ends
         // above it.
         Layout.Node? asked = null;
-        if (canSend && held.Question is { Length: > 0 } question)
+        // A message from the person after the watchtower's last words answers the ask: the card closes, and only a newer ask
+        // (the watchtower speaking again) reopens it.
+        var answeredAlready = held.Entries.Count > 0
+            && held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.User) is var lastUser and >= 0
+            && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
+        if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;

@@ -373,6 +373,7 @@ public sealed class WatchtowerChatTests : IDisposable
         question.ShouldBe("Q?");
         choices.ShouldBe(["a", "b"]);
         AskChoices.Split("Version 1.2 is out").Choices.ShouldBeEmpty();
+        AskChoices.Split("1. Is this ok?").ShouldBe(("1. Is this ok?", []));
         AskChoices.Split("PR 2. was merged").Choices.ShouldBeEmpty();
     }
 

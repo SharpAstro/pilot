@@ -28,10 +28,19 @@ public sealed class ChatTests
         new() { Index = 5, Kind = TranscriptKind.User, Text = "and the next one?", At = At.AddMinutes(6) },
     ];
 
-    private static ChatPage Page(TranscriptEntry[]? entries = null, bool working = false, string? question = null, string[]? choices = null, string[]? queued = null) => new()
+    // A question is the watchtower's last word: the default conversation then ends on its reply, not on the person's line (which
+    // would answer the ask and close the card).
+    private static TranscriptEntry[] Asking() =>
+        Asking("Which one?");
+
+    private static TranscriptEntry[] Asking(string said) =>
+        [.. Conversation().Take(5), new() { Index = 5, Kind = TranscriptKind.Assistant, Text = said, At = At.AddMinutes(6) }];
+
+    private static ChatPage Page(TranscriptEntry[]? entries = null, bool working = false, string? question = null, string[]? choices = null, string[]? queued = null)
     {
-        Entries = entries ?? Conversation(), Total = (entries ?? Conversation()).Length, Working = working, PendingQuestion = question, Choices = choices, Queued = queued,
-    };
+        entries ??= question is null ? Conversation() : Asking();
+        return new() { Entries = entries, Total = entries.Length, Working = working, PendingQuestion = question, Choices = choices, Queued = queued };
+    }
 
     private static ChatView<RgbaImage> NewChat(RgbaImageRenderer renderer, ChatPage? page = null, Func<string, Task<string?>>? send = null)
     {
@@ -339,6 +348,33 @@ public sealed class ChatTests
     }
 
     [Fact]
+    public async Task APersonsMessageAfterTheAskClosesTheCardAndANewerAskReopensIt()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        string[] choices = ["tianwen", "pilot"];
+        var asking = Asking();
+        TranscriptEntry[] answered = [.. asking, new() { Index = 6, Kind = TranscriptKind.User, Text = "its green now, so we can merge", At = At.AddMinutes(7) }];
+        TranscriptEntry[] reasked = [.. answered, new() { Index = 7, Kind = TranscriptKind.Assistant, Text = "Which other repo?", At = At.AddMinutes(8) }];
+
+        var open = NewChat(renderer, Page(asking, question: "Which repo?", choices: choices));
+        await Read(open, 6);
+        Described(open).ShouldContain("tianwen");
+
+        var closed = NewChat(renderer, Page(answered, question: "Which repo?", choices: choices));
+        await Read(closed, 7);
+        Described(closed).ShouldNotContain("tianwen");
+        Described(closed).ShouldNotContain("Pick one");
+        Arranged(closed).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)
+            .ShouldNotContain(a => a.StartsWith("chat:choice:", StringComparison.Ordinal));
+
+        var again = NewChat(renderer, Page(reasked, question: "Which other repo?", choices: ["a", "b"]));
+        await Read(again, 8);
+        Described(again).ShouldContain("Pick one");
+        Arranged(again).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal))
+            .ShouldBe(["chat:choice:1", "chat:choice:2"]);
+    }
+
+    [Fact]
     public async Task AnInlineNumberedQuestionWithNoChoicesFromAnOldNodeShowsPillsAndAClickSendsTheFirst()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
@@ -369,13 +405,28 @@ public sealed class ChatTests
     public async Task AQuestionWithNoParsableChoicesShowsNoPickOneLineAndNoPills()
     {
         using var renderer = new RgbaImageRenderer(1280, 800);
-        var chat = NewChat(renderer, Page(question: "Shall I go on? Note 1.2 is out."));
+        const string ask = "Shall I go on? Note 1.2 is out.";
+        var chat = NewChat(renderer, Page(Asking(ask), question: ask));
         await Read(chat, 6);
 
         var text = Described(chat);
+        text.ShouldContain("Answer in your own words");
         text.ShouldNotContain("Pick one");
         Arranged(chat).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)
             .Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AQuestionTheReplyAlreadySaysWithChoicesShowsPickOneAndTwoPills()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 800);
+        const string ask = "Shall I go on? Note 1.2 is out.";
+        var chat = NewChat(renderer, Page(Asking(ask), question: ask, choices: ["a", "b"]));
+        await Read(chat, 6);
+
+        Described(chat).ShouldContain("Pick one, or answer in your own words");
+        Arranged(chat).Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)
+            .Where(a => a.StartsWith("chat:choice:", StringComparison.Ordinal)).ShouldBe(["chat:choice:1", "chat:choice:2"]);
     }
 
     [Fact]
