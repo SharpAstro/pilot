@@ -98,6 +98,20 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"overlap needs why {flight.Code} overlaps {other.Code}, as in overlap flight/{flight.Code} {other.Code} file=src/Parser.cs <why>");
         }
+        if (node is null && other.Overlaps.FirstOrDefault(o => IsPendingAbout(o, flight.Code)) is { } theirs)
+        {
+            // The other holds a card on this flight (PIL664): answered parallel by the node on both sides, so the planner plans on.
+            var (_, released) = AnswerMutualParallel(flight, null, other, theirs, files);
+            try
+            {
+                await GoOnAfterParallelAnswerAsync(released, theirs, $"{released.Code} is planned in parallel with {flight.Code} by the node", cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"overlap: {released.Code} could not go on after the mutual parallel answer: {ex.Message}");
+            }
+            return $"{other.Code} held a card on {flight.Code} as well, so the node answered it: plan {flight.Code} in parallel with {other.Code}, and connect it (flight connect) only if it still depends on it; no card rings";
+        }
         if (flight.Overlaps.FirstOrDefault(o => o.Answer == OverlapAnswer.Pending) is { } waiting)
         {
             throw new FlightException($"{flight.Code} waits for the answer on {waiting.Other}{CardSaid(flight)}; ask about {other.Code} once that is answered");
@@ -256,13 +270,25 @@ public sealed partial class LegCommander
 
         // The planner that asked is waiting for its turn to end: stopped, so a fresh one is told the answer. Its start is not
         // refused for the stopped one, which the tracker may list for a poll yet.
-        if (known.AfterLeg is not null)
+        return await GoOnAfterParallelAnswerAsync(flight, known,
+            known.AfterLeg is not null
+                ? $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on"
+                : $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer", cancellationToken);
+    }
+
+    /// <summary>
+    /// After a parallel answer on <paramref name="answered"/>: a leg-end row goes on (<see cref="GoOnAfterLegEndAnswerAsync"/>), a
+    /// planner-asked row has its planner stopped and a fresh one started. Called under the lock.
+    /// </summary>
+    private async Task<string> GoOnAfterParallelAnswerAsync(FlightRow flight, OverlapRow answered, string told, CancellationToken cancellationToken)
+    {
+        if (answered.AfterLeg is not null)
         {
-            return await GoOnAfterLegEndAnswerAsync(flight, $"{flight.Code} is planned in parallel with {known.Other}; no planner is started, as {known.AfterLeg} had finished, and the flight goes on", cancellationToken);
+            return await GoOnAfterLegEndAnswerAsync(flight, told, cancellationToken);
         }
         await StopPlannerAsync(flight, cancellationToken);
         StartPlanner(flight, replacing: true);
-        return $"{flight.Code} is planned in parallel with {known.Other}; a fresh planner is started with the answer";
+        return told;
     }
 
     /// <summary>

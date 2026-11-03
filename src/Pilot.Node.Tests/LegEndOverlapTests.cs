@@ -183,17 +183,79 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         row.Files.ShouldBe(["fresh.cs"]);
     }
 
+    /// <summary>TIA2 holds a pending row about TIA1 (its own overlap card is open), from a leg end (<paramref name="afterLeg"/>) or a planner's ask (null).</summary>
+    private void PendingOnTheOthersCard(string? afterLeg, params string[] files)
+    {
+        var tia2 = _state.Flights().Single(f => f.Code == "TIA2");
+        _state.PutFlight(tia2 with { Overlaps = [new OverlapRow { Other = "TIA1", Files = files, Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = OverlapAnswer.Pending, AfterLeg = afterLeg, At = DateTimeOffset.UtcNow }] });
+        _state.RaiseCard(CardBin.Ring, LegCommander.OverlapKind, Verbs.FlightTarget("TIA2"), "TIA2 overlaps TIA1 (shared.cs)", "asked", []);
+    }
+
     [Fact]
-    public async Task AnUnansweredReversePairStillRings()
+    public async Task AMutualOverlapIsAnsweredParallelByTheNodeOnBothSidesWithOneHandledCardAndNoRing()
     {
         await FlyingAsync("parser.cs", "shared.cs");
         OtherFlight("TIA2", "shared.cs");
         (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
-        AnswerOnTheOthersCard(OverlapAnswer.Pending, "shared.cs");
+        PendingOnTheOthersCard("parser", "shared.cs");
+
+        await FinishParserAsync();
+
+        var tia2 = _state.Flights().Single(f => f.Code == "TIA2");
+        tia2.Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
+        var tia1 = _state.Flights().Single(f => f.Code == "TIA1");
+        var row = tia1.Overlaps.Single();
+        (row.Other, row.Answer, row.AfterLeg).ShouldBe(("TIA2", OverlapAnswer.Separate, "parser"));
+        row.Files.ShouldBe(["shared.cs"]);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Cards().Where(c => c.Kind == LegCommander.OverlapKind).ShouldAllBe(c => c.Bin == CardBin.Ring);
+        var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapParallelKind);
+        note.Bin.ShouldBe(CardBin.Handled);
+        note.Title.ShouldContain("TIA1");
+        note.Title.ShouldContain("TIA2");
+        note.Title.ShouldContain("shared.cs");
+        // TIA1's next leg starts; neither flight is held by a pending row.
+        _workers.Started.Select(w => w.Name).ShouldContain("du1-tia1-render-validator");
+        tia1.Overlaps.ShouldNotContain(o => o.Answer == OverlapAnswer.Pending);
+        tia2.Overlaps.ShouldNotContain(o => o.Answer == OverlapAnswer.Pending);
+    }
+
+    [Fact]
+    public async Task AMutualOverlapWhereTheOthersRowCameFromAPlannerAskRestartsItsPlanner()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        PendingOnTheOthersCard(null, "shared.cs");
 
         await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
 
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Flights().Single(f => f.Code == "TIA2").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
+        _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.OverlapParallelKind);
+        // The planner is launched in the background: give the start a moment to be recorded.
+        for (var i = 0; i < 100 && !_workers.Started.Any(w => w.Name == "du1-tia2-plan"); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        _workers.Started.Select(w => w.Name).ShouldContain(n => n.Contains("tia2") && n.Contains("plan"));
+    }
+
+    [Fact]
+    public async Task AOneWayOverlapStillRingsWithConnectAndParallelWhenTheOthersPendingRowNamesAnotherFlight()
+    {
+        await FlyingAsync("parser.cs", "shared.cs");
+        OtherFlight("TIA2", "shared.cs");
+        (await Leg(Verbs.Touches, "flight/TIA1", "parser.cs")).Ok.ShouldBeTrue();
+        var tia2 = _state.Flights().Single(f => f.Code == "TIA2");
+        _state.PutFlight(tia2 with { Overlaps = [new OverlapRow { Other = "TIA9", Files = ["x.cs"], Pick = Verbs.OverlapPickConnect, Why = "asked", Answer = OverlapAnswer.Pending, At = DateTimeOffset.UtcNow }] });
+
+        await _legs.CheckOverlapAsync("TIA1", "parser", Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.OverlapKind);
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.ConnectOverlap, Verbs.Separate]);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OverlapParallelKind);
     }
 
     [Fact]
