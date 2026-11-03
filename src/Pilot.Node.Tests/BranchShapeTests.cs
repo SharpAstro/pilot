@@ -113,7 +113,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         var (number, head, method) = _github.Merged.ShouldHaveSingleItem();
         head.ShouldBe(shaped);
         method.ShouldBe("squash");
-        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().Where(c => c.Bin == CardBin.Ring).Select(c => c.Kind).ShouldBeEmpty();
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
 
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Method.ShouldBe("merge");
-        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().Where(c => c.Bin == CardBin.Ring).Select(c => c.Kind).ShouldBeEmpty();
     }
 
     [Fact]
