@@ -100,6 +100,65 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Merged.ShouldHaveSingleItem();
     }
 
+    private PrChecks TimedChecks(ManualTime clock, bool live) => new(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => live };
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("6", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        // Within the bound with a live watchtower nothing rings.
+        clock.Advance(TimeSpan.FromMinutes(29));
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Choices.Select(c => c.Label).ShouldBe(["Merge as it is", "Wait"]);
+        _github.Merged.ShouldBeEmpty();
+
+        var merge = card.Choices[0];
+        (await Run(merge.Verb, merge.Target, "me", [.. merge.Args])).Error.ShouldBeNull();
+
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem();
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ANotLiveWatchtowerRingsAtOnceAndWaitSilencesItForAnotherBound()
+    {
+        var flight = await Reviewed("7", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: false);
+
+        await checks.LookAsync(Ct);
+        var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        var wait = card.Choices.Single(c => c.Label == "Wait");
+        (await Run(wait.Verb, wait.Target, "me", [.. wait.Args])).Error.ShouldBeNull();
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        F(flight.Code).Holding.ShouldNotBeNull();
+
+        clock.Advance(TimeSpan.FromMinutes(21));
+        await checks.LookAsync(Ct);
+        Open().ShouldContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        await checks.LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APassWithNoNotesMergesAtOnce()

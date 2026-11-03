@@ -296,6 +296,11 @@ public sealed partial class LegCommander
                 ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
                 : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
         }
+        if (flight.Holding is not null && args.Length > 2 && args[2] == MergeAsIs && IsPerson(flight, command.Who))
+        {
+            ReleaseHolding(flight, command.Who, "merged as it is, the watchtower had not cleared it in time");
+            flight = FlightOf(command.Target);
+        }
         if (flight.Holding is { } holding)
         {
             throw new FlightException($"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`)");

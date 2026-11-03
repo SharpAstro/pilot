@@ -492,12 +492,22 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to clear");
         }
-        Record(flight.Code, f => f with { Holding = null });
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{command.Who} cleared it to land", ReviewNotesKind);
-        var why = string.Join(' ', command.Args ?? []).Trim();
-        state.RaiseCard(CardBin.Handled, HoldingClearedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is cleared to land",
-            why.Length > 0 ? $"{command.Who}: {why}" : $"cleared by {command.Who}");
+        ReleaseHolding(flight, command.Who, string.Join(' ', command.Args ?? []).Trim());
     }
+
+    private void ReleaseHolding(FlightRow flight, string? who, string why)
+    {
+        Record(flight.Code, f => f with { Holding = null });
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{who} cleared it to land", ReviewNotesKind, HoldingTimeoutKind);
+        state.RaiseCard(CardBin.Handled, HoldingClearedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is cleared to land",
+            why.Length > 0 ? $"{who}: {why}" : $"cleared by {who}");
+    }
+
+    /// <summary>The Ring card kind of a holding flight the watchtower has not cleared in time, or whose watchtower is not live.</summary>
+    public const string HoldingTimeoutKind = "holding-timeout";
+
+    /// <summary>The third merge argument of the holding-timeout card's Merge as it is: the person's word that the hold ends with the merge.</summary>
+    public const string MergeAsIs = "as-is";
 
     /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>
     public const string ReviewNotesKind = "review-notes";

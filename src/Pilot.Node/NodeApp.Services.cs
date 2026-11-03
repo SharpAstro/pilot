@@ -455,6 +455,7 @@ public static partial class NodeApp
         {
             var checks = ActivatorUtilities.CreateInstance<PrChecks>(services);
             checks.RerunFirst = true;
+            checks.WatchtowerLive = () => services.GetRequiredService<Watchtower>().IsLive();
             checks.Recheck = services.GetRequiredService<PrRecheck>();
             checks.Error = logWriter;
             return checks;

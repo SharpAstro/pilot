@@ -806,6 +806,9 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>Whether the watchtower has a row that is working, waiting or idle now (an ended one is not live).</summary>
+    public bool IsLive() => Current() is { } row && Live(row);
+
     /// <summary>The target a <c>tell</c> goes to: the watchtower's row, or why there is none to tell.</summary>
     public (string? Target, string? Error) TellTarget()
     {
