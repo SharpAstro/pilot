@@ -204,7 +204,8 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     // A Review's or an Address review's press, working with the node, taken (the row says "reviewing" or "fixing" at once, until a read shows
     // the outcome, which takes over; it lapses after StartedFor so the row cannot say so for a review that never ran) or refused: the shared
     // helper's, by PR URL (a fix's by FixKey).
-    internal Presses Presses { get; } = new();
+    // The review rows carry their own Starting, Reviewing and refused words, so no done mark doubles them up.
+    internal Presses Presses { get; } = new() { DoneFor = TimeSpan.Zero };
     internal TimeSpan StartedFor { get => Presses.TakenFor; set => Presses.TakenFor = value; }
 
     /// <summary>What the node said to the last Address review pressed, when it refused: its words, with the PR; null when it did not.</summary>
