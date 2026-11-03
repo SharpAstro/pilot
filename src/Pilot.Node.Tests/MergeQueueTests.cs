@@ -10,6 +10,27 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class MergeQueueTests
 {
+    [Theory]
+    [InlineData("gh: Pull request is already in the queue", true)]
+    [InlineData("gh: GraphQL: Pull request is already in the queue (enqueuePullRequest)", true)]
+    [InlineData("""{"errors":[{"message":"Pull request is already queued"}]}""", true)]
+    [InlineData("gh: Head sha didn't match expected head oid", false)]
+    [InlineData("gh: Pull request is not mergeable", false)]
+    [InlineData("gh: Required status check build is expected", false)]
+    [InlineData("", false)]
+    public void GitHubSayingAPullRequestIsInTheQueueAlreadyIsNotARefusal(string said, bool expected) =>
+        GhCli.AlreadyQueued(said).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("gh: Pull request auto merge is already enabled", true)]
+    [InlineData("GraphQL: Auto-merge is already enabled for this pull request (enablePullRequestAutoMerge)", true)]
+    [InlineData("gh: Pull request is in clean status", false)]
+    [InlineData("gh: Pull request is already in the queue", false)]
+    [InlineData("gh: Head sha didn't match expected head oid", false)]
+    [InlineData("", false)]
+    public void GitHubSayingAutoMergeIsEnabledAlreadyIsNotARefusal(string said, bool expected) =>
+        GhCli.AlreadyArmed(said).ShouldBe(expected);
+
     [Fact]
     public void APullRequestWhoseBaseHasAQueueIsQueuedByItsNodeId() =>
         GhCli.QueuedPullRequest("""{"data":{"repository":{"pullRequest":{"id":"PR_kwDOVGh6Zs8AAAABKa-GdA","isMergeQueueEnabled":true}}}}""")
