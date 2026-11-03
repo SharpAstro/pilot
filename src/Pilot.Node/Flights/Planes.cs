@@ -522,6 +522,33 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return path;
     }
 
+    /// <summary>
+    /// Makes the worktree at <paramref name="worktree"/> detached at <paramref name="commit"/>, for a branch that is checked out
+    /// in another worktree and so cannot be checked out twice. A leftover folder of a torn-down one goes first, as in <see cref="EnsureAsync"/>.
+    /// </summary>
+    public async Task DetachAsync(string repoPath, string worktree, string commit, CancellationToken cancellationToken)
+    {
+        if (await IsRegisteredAsync(repoPath, worktree, cancellationToken))
+        {
+            if (await RemoveAsync(repoPath, worktree, cancellationToken, force: true) is { } held)
+            {
+                throw new FlightException(held);
+            }
+        }
+        await git.RunAsync(["worktree", "prune"], repoPath, cancellationToken);
+        if (queue is not null && queue.Contains(worktree) && !queue.TryOne(worktree))
+        {
+            throw new FlightException($"{worktree} is queued for removal at the node's next start and a process still holds it; the plane cannot be checked out there until it lets go");
+        }
+        DeleteLeftover(worktree);
+        var add = await git.RunAsync(["worktree", "add", "--detach", worktree, commit], repoPath, cancellationToken);
+        if (!add.Ok)
+        {
+            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} detached at {worktree}: {add.Why}");
+        }
+        PlaneSettings.DisableRepoMcpServers(worktree);
+    }
+
     /// <summary>Removes the folder of a worktree git no longer has: what a torn-down worktree leaves when a file was held.</summary>
     private static void DeleteLeftover(string worktree)
     {

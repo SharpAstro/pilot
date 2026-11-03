@@ -77,6 +77,8 @@ public sealed partial class PrReviews
             FixerJob = fixOn?.FixerJob,
             FixWorktree = fixOn?.FixWorktree,
             FixRound = fixOn?.FixRound,
+            FixWorktreeBorrowed = fixOn?.FixWorktreeBorrowed,
+            FixDetached = fixOn?.FixDetached,
             StartedAt = time.GetUtcNow(),
         };
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);

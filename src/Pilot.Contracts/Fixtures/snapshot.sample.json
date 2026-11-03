@@ -344,6 +344,8 @@
       "fixer": null,
       "fixerJob": null,
       "fixWorktree": null,
+      "fixWorktreeBorrowed": null,
+      "fixDetached": null,
       "fixRound": null,
       "designAnswer": null,
       "startedAt": "2026-10-18T09:02:10+00:00",
