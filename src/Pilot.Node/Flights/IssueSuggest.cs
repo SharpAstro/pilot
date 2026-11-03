@@ -25,7 +25,7 @@ public sealed class ClaudeIssueReadinessChecker : IIssueReadinessChecker
     public static string Prompt(IdeaText issue) => $$"""
         Judge whether this GitHub issue is ready to become a flight: one planned piece of work that is flown leg by leg. Nothing is changed: you only judge.
         It is ready when all of these hold:
-        - it has one goal that fits a single leg (a few files, one reviewable change), not several goals or an open-ended theme;
+        - it has one goal, not several unrelated goals or an open-ended theme; a goal that takes several legs is fine, as the flight's planner splits it into legs, each one reviewable change, so do not count legs or files against it;
         - the tests that would show it done can be named from the text;
         - no question is left open that someone must answer before work starts.
         Say, in a line each, what makes it ready, or which of these is missing and what would fix it.
