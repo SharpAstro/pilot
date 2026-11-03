@@ -298,9 +298,9 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(pressed);
         }
-        if (idea is not null && _open is { } open && open.Key == KeyOf(idea))
+        if (_open is { } open && (idea ?? (open.Mode == Mode.BreakUp ? RowOf(item) : null)) is { } openOn && open.Key == KeyOf(openOn))
         {
-            parts.AddRange(OpenRows(idea, open.Mode));
+            parts.AddRange(OpenRows(openOn, open.Mode));
         }
         return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(10f, 8f).Bg(_dragging == item.Key ? P.GhostBg : P.RowAltBg).WStar().HAuto();
     }
@@ -340,6 +340,10 @@ internal sealed partial class IdeasView<TSurface>
                 .Pressable(new HitResult.ButtonHit(hit + item.Key), press => BeginDrag(item, press), CursorKind.Move)
             : null;
 
+    // An issue as the row the open actions work on: only Break up is opened on one.
+    private static IdeaRow RowOf(BoardItem item) =>
+        item.Idea ?? new IdeaRow { Id = IdeaIds.Id(item.Number), Repo = item.Repo, Title = item.Title, Body = item.Body, State = IdeaState.Noted, UpdatedAt = item.UpdatedAt, Url = item.Url };
+
     private IEnumerable<Layout.Node> Buttons(BoardItem item, BoardSection? section = null)
     {
         var idea = item.Idea;
@@ -358,6 +362,10 @@ internal sealed partial class IdeasView<TSurface>
             yield return ActionPill("Drop", idea, Mode.Drop);
             yield return ActionPill("Edit", idea, Mode.Edit);
             yield return ActionPill("Tidy", idea, Mode.Tidy);
+            if (!flown)
+            {
+                yield return ActionPill("Break up", idea, Mode.BreakUp);
+            }
         }
         else if (!flown && Send is not null)
         {
@@ -408,6 +416,10 @@ internal sealed partial class IdeasView<TSurface>
         }
         else
         {
+            if (!flown)
+            {
+                yield return ActionPill("Break up", RowOf(item), Mode.BreakUp);
+            }
             yield return CardsView<TSurface>.Pill("Open on GitHub ↗", $"ideas:open:{item.Key}", () => { if (item.Url.Length > 0) { OnOpen?.Invoke(item.Url); } }, Tint, Link);
         }
     }

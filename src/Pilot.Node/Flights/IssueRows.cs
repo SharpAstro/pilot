@@ -38,7 +38,7 @@ public static class IssueRows
             Flight = FlightOf(flights, repo, issue.Number),
         })];
 
-    private static string? FlightOf(IReadOnlyCollection<FlightRow> flights, string repo, int number) =>
+    internal static string? FlightOf(IReadOnlyCollection<FlightRow> flights, string repo, int number) =>
         flights.Where(f => f.Tracker == TrackerKind.GitHub && f.Issue == number && string.Equals(f.Repo, repo, StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f.State == FlightState.Landed)
             .ThenByDescending(f => f.CreatedAt)

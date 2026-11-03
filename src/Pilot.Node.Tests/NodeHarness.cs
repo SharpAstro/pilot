@@ -66,6 +66,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>The idea milestone proposal: what it answers is the test's; Claude is never run.</summary>
     public FakeIdeaMilestoner Milestoner { get; private init; } = new();
 
+    /// <summary>The issue break-up: what it proposes is the test's; Claude is never run.</summary>
+    public FakeIssueSplitter Splitter { get; private init; } = new();
+
     /// <summary>nuget.org: what it lists is the test's.</summary>
     public FakeNuGetFeed NuGet { get; private init; } = new();
 
@@ -105,6 +108,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var nuget = new FakeNuGetFeed();
         var summary = new FakeSummaryModel();
         var milestoner = new FakeIdeaMilestoner();
+        var splitter = new FakeIssueSplitter();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -135,6 +139,7 @@ internal sealed class NodeHarness : IAsyncDisposable
                     builder.Services.AddSingleton(journal);
                 }
                 builder.Services.AddSingleton<Pilot.Node.Flights.IIdeaMilestoner>(milestoner);
+                builder.Services.AddSingleton<Pilot.Node.Flights.IIssueSplitter>(splitter);
                 builder.Services.AddSingleton(new SessionTrackerOptions(
                     new ClaudeProfile(Path.Combine(folder, "claude")),
                     TimeSpan.FromMilliseconds(100),
@@ -151,7 +156,7 @@ internal sealed class NodeHarness : IAsyncDisposable
             await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);
             // So is the flight sweep's: it tells the keeper of the Opus count what this node runs, and would free a slot a test had just taken.
             await app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().FirstSweep.WaitAsync(cancellationToken);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner, PrPacing = prPacing };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner, Splitter = splitter, PrPacing = prPacing };
         }
         catch
         {

@@ -149,6 +149,11 @@ internal sealed partial class IdeasView<TSurface>
         }
         _choices = null;
         _picked = null;
+        _breakUp = null;
+        if (mode == Mode.BreakUp)
+        {
+            Run(() => BreakUpAsync(idea), $"break up {idea.Id}");
+        }
         if (mode == Mode.Tidy)
         {
             _proposal = null;
@@ -283,6 +288,7 @@ internal sealed partial class IdeasView<TSurface>
     {
         _open = null;
         _proposal = null;
+        _breakUp = null;
         _choices = null;
         Ui.Focus.BlurIfFocused(RowInput);
         Ui.Focus.BlurIfFocused(EditInput);
@@ -369,6 +375,43 @@ internal sealed partial class IdeasView<TSurface>
         {
             Close();
             Say(reply.Ok ? $"nothing to tidy in {Name(idea)}" : $"{Name(idea)} not tidied: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    private async Task BreakUpAsync(IdeaRow idea)
+    {
+        var reply = await RunAsync(idea, $"ideas:breakup:{KeyOf(idea)}", "breaking it up", Verbs.BreakUpIssue, []);
+        if (reply is null)
+        {
+            return;
+        }
+        if (reply is { Ok: true, BreakUp: { Parts.Length: > 0 } parts })
+        {
+            if (_open is { Mode: Mode.BreakUp } open && open.Key == KeyOf(idea))
+            {
+                _breakUp = (open.Key, parts);
+                Changed?.Invoke();
+            }
+        }
+        else
+        {
+            Close();
+            Say(reply.Ok ? $"nothing to break up in {Name(idea)}" : $"{Name(idea)} not broken up: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    /// <summary>Accepts the break-up on screen, from the version Claude read: the first part over the item, the rest as new issues.</summary>
+    public async Task AcceptBreakUpAsync(IdeaRow idea)
+    {
+        if (_breakUp is not { } kept || kept.Key != KeyOf(idea))
+        {
+            return;
+        }
+        Close();
+        var reply = await RunAsync(idea, $"ideas:breakup-accept:{KeyOf(idea)}", "breaking it up", Verbs.AcceptBreakUp, [kept.Parts.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)]);
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"broke up {Name(idea)}{(reply.Made is { Length: > 0 } made ? ": " + made : "")}" : $"{Name(idea)} not broken up: {reply.Error}", !reply.Ok);
         }
     }
 

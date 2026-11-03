@@ -179,6 +179,29 @@ public static partial class PilotCommand
             {
                 await output.WriteLineAsync($"moved: {accepted}");
             }
+            if (verb == Verbs.BreakUpIssue && result.BreakUp is { } broken)
+            {
+                BreakUpCache.Write(target, broken);
+                await output.WriteLineAsync($"{result.Made ?? target}: proposed {broken.Parts.Length} parts");
+                for (var i = 0; i < broken.Parts.Length; i++)
+                {
+                    var part = broken.Parts[i];
+                    await output.WriteLineAsync($"{i + 1}. {part.Title}");
+                    if (part.Body.Trim() is { Length: > 0 } partBody)
+                    {
+                        await output.WriteLineAsync("   " + partBody.Replace("\n", "\n   ", StringComparison.Ordinal));
+                    }
+                    foreach (var question in part.OpenQuestions)
+                    {
+                        await output.WriteLineAsync($"   ? {question}");
+                    }
+                }
+                await output.WriteLineAsync("nothing is written: pilot issue break-up <issue> --save accepts it (part 1 replaces the issue, the rest are new issues), --discard drops it");
+            }
+            if (verb == Verbs.AcceptBreakUp && result.Made is { Length: > 0 } madeParts)
+            {
+                await output.WriteLineAsync($"broken up {target.Split('/')[^1]}: part 1 stays in it, new issues {madeParts}");
+            }
             if (verb == Verbs.TidyIdea && result.Tidy is { } tidy)
             {
                 var id = result.Made ?? target;

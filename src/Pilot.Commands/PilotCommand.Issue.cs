@@ -227,7 +227,51 @@ public static partial class PilotCommand
                         ? Send(client, Verbs.AcceptMilestones, IssueIds.Target(parsed[0].Repo, parsed[0].Number), [], who, ct)
                         : Send(client, Verbs.AcceptMilestones, Verbs.RepoTarget(parsed[0].Repo), [.. parsed.Select(i => i.Number.ToString(CultureInfo.InvariantCulture))], who, ct);
                 });
-            var issueCommand = new Command("issue", "Issues: create, milestone, priority, ready, suggest, accept") { Subcommands = { issueCreate, issueSetMilestone, issuePriority, issueReady, issueSuggest, issueAccept } };
+            var issueInto = new Option<int?>("--into") { Description = "break-up: how many parts to ask for (two or more; a wish, Claude may propose another number)" };
+            var issueSave = new Option<bool>("--save") { Description = "break-up: accept the proposal the last break-up showed: the first part replaces the issue, the others are made as new issues" };
+            var issueDiscard = new Option<bool>("--discard") { Description = "break-up: forget the proposal the last break-up showed; nothing is written" };
+            var issueBreakUp = Action(new Command("break-up", "Ask Claude to split an open issue (or idea, I<n>) into two or more distinct parts and show them; nothing is written until --save, which puts the first part over the issue and makes the others as new issues in its milestone with its priority, each naming its siblings. --discard forgets the proposal") { Arguments = { issueRef }, Options = { issueRepo, issueInto, issueSave, issueDiscard } },
+                async (p, client, ct) =>
+                {
+                    var text = p.GetValue(issueRef) ?? "";
+                    string target;
+                    string label;
+                    if (IdeaIds.TryNumber(text, out var ideaNumber))
+                    {
+                        target = IdeaIds.Target(RepoPath(client, p.GetValue(issueRepo), cwd), ideaNumber);
+                        label = IdeaIds.Id(ideaNumber);
+                    }
+                    else
+                    {
+                        var (repo, number) = ParseIssue(client, p, text);
+                        target = IssueIds.Target(repo, number);
+                        label = "#" + number.ToString(CultureInfo.InvariantCulture);
+                    }
+                    if (p.GetValue(issueDiscard))
+                    {
+                        await output.WriteLineAsync(BreakUpCache.Discard(target) ? $"discarded the break-up of {label}: nothing was written" : $"no break-up of {label} is waiting");
+                        return 0;
+                    }
+                    if (p.GetValue(issueSave))
+                    {
+                        var kept = BreakUpCache.Read(target)
+                            ?? throw new UsageException($"no break-up of {label} is waiting to save: run pilot issue break-up {text} first");
+                        var saved = await Send(client, Verbs.AcceptBreakUp, target, [kept.UpdatedAt.ToString("O", CultureInfo.InvariantCulture)], who, ct);
+                        if (saved == 0)
+                        {
+                            BreakUpCache.Discard(target);
+                        }
+                        return saved;
+                    }
+                    if (p.GetValue(issueInto) is { } into)
+                    {
+                        return into < 2
+                            ? throw new UsageException("--into is two or more parts")
+                            : await Send(client, Verbs.BreakUpIssue, target, [into.ToString(CultureInfo.InvariantCulture)], who, ct);
+                    }
+                    return await Send(client, Verbs.BreakUpIssue, target, [], who, ct);
+                });
+            var issueCommand = new Command("issue", "Issues: create, milestone, priority, ready, suggest, accept, break-up") { Subcommands = { issueCreate, issueSetMilestone, issuePriority, issueReady, issueSuggest, issueAccept, issueBreakUp } };
 
             return issueCommand;
         }

@@ -25,6 +25,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         Edit,
         Tidy,
         Move,
+        BreakUp,
     }
 
     private sealed record Open(string Key, Mode Mode);
@@ -42,6 +43,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private IdeasScreen _screen = IdeasScreen.Empty;
     private Open? _open;
     private Proposal? _proposal;
+    private (string Key, BreakUpProposal Parts)? _breakUp;
     private Choices? _choices;
     private string? _picked;
     private string? _editFrom;

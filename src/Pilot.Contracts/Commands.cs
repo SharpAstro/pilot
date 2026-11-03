@@ -111,6 +111,10 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ReadinessResult? Readiness { get; init; }
 
+    /// <summary>A <c>break-up-issue</c>'s proposal; null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BreakUpProposal? BreakUp { get; init; }
+
     /// <summary>A <c>suggest-milestones</c>'s answer; null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MilestoneSuggestions? Suggestions { get; init; }
@@ -577,6 +581,19 @@ public static class Verbs
     public const string CheckReady = "check-ready";
 
     /// <summary>
+    /// <c>break-up-issue issue/&lt;repo&gt;/#&lt;n&gt; [N]</c> (an idea target works too): Claude proposes splitting the open issue into N distinct parts (two or more; N is
+    /// a wish, not a promise). The proposal is in <see cref="CommandResult.BreakUp"/> and is kept for <see cref="AcceptBreakUp"/>. Nothing is written to GitHub.
+    /// </summary>
+    public const string BreakUpIssue = "break-up-issue";
+
+    /// <summary>
+    /// <c>accept-break-up issue/&lt;repo&gt;/#&lt;n&gt; &lt;updated_at&gt;</c>: the kept proposal is written. The first part replaces the issue's title and body; the others are made as new
+    /// issues in the same milestone with the same priority; each body names the others. Refused when the issue changed since the proposal
+    /// (<c>updated_at</c>). <see cref="CommandResult.Made"/> lists the numbers made.
+    /// </summary>
+    public const string AcceptBreakUp = "accept-break-up";
+
+    /// <summary>
     /// <c>suggest-milestones issue/&lt;repo&gt;/#&lt;n&gt;</c> or <c>section/&lt;repo&gt;/unsorted|none</c>: Claude proposes a milestone for the one open issue or
     /// for each open issue of the section (<see cref="SectionUnsorted"/>: the Ideas milestone; <see cref="NoMilestone"/>: no milestone), an open one each or a
     /// new one (title and one-line goal) grouping the issues that would go in it. The answer is in <see cref="CommandResult.Suggestions"/> and is kept for
@@ -820,6 +837,12 @@ public static class IdeaEditWays
     /// <summary>The two versions contradict: nothing is written, a card asks which to keep (<see cref="CommandResult.Made"/> is its id).</summary>
     public const string Asked = "asked";
 }
+
+/// <summary>One part of a break-up: a title, a body and the questions left open for it.</summary>
+public sealed record BreakUpPart(string Title, string Body, string[] OpenQuestions);
+
+/// <summary>What Claude proposes for splitting an issue (<see cref="Verbs.BreakUpIssue"/>), beside the text it read and the <c>updated_at</c> it read, which accepting goes from.</summary>
+public sealed record BreakUpProposal(BreakUpPart[] Parts, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt, string? Milestone, string? Priority);
 
 /// <summary>What Claude proposes for an idea's text (<see cref="Verbs.TidyIdea"/>), beside the text it read, and the <c>updated_at</c> of the issue it read, which saving it goes from.</summary>
 public sealed record IdeaTidyProposal(string Title, string Body, string CurrentTitle, string CurrentBody, DateTimeOffset UpdatedAt)
