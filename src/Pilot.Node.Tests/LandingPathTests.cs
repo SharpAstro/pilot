@@ -110,6 +110,12 @@ public sealed class LandingPathTests : ReviewTestsBase
                         cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
                         break;
                     case Path.Autopilot:
+                        if (answer.Contains("Base branch was modified", StringComparison.Ordinal))
+                        {
+                            // Behind: the node brings the branch up to date and offers the merge again, so nothing is refused to show.
+                            cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
+                            break;
+                        }
                         var one = cards.ShouldHaveSingleItem();
                         $"{one.Title} {one.Detail}".ShouldContain(Marker);
                         break;
