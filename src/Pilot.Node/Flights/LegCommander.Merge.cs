@@ -67,7 +67,7 @@ public sealed partial class LegCommander
             holder.Answered = true;
             if (result.Merged)
             {
-                SetEntry(asked.Code, MergeEntryState.Merging, "merged: the flight lands");
+                SetEntry(asked.Code, MergeEntryState.Merging, _mergeFallbacks.TryRemove(asked.Code, out var fell) ? $"merged: the flight lands ({fell})" : "merged: the flight lands");
             }
             else if (result.Way == MergeWays.Armed)
             {
@@ -101,6 +101,9 @@ public sealed partial class LegCommander
             throw;
         }
     }
+
+    // What the merge entry says of a rebase GitHub refused and a squash or merge took over (MergeFallback), by flight, until the merge ends.
+    private readonly ConcurrentDictionary<string, string> _mergeFallbacks = new(StringComparer.Ordinal);
 
     private async Task<(bool Merged, string? Made, string? Way)> MergeEntryAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -161,9 +164,16 @@ public sealed partial class LegCommander
         var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
         try
         {
-            return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
-                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
-                : (true, null, null);
+            var (queued, instead) = await OffLockAsync(null, () => MergeFallback.MergeAsync(github, flight.RepoPath, pr.Number, queueHead, method, cancellationToken));
+            if (instead is not null)
+            {
+                // GitHub could not rebase the branch (it holds merges of its base): not a refusal, the same head merged by another
+                // method. Said on the entry and the card, which show it until the flight lands.
+                var note = MergeFallback.Note(instead);
+                _mergeFallbacks[flight.Code] = note;
+                SetEntry(flight.Code, MergeEntryState.Merging, note, cardNote: note);
+            }
+            return queued ? (false, QueuedLine(flight.Code), MergeWays.Queued) : (true, null, null);
         }
         catch (FlightException ex) when (!string.Equals(queueHead, pr.Head, StringComparison.OrdinalIgnoreCase))
         {
