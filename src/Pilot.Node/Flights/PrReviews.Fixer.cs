@@ -218,7 +218,19 @@ public sealed partial class PrReviews
             review = review with { QueuedAt = null };
             state.PutPrReview(review);
         }
-        var fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        string fixerStart;
+        try
+        {
+            fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+        }
+        catch (FlightException ex) when (command is not null)
+        {
+            // The answer stays stored (DesignAnswer), and the card's choice starts the fixer with it, without asking again.
+            var subject = Verbs.PrTarget(pr.Repo, pr.Number);
+            RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                [new CardChoice { Label = $"Start the fixer on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
+            throw;
+        }
         if (dequeued)
         {
             state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
@@ -320,7 +332,8 @@ public sealed partial class PrReviews
         var detached = false;
         if (await HolderOfBranchAsync(clone, worktree, branch, cancellationToken) is { } holder)
         {
-            if (await CanBorrowAsync(clone, holder, branch, cancellationToken))
+            var notBorrowed = await WhyNotBorrowAsync(clone, holder, branch, cancellationToken);
+            if (notBorrowed is null)
             {
                 worktree = holder;
                 plane = Path.GetFileName(holder);
@@ -328,7 +341,14 @@ public sealed partial class PrReviews
             }
             else
             {
-                await planes.DetachAsync(clone, worktree, $"refs/remotes/origin/{branch}", cancellationToken);
+                try
+                {
+                    await planes.DetachAsync(clone, worktree, $"refs/remotes/origin/{branch}", cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    throw new FlightException($"{branch} is checked out in {holder}, which was not used because {notBorrowed}, and a detached worktree could not be made: {ex.Message}");
+                }
                 detached = true;
             }
         }
@@ -387,24 +407,26 @@ public sealed partial class PrReviews
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     // A holder is borrowed when it is clean, at origin/<branch>, directly under <clone>/.claude/worktrees, and no live session is in it.
-    private async Task<bool> CanBorrowAsync(string clone, string holder, string branch, CancellationToken cancellationToken)
+    // Null when the holder may be borrowed; else why not.
+    private async Task<string?> WhyNotBorrowAsync(string clone, string holder, string branch, CancellationToken cancellationToken)
     {
         var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(holder)));
         if (parent is null || !SamePath(parent, Path.Combine(clone, ".claude", "worktrees")))
         {
-            return false;
+            return "it lies outside <clone>/.claude/worktrees";
         }
         if (state.Sessions().Any(s => s.State != SessionState.Ended && s.Cwd is { Length: > 0 } cwd && SamePath(cwd, holder)))
         {
-            return false;
+            return "a live session works in it";
         }
         if (await planes.IsDirtyAsync(holder, cancellationToken) != false)
         {
-            return false;
+            return "it holds uncommitted changes";
         }
         var head = await git.RunAsync(["rev-parse", "HEAD"], holder, cancellationToken);
         var tip = await git.RunAsync(["rev-parse", $"refs/remotes/origin/{branch}"], clone, cancellationToken);
-        return head.Ok && tip.Ok && string.Equals(head.Output.Trim(), tip.Output.Trim(), StringComparison.OrdinalIgnoreCase);
+        return head.Ok && tip.Ok && string.Equals(head.Output.Trim(), tip.Output.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? null : "it is not at origin's head of the branch";
     }
 
     /// <summary>

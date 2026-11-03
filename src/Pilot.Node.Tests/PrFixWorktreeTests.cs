@@ -73,6 +73,57 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
         PrOrigins.Git(Other, "symbolic-ref", "--short", "HEAD").ShouldBe("feature/seven");
     }
 
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARefusedStartNamesTheWorktreeThatHoldsTheBranchAndWhyItWasNotUsed()
+    {
+        // The holder lies outside .claude/worktrees, and .claude/worktrees is a file, so the detached add fails as well.
+        await Review("acme/widget#7", "comment", Question);
+        var elsewhere = Path.Combine(_root, "elsewhere-seven");
+        PrOrigins.Git(WidgetClone, "worktree", "add", "-q", "--track", "-b", "feature/seven", elsewhere, "origin/feature/seven");
+        var worktrees = Path.Combine(WidgetClone, ".claude", "worktrees");
+        if (Directory.Exists(worktrees))
+        {
+            Directory.Delete(worktrees, recursive: true);
+        }
+        Directory.CreateDirectory(Path.Combine(WidgetClone, ".claude"));
+        File.WriteAllText(worktrees, "not a folder");
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain(elsewhere);
+        Fixers.ShouldBeEmpty();
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixFailedKind).ShouldHaveSingleItem();
+        card.Detail!.ShouldContain(elsewhere);
+        card.Detail!.ShouldContain("outside");
+    }
+
+    private const string Question = "README.md:1 design: should this be a service at all?";
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ADesignAnswerWhoseStartIsRefusedKeepsTheAnswerAndItsFailedCardStartsTheFixerWithIt()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        _workers.Fail = new FlightException("claude refused to start");
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldNotBeNull();
+
+        Row.DesignAnswer.ShouldBe("Keep it a library");
+        Fixers.ShouldBeEmpty();
+        var failed = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixFailedKind).ShouldHaveSingleItem();
+        var choice = failed.Choices.ShouldHaveSingleItem();
+        choice.Verb.ShouldBe(Verbs.FixPr);
+        _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
+
+        _workers.Fail = null;
+        (await Run(choice.Verb, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("Keep it a library");
+        _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixFailedKind);
+    }
+
     private Task AssertDetachedAsync(PrReviewRow row)
     {
         var start = Fixers.ShouldHaveSingleItem();
