@@ -521,7 +521,8 @@ public sealed partial class LegCommander
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
-            string.Join('\n', notes),
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join(' ', notes)} "
+                + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
             link: flight.PullRequestUrl,
             summary: $"The review of {flight.Code} passed with {notes.Count} not blocking {(notes.Count == 1 ? "note" : "notes")}. The flight holds (no merge) while the watchtower makes the small ones in the plane ({flight.Worktree}) and commits them; no leg goes round. It then clears the hold (`flight clear {flight.Code}`) or pushes (`flight pr {flight.Code}`).");
     }

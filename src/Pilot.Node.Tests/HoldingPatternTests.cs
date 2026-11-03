@@ -165,6 +165,64 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task ALiveWatchtowerIsToldTheReviewNotesCardOnceWithWhatItNeedsToAct()
+    {
+        var flight = await NewFlight("8", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        var said = new List<CommandRequest>();
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "wt-data"), MachinePrefix: "DU1");
+        var tower = new Watchtower(_state, new FakeWorkers(), (command, _) =>
+        {
+            said.Add(command);
+            return Task.FromResult(_state.Complete(command, null));
+        }, options, TimeProvider.System) { Pilot = "pilot", Version = "2.0.1" };
+        // A watchtower started with the cards open has them in its brief; the pass comes after it is up.
+        await tower.LookAsync(Ct);
+        _state.PutSession(new SessionRow
+        {
+            Id = "job00001", SessionId = "job00001-0000-4000-8000-000000000000", Name = "du1-watchtower", Kind = SessionKind.Background,
+            Cwd = options.WatchtowerFolder, Role = SessionRole.Watchtower, ContextTokens = 10_000, ContextWindow = 200_000,
+            State = SessionState.Working, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+        });
+        await tower.LookAsync(Ct);
+        said.Clear();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
+
+        await tower.LookAsync(Ct);
+        await tower.LookAsync(Ct);
+        var told = said.Where(c => c.Verb == Verbs.Say).SelectMany(c => c.Args ?? []).Where(t => t.Contains("review passed with notes")).ToList();
+        var text = told.ShouldHaveSingleItem();
+        var pr = F(flight.Code).PullRequest;
+        text.ShouldContain($"about flight/{flight.Code}");
+        text.ShouldContain($"PR #{pr}");
+        text.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
+        text.ShouldContain("rename `x` to `count`");
+        text.ShouldContain($"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ANotLiveWatchtowerRingsAtOnceEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
+    {
+        var flight = await NewFlight("9", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        _github.PrFails = "gh is down";
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
+        _github.PrFails = null;
+        _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+
+        await TimedChecks(clock, live: false).LookAsync(Ct);
+
+        Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
+        Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task APassWithNoNotesMergesAtOnce()
     {
         AutopilotOn();
