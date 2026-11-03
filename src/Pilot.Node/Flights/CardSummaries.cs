@@ -39,7 +39,7 @@ public static partial class CardSummaries
         {
             LegCommander.ReviewChanges => $"The review of {what} found things to fix. Fix the review's findings has a worker fix them on the leg's work as it stands, nothing thrown away; Land it with the review's findings unfixed takes it as it is.",
             LegCommander.PrReady => $"{what} is reviewed and its PR is ready. Merge lands it; dismissing leaves the PR open.",
-            LegCommander.MergeFailed => $"The merge of {what} did not go through. Start a fresh worker on its last leg sends one to fix it; Merge its PR again as it is tries once more.",
+            LegCommander.MergeFailed => $"The merge of {what} did not go through. Choose: a fresh worker can fix its last leg, the checks can be run again if they failed, or the merge can be tried once more as the PR stands.",
             "leg-failed" => $"The worker of {what} stopped. Send it round again starts a fresh worker told why; Accept it as it stands keeps the failure in its report and the flight goes on.",
             LegCommander.PushBlockedKind => $"{what} is done and its check passes, but its branch was rebased off the pushed one. Push the rebased branch with lease overwrites origin's only if it has not moved; Merge origin's branch into the plane keeps its commits and pushes plain.",
             "pr-checks-failed" => $"The PR of {what} fails its checks and the node could not send the last leg back to fix them. The first choice starts a fresh worker on that leg, told which checks failed and to push a fix; or fix them by hand, then dismiss this.",

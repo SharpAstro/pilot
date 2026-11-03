@@ -64,8 +64,17 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == LegCommander.MergeFailed);
-        card.Summary.ShouldNotBeNull().ShouldContain("Start a fresh worker on parser (the last one left the PR's checks failing)");
-        card.Summary.ShouldContain("Re-run the checks of TIA43's PR");
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("TIA43/parser");
+        summary.ShouldContain("fresh worker can fix the last leg");
+        summary.ShouldContain("checks can be run again");
+        summary.ShouldContain("merge can be tried once more");
+        // The buttons show their whole labels, so the sentence says what each is for in other words.
+        card.Choices.Length.ShouldBeGreaterThan(1);
+        foreach (var choice in card.Choices)
+        {
+            summary.ShouldNotContain(choice.Label);
+        }
     }
 
     [Fact]

@@ -49,6 +49,25 @@ public sealed class CardSummaryTests
     }
 
     [Fact]
+    public void AMergeFailedCardsFallbackSummaryNamesNoneOfItsChoicesLabels()
+    {
+        CardChoice[] choices =
+        [
+            new() { Label = "Start a fresh worker on parser (the last one left the PR's checks failing)", Verb = Verbs.GoAround, Target = "flight/PIL355/parser" },
+            new() { Label = "Re-run the checks of PIL355's PR", Verb = Verbs.RerunChecks, Target = "flight/PIL355" },
+            new() { Label = "Merge PIL355's PR again as it is", Verb = Verbs.Merge, Target = "flight/PIL355" },
+        ];
+        var summary = CardSummaries.For(LegCommander.MergeFailed, "flight/PIL355", "PIL355's PR #360: check failed", choices);
+
+        summary.ShouldContain("did not go through");
+        foreach (var choice in choices)
+        {
+            summary.ShouldNotContain(choice.Label);
+        }
+        summary.ShouldNotContain("—");
+    }
+
+    [Fact]
     public void AnUnknownKindGetsTheTitleAndTheChoices()
     {
         var card = NewState().RaiseCard(CardBin.ForYou, "brand-new", "flight/PIL355", "Something odd happened", null,

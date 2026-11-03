@@ -527,23 +527,29 @@ public sealed partial class LegCommander
         {
             choices.Add(new CardChoice { Label = $"Merge {code}'s PR again as it is", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
+        // What each choice is for, in other words: the buttons show their whole labels, so the sentence must not repeat them.
         var offers = new List<string>();
-        if (choices.FirstOrDefault(c => c.Verb == Verbs.GoAround) is { } redoChoice)
+        if (choices.Any(c => c.Verb == Verbs.GoAround) && state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } lastLeg)
         {
-            offers.Add($"{redoChoice.Label} sends a fresh worker to fix it");
+            offers.Add($"a fresh worker can fix the last leg ({code}/{lastLeg.Name})");
         }
         if (rerun)
         {
-            offers.Add($"Re-run the checks of {code}'s PR runs them again");
+            offers.Add("the failed checks can be run again, in case it was a flake");
         }
         if (mergeAgain)
         {
-            offers.Add($"Merge {code}'s PR again as it is tries once more");
+            offers.Add("the merge can be tried once more as the PR stands");
         }
-        var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
+        var why = rerun ? " because the PR's checks failed" : "";
+        var summary = $"The merge of {code} did not go through{why}.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary, CardBin.Ring);
         return true;
     }
+
+    // "a", "a or b", "a, b or c".
+    private static string JoinOffers(IReadOnlyList<string> offers) =>
+        offers.Count == 1 ? offers[0] : string.Join(", ", offers.Take(offers.Count - 1)) + " or " + offers[^1];
 
     // A merge refused because the PR no longer merges into its base (main moved under it).
     private static bool Conflicts(string error) =>

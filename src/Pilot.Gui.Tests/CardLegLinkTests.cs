@@ -66,7 +66,7 @@ public sealed class CardLegLinkTests
         var card = new CardRow
         {
             Id = "c3", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL355", Title = "PIL355's PR #360: check build-and-test failed",
-            Summary = "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Merge again tries once more as it is.",
+            Summary = "The merge of PIL355 did not go through. Choose: a fresh worker can fix the last leg (parser), or the merge can be tried once more as the PR stands.",
             Choices = [new CardChoice { Label = Verbs.RedoLeg("parser"), Verb = Verbs.GoAround, Target = Verbs.LegTarget("PIL355", "parser") }],
             At = Now, State = CardState.Open,
         };
@@ -106,7 +106,7 @@ public sealed class CardLegLinkTests
 
     [Theory]
     [InlineData("pr-checks-failed", "The PR of PIL355 fails its checks. The node could not send the last leg back; redo it from the flight page or with pilot leg go-around, or fix them by hand, then dismiss this.", "this.")]
-    [InlineData("merge-failed", "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Re-run checks runs them again; Merge again tries once more as it is.", "is.")]
+    [InlineData("merge-failed", "The merge of PIL355 did not go through because the PR's checks failed. Choose: a fresh worker can fix the last leg (PIL355/parser), the failed checks can be run again, in case it was a flake, or the merge can be tried once more as the PR stands.", "stands.")]
     [InlineData("leg-stopped", "The worker of PIL355/parser hit the usage limit. It resumes when the window resets; nothing to do, and the leg keeps its place in the queue until then.", "then.")]
     public void ALongSummaryIsShownWholeAtThePanelsWidth(string kind, string summary, string lastWord)
     {
@@ -154,7 +154,7 @@ public sealed class CardLegLinkTests
             ("merge-failed", new CardRow
             {
                 Id = "c3", Bin = CardBin.Ring, Kind = "merge-failed", Subject = "flight/PIL355", Title = "PIL355's PR #360: check build-and-test failed",
-                Summary = "The merge of PIL355 did not go through. Redo leg parser sends a fresh worker to fix it; Re-run checks runs them again; Merge again tries once more as it is.",
+                Summary = "The merge of PIL355 did not go through because the PR's checks failed. Choose: a fresh worker can fix the last leg (PIL355/parser), the failed checks can be run again, in case it was a flake, or the merge can be tried once more as the PR stands.",
                 Detail = "The merge waited for the checks to pass, and build-and-test failed on 3b2b6d0. Auto-merge is off.",
                 Choices = [redo, new CardChoice { Label = "Re-run checks", Verb = Verbs.RerunChecks, Target = "flight/PIL355", Args = ["3b2b6d0", "squash"] }, new CardChoice { Label = "Merge again", Verb = Verbs.Merge, Target = "flight/PIL355", Args = ["3b2b6d0"] }],
                 Link = "https://github.com/SharpAstro/pilot/pull/360", At = Live.At, State = CardState.Open,
