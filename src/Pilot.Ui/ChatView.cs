@@ -733,7 +733,13 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         // the reply it ends, cutting its last lines, and scrolled away with the feed. Here it always shows, and the feed ends
         // above it.
         Layout.Node? asked = null;
-        if (canSend && held.Question is { Length: > 0 } question)
+        // A message from the person after the watchtower's last words answers the ask: the card closes, and only a newer ask
+        // (the watchtower speaking again) reopens it.
+        // Only the person's own line counts: a node note or a hand-back (Note, or From set) leaves the ask pending.
+        var answeredAlready = held.Entries.Count > 0
+            && held.Entries.FindLastIndex(e => e is { Kind: TranscriptKind.User, From: null, Note: false }) is var lastUser and >= 0
+            && lastUser > held.Entries.FindLastIndex(e => e.Kind == TranscriptKind.Assistant);
+        if (canSend && !answeredAlready && held.Question is { Length: > 0 } question)
         {
             // The reply the question ends already says it in the feed: the card then holds only the choices.
             var said = held.Entries.LastOrDefault(e => e.Kind == TranscriptKind.Assistant)?.Text;
@@ -746,7 +752,21 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             // list counts whole surface units, the content rounded up and the viewport down), which drew a full-height
             // thumb on every card. The bar waits until the body overflows by more than that, as of the last frame.
             _askScroll.Mode = _askScroll.MaxOffset > 1f ? ScrollBarMode.Interactive : ScrollBarMode.None;
-            asked = Question(question, said is not null && said.Contains(question, StringComparison.Ordinal), held.Choices);
+            // An older node sent no choices: read them from the question text with the shared parser.
+            var choices = held.Choices;
+            var shown = question;
+            if (choices.Length == 0)
+            {
+                var (head, parsed) = Pilot.Contracts.AskChoices.Split(question);
+                if (parsed.Length > 0)
+                {
+                    choices = parsed;
+                    shown = head.Length > 0 ? head : question;
+                }
+            }
+            var saidAlready = said is not null
+                && (said.Contains(question, StringComparison.Ordinal) || said.Contains(shown, StringComparison.Ordinal));
+            asked = Question(shown, saidAlready, choices);
         }
         var sending = Presses.AnyPending || Volatile.Read(ref _outbox).Any(m => m.Where == here && m.State is OutState.Queued or OutState.Sending);
         if (held.Working || sending)
@@ -825,7 +845,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         var body = new List<Layout.Node>();
         if (saidAlready)
         {
-            body.Add(Layout.Builder.Text("Pick one, or answer in your own words", 11f, Dim).Selectable());
+            body.Add(Layout.Builder.Text(choices.Length > 0 ? "Pick one, or answer in your own words" : "Answer in your own words", 11f, Dim).Selectable());
         }
         else
         {
