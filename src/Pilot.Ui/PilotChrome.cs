@@ -188,6 +188,7 @@ internal sealed class PilotChrome<TSurface>
         Ideas.Arranged = nodes => TextCheck.Observe("ideas", nodes, DpiScale);
         Spend.Arranged = nodes => TextCheck.Observe("spend", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
+        More = new RailMoreMenu<TSurface>(renderer);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         Flights.CardWorking = Cards.WorkingOn;
@@ -202,7 +203,7 @@ internal sealed class PilotChrome<TSurface>
         Repos.OnPullRequests = OpenRepoPullRequests;
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
-        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat);
+        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat, More);
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
         // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the
@@ -316,6 +317,9 @@ internal sealed class PilotChrome<TSurface>
 
     public TabBar<TSurface> Rail { get; }
 
+    /// <summary>The menu of the pages the rail had no room for, behind its "..." cell; it paints only while open.</summary>
+    internal RailMoreMenu<TSurface> More { get; }
+
     /// <summary>The text check the pages report their arranged nodes to: the host gives it where to send the card it raises, and a line for the console.</summary>
     public LiveTextCheck TextCheck { get; } = new();
 
@@ -393,7 +397,9 @@ internal sealed class PilotChrome<TSurface>
     public PilotPage Page { get; private set; } = PilotPage.Home;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
-    public IReadOnlyList<IPixelWidget> Widgets => Page switch
+    public IReadOnlyList<IPixelWidget> Widgets => [.. PageWidgets, More];
+
+    private IReadOnlyList<IPixelWidget> PageWidgets => Page switch
     {
         PilotPage.Chat => [Nav, Rail, Chat, Cards],
         PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
@@ -977,6 +983,7 @@ internal sealed class PilotChrome<TSurface>
             Spend.DpiScale = value;
             Tooltips.DpiScale = value;
             Rail.DpiScale = value;
+            More.DpiScale = value;
             Nav.DpiScale = value;
         }
     }
@@ -1000,6 +1007,7 @@ internal sealed class PilotChrome<TSurface>
             Spend.FontPath = value;
             Tooltips.FontPath = value;
             Rail.FontPath = value;
+            More.FontPath = value;
             Nav.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
@@ -1171,7 +1179,7 @@ internal sealed class PilotChrome<TSurface>
                     // Back and Forward over the tabs, the tabs in what is left of the rail.
                     var navHeight = Nav.Scale.ToSurface(NavControls<TSurface>.Height);
                     Nav.Render(new RectF32(rect.X, rect.Y, rect.Width, navHeight));
-                    Rail.Render(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), _items, CardsOpen ? PilotPage.Cards : Page);
+                    RenderRail(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), CardsOpen ? PilotPage.Cards : Page);
                     break;
                 case CardsKey:
                     Cards.Render(cards!, rect);
@@ -1213,5 +1221,43 @@ internal sealed class PilotChrome<TSurface>
                     break;
             }
         }
+        // Over everything the window painted: the menu of the pages the rail had no room for.
+        More.Render(bounds);
+    }
+
+    /// <summary>
+    /// The rail's cells in <paramref name="area"/>: all of them when they fit, else the whole cells that fit less one and a "..."
+    /// cell that opens the menu of the rest (<see cref="RailOverflow"/>), so no cell is ever cropped.
+    /// </summary>
+    private void RenderRail(RectF32 area, PilotPage active)
+    {
+        // Uniform cells are as tall as the rail is wide.
+        var plan = RailOverflow.Of(_items.Count, RailOverflow.Capacity(area.Height, area.Width),
+            i => _items[i].Value == active || _items[i].Value == PilotPage.Cards);
+        if (!plan.Overflows)
+        {
+            More.Menu.IsOpen = false;
+            More.Chords = [];
+            Rail.Render(area, _items, active);
+            return;
+        }
+
+        var cells = plan.Visible.Select(i => _items[i]).ToList();
+        var hidden = plan.Hidden.Select(i => _items[i]).ToList();
+        cells.Add(new TabItem<PilotPage>("More", RailOverflow.MoreValue)
+        {
+            Icon = Night.On ? "..." : "⋯",
+            Tooltip = $"More pages: {string.Join(", ", hidden.Select(h => h.Label))}",
+            OnSelect = _ => More.Menu.IsOpen = !More.Menu.IsOpen,
+        });
+        More.Menu.Items = [.. hidden.Select(h => new DropdownItem<PilotPage>(
+            $"{h.Icon}  {h.Label}{(h.Shortcut is { } chord ? $"  ({ChordText(chord)})" : "")}", h.Value)
+        {
+            IsEnabled = h.IsEnabled,
+            OnChoose = () => Show(h.Value),
+        })];
+        More.Chords = [.. hidden.Where(h => h.IsEnabled && h.Shortcut is not null).Select(h => (h.Shortcut!.Value, (Action)(() => Show(h.Value))))];
+        More.Anchor = new RectF32(area.X, area.Y + (cells.Count - 1) * area.Width, area.Width, area.Width);
+        Rail.Render(area, cells, active);
     }
 }
