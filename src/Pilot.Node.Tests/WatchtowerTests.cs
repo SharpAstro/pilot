@@ -316,6 +316,131 @@ public sealed class WatchtowerTests : IDisposable
         _said.Count.ShouldBe(2);
     }
 
+    private Watchtower Restarted() => new(_state, _workers, Run, _options, _time)
+    {
+        Pilot = "pilot",
+        JobRecord = job => _records.TryGetValue(job, out var record) ? record : null,
+        Version = "2.0.1",
+    };
+
+    private async Task TellAndRetell()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ACardToldAndRetoldIsNotToldAgainByANewWatchtowerOverTheSameStateAfterANodeRestart()
+    {
+        await TellAndRetell();
+        File.Exists(_tower.TellsFile).ShouldBeTrue();
+
+        var restarted = Restarted();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await restarted.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+        restarted.Untold().ShouldBeEmpty();
+
+        // Another RetellAfter on: only the file keeps it from being told a third time.
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await restarted.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ACardToldOnceIsSummarisedInAFreshBriefAndNotSaidToTheLiveFreshSessionAfterRetellAfter()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromMinutes(20));
+
+        await _tower.RestartAsync("test", Ct);
+        _workers.Started[^1].Brief.ShouldContain("TIA9's review asks for changes");
+        var said = _said.Count;
+
+        _time.Advance(TimeSpan.FromMinutes(11));
+        await _tower.LookAsync(Ct);
+        _tower.Untold().ShouldBeEmpty();
+        _said.Count(s => s.Args.Length > 0 && s.Args[0].Contains("A card opened") && s.Args[0].Contains("TIA9's review asks for changes")).ShouldBe(1);
+        _said.Count.ShouldBe(said);
+    }
+
+    [Fact]
+    public async Task ACardToldAndRetoldIsNotToldToAFreshWatchtowerSessionStartedAfterIt()
+    {
+        await TellAndRetell();
+
+        await _tower.RestartAsync("test", Ct);
+        _time.Advance(TimeSpan.FromMinutes(31));
+        await _tower.LookAsync(Ct);
+        _tower.Untold().ShouldBeEmpty();
+        // Only the two tells of the card: whatever else was said (the restart's own word) is not a card told.
+        _said.Count(s => s.Args.Length > 0 && s.Args[0].Contains("TIA9's review asks for changes")).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AFreshWatchtowerAfterAReplacementGetsTheToldCardOnceInItsBriefAndNeverSaidToIt()
+    {
+        // Told, then re-told once: nothing is left to say to any later session.
+        await TellAndRetell();
+
+        await _tower.RestartAsync("test", Ct);
+        var brief = _workers.Started[^1].Brief;
+        brief.ShouldContain("told to an earlier watchtower");
+        brief.ShouldContain("TIA9's review asks for changes");
+        brief.ShouldNotContain("as if the node had just said them");
+
+        _time.Advance(TimeSpan.FromMinutes(31));
+        await _tower.LookAsync(Ct);
+        _tower.Untold().ShouldBeEmpty();
+        _said.Count(s => s.Args.Length > 0 && s.Args[0].Contains("A card opened") && s.Args[0].Contains("TIA9's review asks for changes")).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ACardToldOnceBeforeANodeRestartIsRetoldAtMostOnceAfterIt()
+    {
+        await _tower.LookAsync(Ct);
+        Row("job00001", SessionState.Working);
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        await _tower.LookAsync(Ct);
+        _said.Count.ShouldBe(1);
+
+        var restarted = Restarted();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await restarted.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+
+        var again = Restarted();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        Row("job00001", SessionState.Working);
+        await again.LookAsync(Ct);
+        await restarted.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AMissingOrGarbledToldFileReadsAsNoneTold()
+    {
+        _state.RaiseCard(CardBin.Ring, "review-changes", "flight/TIA9", "TIA9's review asks for changes");
+        _tower.Untold().Count.ShouldBe(1);
+
+        Directory.CreateDirectory(_data);
+        await File.WriteAllTextAsync(_tower.TellsFile, "garbage\nno-time\tnot-a-date\t1\n\t\t\n", Ct);
+        Restarted().Untold().Count.ShouldBe(1);
+    }
+
     [Fact]
     public async Task OneThatEndedIsReplacedForANewCardOnceItsCacheIsColdOrItsWindowMostlySpent()
     {

@@ -116,9 +116,59 @@ public sealed class Watchtower(
     private readonly SemaphoreSlim _one = new(1, 1);
     private string? _briefed;
     private bool _briefedRead;
-    // Each open card it was told, and when; a Ring card still open RetellAfter on is told once more (_retold).
-    private readonly Dictionary<string, DateTimeOffset> _told = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _retold = new(StringComparer.Ordinal);
+    // Each open card it was told, and when; a Ring card still open RetellAfter on is told once more. Kept per card in TellsFile
+    // (read once, lazily, under _tellsLock), so a node restart or a replaced watchtower does not tell a card again.
+    private readonly Lock _tellsLock = new();
+    private Dictionary<string, (DateTimeOffset At, bool Retold)>? _tells;
+
+    /// <summary>Where the cards the watchtower was told are kept, in the node's data folder: a line each, id, first told, re-told (1 or 0).</summary>
+    public string TellsFile => Path.Combine(options.DataFolder, "watchtower-told");
+
+    private Dictionary<string, (DateTimeOffset At, bool Retold)> Tells()
+    {
+        if (_tells is not null)
+        {
+            return _tells;
+        }
+        var found = new Dictionary<string, (DateTimeOffset, bool)>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var line in File.Exists(TellsFile) ? File.ReadAllLines(TellsFile) : [])
+            {
+                var parts = line.Split('\t');
+                if (parts.Length >= 2 && parts[0].Length > 0
+                    && DateTimeOffset.TryParse(parts[1], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var at))
+                {
+                    found[parts[0]] = (at, parts.Length > 2 && parts[2] == "1");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable counts as nothing told.
+        }
+        return _tells = found;
+    }
+
+    private void SaveTells()
+    {
+        var tells = Tells();
+        var open = state.Cards(openOnly: true).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var gone in tells.Keys.Where(id => !open.Contains(id)).ToList())
+        {
+            tells.Remove(gone);
+        }
+        try
+        {
+            Directory.CreateDirectory(options.DataFolder);
+            File.WriteAllLines(TellsFile, tells.Select(t =>
+                string.Join('\t', t.Key, t.Value.At.ToString("O", System.Globalization.CultureInfo.InvariantCulture), t.Value.Retold ? "1" : "0")));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Kept in memory all the same; a restarted node then tells those cards once more.
+        }
+    }
     private string? _job;
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
@@ -823,10 +873,16 @@ public sealed class Watchtower(
 
         var folder = options.WatchtowerFolder;
         string fingerprint;
+        HashSet<string> alreadyTold;
         try
         {
             Directory.CreateDirectory(folder);
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine);
+            // Read before TellAllOpen runs: which cards an earlier watchtower already had, so the brief lists them as a summary (#665).
+            lock (_tellsLock)
+            {
+                alreadyTold = [.. Tells().Keys];
+            }
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold);
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
@@ -859,6 +915,7 @@ public sealed class Watchtower(
         KeepChurnCard(Health());
         RecordBrief(fingerprint);
         TellAllOpen();
+        CountSummaryAsRetell(alreadyTold);
         state.CloseCardsAbout(Verbs.WatchtowerTarget, "a fresh one started", Down, Stopped);
         state.RaiseCard(CardBin.Handled, "watchtower-started", Verbs.WatchtowerTarget, $"Started a fresh watchtower: {why}");
         await StopOthersAsync(_job, cancellationToken);
@@ -1100,13 +1157,47 @@ public sealed class Watchtower(
         }
     }
 
+    /// <summary>
+    /// The brief's summary block told a fresh watchtower the cards in <paramref name="listed"/>, promising it would not hear them
+    /// again, so each counts as re-told: no later look says it to the new session as a card that opened.
+    /// </summary>
+    private void CountSummaryAsRetell(HashSet<string> listed)
+    {
+        lock (_tellsLock)
+        {
+            var tells = Tells();
+            var changed = false;
+            foreach (var id in listed)
+            {
+                if (tells.TryGetValue(id, out var told) && !told.Retold)
+                {
+                    tells[id] = (told.At, true);
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                SaveTells();
+            }
+        }
+    }
+
     /// <summary>Takes every open card as told: a fresh watchtower has them in its brief.</summary>
     private void TellAllOpen()
     {
         var now = time.GetUtcNow();
-        foreach (var card in state.Cards(openOnly: true))
+        lock (_tellsLock)
         {
-            _told.TryAdd(card.Id, now);
+            var tells = Tells();
+            var added = false;
+            foreach (var card in state.Cards(openOnly: true))
+            {
+                added |= tells.TryAdd(card.Id, (now, false));
+            }
+            if (added)
+            {
+                SaveTells();
+            }
         }
     }
 
@@ -1117,11 +1208,15 @@ public sealed class Watchtower(
     internal List<CardRow> Untold()
     {
         var now = time.GetUtcNow();
-        return state.Cards(openOnly: true)
-            .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
-                && (!_told.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told >= RetellAfter && !_retold.Contains(c.Id)))
-            .OrderBy(c => c.At)
-            .ToList();
+        lock (_tellsLock)
+        {
+            var tells = Tells();
+            return state.Cards(openOnly: true)
+                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
+                    && (!tells.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told.At >= RetellAfter && !told.Retold))
+                .OrderBy(c => c.At)
+                .ToList();
+        }
     }
 
     /// <summary>Whether an ended watchtower is resumed rather than replaced: its cache still warm, and room left in its window.</summary>
@@ -1147,10 +1242,16 @@ public sealed class Watchtower(
 
         var text = (fresh.Count == 1 ? "A card opened:" : $"{fresh.Count} cards opened:") + "\n" + string.Join("\n", fresh.Select(Briefs.CardLine))
             + "\nThese are yours to see through: act on each (resolve a conflict, make a review's small fixes, redo a leg only for real work).";
+        int retells;
+        lock (_tellsLock)
+        {
+            var tells = Tells();
+            retells = fresh.Count(c => tells.ContainsKey(c.Id));
+        }
         _sayRuns++;
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
             // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
-            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{_retold.Count}" }, cancellationToken);
+            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{retells}" }, cancellationToken);
         _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {
@@ -1158,12 +1259,14 @@ public sealed class Watchtower(
             _transientId = null;
             _transientCount = 0;
             var now = time.GetUtcNow();
-            foreach (var card in fresh)
+            lock (_tellsLock)
             {
-                if (!_told.TryAdd(card.Id, now))
+                var tells = Tells();
+                foreach (var card in fresh)
                 {
-                    _retold.Add(card.Id);
+                    tells[card.Id] = tells.TryGetValue(card.Id, out var was) ? (was.At, true) : (now, false);
                 }
+                SaveTells();
             }
         }
         else

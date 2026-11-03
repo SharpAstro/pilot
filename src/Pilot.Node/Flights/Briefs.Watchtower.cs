@@ -12,7 +12,7 @@ public static partial class Briefs
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null)
     {
         var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
         text.AppendLine("## Where things stand");
@@ -32,15 +32,39 @@ public static partial class Briefs
             }
         }
         var open = cards.Where(c => c.State == CardState.Open).ToList();
+        var told = alreadyTold is null ? [] : open.Where(c => alreadyTold.Contains(c.Id)).ToList();
+        var fresh = alreadyTold is null ? open : open.Where(c => !alreadyTold.Contains(c.Id)).ToList();
         text.AppendLine();
         // Said as work, not as state: a watchtower restarted with four rings open read them here and sat idle, since the node had
         // told them to the one before it and does not tell them again (DE1, 2026-10-28).
-        text.AppendLine(open.Count == 0 ? "No card is open." : "Open cards, yours to act on now as if the node had just said them (start with the rings; `pilot cards` has each one whole):");
-        // One short line a card, and no more of them than fit: the brief is the session's first prompt, passed on its command line,
-        // and with every card whole it grew past what Windows starts a process with (32,767 characters). Nine watchtowers in a
-        // row died on ENAMETOOLONG before writing a line, and the node's cards reached nobody (DE1, 2026-10-29).
+        if (open.Count == 0)
+        {
+            text.AppendLine("No card is open.");
+        }
+        else if (fresh.Count > 0)
+        {
+            text.AppendLine("Open cards, yours to act on now as if the node had just said them (start with the rings; `pilot cards` has each one whole):");
+            AppendCardLines(text, fresh);
+        }
+        if (told.Count > 0)
+        {
+            // Told to an earlier watchtower and still open: said once here, as a summary, and the node does not say them again one by one.
+            text.AppendLine();
+            text.AppendLine($"Still open, {told.Count} told to an earlier watchtower (the node will not say them to you again; see them through, rings first; `pilot cards` has each one whole):");
+            AppendCardLines(text, told);
+        }
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// One short line a card, rings first, and no more of them than fit: the brief is the session's first prompt, passed on its command line,
+    /// and with every card whole it grew past what Windows starts a process with (32,767 characters). Nine watchtowers in a
+    /// row died on ENAMETOOLONG before writing a line, and the node's cards reached nobody (DE1, 2026-10-29).
+    /// </summary>
+    private static void AppendCardLines(StringBuilder text, List<CardRow> cards)
+    {
         var listed = 0;
-        foreach (var card in open.OrderBy(c => c.Bin == CardBin.Ring ? 0 : 1))
+        foreach (var card in cards.OrderBy(c => c.Bin == CardBin.Ring ? 0 : 1))
         {
             var line = ShortCardLine(card);
             if (text.Length + line.Length > MaxWatchtowerBrief)
@@ -50,11 +74,10 @@ public static partial class Briefs
             text.AppendLine(line);
             listed++;
         }
-        if (listed < open.Count)
+        if (listed < cards.Count)
         {
-            text.AppendLine($"- and {open.Count - listed} more: `pilot cards` lists them.");
+            text.AppendLine($"- and {cards.Count - listed} more: `pilot cards` lists them.");
         }
-        return text.ToString();
     }
 
     /// <summary>
