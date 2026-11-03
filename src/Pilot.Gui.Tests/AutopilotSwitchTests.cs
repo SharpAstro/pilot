@@ -132,6 +132,7 @@ public sealed class AutopilotSwitchTests
         var chrome = NewChrome(renderer);
         var asked = new List<bool>();
         chrome.Autopilot.OnToggle = Taken.By<bool>(asked.Add);
+        chrome.Autopilot.Presses.DoneFor = TimeSpan.Zero;
 
         foreach (var on in new[] { false, true })
         {

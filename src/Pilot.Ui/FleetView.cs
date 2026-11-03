@@ -668,7 +668,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     Layout.Builder.VStack(
                             Layout.Builder.Text($"fleet: {role.Fleet}{(role.Odd > 0 ? $" · {role.Odd} differ" : "")}", 12f, Body).Selectable().RowH(20f),
                             Layout.Builder.WrapH([.. nodes]).WithGap(14f).WithLineGap(4f).WStar(),
-                            Presses.RefusalLine($"range:{role.Role}", 11f, Ringing, 3) ?? Layout.Builder.Spacer().RowH(0f))
+                            Presses.RefusalLine($"range:{role.Role}", 11f, Ringing, 3) ?? Presses.DoneLine($"range:{role.Role}", 11f) ?? Layout.Builder.Spacer().RowH(0f))
                         .WStar().HAuto())
                 .WithGap(14f).Pad(8f, 6f).HAuto().WStar();
             yield return (i & 1) == 1 ? row.Bg(RowAltBg) : row;
@@ -856,6 +856,27 @@ internal static class FleetCommands
     {
         var reply = await SettingsCommands.SendAsync(here, Verbs.Set, TakeArgs(role, range, fleet), who, cancellationToken);
         return (reply.Kind == ReplyKind.Done ? null : reply.Line, reply.Line);
+    }
+
+    /// <summary>
+    /// A Take, then (when the node did not refuse it) the feed asks the node what it is again, so this node's line shows the taken range
+    /// and drops its Take button as the press's done mark arrives, not at the next reconnect.
+    /// </summary>
+    public static async Task<(string? Refused, string Said)> TakeRangeAndRefreshAsync(NodeClient here, NodeFeed? feed, string role, string range, bool fleet, string who, CancellationToken cancellationToken)
+        => await ThenRefreshAsync(() => TryTakeRangeAsync(here, role, range, fleet, who, cancellationToken), feed, cancellationToken);
+
+    /// <summary>The take-then-refresh itself, with the take as a function (a test's own stands in for the node's client).</summary>
+    internal static async Task<(string? Refused, string Said)> ThenRefreshAsync(Func<Task<(string? Refused, string Said)>> take, NodeFeed? feed, CancellationToken cancellationToken)
+    {
+        var result = await take();
+        if (result.Refused is null)
+        {
+            if (feed is not null)
+            {
+                await feed.RefreshNodeAsync(cancellationToken);
+            }
+        }
+        return result;
     }
 
     /// <summary>The <c>set</c> arguments of a Take: the role's range key and value, and <c>--fleet</c> for a range of the fleet layer.</summary>

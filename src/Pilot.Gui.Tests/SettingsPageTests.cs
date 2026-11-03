@@ -596,6 +596,7 @@ public sealed class SettingsPageTests
         var now = DateTimeOffset.UtcNow;
         var reply = new TaskCompletionSource<SettingsReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sends = 0;
+        chrome.Settings.Presses.DoneFor = TimeSpan.Zero;
         chrome.Settings.Load = _ => Task.FromResult(Sample);
         chrome.Settings.LoadChecks = (_, _) => Task.FromResult(Measured(now, TimeSpan.FromSeconds(1)));
         chrome.Settings.Send = (_, _, _) =>

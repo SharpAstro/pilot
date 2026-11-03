@@ -306,7 +306,7 @@ if (remote is null)
     // Take another node's range for a role, on this window's own node.
     fleet.OnTakeRange = (node, role, range, fleetRange) => Task.Run<string?>(async () =>
     {
-        var (refused, said) = await FleetCommands.TryTakeRangeAsync(client, role, range, fleetRange, Who, stop.Token);
+        var (refused, said) = await FleetCommands.TakeRangeAndRefreshAsync(client, feed, role, range, fleetRange, Who, stop.Token);
         fleet.Said = said.ReplaceLineEndings(" ").Trim();
         sessions.SayStatus = fleet.Said;
         Redraw();

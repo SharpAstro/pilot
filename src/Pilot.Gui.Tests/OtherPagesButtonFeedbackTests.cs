@@ -255,6 +255,7 @@ public sealed class OtherPagesButtonFeedbackTests
         using var renderer = new RgbaImageRenderer(1280, 2000);
         var chrome = NewChrome(renderer);
         var settings = chrome.Settings;
+        settings.Presses.DoneFor = TimeSpan.Zero;
         var node = new LateNode();
         settings.Load = _ => Task.FromResult(Page());
         settings.Send = async (verb, args, _) =>
@@ -350,6 +351,7 @@ public sealed class OtherPagesButtonFeedbackTests
         var (chrome, renderer) = await OpenWizardAtReviewAsync(create);
         using var _ = renderer;
         var wizard = chrome.Flights.Wizard;
+        wizard.Presses.DoneFor = TimeSpan.Zero;
         wizard.Current.ShouldBe(NewFlightWizard.Step.Review);
         Painted(chrome, "wizard:create").ShouldBeTrue();
 
@@ -394,6 +396,7 @@ public sealed class OtherPagesButtonFeedbackTests
         var (chrome, renderer) = await OpenWizardAtReviewAsync(create);
         using var _ = renderer;
         var wizard = chrome.Flights.Wizard;
+        wizard.Presses.DoneFor = TimeSpan.Zero;
         var issue = new TaskCompletionSource<IssueInfo>();
         var asked = 0;
         wizard.CreateIssue = (_, _, _) =>

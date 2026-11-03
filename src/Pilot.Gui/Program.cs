@@ -825,7 +825,7 @@ if (feed is not null && client is not null && clients is not null)
     {
         chrome.Fleet.OnTakeRange = (node, role, range, fleetRange) => Tracked(async () =>
         {
-            var (refused, said) = await FleetCommands.TryTakeRangeAsync(client, role, range, fleetRange, GuiSay.Who, cts.Token);
+            var (refused, said) = await FleetCommands.TakeRangeAndRefreshAsync(client, feed, role, range, fleetRange, GuiSay.Who, cts.Token);
             chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
             view.SayStatus = chrome.Fleet.Said;
             Note($"pilot-gui: took {node.Machine}'s {role}-range {range}{(fleetRange ? " for the fleet" : "")}: {chrome.Fleet.Said}");

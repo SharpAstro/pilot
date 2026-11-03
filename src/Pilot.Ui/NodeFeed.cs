@@ -348,6 +348,27 @@ internal sealed class NodeFeed : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Asks the node what it is again now, so what changed since the connection (its role ranges, after a Take) shows at once, and asks
+    /// a redraw through <see cref="Version"/>. A node that does not answer leaves the last answer.
+    /// </summary>
+    public async Task RefreshNodeAsync(CancellationToken cancellationToken)
+    {
+        if (_nodeInfo is null)
+        {
+            return;
+        }
+        try
+        {
+            var info = await _nodeInfo(cancellationToken).ConfigureAwait(false);
+            ImmutableInterlocked.Update(ref _view, view => view with { NodeVersion = info.Version ?? view.NodeVersion, Node = info });
+            Interlocked.Increment(ref _version);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or System.Net.Sockets.SocketException or System.Text.Json.JsonException)
+        {
+        }
+    }
+
     private static string UpdateNoteOf(View view) =>
         NewerOf(view) is { } newer ? $" · pilot {newer} is installed: restart to use it" : "";
 
