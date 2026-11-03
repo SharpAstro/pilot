@@ -344,7 +344,10 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
                 text.AppendLine("if {");
                 text.AppendLine(fetch is { Length: > 0 } ? fetch : "true");
                 text.AppendLine("}; then");
+                // A subshell, so an exit in the command ends that ref only.
+                text.AppendLine("(");
                 text.AppendLine(command);
+                text.AppendLine(")");
                 text.AppendLine("code=$?; [ $code -ne 0 ] && bad=$code");
                 text.AppendLine("else echo '=== the fetch step failed, the benchmark was not run ==='; bad=1; fi");
             }

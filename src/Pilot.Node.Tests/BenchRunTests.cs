@@ -52,7 +52,7 @@ public sealed class BenchRunTests : JobTestsBase
     private static string FakeBenchmark(int exit = 0) => (OperatingSystem.IsWindows()
         ? "New-Item -ItemType Directory -Force BenchmarkDotNet.Artifacts/results | Out-Null; \"| Mean | $((Get-Content README.md -Raw).Trim()) |\" | Set-Content BenchmarkDotNet.Artifacts/results/X-report-github.md"
         : "mkdir -p BenchmarkDotNet.Artifacts/results; echo \"| Mean | $(cat README.md) |\" > BenchmarkDotNet.Artifacts/results/X-report-github.md")
-        + "; echo \"folder $(pwd) head $(git rev-parse HEAD) branch [$(git branch --show-current)]\"" + (exit == 0 ? "" : $"; exit {exit}");
+        + "; echo \"folder $(pwd) head $(git rev-parse HEAD) branch [$(git branch --show-current)]\"" + (exit == 0 ? "" : "; git rev-parse --verify --quiet refs/heads/no-such-branch");
 
     private const string Fetch = "echo 'fetching externals'";
 
@@ -104,6 +104,7 @@ public sealed class BenchRunTests : JobTestsBase
         log.ShouldContain($"folder {folder}b1 head {_first} branch []");
         log.IndexOf("fetching externals", StringComparison.Ordinal).ShouldBeLessThan(log.IndexOf("folder ", StringComparison.Ordinal));
         _state.Jobs().Single().Kind.ShouldBe(JobKind.Bench);
+        card.Kind.ShouldBe("bench-result");
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.RepoTarget(_repo));
         card.Detail.ShouldNotBeNull().ShouldContain($"## ref `{_first}` at `{_first[..7]}`");
@@ -174,7 +175,7 @@ public sealed class BenchRunTests : JobTestsBase
         // A ref that fails does not skip the next one.
         Log(job).ShouldContain($"head {_second}");
         _state.Jobs().Single().State.ShouldBe(JobState.Failed);
-        card.Detail.ShouldNotBeNull().ShouldContain("failed (exit 3)");
+        card.Detail.ShouldNotBeNull().ShouldContain("failed (exit 1)");
         card.Title.ShouldContain("ended badly");
     }
 
