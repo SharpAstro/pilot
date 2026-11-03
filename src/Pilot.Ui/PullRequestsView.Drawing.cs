@@ -96,10 +96,11 @@ internal sealed partial class PullRequestsView<TSurface>
         }
         items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
-        // always there, so a refusal moves nothing. Cut to the room it has with an ellipsis, whole on hover.
+        // always there, so a refusal moves nothing. Drawn from the slot's left edge, never far-aligned: a run wider than its slot would grow
+        // leftwards over the pills. Cut to the room it has with an ellipsis, whole on hover.
         if (Refusal() is { } refused)
         {
-            items.Add(Layout.Builder.Text(refused, 12f, P.Held, TextAlign.Far).WithTooltip(refused).WStar());
+            items.Add(Layout.Builder.Text(refused, 12f, P.Held).WithTooltip(refused).WStar());
         }
         else
         {
