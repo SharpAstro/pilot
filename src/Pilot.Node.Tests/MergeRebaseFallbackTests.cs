@@ -54,7 +54,8 @@ public sealed class MergeRebaseFallbackTests
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         node.State.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
         NoOpenRingCard(node);
-        node.State.Merges().Single().Why.ShouldNotBeNull().ShouldContain("squash");
+        // The entry says rebase was refused while it merges; landing ends it as merged.
+        node.State.Merges().Single().State.ShouldBe(MergeEntryState.Merged);
     }
 
     [Fact]
