@@ -401,6 +401,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<SessionMessenger>().EndAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.ReportState)
+        {
+            return ReportState(command);
+        }
         if (command.Verb == Verbs.Archive)
         {
             return Get<SessionTracker>().Archive(command);
@@ -474,6 +478,43 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             return await AnswerAsync(command, cancellationToken);
         }
         return state.Execute(command);
+    }
+
+    /// <summary>
+    /// <c>report-state</c>: stores a session's own report (args: state, optional seq, optional message). The session is the target's
+    /// when it names one (<c>session/&lt;id&gt;</c>), else the caller's own (<see cref="CommandRequest.SessionId"/>).
+    /// </summary>
+    private CommandResult ReportState(CommandRequest command)
+    {
+        var args = command.Args ?? [];
+        if (args.Length == 0 || !ReportBook.IsState(args[0]))
+        {
+            return state.Complete(command, "report-state takes idle, working or blocked, then an optional seq and message");
+        }
+        long? seq = null;
+        if (args.Length > 1 && args[1].Length > 0)
+        {
+            if (!long.TryParse(args[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                return state.Complete(command, $"the seq must be a whole number, not '{args[1]}'");
+            }
+            seq = parsed;
+        }
+        var wanted = command.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal) ? command.Target[Verbs.SessionTargetPrefix.Length..] : command.SessionId;
+        if (wanted is not { Length: > 0 })
+        {
+            return state.Complete(command, "report-state needs the session: run it inside the session (CLAUDE_CODE_SESSION_ID) or pass --session <id>");
+        }
+        var row = state.Sessions().FirstOrDefault(s => string.Equals(s.Id, wanted, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(s.SessionId, wanted, StringComparison.OrdinalIgnoreCase)
+            || s.EarlierSessionIds?.Contains(wanted, StringComparer.OrdinalIgnoreCase) == true);
+        if (row is null)
+        {
+            return state.Complete(command, $"no session '{wanted}' on this node");
+        }
+        Get<ReportBook>().Accept(row.SessionId, args[0], args.Length > 2 ? args[2] : null, seq, Get<TimeProvider>().GetUtcNow());
+        Get<SessionTracker>().Kick();
+        return state.Complete(command, null);
     }
 
     private static CardChoice? FindChoice(CardRow card, string which) =>

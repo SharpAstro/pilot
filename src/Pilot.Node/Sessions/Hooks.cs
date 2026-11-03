@@ -24,6 +24,9 @@ public sealed class HookBook
 {
     private readonly ConcurrentDictionary<string, HookState> _bySession = new(StringComparer.Ordinal);
 
+    /// <summary>The sessions' own reports, told of each hook so a blocked one goes once work is taken up again; null tells none.</summary>
+    public ReportBook? Reports { get; init; }
+
     /// <summary>The latest hook state of <paramref name="sessionId"/>, or null when none came.</summary>
     public HookState? Of(string sessionId) => _bySession.GetValueOrDefault(sessionId);
 
@@ -63,6 +66,7 @@ public sealed class HookBook
         if (next is not null)
         {
             _bySession[sessionId] = next;
+            Reports?.Heard(sessionId, next);
         }
         return sessionId;
     }
