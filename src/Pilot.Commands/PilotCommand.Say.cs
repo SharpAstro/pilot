@@ -23,7 +23,29 @@ public static partial class PilotCommand
             var endWhy = Words("why", "Why it ends (required): kept in the session ledger");
             var endCommand = Action(new Command("end", "End a running background session through the node, cancelling its jobs, with a reason") { Arguments = { endSession, endWhy } },
                 (p, client, ct) => Send(client, Verbs.EndSession, Verbs.SessionTarget(p.GetValue(endSession)!), [Join(p, endWhy)], who, ct));
-            var sessionCommand = new Command("session", "Act on one session") { Subcommands = { endCommand } };
+            // session report: a session says its own state (herdr's idle, working, blocked), and the node prefers it while newest.
+            var reportState = Arg("state", "idle, working or blocked");
+            var reportMessage = Words("message", "Why it is blocked (optional)", required: false);
+            var reportSeq = new Option<long?>("--seq") { Description = "Must rise: a report not above the last accepted one is ignored; default is the node's receive time in ms" };
+            var reportSession = new Option<string?>("--session") { Description = "The session's row id or session id; default is this session (CLAUDE_CODE_SESSION_ID)" };
+            var reportCommand = Action(new Command("report", "Report this session's own state to the node: idle, working or blocked, with an optional reason")
+                { Arguments = { reportState, reportMessage }, Options = { reportSeq, reportSession } },
+                (p, client, ct) =>
+                {
+                    var state = p.GetValue(reportState)!;
+                    if (state is not ("idle" or "working" or "blocked"))
+                    {
+                        throw new UsageException($"state takes idle, working or blocked; not '{state}'");
+                    }
+                    var named = p.GetValue(reportSession);
+                    if (named is not { Length: > 0 } && sessionId is not { Length: > 0 })
+                    {
+                        throw new UsageException("no session to report for: run it inside the session (CLAUDE_CODE_SESSION_ID is not set) or pass --session <id>");
+                    }
+                    var seq = p.GetValue(reportSeq)?.ToString(CultureInfo.InvariantCulture) ?? "";
+                    return Send(client, Verbs.ReportState, named is { Length: > 0 } ? Verbs.SessionTarget(named) : Verbs.NodeTarget, [state, seq, Join(p, reportMessage)], who, ct);
+                });
+            var sessionCommand = new Command("session", "Act on one session") { Subcommands = { endCommand, reportCommand } };
 
             // say-all: the same say to each session the filters pick, one Send each; the picking is SayAllFilter's, shared with the Sessions page.
             var sayAllText = Words("text", "What to say to each");

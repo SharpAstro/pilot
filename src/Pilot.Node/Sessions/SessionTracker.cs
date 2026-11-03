@@ -91,6 +91,9 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The hooks sessions post: a row follows its session's latest one while the session runs.</summary>
     public HookBook Hooks { get; init; } = new();
 
+    /// <summary>What sessions reported of their own state (<c>pilot session report</c>); preferred over the listing and transcripts while newest.</summary>
+    public ReportBook Reports { get; init; } = new();
+
     /// <summary>The token ledger every message's usage goes into; null keeps none.</summary>
     public SpendLedger? Ledger { get; init; }
 
@@ -597,7 +600,7 @@ public sealed class SessionTracker : BackgroundService
             var round = joined is { Flight: { } code, Leg: { } leg } ? _state.Legs(code).FirstOrDefault(l => l.Name == leg)?.GoArounds ?? 0 : 0;
             Ledger.Record(agent.SessionId, agent.Name, joined, SpendRoles.Of(agent.Name, joined.Role), round, spend, now);
         }
-        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId));
+        var built = SessionRowBuilder.Build(agent, facts, record, repo, joined, Hooks.Of(agent.SessionId), Reports.Of(agent.SessionId));
         if (renamed is not null)
         {
             built = built with { Name = renamed };
