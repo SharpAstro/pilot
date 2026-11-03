@@ -147,6 +147,10 @@ public enum JobKind
     /// <summary>A leg's check, run by the node for the leg: it has no owner to wake.</summary>
     [JsonStringEnumMemberName("check")]
     Check,
+
+    /// <summary>A benchmark (<c>pilot run --alone</c>): it has the node to itself, so it waits until no other job runs and the CPU is quiet, and nothing else starts beside it.</summary>
+    [JsonStringEnumMemberName("bench")]
+    Bench,
 }
 
 /// <summary>Where a job stands.</summary>

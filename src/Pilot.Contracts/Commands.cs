@@ -337,6 +337,9 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
+    /// <summary>The leading argument of <c>run</c> that asks for the node to itself (a benchmark, <see cref="JobKind.Bench"/>).</summary>
+    public const string AloneArg = "--alone";
+
     /// <summary>
     /// <c>cancel-job job/&lt;id&gt;</c>: stops a running job; its owner is told, as of any job's end. With <see cref="ForceArg"/> it
     /// kills the job's wrapper and every process the node has seen under it at once, with no grace.

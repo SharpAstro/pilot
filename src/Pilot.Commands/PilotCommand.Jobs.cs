@@ -11,6 +11,10 @@ public static partial class PilotCommand
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
+        if (job.Kind == JobKind.Bench)
+        {
+            state += " bench";
+        }
         if (job.State == JobState.Running && job.PausedAt is { } pausedAt)
         {
             state = $"paused since {pausedAt.ToLocalTime():HH:mm}";
@@ -59,11 +63,12 @@ public static partial class PilotCommand
         {
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
+            var runAlone = new Option<bool>("--alone") { Description = "Run with the node to itself (a benchmark): waits for no other job and a quiet CPU, and holds every other job and new leg until it ends" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout },
+                    Options = { runTimeout, runAlone },
                 },
                 async (p, client, ct) =>
                 {
@@ -79,7 +84,7 @@ public static partial class PilotCommand
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,
