@@ -76,8 +76,9 @@ public static partial class Briefs
         "  When you take up the work again the node sees it from your next hook, so no report is needed.";
 
     /// <summary>
-    /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the plane's LFS files are pointers, because the node
-    /// never smudges them, and one <c>git lfs pull</c> fills the shared store. Nothing for a repo without LFS.
+    /// For a repo with LFS (its .gitattributes holds <c>filter=lfs</c>): the node filled the plane's LFS files from the shared
+    /// store (<see cref="LfsFill"/>), so the brief says no pull is needed, or names the paths it could not fill (capped, with a
+    /// count of the rest) and one <c>git lfs pull --include</c> for them, only if the step needs them. Nothing for a repo without LFS.
     /// </summary>
     /// <param name="folder">The plane or worktree the brief sends its agent to.</param>
     /// <param name="noun">What the brief calls that folder: "plane", or "worktree" for a PR's.</param>
@@ -95,9 +96,20 @@ public static partial class Briefs
         {
             return "";
         }
-        return $"\nThis repo uses git LFS: the {noun}'s LFS files are pointers. When the step needs their content, run `git lfs pull` once in the {noun} " +
-            "(it fills the shared store, so other planes reuse it), never per file or per build.\n";
+        var missing = LfsFill.MissingPaths(folder!);
+        if (missing.Count == 0)
+        {
+            return $"\nThis repo uses git LFS: the node already filled the {noun}'s LFS files from the shared store, so no pull is needed.\n";
+        }
+        var shown = missing.Take(MaxLfsPathsShown).ToList();
+        var rest = missing.Count - shown.Count;
+        var text = $"\nThis repo uses git LFS: the node already filled the {noun}'s LFS files from the shared store, except {missing.Count} the store lacked: " +
+            string.Join(", ", shown) + (rest > 0 ? $" and {rest} more" : "") + ".\n";
+        return text + $"Only if the step needs them, run `git lfs pull --include={string.Join(',', shown)}` once in the {noun}" +
+            (rest > 0 ? " (for the paths listed; the rest wait until a step needs them)" : "") + ", never per file or per build.\n";
     }
+
+    private const int MaxLfsPathsShown = 20;
 
     /// <summary>The repo's PILOT.md quoted whole under one heading; nothing when it has none.</summary>
     internal static string PilotMdSection(string? pilotMd) =>
