@@ -807,6 +807,36 @@ A worker that finishes its own leg is stopped after 90 s, once it has said its r
 its `-w` session entered when that job ends by itself, keeping the branch; the node checks a plane out again from its
 branch before any worker goes in, and lands one that is already gone.
 
+### Benchmarks
+
+A benchmark is only worth its numbers when nothing else runs beside it. `pilot run --alone -- <command>` queues one
+exclusive job (kind `bench`): it goes ahead of the other queued jobs, waits until no other job runs and the machine's
+CPU is near idle (15 % or less, `JobRunner.BenchQuietCpu`), and then **holds everything else**: no other job, no check
+and no new leg worker or reviewer starts while it runs (their steps say `a benchmark (<id>) holds the node`), and the
+queue and admission pick up again when it ends. One bench job runs at a time.
+
+`pilot bench <repo> (--ref <ref> | --baseline <ref> --candidate <ref>) [--fetch <cmd>] [--pr <n>] [--timeout 2h] -- <command...>`
+is that job made for a repo. The node updates the repo from origin, checks each ref out in a short-path **detached
+worktree** inside the repo's `.claude/worktrees` (named `b1`, `b2`, so BenchmarkDotNet's generated folders stay under
+Windows' 260 characters, and it finds exactly one project), and queues one job whose script runs, per ref in order
+baseline then candidate and inside its worktree, a marker line naming the ref (so the log reads in sections), the repo's
+fetch step and then the command. A ref that fails does not skip the next, and the cleanup always runs. When the job ends
+however it ends, the node gathers each worktree's `BenchmarkDotNet.Artifacts/results/*-report-github.md`, puts the tables
+under a heading per ref with its short commit (plus the job's exit and log path) on a **bench-result** card for you, comments
+the same on the PR when `--pr` is given, and removes the worktrees. A ref with no results file says so instead of showing an
+empty table. Like `pilot run`, the call wakes the calling session when the job ends; end your turn after it.
+
+The Codecs example (issue #675), an A/B of a branch against main on the external WebP codec:
+
+```
+pilot bench Codecs --baseline main --candidate my-branch --pr 123 --fetch ./fetch-webp-external.sh --timeout 3h -- \
+  dotnet run -c Release --project benchmarks/SharpAstro.Codecs.Benchmarks -- --filter '*External*'
+```
+
+The run is without `--inProcess`: BenchmarkDotNet builds and starts its own process per benchmark, which is what the
+detached worktree and its short name are for. A node that stops while the job runs leaves the worktrees and the post
+undone; the next bench picks free names beside them.
+
 ### The MCP server
 
 **Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,

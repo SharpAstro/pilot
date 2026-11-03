@@ -337,6 +337,14 @@ public static class Verbs
     /// </summary>
     public const string Run = "run";
 
+    /// <summary>
+    /// <c>bench session/&lt;id&gt;|node &lt;repo&gt; --ref &lt;ref&gt; | --baseline &lt;ref&gt; --candidate &lt;ref&gt; [--fetch &lt;cmd&gt;] [--pr &lt;n&gt;]
+    /// [--timeout &lt;seconds&gt;] -- &lt;command…&gt;</c>: one exclusive (<see cref="JobKind.Bench"/>) job that runs the command on a ref, or on a
+    /// baseline and then a candidate, each in its own detached worktree, and posts BenchmarkDotNet's tables on a card and, with
+    /// <c>--pr</c>, on the PR. The result's <see cref="CommandResult.Made"/> is the job's id.
+    /// </summary>
+    public const string Bench = "bench";
+
     /// <summary>The leading argument of <c>run</c> that asks for the node to itself (a benchmark, <see cref="JobKind.Bench"/>).</summary>
     public const string AloneArg = "--alone";
 

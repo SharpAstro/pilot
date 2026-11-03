@@ -400,6 +400,20 @@ public sealed class CliTests : IAsyncLifetime
         global::Pilot.Commands.PilotCommand.JobLine(job).ShouldContain("bench");
     }
 
+    [Theory]
+    [InlineData("--ref", "main", "--baseline", "main")]
+    [InlineData("--baseline", "main")]
+    [InlineData("--candidate", "main")]
+    [InlineData("--fetch", "true")]
+    public async Task PilotBenchWithBothOrNeitherOfARefAndAPairIsAUsageError(params string[] flags)
+    {
+        var (exit, output, error) = await Pilot(_root, ["bench", "tianwen", .. flags, "--", "echo", "x"]);
+
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain("bench takes one --ref, or a --baseline and a --candidate together");
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task PilotJobCancelForceSendsCancelJobWithForceAndTheJobEndsForced()
     {

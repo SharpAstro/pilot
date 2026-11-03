@@ -59,7 +59,7 @@ public static partial class PilotCommand
     private sealed partial class BuildContext
     {
         /// <summary>Makes the run, jobs, merges, spend, decisions and job: the node's jobs and ledgers.</summary>
-        internal (Command, Command, Command, Command, Command, Command) JobCommands()
+        internal (Command, Command, Command, Command, Command, Command, Command) JobCommands()
         {
             // run, jobs, job: a long run handed to the node, which wakes the session that handed it over
             var runTimeout = new Option<string?>("--timeout") { Description = "How long it may run: 90m, 2h, 45s; 2h by default, 8h at most" };
@@ -106,6 +106,61 @@ public static partial class PilotCommand
                     await output.WriteLineAsync(owner is null
                         ? $"job {job} {how}; pilot job {job} shows how it stands"
                         : $"job {job} {how}. End your turn now: the node tells you how it ended, with its last lines. Do not wait for it or poll it.");
+                    return 0;
+                });
+            var benchRepo = new Argument<string>("repo") { Description = "The repo (a clone the node knows: pilot repos)" };
+            var benchRef = new Option<string?>("--ref") { Description = "Measure this one ref (a branch, tag or commit)" };
+            var benchBaseline = new Option<string?>("--baseline") { Description = "The baseline ref of an A/B, measured first" };
+            var benchCandidate = new Option<string?>("--candidate") { Description = "The candidate ref of an A/B, measured after the baseline" };
+            var benchFetch = new Option<string?>("--fetch") { Description = "The repo's fetch step, run in each worktree before the command (fetch-webp-external.sh)" };
+            var benchPr = new Option<int?>("--pr") { Description = "Also post the tables as a comment on this PR" };
+            var benchTimeout = new Option<string?>("--timeout") { Description = "How long the whole job may run: 90m, 2h; 2h by default, 8h at most" };
+            var benchWords = new Argument<string[]>("command") { Description = "The benchmark command, after --: pilot bench codecs --ref main -- dotnet run -c Release", Arity = ArgumentArity.OneOrMore };
+            var benchCommand = Action(new Command("bench", "Run a benchmark alone on the node, on a ref or a baseline and a candidate, and post the tables on a card (and a PR)")
+                {
+                    Arguments = { benchRepo, benchWords },
+                    Options = { benchRef, benchBaseline, benchCandidate, benchFetch, benchPr, benchTimeout },
+                },
+                async (p, client, ct) =>
+                {
+                    var (@ref, baseline, candidate) = (p.GetValue(benchRef), p.GetValue(benchBaseline), p.GetValue(benchCandidate));
+                    var pair = baseline is not null && candidate is not null;
+                    if (@ref is not null == pair || (baseline is null) != (candidate is null))
+                    {
+                        throw new UsageException("bench takes one --ref, or a --baseline and a --candidate together, not both and not neither");
+                    }
+                    var seconds = p.GetValue(benchTimeout) is { } given
+                        ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
+                        : 0;
+                    var owner = Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
+                        ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+                        : null;
+                    List<string> args = [p.GetValue(benchRepo)!];
+                    foreach (var (flag, value) in new[] { ("--ref", @ref), ("--baseline", baseline), ("--candidate", candidate), ("--fetch", p.GetValue(benchFetch)), ("--pr", p.GetValue(benchPr)?.ToString(CultureInfo.InvariantCulture)) })
+                    {
+                        if (value is not null)
+                        {
+                            args.AddRange([flag, value]);
+                        }
+                    }
+                    args.AddRange(["--timeout", seconds.ToString(CultureInfo.InvariantCulture), "--", .. p.GetValue(benchWords) ?? []]);
+                    var sent = await SendCommandAsync(client, new CommandRequest
+                    {
+                        Verb = Verbs.Bench,
+                        Target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id),
+                        Args = [.. args],
+                        Who = owner?.Name ?? who,
+                        Agent = byAgent,
+                        RequestId = requestId,
+                    }, deadline, ct);
+                    if (sent is not { Success: true, Response: { Ok: true, Made: { } job } })
+                    {
+                        await output.WriteLineAsync($"refused: bench: {sent.Response?.Error ?? sent.Error}");
+                        return 1;
+                    }
+                    await output.WriteLineAsync(owner is null
+                        ? $"bench job {job} queued: it waits for the node to go quiet and holds other jobs while it runs; pilot job {job} shows how it stands, and a card carries the tables"
+                        : $"bench job {job} queued. End your turn now: it waits for the node to go quiet, then the node wakes you when it ends, and a card carries the tables. Do not wait for it or poll it.");
                     return 0;
                 });
             var jobsCommand = Action(new Command("jobs", "The node's jobs, running first"), async (_, client, ct) =>
@@ -273,7 +328,7 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.ResumeJob, Verbs.JobTarget(p.GetValue(jobId)!), [], who, ct));
             jobShow.Subcommands.Add(resumeJob);
 
-            return (runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow);
+            return (runCommand, jobsCommand, mergesCommand, spendCommand, decisionsCommand, jobShow, benchCommand);
         }
     }
 }

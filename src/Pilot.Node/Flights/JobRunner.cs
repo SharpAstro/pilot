@@ -141,6 +141,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CheckRun>> _checkWaiters = new(StringComparer.Ordinal);
+    // The benchmarks a caller awaits (QueueBench), by job id: completed with the ended row when the job ends however it ends.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JobRow>> _benchWaiters = new(StringComparer.Ordinal);
     // The running checks' kill-on-close job objects (Windows): a node that crashes ends them, as a check never outlives its node.
     private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
     // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
@@ -429,8 +431,50 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
+    /// <summary>
+    /// Queues a benchmark as a job of kind <see cref="JobKind.Bench"/> (the node to itself) and returns its id and a task that
+    /// completes with the ended row when the job ends however it ends. <paramref name="owner"/>, when given, is woken as for any job.
+    /// </summary>
+    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner)
+    {
+        var jobId = state.NextJobId();
+        var folder = Path.Combine(options.DataFolder, "jobs");
+        Directory.CreateDirectory(folder);
+        var logPath = Path.Combine(folder, $"{jobId}.log");
+        var now = time.GetUtcNow();
+        var job = new JobRow
+        {
+            Id = jobId,
+            Command = command,
+            Cwd = cwd,
+            Owner = owner?.Id,
+            OwnerName = owner?.Name,
+            Flight = owner?.Flight,
+            Leg = owner?.Leg,
+            Kind = JobKind.Bench,
+            State = JobState.Queued,
+            LogPath = logPath,
+            ExitPath = ExitPathOf(logPath),
+            Timeout = timeout,
+            StartedAt = now,
+            QueuedAt = now,
+            MemoryKey = JobKey.Of(command, cwd).ToString(),
+        };
+        var done = new TaskCompletionSource<JobRow>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _benchWaiters[jobId] = done;
+        _mine[jobId] = 0;
+        state.PutJob(job);
+        _signals.Writer.TryWrite(new HandedOver(job));
+        return (jobId, done.Task);
+    }
+
     private void Finish(JobRow ended, string[]? last)
     {
+        if (_benchWaiters.TryRemove(ended.Id, out var bench))
+        {
+            bench.TrySetResult(ended);
+            return;
+        }
         if (!_checkWaiters.TryRemove(ended.Id, out var waiter))
         {
             return;
