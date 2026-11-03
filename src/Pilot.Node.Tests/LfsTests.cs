@@ -127,7 +127,7 @@ public sealed class LfsTests : IDisposable
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AMadePlaneTransfersNoLfsAndLeavesTheStoreAlone()
+    public async Task AMadePlaneIsFilledFromTheStoreOfflineAndLeavesTheStoreAlone()
     {
         Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
         MakeRepoWithLfs();
@@ -139,11 +139,73 @@ public sealed class LfsTests : IDisposable
         Git(Main, "config", "lfs.url", new Uri(Path.Combine(_root, "nowhere")).AbsoluteUri);
         Git(Main, "config", "lfs.allowincompletepush", "false");
 
-        var plane = await new Planes(new GitCli()).MakeAsync(Main, "PIL1", CancellationToken.None);
+        var traffic = new NodeTraffic();
+        var planes = new Planes(new GitCli(traffic));
+        // The fetch that finds the base is the one network run a plane makes; the LFS fill adds none.
+        await planes.RemoteBaseAsync(Main, CancellationToken.None);
+        var baseline = traffic.NetworkGitRunsSinceStart;
+
+        var plane = await planes.MakeAsync(Main, "PIL1", CancellationToken.None);
 
         Directory.Exists(plane.Worktree).ShouldBeTrue();
-        File.ReadAllText(Path.Combine(plane.Worktree, "big.bin")).ShouldContain("version https://git-lfs.github.com/spec/v1");
+        File.ReadAllText(Path.Combine(plane.Worktree, "big.bin")).ShouldBe("large content\n");
+        LfsFill.MissingPaths(plane.Worktree).ShouldBeEmpty();
+        traffic.NetworkGitRunsSinceStart.ShouldBe(baseline * 2, "the fill ran no git that can use the network");
         StoreSnapshot().ShouldBe(store);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnObjectTheStoreAndServerLackIsRecordedAsMissingAndTheRestIsFilled()
+    {
+        Assert.SkipUnless(HasLfs.Value, "git-lfs is not installed (git lfs version fails)");
+        MakeRepoWithLfs();
+        File.WriteAllText(Path.Combine(Main, "other.bin"), "other content\n");
+        Git(Main, "add", ".");
+        Git(Main, "commit", "-m", "second lfs file");
+        Git(Main, "push", "origin", "HEAD:main");
+
+        // big.bin's object is in neither the store nor the server, which points nowhere.
+        var oid = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("large content\n"))).ToLowerInvariant();
+        var gone = Path.Combine(Main, ".git", "lfs", "objects", oid[..2], oid[2..4], oid);
+        File.Exists(gone).ShouldBeTrue();
+        File.SetAttributes(gone, FileAttributes.Normal);
+        File.Delete(gone);
+        Directory.Delete(Path.Combine(Remote, "lfs"), recursive: true);
+        Git(Main, "config", "lfs.url", new Uri(Path.Combine(_root, "nowhere")).AbsoluteUri);
+
+        var plane = await new Planes(new GitCli()).MakeAsync(Main, "PIL2", CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(plane.Worktree, "other.bin")).ShouldBe("other content\n");
+        File.ReadAllText(Path.Combine(plane.Worktree, "big.bin")).ShouldContain("version https://git-lfs.github.com/spec/v1");
+        LfsFill.MissingPaths(plane.Worktree).ShouldBe(["big.bin"]);
+        Directory.EnumerateFiles(plane.Worktree, "pilot-lfs-missing*").ShouldBeEmpty("the record is in the worktree's git dir, never in the worktree");
+    }
+
+    [Fact]
+    public async Task ARepoWithoutTheLfsFilterRunsNoLfsCommand()
+    {
+        var plane = Path.Combine(_root, "plain");
+        Directory.CreateDirectory(plane);
+        var git = new RecordingGit();
+
+        await LfsFill.FillAsync(git, plane, CancellationToken.None);
+        File.WriteAllText(Path.Combine(plane, ".gitattributes"), "*.txt text\n");
+        await LfsFill.FillAsync(git, plane, CancellationToken.None);
+
+        git.Calls.ShouldBeEmpty();
+        LfsFill.MissingPaths(plane).ShouldBeEmpty();
+    }
+
+    private sealed class RecordingGit : IGit
+    {
+        public List<string> Calls { get; } = [];
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            Calls.Add(string.Join(' ', args));
+            return Task.FromResult(new GitRun(0, "", ""));
+        }
     }
 
     [Fact]
