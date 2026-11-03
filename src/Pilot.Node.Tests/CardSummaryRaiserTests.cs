@@ -68,6 +68,8 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         summary.ShouldContain("TIA43/parser");
         // The panel shows at most 240 characters of a summary (CardsView.SummaryChars).
         summary.Length.ShouldBeLessThanOrEqualTo(240);
+        // Why it did not go through: the failed check by name, not only "failed".
+        summary.ShouldContain("because check build (linux) failed");
         summary.ShouldContain("fresh worker can fix the last leg");
         summary.ShouldContain("checks can be run again");
         summary.ShouldContain("merge can be tried once more");
