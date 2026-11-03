@@ -158,10 +158,17 @@ public sealed partial class LegCommander
         }
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
-        var queueHead = await LayIfNotRebaseableAsync(flight, pr.Head, cancellationToken);
+        var queueHead = await ShapeForMergeAsync(flight, pr.Head, method, cancellationToken);
         try
         {
             return await OffLockAsync(null, () => github.MergeAsync(flight.RepoPath, pr.Number, queueHead, method, cancellationToken))
+                ? (false, QueuedLine(flight.Code), MergeWays.Queued)
+                : (true, null, null);
+        }
+        catch (MergeRefusedException refusal) when (refusal.Kind == MergeAnswerKind.NotRebaseable)
+        {
+            // Shaped already and GitHub still cannot rebase it: the same head merges by squash, else merge, said on the flight, no card.
+            return await MergeWhenNotRebaseableAsync(flight, pr.Number, queueHead, refusal, cancellationToken)
                 ? (false, QueuedLine(flight.Code), MergeWays.Queued)
                 : (true, null, null);
         }
