@@ -13,9 +13,13 @@ public sealed class SiblingLockTests : JobTestsBase
 
     private static string Clone(string name) => Path.Combine(Path.GetTempPath(), "org-fake", name);
 
+    // The runner's clock is the test's: the tree is looked at again only when it is advanced past TreeEvery.
+    private Clock? _clock;
+
     private JobRunner Runner(Func<string, string[]> setOf, int slots = 2)
     {
-        var (jobs, _, _, _) = Idle();
+        var (jobs, clock, _, _) = Idle();
+        _clock = clock;
         jobs.MaxRunning = slots;
         jobs.SiblingsOf = job => setOf(job.Command);
         return jobs;
@@ -57,6 +61,7 @@ public sealed class SiblingLockTests : JobTestsBase
 
         // Past its build: the clones are let go at once, the first still runs, the second starts.
         Volatile.Write(ref past, true);
+        _clock!.Advance(TimeSpan.FromSeconds(5));
         // The runner is not started here, so the test is the dispatcher: it sees the release (which Pumps a started one) and looks again.
         await Until(first, j => j.Step is { } s && s.Contains("clones released"));
         jobs.Dispatch(JobRunner.LookAgain.Instance);
