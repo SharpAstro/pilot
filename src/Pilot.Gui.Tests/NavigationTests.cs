@@ -427,7 +427,7 @@ public sealed class NavigationTests
 
     private static CardRow ACard() => new()
     {
-        Id = "c1", Bin = CardBin.Ring, Kind = "waiting", Subject = "h-work", Title = "t", At = Live.At,
+        Id = "c1", Bin = CardBin.Ring, Kind = "waiting", Subject = "h-work", Title = "t", State = CardState.Open, At = Live.At,
     };
 
     [Fact]
