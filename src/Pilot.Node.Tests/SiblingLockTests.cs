@@ -30,13 +30,60 @@ public sealed class SiblingLockTests : JobTestsBase
         var second = Hand(jobs, "echo 'two'; sleep 20");
 
         Row(second).State.ShouldBe(JobState.Queued);
-        Row(second).Step.ShouldNotBeNull().ShouldContain("shares the sibling clone dir.lib with job " + first);
+        Row(second).Step.ShouldNotBeNull().ShouldContain($"waiting for job {first}'s build of the sibling clone dir.lib");
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(first), Who = "controller" });
         await Until(first, j => j.EndedAt is not null);
         jobs.Dispatch(JobRunner.LookAgain.Instance);
         await Until(second, j => j.State == JobState.Running);
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(second), Who = "controller" });
         await Until(second, j => j.EndedAt is not null);
+    }
+
+    [Fact]
+    public async Task AHolderPastItsBuildReleasesTheClonesWhileItStillRunsAndTheNextStarts()
+    {
+        var jobs = Runner(_ => [Clone("pilot"), Clone("DIR.Lib")]);
+        jobs.TreeEvery = TimeSpan.FromMilliseconds(50);
+        var past = false;
+        jobs.PastBuild = (_, _) => Volatile.Read(ref past);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var second = Hand(jobs, "echo 'two'; sleep 20");
+
+        // Still building: the second stays queued, naming the build.
+        await Task.Delay(300);
+        Row(second).State.ShouldBe(JobState.Queued);
+        Row(second).Step.ShouldNotBeNull().ShouldContain($"waiting for job {first}'s build");
+
+        // Past its build: the clones are let go at once, the first still runs, the second starts.
+        Volatile.Write(ref past, true);
+        await Until(second, j => j.State == JobState.Running);
+        Row(first).State.ShouldBe(JobState.Running);
+        await Until(first, j => j.Step is { } s && s.Contains("clones released"));
+
+        foreach (var id in new[] { first, second })
+        {
+            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+            await Until(id, j => j.EndedAt is not null);
+        }
+    }
+
+    [Fact]
+    public void PastBuildNeedsNoBuildingProcessAndALaterSegmentSeen()
+    {
+        const string command = "cd src && dotnet build X.slnx -c Release && dotnet test Y --no-build";
+        var cwd = _root;
+        string[] building = ["dotnet.exe build X.slnx -c Release", "dotnet C:\\sdk\\MSBuild.dll -maxcpucount"];
+        string[] nodeReuse = ["dotnet C:\\sdk\\MSBuild.dll /nodeReuse:true -nodemode:1", "VBCSCompiler.exe"];
+
+        SiblingSet.PastBuild(command, cwd, building).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, [.. building, "dotnet test Y --no-build"]).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, nodeReuse).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, [.. nodeReuse, "dotnet.exe test Y --no-build"]).ShouldBeTrue();
+        // A last segment that builds holds to its end.
+        SiblingSet.PastBuild("dotnet test Y --no-build && dotnet build X", cwd, ["dotnet build X"]).ShouldBeFalse();
+        // No building segment at all: nothing to release.
+        SiblingSet.PastBuild("dotnet test Y --no-build", cwd, ["dotnet test Y --no-build"]).ShouldBeFalse();
     }
 
     [Fact]
