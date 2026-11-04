@@ -58,7 +58,7 @@ public static partial class CardSummaries
             LegCommander.NextStepKind => $"The node tried {what}'s next step and was refused. Do the step now to ask it again.",
             LegCommander.StartFailedKind => $"A session of {what} did not start and the node does not retry it by itself. Start it again from the card.",
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
-            LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, or with a flight that held a card on it too, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
+            LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
             LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
