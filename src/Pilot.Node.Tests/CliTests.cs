@@ -37,6 +37,8 @@ public sealed class CliTests : IAsyncLifetime
         (await NodeTargets.WatchtowerLineAsync("127.0.0.1:1", TimeSpan.FromSeconds(1), Ct)).ShouldBe("watchtower: not reached (the node did not answer)");
     }
 
+    public static TheoryData<int> Fifty() => [.. Enumerable.Range(0, 50)];
+
     public async ValueTask InitializeAsync()
     {
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
@@ -54,11 +56,7 @@ public sealed class CliTests : IAsyncLifetime
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        PrOrigins.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)
@@ -381,9 +379,11 @@ public sealed class CliTests : IAsyncLifetime
         lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
+    [Theory]
+    [MemberData(nameof(Fifty))]
+    public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob(int repeat)
     {
+        _ = repeat;
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // The machine running the suite is not quiet: the test is about the flag, not the CPU.
