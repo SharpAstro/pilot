@@ -57,9 +57,11 @@ public sealed class SiblingLockTests : JobTestsBase
 
         // Past its build: the clones are let go at once, the first still runs, the second starts.
         Volatile.Write(ref past, true);
+        // The runner is not started here, so the test is the dispatcher: it sees the release (which Pumps a started one) and looks again.
+        await Until(first, j => j.Step is { } s && s.Contains("clones released"));
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
         await Until(second, j => j.State == JobState.Running);
         Row(first).State.ShouldBe(JobState.Running);
-        await Until(first, j => j.Step is { } s && s.Contains("clones released"));
 
         foreach (var id in new[] { first, second })
         {
