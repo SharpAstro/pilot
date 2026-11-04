@@ -117,6 +117,8 @@ public sealed partial class LegCommander
             var mergeState = checks?.Status == ChoiceStatus.Failing ? null : await github.MergeStateAsync(flight.RepoPath, pr.Number, cancellationToken);
             return (pr, checks, mergeState);
         });
+        // A head re-pinned by the look (moved only by its base or by whitespace or documentation) is the review's head now.
+        flight = FlightOf(command.Target);
         // A head that is in the queue now, or whose checks are still pending, is not one the queue dropped for a conflict: only a PR
         // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
         if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
@@ -333,7 +335,7 @@ public sealed partial class LegCommander
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number}'s head is {CommitRefs.Short(pr.Head)}, not the {head} you reviewed: look again before it lands");
+            pr = await RepinMovedHeadAsync(flight, pr, head, cancellationToken);
         }
         // A commit made in the plane after the PR's last push would be left behind by the merge, and the landing would
         // then take the plane with it (TIA1658's plan read, 2026-10-23, landed by hand afterwards).
@@ -364,13 +366,48 @@ public sealed partial class LegCommander
                 {
                     return pr;
                 }
-                throw new FlightException(BehindText(pr.Number));
+                throw new FlightException(BehindText(pr.Number, await HeadWords.BehindAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", tip, cancellationToken)));
             }
         }
         return pr;
     }
 
-    private static string BehindText(int number) => $"#{number} is behind its base";
+    /// <summary>A moved head in words (<see cref="HeadWords"/>, shas after them); the plain form when the plane cannot say.</summary>
+    internal async Task<string> MovedHeadWordsAsync(FlightRow flight, string reviewed, string head, CancellationToken cancellationToken)
+    {
+        if (Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            return (await HeadWords.DescribeAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", reviewed, head, cancellationToken)).Text;
+        }
+        return $"newer than the review ({CommitRefs.Short(head)} · reviewed {CommitRefs.Short(reviewed)})";
+    }
+
+    private static string BehindText(int number, string? words = null) => words is null ? $"#{number} is behind its base" : $"#{number} is behind its base ({words})";
+
+    /// <summary>
+    /// The PR's head is not the one the card named. A head moved only by its base, by whitespace or by documentation (.md) changes is
+    /// re-pinned: the review's head and marks move to it and the landing goes on with it. A real code change throws, in words
+    /// (<see cref="HeadWords"/>), asking for a re-review.
+    /// </summary>
+    private async Task<PullRequest> RepinMovedHeadAsync(FlightRow flight, PullRequest pr, string head, CancellationToken cancellationToken)
+    {
+        if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } reviewed } && Directory.Exists(flight.Worktree)
+            && reviewed.StartsWith(head, StringComparison.OrdinalIgnoreCase))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var words = await HeadWords.DescribeAsync(git, flight.Worktree, flight.Base, $"origin/{BaseBranch(flight)}", reviewed, pr.Head, cancellationToken);
+            if (words.Repinnable && words.Relation != HeadRelation.Unknown)
+            {
+                Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = pr.Head, StatusState = null } : null });
+                await _marks.ApplyAsync(flight.Code, cancellationToken);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                return pr;
+            }
+            throw new FlightException($"#{pr.Number}'s head is {words.Text}: look again before it lands");
+        }
+        throw new FlightException($"#{pr.Number}'s head is newer than the one you reviewed ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)}): look again before it lands");
+    }
 
     private static bool Behind(string error) => error.Contains("is behind its base", StringComparison.OrdinalIgnoreCase);
 

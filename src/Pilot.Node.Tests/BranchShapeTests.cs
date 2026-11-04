@@ -65,6 +65,49 @@ public sealed class BranchShapeTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AHeadMovedOnlyByAMergeOfItsBaseIsRepinnedAndMergesWithNoCard()
+    {
+        var (flight, _) = await Passed("1");
+        var reviewed = _github.Pr!.Head;
+        File.WriteAllText(Path.Combine(Repo, "base.txt"), "base\n");
+        Git(Repo, "add", "base.txt");
+        Commit(Repo, "base moves");
+        Git(Repo, "push", "-q", "origin", "main");
+        var plane = flight.Worktree;
+        Git(plane, "fetch", "-q", "origin");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "--no-ff", "-q", "-m", "take main", "origin/main");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+        var head = Git(plane, "rev-parse", "HEAD");
+        head.ShouldNotBe(reviewed);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
+
+        merge.Error.ShouldBeNull();
+        _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(head);
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(head);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+    }
+
+    [Fact]
+    public async Task AHeadMovedByACodeChangeIsRefusedInWordsAndIsNotRepinned()
+    {
+        var (flight, _) = await Passed("1");
+        var reviewed = _github.Pr!.Head;
+        var plane = flight.Worktree;
+        File.WriteAllText(Path.Combine(plane, "new.cs"), "class N { }\n");
+        Git(plane, "add", ".");
+        Commit(plane, "Add N");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
+
+        merge.Error.ShouldNotBeNull().ShouldContain("newer than the review: 1 commit (Add N)");
+        merge.Error.ShouldContain(CommitRefs.Short(reviewed));
+        _github.Merged.ShouldBeEmpty();
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(reviewed);
+    }
+
+    [Fact]
     public async Task ARebaseThatConflictsIsLaidAsOneCommit()
     {
         _github.MergeQueueMethod = "REBASE";

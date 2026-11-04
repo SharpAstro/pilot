@@ -402,7 +402,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var moved = pr is { State: "OPEN" } && pr.Number == number && !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase);
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
-                : moved ? $"#{number}'s head moved from {CommitRefs.Short(head)} to {CommitRefs.Short(pr.Head)} while its checks ran: look at what is new, then merge again"
+                : moved ? $"#{number}'s head is {(legs is null ? $"newer than the review ({CommitRefs.Short(pr.Head)} · reviewed {CommitRefs.Short(head)})" : await legs.MovedHeadWordsAsync(flight, head, pr.Head, cancellationToken))}, moved while its checks ran: look at what is new, then merge again"
                 : null;
             // What GitHub says of the PR is what the card says of the merge: an auto-merge somebody turned off on the PR page, or a
             // merge GitHub blocks (a review required, changes requested, behind its base), is no merge waiting any more, and the
@@ -537,7 +537,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {
                 state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(dropped)}", dropped,
-                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {CommitRefs.Short(headNow)}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
+                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again", Note = $"at {CommitRefs.Short(headNow)}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -612,7 +612,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 _ => $"GitHub shows it as {merge.Kind}",
             };
             state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(why)}", $"{why}. Merge again once that is dealt with.",
-                [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {CommitRefs.Short(pr.Head)}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
+                [new CardChoice { Label = $"Merge {flight.Code}'s PR again", Note = $"at {CommitRefs.Short(pr.Head)}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
         }
         return true;
     }

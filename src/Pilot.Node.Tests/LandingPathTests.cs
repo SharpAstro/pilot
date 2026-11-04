@@ -126,6 +126,45 @@ public sealed class LandingPathTests : ReviewTestsBase
                 }
                 break;
         }
+        EveryShaIsALink();
+    }
+
+    // Every 7-to-40 hex run a card shows (a sha mixes digits and letters) is a commit the card links; a button label holds none.
+    private static readonly System.Text.RegularExpressions.Regex HexRun = new(@"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z])", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private void EveryShaIsALink()
+    {
+        foreach (var card in _state.Cards())
+        {
+            foreach (var text in new[] { card.Title, card.Detail, card.Summary }.Concat(card.Choices.Select(c => c.Note)))
+            {
+                foreach (System.Text.RegularExpressions.Match m in HexRun.Matches(text ?? ""))
+                {
+                    card.Commits.ShouldContainKey(m.Value, $"card {card.Id} ({card.Kind}) shows {m.Value} without linking it: {text}");
+                    card.Commits[m.Value].ShouldEndWith($"/commit/{m.Value}");
+                }
+            }
+            foreach (var choice in card.Choices)
+            {
+                HexRun.IsMatch(choice.Label).ShouldBeFalse($"card {card.Id} ({card.Kind}): label '{choice.Label}' holds a sha");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EveryShaOnTheCardsAMergeRaisesIsALinkAndNoButtonHoldsOne()
+    {
+        var (flight, _) = await Passed("1");
+        var head = _github.Pr!.Head;
+        _github.Checks = ChoiceStatus.Passing;
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _github.MergeScript.Enqueue("GraphQL: Repository rule violations found");
+        await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+        _github.MergeScript.Enqueue("GraphQL: Pull request has a merge conflict");
+        await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
+
+        _state.Cards().Count.ShouldBeGreaterThan(0);
+        EveryShaIsALink();
     }
 
     [Fact]

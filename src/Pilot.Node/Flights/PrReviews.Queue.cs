@@ -66,7 +66,7 @@ public sealed partial class PrReviews
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
-            state.PutPrReview(review with { QueueNote = $"its head moved to {CommitRefs.Short(read.Head)} after the review of {at}" });
+            state.PutPrReview(review with { QueueNote = $"its head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {at})" });
             return;
         }
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
@@ -110,7 +110,7 @@ public sealed partial class PrReviews
             var said = outcome.Said ?? "GitHub refused";
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
             state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
-                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more", Note = $"at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
@@ -137,7 +137,7 @@ public sealed partial class PrReviews
         }
         if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"{pr}'s head moved to {CommitRefs.Short(read.Head)} past the {CommitRefs.Short(head)} reviewed: review it again");
+            throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
         if (!outcome.Done)
