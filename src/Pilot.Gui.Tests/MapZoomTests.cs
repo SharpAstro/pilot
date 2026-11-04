@@ -247,7 +247,7 @@ public sealed class MapZoomTests
     }
 
     [Fact]
-    public void ArrowsPanTheMapOnTheCanvasAndShiftMovesFurther()
+    public void LeftAndRightPanTheMapOnTheCanvasAndShiftMovesFurtherWhileUpAndDownMoveTheSelection()
     {
         var (renderer, view, show) = Open();
         using var _ = renderer;
@@ -255,20 +255,26 @@ public sealed class MapZoomTests
         view.HandleInput(Ctrl(InputKey.D1));
         show();
         var (x0, y0) = (vp.PanX, vp.PanY);
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Home)).ShouldBeTrue();
         var selected = view.Selected;
 
         view.HandleInput(new InputEvent.KeyDown(InputKey.Left)).ShouldBeTrue();
-        view.HandleInput(new InputEvent.KeyDown(InputKey.Up)).ShouldBeTrue();
         vp.PanX.ShouldBeGreaterThan(x0);
-        vp.PanY.ShouldBeGreaterThan(y0);
         var small = vp.PanX - x0;
         view.HandleInput(new InputEvent.KeyDown(InputKey.Right)).ShouldBeTrue();
-        view.HandleInput(new InputEvent.KeyDown(InputKey.Down)).ShouldBeTrue();
         vp.PanX.ShouldBe(x0, 0.001f);
-        vp.PanY.ShouldBe(y0, 0.001f);
         view.HandleInput(new InputEvent.KeyDown(InputKey.Left, InputModifier.Shift)).ShouldBeTrue();
         (vp.PanX - x0).ShouldBeGreaterThan(small);
         view.Selected.ShouldBe(selected);
+
+        // Down moves the selection one row on; the view's vertical pan stays put while the rows are in view.
+        var panY = vp.PanY;
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Down)).ShouldBeTrue();
+        view.Selected.ShouldBe(selected + 1);
+        vp.PanY.ShouldBe(panY, 0.001f);
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Up)).ShouldBeTrue();
+        view.Selected.ShouldBe(selected);
+        y0.ShouldBe(panY, 0.001f);
     }
 
     [Theory]

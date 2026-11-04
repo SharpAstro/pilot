@@ -213,12 +213,12 @@ internal sealed partial class FlightsView<TSurface>
         var step = (key.Modifiers & InputModifier.Shift) != 0 ? ArrowStepBig : ArrowStep;
         switch (key.Key)
         {
-            // As the wheel: Up shows more of the top, Left more of the left.
+            // Up, Down, Home and End move the selection through the rows as drawn; the view follows it.
             case InputKey.Up:
-                _vp.PanBy(0f, step);
-                break;
             case InputKey.Down:
-                _vp.PanBy(0f, -step);
+            case InputKey.Home:
+            case InputKey.End:
+                MoveSelection(key.Key);
                 break;
             case InputKey.Left:
                 _vp.PanBy(step, 0f);
@@ -234,6 +234,35 @@ internal sealed partial class FlightsView<TSurface>
         }
         Changed?.Invoke();
         return true;
+    }
+
+    // Moves the selection through the flights in the order they are drawn (continents as drawn, rows top to bottom), stopping at the
+    // ends, then pans just far enough to bring its row into view. With none picked, Down and Home take the first, Up and End the last.
+    private void MoveSelection(InputKey key)
+    {
+        var order = new List<(int Index, MapRoute Route)>();
+        foreach (var route in _map.Routes)
+        {
+            if (IndexOf(_screen, route) is >= 0 and var i)
+            {
+                order.Add((i, route));
+            }
+        }
+        if (order.Count == 0)
+        {
+            return;
+        }
+        var at = order.FindIndex(o => o.Index == Selected);
+        var to = key switch
+        {
+            InputKey.Home => 0,
+            InputKey.End => order.Count - 1,
+            InputKey.Down => at < 0 ? 0 : Math.Min(at + 1, order.Count - 1),
+            _ => at < 0 ? order.Count - 1 : Math.Max(at - 1, 0),
+        };
+        ListCursor.MoveTo(order[to].Index);
+        var (bx, by, bw, bh) = _map.RowBand(order[to].Route);
+        _vp.EnsureVisible(bx, by, bw, bh);
     }
 
     private const float PillWidth = 56f;
@@ -464,6 +493,22 @@ internal sealed partial class FlightsView<TSurface>
                         .Clickable(new HitResult.ButtonHit($"map:{c.Key}"), _ => ListCursor.MoveTo(at)),
                     null, _vp.ViewX(c.X), _vp.ViewY(c.Y), 0f, false);
             }
+        }
+        // One band per row, under every other target of the row (and of the rows' own gates, airports, signs and planes), so a click
+        // anywhere in the row's band picks the flight and the circles, the sign and the plane keep their own double-click and tip.
+        foreach (var route in _map.Routes)
+        {
+            if (IndexOf(screen, route) is not (>= 0 and var at))
+            {
+                continue;
+            }
+            var line = screen.Lines[at];
+            var (bx, by, bw, bh) = _map.RowBand(route);
+            yield return Layout.Builder.Anchored(
+                Layout.Builder.Spacer().WFixed(bw * _vp.Scale).HFixed(bh * _vp.Scale)
+                    .Clickable(new HitResult.ButtonHit($"map:{line.Code}:row"), _ => ListCursor.MoveTo(at))
+                    .WithContextMenu(pt => OpenMenu(line, at, pt)),
+                null, _vp.ViewX(bx), _vp.ViewY(by), 0f, false);
         }
         foreach (var route in _map.Routes)
         {
