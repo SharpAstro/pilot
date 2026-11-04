@@ -296,8 +296,17 @@ internal sealed class PilotChrome<TSurface>
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
-        // The per-view Back pills and Escape are the window's Back: where there is no place to go back to, the view closes itself.
-        sessions.Transcript.OnBack = BackOrClose(sessions.Transcript.Close);
+        // A transcript goes up, not back: to the Sessions page as it was left, with its session selected. A move, so the rail's back returns here.
+        sessions.Transcript.OnUp = () => Navigate(() =>
+        {
+            var line = sessions.Transcript.Line;
+            Switch(PilotPage.Sessions, _show);
+            sessions.Transcript.Close();
+            if (line is not null)
+            {
+                sessions.Pin(line);
+            }
+        });
         // The flight's page goes up, not back: to the Flights page as it was left, with the flight selected. A move, so the rail's back returns here.
         Flights.OnUp = () => Navigate(() =>
         {
@@ -569,14 +578,6 @@ internal sealed class PilotChrome<TSurface>
         Restore(place);
         return true;
     }
-
-    private Action BackOrClose(Action close) => () =>
-    {
-        if (!Back())
-        {
-            close();
-        }
-    };
 
     /// <summary>
     /// The window's own keys and buttons, ahead of what is painted and of a focused field: Alt+Left and the mouse's back

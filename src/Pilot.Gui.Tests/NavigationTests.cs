@@ -284,7 +284,7 @@ public sealed class NavigationTests
     }
 
     [Fact]
-    public void EscapeOnAnOpenTranscriptGoesBack()
+    public void EscapeOnAnOpenTranscriptGoesUp()
     {
         using var window = new Window();
         var chrome = window.Chrome;
@@ -324,7 +324,7 @@ public sealed class NavigationTests
     }
 
     [Fact]
-    public void TheFlightsPillGoesUpAndTheTranscriptsBackPillIsTheWindowsBack()
+    public void TheFlightsAndTheTranscriptsPillsGoUp()
     {
         using var window = new Window();
         var chrome = window.Chrome;
@@ -425,6 +425,68 @@ public sealed class NavigationTests
         pill.Tooltip.ShouldNotBeNull().ShouldContain("Flights");
     }
 
+    private static CardRow ACard() => new()
+    {
+        Id = "c1", Bin = CardBin.Ring, Kind = "waiting", Subject = "h-work", Title = "t", At = Live.At,
+    };
+
+    [Fact]
+    public void TheSessionsPillGoesUpToTheSessionsPageWithItsSessionSelected()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        var line = window.Sessions().Lines[1];
+        chrome.Show(PilotPage.Home);
+        chrome.Cards.OnTranscript.ShouldNotBeNull().Invoke(ACard(), line);
+        window.Draw();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+
+        Press(window, chrome.Sessions, "transcript:back");
+
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Sessions.SelectedId.ShouldBe(line.Key);
+        // A move of its own: the rail's back returns to the transcript.
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+        chrome.Sessions.Transcript.Key.ShouldBe(line.Key);
+    }
+
+    [Fact]
+    public void EscapeOnATranscriptOpenedFromACardDoesWhatTheSessionsPillDoes()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        var line = window.Sessions().Lines[1];
+        chrome.Show(PilotPage.Home);
+        chrome.Cards.OnTranscript.ShouldNotBeNull().Invoke(ACard(), line);
+        window.Draw();
+
+        chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+        window.Draw();
+
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Sessions.SelectedId.ShouldBe(line.Key);
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheTranscriptsUpPillNamesSessions()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Sessions);
+        chrome.Sessions.Transcript.Open(window.Sessions().Lines[0]);
+        window.Draw();
+
+        var regions = new List<ClickableRegion>();
+        chrome.Sessions.CollectPaintedRegions(regions);
+        var pill = regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == "transcript:back");
+        pill.Tooltip.ShouldNotBeNull().ShouldContain("Sessions");
+    }
+
     [Fact]
     public void ABackPillWithNoHistoryStillClosesWhatItLeaves()
     {
@@ -433,7 +495,7 @@ public sealed class NavigationTests
         sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage { Total = 0, Entries = [] });
         sessions.Transcript.Open(SessionLine.From(Live.Row("aaaa0000", "h-work", SessionState.Working), Live.At));
 
-        sessions.Transcript.GoBack();
+        sessions.Transcript.GoUp();
 
         sessions.Transcript.IsOpen.ShouldBeFalse();
     }
