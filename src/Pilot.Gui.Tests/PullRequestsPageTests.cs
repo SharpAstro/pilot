@@ -1493,35 +1493,57 @@ public sealed class PullRequestsPageTests
             arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds, arranged);
     }
 
+    // 500 and 584 are the widths where the slot on the pills' row is zero (the engine clamps it), 700 a small one, 1400 a wide one.
     [Theory]
+    [InlineData(500f)]
+    [InlineData(584f)]
     [InlineData(600f)]
     [InlineData(700f)]
     [InlineData(1400f)]
-    public async Task ALongRefusalStaysRightOfTheSearchBoxInsideThePageWholeOnHoverAndMovesNothing(float width)
+    public async Task ALongRefusalStaysClearOfThePillsAndTheSearchBoxInsideThePageCutOrWholeAndMovesNothing(float width)
     {
         var without = await ToolbarAt(width, refused: false);
         var with = await ToolbarAt(width, refused: true);
 
         (with.Mine, with.Flights, with.NeedsMe, with.Search).ShouldBe((without.Mine, without.Flights, without.NeedsMe, without.Search));
         var text = with.Arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == HoldingRefusal);
-        text.Bounds.X.ShouldBeGreaterThanOrEqualTo(with.Search.X + with.Search.Width);
-        (text.Bounds.X + text.Bounds.Width).ShouldBeLessThanOrEqualTo(width + 0.01f);
+        var content = (Layout.Content.Text)((Layout.Node.Leaf)text.Node).Content;
+        // Either right of the search box on the pills' row, or on a line of its own under the pills.
+        var below = text.Bounds.Y >= with.Search.Y + with.Search.Height - 0.01f;
+        if (!below)
+        {
+            text.Bounds.X.ShouldBeGreaterThanOrEqualTo(with.Search.X + with.Search.Width);
+        }
         text.Bounds.X.ShouldBeGreaterThanOrEqualTo(0f);
+        text.Bounds.Width.ShouldBeGreaterThan(0f);
+        (text.Bounds.X + text.Bounds.Width).ShouldBeLessThanOrEqualTo(width + 0.01f);
         text.Node.Tooltip.ShouldBe(HoldingRefusal);
-        // Drawn from its left edge: a far-aligned run wider than its slot grows leftwards, over the pills, whatever its bounds say.
-        ((Layout.Content.Text)((Layout.Node.Leaf)text.Node).Content).HAlign.ShouldBe(TextAlign.Near);
+        // What is drawn, not only the slot: the run is cut to the slot (ending in an ellipsis) when it does not fit, so it ends inside the page.
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (full, _) = renderer.MeasureText(HoldingRefusal, SessionsCapture.FontPath, content.FontSize);
+        var (shown, size) = TextFit.ForWidth(renderer, HoldingRefusal, SessionsCapture.FontPath, null, content.FontSize, text.Bounds.Width, content.Trim);
+        var (drawn, _) = renderer.MeasureText(shown, SessionsCapture.FontPath, size);
+        drawn.ShouldBeLessThanOrEqualTo(text.Bounds.Width + 0.5f);
+        if (full > text.Bounds.Width)
+        {
+            shown.ShouldNotBe(HoldingRefusal);
+            shown.ShouldEndWith("…");
+        }
+        content.HAlign.ShouldBe(TextAlign.Near);
         TextOverlap.Faults(with.Arranged).Select(f => f.Text).ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task TheRefusalCaptureIsWrittenAtANarrowAndAWideWidth()
+    public async Task TheRefusalCapturesAreWrittenAtNarrowAndWideWidthsAndOnlyTheirFormatIsChecked()
     {
+        // PILOT_PR_CAPTURES names the folder to write to (give docs/captures, as AdmissionViewsTests does with PILOT_ADMISSION_CAPTURES; else a
+        // temp folder), PILOT_PR_CAPTURE_SUFFIX such as -before goes on the end of the file names.
         var given = Environment.GetEnvironmentVariable("PILOT_PR_CAPTURES");
         var folder = given is { Length: > 0 } ? Directory.CreateDirectory(given) : Directory.CreateTempSubdirectory("pilot-pr-");
         var suffix = Environment.GetEnvironmentVariable("PILOT_PR_CAPTURE_SUFFIX") ?? "";
         try
         {
-            foreach (var width in new[] { 700, 1400 })
+            foreach (var width in new[] { 500, 700, 1400 })
             {
                 using var renderer = new RgbaImageRenderer((uint)width, 520);
                 var (chrome, page) = Chrome(renderer);

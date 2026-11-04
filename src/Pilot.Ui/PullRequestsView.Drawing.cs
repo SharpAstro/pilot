@@ -94,21 +94,30 @@ internal sealed partial class PullRequestsView<TSurface>
             items.Add(CardsView<TSurface>.HeaderPill(FilterName(filter), FilterAction(filter), () => Filter = isLit ? null : chosen, isLit ? lit : plain, NightOrNull?.Bright)
                 .WithTooltip(FilterTip(filter, isLit)));
         }
-        items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WFixed(SearchWidth).HFixed(AboutCard.HeaderButton));
+        items.Add(Layout.Builder.TextInput(Search, TextSize, Palette.Input).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton));
         // What the node refused of the last button pressed on a row, in its words, where the count of the list is: a place that is
         // always there, so a refusal moves nothing. Drawn from the slot's left edge, never far-aligned: a run wider than its slot would grow
         // leftwards over the pills. Cut to the room it has with an ellipsis, whole on hover.
+        // The search box gives way before the refusal does: a star between a floor and its usual width, beside a slot with a floor of its own.
+        // The engine clamps a star slot to zero when the fixed parts take the row, and a text in a zero slot is not cut at all, so the
+        // refusal always has RefusalFloor to be cut to (with an ellipsis), whatever the width, and the pills never move for it.
         if (Refusal() is { } refused)
         {
-            items.Add(Layout.Builder.Text(refused, 12f, P.Held).WithTooltip(refused).WStar());
+            // An empty count slot stays, so the row has the same parts and gaps with a refusal as without: the search box, which gives way
+            // on a narrow page, is then the same width either way.
+            items.Add(Layout.Builder.Text(refused, 12f, P.Held).WithTooltip(refused).WStar(1f, RefusalFloor));
+            items.Add(Layout.Builder.Text("", 12f, BodyText, TextAlign.Far).WAuto());
         }
         else
         {
-            items.Add(Layout.Builder.Spacer().WStar());
+            items.Add(Layout.Builder.Spacer().WStar(1f, RefusalFloor));
             items.Add(Layout.Builder.Text(shown == total ? "" : $"showing {shown} of {total}", 12f, BodyText, TextAlign.Far).WAuto());
         }
         return Layout.Builder.HStack([.. items]).WithGap(8f).RowH(ToolbarHeight);
     }
+
+    private const float RefusalFloor = 100f;
+    private const float SearchFloor = 60f;
 
     private Layout.Node Main(PullRequestsScreen screen, IReadOnlyList<PullRequestOrgGroup> orgs, float width)
     {
