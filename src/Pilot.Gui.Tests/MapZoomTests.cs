@@ -13,7 +13,7 @@ public sealed class MapZoomTests
     private const int Width = 1280;
     private const int Height = 800;
 
-    private static FlightLine[] Lines(int flights = 3, int legs = 4)
+    private static FlightLine[] Lines(int flights = 3, int legs = 4, int doneLegs = 1)
     {
         var rows = Enumerable.Range(0, flights).Select(i => new FlightRow
         {
@@ -30,7 +30,7 @@ public sealed class MapZoomTests
         }).ToArray();
         var legRows = rows.SelectMany(f => Enumerable.Range(1, legs).Select(n => new LegRow
         {
-            Flight = f.Code, Name = "leg" + n, Order = n, Goal = "g", DoneWhen = "d", State = n == 1 ? LegState.Done : LegState.Planned,
+            Flight = f.Code, Name = "leg" + n, Order = n, Goal = "g", DoneWhen = "d", State = n <= doneLegs ? LegState.Done : LegState.Planned,
         }));
         return [.. FlightLine.Build(rows, [], Live.At, legRows)];
     }
@@ -208,17 +208,19 @@ public sealed class MapZoomTests
             view.HandleInput(new InputEvent.KeyDown(InputKey.Space)).ShouldBeTrue();
         }
 
-        view.HandleMapPointer(new InputEvent.MouseDown(600f, 400f, button)).ShouldBeTrue();
-        view.HandleMapPointer(new InputEvent.MouseMove(630f, 380f, button)).ShouldBeTrue();
-        view.HandleMapPointer(new InputEvent.MouseMove(650f, 370f, button)).ShouldBeTrue();
-        view.HandleMapPointer(new InputEvent.MouseUp(650f, 370f, button)).ShouldBeTrue();
+        // Press on a row band, where a plain left drag never pans, so Space (or the middle button) is what moves the map.
+        var (sx, sy) = RowPoint(view, 0);
+        view.HandleMapPointer(new InputEvent.MouseDown(sx, sy, button)).ShouldBeTrue();
+        view.HandleMapPointer(new InputEvent.MouseMove(sx + 30f, sy - 20f, button)).ShouldBeTrue();
+        view.HandleMapPointer(new InputEvent.MouseMove(sx + 50f, sy - 30f, button)).ShouldBeTrue();
+        view.HandleMapPointer(new InputEvent.MouseUp(sx + 50f, sy - 30f, button)).ShouldBeTrue();
         show();
 
         vp.PanX.ShouldBe(x0 + 50f, 0.5f);
         vp.PanY.ShouldBe(y0 - 30f, 0.5f);
         vp.IsPanning.ShouldBeFalse();
         // The drag is over: a move now moves nothing.
-        view.HandleMapPointer(new InputEvent.MouseMove(700f, 300f, button)).ShouldBeFalse();
+        view.HandleMapPointer(new InputEvent.MouseMove(sx + 100f, sy - 90f, button)).ShouldBeFalse();
     }
 
     private static List<ClickableRegion> Regions(FlightsView<RgbaImage> view)
@@ -342,13 +344,70 @@ public sealed class MapZoomTests
     }
 
     [Fact]
+    public void TheLayersPaletteTakesItsOwnLeftPressAndNothingPans()
+    {
+        var (renderer, view, show) = Open();
+        using var _ = renderer;
+        show();
+        var panel = view.MapLayers.Palette.PanelRect;
+        panel.Width.ShouldBeGreaterThan(0f);
+
+        // The body of the palette and its grip (the top edge).
+        view.HandleMapPointer(new InputEvent.MouseDown(panel.X + panel.Width / 2f, panel.Y + panel.Height / 2f)).ShouldBeFalse();
+        view.HandleMapPointer(new InputEvent.MouseDown(panel.X + panel.Width / 2f, panel.Y + 2f)).ShouldBeFalse();
+        view.Viewport.IsPanning.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnOpenAboutCardTakesALeftPressOverEmptyCanvasSoNothingPans()
+    {
+        var (renderer, view, show) = Open();
+        using var _ = renderer;
+        show();
+        var (ex, ey) = EmptyPoint(view);
+        var about = new AboutCard();
+        view.About = about;
+
+        about.Toggle();
+        view.HandleMapPointer(new InputEvent.MouseDown(ex, ey)).ShouldBeFalse();
+        view.Viewport.IsPanning.ShouldBeFalse();
+
+        // Closed again, the same press pans.
+        about.Close();
+        view.HandleMapPointer(new InputEvent.MouseDown(ex, ey)).ShouldBeTrue();
+        view.Viewport.IsPanning.ShouldBeTrue();
+        view.HandleMapPointer(new InputEvent.MouseUp(ex, ey));
+    }
+
+    [Fact]
+    public void ARefreshWhereALegChangedStateKeepsThePanOffsetAndTheSelectedFlight()
+    {
+        var (renderer, view, show) = Open();
+        using var _ = renderer;
+        var vp = view.Viewport;
+        vp.PanBy(25f, 15f);
+        show();
+        var (x0, y0) = (vp.PanX, vp.PanY);
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Home));
+        view.HandleInput(new InputEvent.KeyDown(InputKey.Down));
+        var code = Lines()[view.Selected].Code;
+
+        // The same flights with a second leg now done each.
+        var changed = Lines(doneLegs: 2);
+        view.Render(new FlightsScreen(changed, "test", Live.At), new RectF32(0, 0, Width, Height));
+
+        changed[view.Selected].Code.ShouldBe(code);
+        (vp.PanX, vp.PanY).ShouldBe((x0, y0));
+    }
+
+    [Fact]
     public void BeforeAndAfterCapturesOfTheCanvasAreWrittenUnderTheTestOutput()
     {
         var (renderer, view, show) = Open();
         using var _ = renderer;
         view.HandleInput(new InputEvent.KeyDown(InputKey.Home));
         show();
-        var folder = Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "captures")).FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "pilot-pil715-captures")).FullName;
         var before = Path.Combine(folder, "canvas-selected-row.png");
         File.WriteAllBytes(before, PngWriter.Encode(renderer.Surface.Pixels, Width, Height));
 

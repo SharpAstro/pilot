@@ -96,6 +96,10 @@ internal sealed partial class FlightsView<TSurface>
     // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
     private bool MapLive => MapShown && _mapBodySeen is not null && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
 
+    // An overlay over the canvas (the About card, the gallery viewer) takes a plain left press itself, so it never starts a pan.
+    // The chrome adds the rail's More menu, which the view does not know.
+    private bool OverlayOpen => About is { IsOpen: true } || Gallery.Viewing is not null;
+
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;
 
@@ -153,7 +157,7 @@ internal sealed partial class FlightsView<TSurface>
                 }
                 return true;
             case InputEvent.MouseDown down when MapLive && _mapBody is { } body && body.Contains(down.X, down.Y)
-                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && (_space || IsEmptyCanvas(body, down.X, down.Y)))):
+                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && (_space || (!OverlayOpen && IsEmptyCanvas(body, down.X, down.Y))))):
                 _panButton = down.Button;
                 var (vx, vy) = ToView(body, down.X, down.Y);
                 _vp.BeginPan(vx, vy);
@@ -175,43 +179,6 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
-    // Whether a surface point is empty canvas: in no row band, no continent header, and not on the zoom pill or the layers menu.
-    // A left press there pans; a press on a row is left to the router (a click selects, and a drag is kept for reordering).
-    private bool IsEmptyCanvas(RectF32 body, float x, float y)
-    {
-        if (_layersOnShow && MapLayers.Palette.PanelRect.Contains(x, y))
-        {
-            return false;
-        }
-        var (vx, vy) = ToView(body, x, y);
-        var pillX = _vp.ViewWidth - PillWidth - PillGap - (MapLayers.Palette.Side == Layout.DockSide.Right ? FlightMapLayerPalette.PanelWidth + PillGap : 0f);
-        var pillY = _vp.ViewHeight - PillHeight - PillGap;
-        if (vx >= pillX && vx <= pillX + PillWidth && vy >= pillY && vy <= pillY + PillHeight)
-        {
-            return false;
-        }
-        var (dx, dy) = (_vp.DesignX(vx), _vp.DesignY(vy));
-        foreach (var c in _map.Continents)
-        {
-            if (dx >= c.X && dx <= c.X + c.Width && dy >= c.Y && dy <= c.Y + FlightMap.Header)
-            {
-                return false;
-            }
-        }
-        foreach (var route in _map.Routes)
-        {
-            if (IndexOf(_screen, route) < 0)
-            {
-                continue;
-            }
-            var (bx, by, bw, bh) = _map.RowBand(route);
-            if (dx >= bx && dx <= bx + bw && dy >= by && dy <= by + bh)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
 
     // The keys the map takes while it is shown. Ctrl+0 and Ctrl+1 are also the Ideas and Home pages' chords: the chrome offers them
     // here first (see PilotChrome.HandleInput), and they are the map's only while it is shown. Ctrl+= arrives as Plus (the
@@ -275,34 +242,6 @@ internal sealed partial class FlightsView<TSurface>
         return true;
     }
 
-    // Moves the selection through the flights in the order they are drawn (continents as drawn, rows top to bottom), stopping at the
-    // ends, then pans just far enough to bring its row into view. With none picked, Down and Home take the first, Up and End the last.
-    private void MoveSelection(InputKey key)
-    {
-        var order = new List<(int Index, MapRoute Route)>();
-        foreach (var route in _map.Routes)
-        {
-            if (IndexOf(_screen, route) is >= 0 and var i)
-            {
-                order.Add((i, route));
-            }
-        }
-        if (order.Count == 0)
-        {
-            return;
-        }
-        var at = order.FindIndex(o => o.Index == Selected);
-        var to = key switch
-        {
-            InputKey.Home => 0,
-            InputKey.End => order.Count - 1,
-            InputKey.Down => at < 0 ? 0 : Math.Min(at + 1, order.Count - 1),
-            _ => at < 0 ? order.Count - 1 : Math.Max(at - 1, 0),
-        };
-        ListCursor.MoveTo(order[to].Index);
-        var (bx, by, bw, bh) = _map.RowBand(order[to].Route);
-        _vp.EnsureVisible(bx, by, bw, bh);
-    }
 
     private const float PillWidth = 56f;
     private const float PillHeight = 26f;
