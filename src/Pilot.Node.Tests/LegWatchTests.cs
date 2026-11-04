@@ -289,23 +289,30 @@ public sealed class LegWatchTests
     [Fact]
     public async Task AnIdleWorkerWithAnEndedUntoldJobIsToldItAndNeitherNudgedNorRung()
     {
-        Worker(SessionState.Idle);
-        EndedUntoldJob();
-        _watch.TellEndedJobs = (owners, _) =>
+        // The hook goes through a real JobRunner's tell, as the node wires it (NodeApp.Services.cs).
+        var root = Directory.CreateTempSubdirectory("legwatch-tell-").FullName;
+        try
         {
-            owners.ShouldContain("a1b2c3d4");
-            _state.PutJob(_state.Jobs().Single(j => j.Id == "j9") with { Told = true });
-            return Task.FromResult(true);
-        };
-        _time.Advance(TimeSpan.FromMinutes(10));
+            var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), _time) { Say = Run };
+            _watch.TellEndedJobs = jobs.TellUntoldOf;
+            Worker(SessionState.Idle);
+            EndedUntoldJob();
+            _time.Advance(TimeSpan.FromMinutes(10));
 
-        await _watch.LookAsync(Ct);
+            await _watch.LookAsync(Ct);
 
-        _state.Jobs().Single(j => j.Id == "j9").Told.ShouldBeTrue();
-        _said.ShouldBeEmpty();
-        Open().ShouldBeEmpty();
-        Handled().ShouldNotContain(c => c.Kind == "worker-nudged");
-        Handled().ShouldContain(c => c.Kind == "worker-told-job");
+            _state.Jobs().Single(j => j.Id == "j9").Told.ShouldBeTrue();
+            var told = _said.ShouldHaveSingleItem();
+            told.Target.ShouldBe(Verbs.SessionTarget("a1b2c3d4"));
+            told.Args.ShouldHaveSingleItem().ShouldContain("Your job j9");
+            Open().ShouldBeEmpty();
+            Handled().ShouldNotContain(c => c.Kind == "worker-nudged");
+            Handled().ShouldContain(c => c.Kind == "worker-told-job");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

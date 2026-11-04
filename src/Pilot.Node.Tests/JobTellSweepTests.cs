@@ -56,6 +56,15 @@ public sealed class JobTellSweepTests : IDisposable
             StartedAt = DateTimeOffset.UtcNow.AddMinutes(-2), EndedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
         });
 
+    /// <summary>A live session row for <paramref name="id"/>, so a refused say is a refusal of a session the node knows.</summary>
+    private void Live(string id) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "de1-tell-" + id, Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.Worker, Flight = "TELL1", Leg = "one", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = SessionState.Idle,
+            LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow.AddHours(-1),
+        });
+
     private async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
         for (var i = 0; i < 200; i++)
@@ -89,6 +98,7 @@ public sealed class JobTellSweepTests : IDisposable
     public async Task ARefusingOwnerRingsOneCardAcrossSeveralTicks()
     {
         _refuse = true;
+        Live("w0000001");
         Seed("j1");
         await _jobs.StartAsync(CancellationToken.None);
 
@@ -111,7 +121,39 @@ public sealed class JobTellSweepTests : IDisposable
         await Task.Delay(300, Ct);
 
         _said.Count.ShouldBe(2);
-        _state.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UntoldKind);
+        // The card the throw rang is closed by the later tell: it would say "could not be told" of a job that was.
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UntoldKind);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnOwnerTheNodeHasNoRowForWhoseSayIsRefusedIsMarkedToldAndRingsNothing()
+    {
+        // As the real messenger does for a session long gone: "There is no session ...".
+        _refuse = true;
+        Seed("j1", owner: "w0000099");
+        await _jobs.StartAsync(CancellationToken.None);
+
+        await Until("j1", j => j.Told);
+        await Task.Delay(300, Ct);
+
+        _said.Count.ShouldBe(1);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnOwnerTheLedgerShowsEndedIsMarkedToldWithoutASay()
+    {
+        var ledger = new Pilot.Node.Sessions.SessionLedger(Path.Combine(_root, "ledger.json"));
+        ledger.Started("w0000077", "de1-tell-gone", new Pilot.Node.Sessions.SessionRoleInfo(SessionRole.Worker, "TELL1", "one", null), SessionStartReasons.LegLaunch, "opus");
+        ledger.Stopped(["w0000077"], SessionEndReasons.Finished, "claude");
+        _jobs.Ledger = ledger;
+        Seed("j1", owner: "w0000077");
+
+        (await _jobs.TellUntoldOf(["w0000077"], Ct)).ShouldBeTrue();
+
+        _said.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldBeEmpty();
     }
 
     [Fact]
@@ -119,7 +161,6 @@ public sealed class JobTellSweepTests : IDisposable
     {
         Seed("j1", owner: "w0000001");
         Seed("j2", owner: "w0000002");
-        _jobs.PumpEvery.ShouldBe(TimeSpan.FromMilliseconds(50));
 
         (await _jobs.TellUntoldOf(["w0000002"], Ct)).ShouldBeTrue();
 

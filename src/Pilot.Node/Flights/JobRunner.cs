@@ -1370,8 +1370,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return;
             }
         }
+        else if (Ledger?.Find([job.Owner]) is { EndedAt: not null })
+        {
+            // No row for the owner, and the ledger says its session ended: nobody is waiting on this job.
+            state.PutJob(job with { Told = true });
+            return;
+        }
         bool ok;
         string? error;
+        var threw = false;
         try
         {
             var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
@@ -1387,6 +1394,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             // A say that throws is a say that failed: it rings like a refused one (once), rather than faulting the caller
             // silently, and unlike a refusal it is tried again by the next sweep, as the fault may have been a passing one.
             _tried.TryRemove(job.Id, out _);
+            threw = true;
             (ok, error) = (false, $"{ex.GetType().Name}: {ex.Message}");
             if (!_rang.TryAdd(job.Id, 0))
             {
@@ -1395,6 +1403,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         if (ok)
         {
+            state.PutJob(job with { Told = true });
+            // A card an earlier try rang ("could not be told") is out of date now it has been told.
+            state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
+        }
+        else if (ownerRow is null && !threw)
+        {
+            // The node has no row for the owner and its session refused the say (it is gone): nobody is waiting on this job.
+            // Marked told, quietly, so a session long gone is not rung for again on every node start.
             state.PutJob(job with { Told = true });
         }
         else
