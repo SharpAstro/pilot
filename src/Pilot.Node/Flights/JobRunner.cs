@@ -553,7 +553,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // Each waiting job says where it stands.
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
+            _queue[i] = _queue[i] with
+            {
+                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}",
+                Slots = MaxRunning,
+                WaitsOnSibling = SiblingHold(_queue[i]) is not null,
+            };
             state.PutJob(_queue[i]);
         }
 
@@ -683,6 +688,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
+    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set, live.</summary>
+    public bool PlaneOutput { get; set; }
+
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
     public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
 
@@ -697,7 +705,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         IReadOnlyCollection<string> set;
         try
         {
-            set = SiblingsOf(job);
+            // A plane job that builds into the plane's own artifacts shares nothing to hold (job-plane-output).
+            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOf(job);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -837,7 +846,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority);
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd));
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);
         }
