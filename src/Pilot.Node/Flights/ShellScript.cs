@@ -39,7 +39,7 @@ public sealed partial class ShellScript : IDisposable
             return new ShellScript(BuildEnvironment.Apply(unixStart), null);
         }
         var script = Path.Combine(Path.GetTempPath(), $"pilot-{Guid.NewGuid():N}.ps1");
-        File.WriteAllText(script, Body(Unwrap(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(script, Body(Prepared(command)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = cwd };
         foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script })
         {
@@ -80,6 +80,40 @@ public sealed partial class ShellScript : IDisposable
             ? match.Groups["sbody"].Value.Replace("''", "'", StringComparison.Ordinal)
             : UnquoteDouble(match.Groups["dbody"].Value);
     }
+
+    /// <summary>
+    /// The line a Windows script holds: <see cref="Unwrap"/>ped, and with a <c>bash</c> or <c>sh</c> head run by Git Bash
+    /// (<see cref="GitBash"/>), never System32's WSL launcher. One place for <see cref="For"/> and <see cref="DetachedShell.For"/>,
+    /// so a check and a job read a line alike. Throws <see cref="InvalidOperationException"/> with <see cref="GitBash.NotFound"/>
+    /// when the line needs Git Bash and there is none.
+    /// </summary>
+    public static string Prepared(string command) => Resolved(command).Line;
+
+    /// <summary>
+    /// <see cref="Prepared(string)"/> with the shell that line really runs in (<see cref="ShellName"/>), from the one resolution:
+    /// a job's row and its log header name the same Git Bash the script calls. Throws as <see cref="Prepared(string)"/> does.
+    /// </summary>
+    public static (string Line, string Shell) Resolved(string command) => Resolved(command, null, resolve: true);
+
+    /// <summary><see cref="Prepared(string)"/> with the Git Bash a test names; null means none was found.</summary>
+    internal static string Prepared(string command, string? gitBash) => Resolved(command, gitBash, resolve: false).Line;
+
+    /// <summary>What a job's row and log header say ran it on Windows: <c>pwsh</c>, or <c>git-bash &lt;path&gt;</c>.</summary>
+    public static string ShellName(string? gitBash) => gitBash is null ? "pwsh" : $"git-bash {gitBash}";
+
+    private static (string Line, string Shell) Resolved(string command, string? gitBash, bool resolve)
+    {
+        var line = Unwrap(command);
+        if (!GitBash.NeedsGitBash(line))
+        {
+            return (line, ShellName(null));
+        }
+        var path = resolve ? GitBash.Resolve() : gitBash;
+        return (GitBash.Rewrite(line, path ?? throw new InvalidOperationException(GitBash.NotFound)), ShellName(path));
+    }
+
+    /// <summary>The first line of a job's log: <c>shell: pwsh</c>, <c>shell: git-bash C:\Program Files\Git\bin\bash.exe</c>, <c>shell: /bin/bash</c>.</summary>
+    public static string LogHeader(string shell) => $"shell: {shell}";
 
     /// <summary>
     /// A double-quoted pwsh string's text as the outer pwsh reads it, in one left-to-right pass: <c>""</c> is a quote, a

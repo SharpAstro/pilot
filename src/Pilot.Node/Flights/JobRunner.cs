@@ -319,7 +319,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         };
         ended = ended with
         {
-            Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null,
+            Step = StepOf(last, job),
             EndedAt = EndOf(job, exitPath),
         };
         _tried[job.Id] = 0;
@@ -381,6 +381,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (SleepOnly.Refusal(line) is { } refusal)
         {
             return state.Complete(command, refusal);
+        }
+        // A bash or sh line runs Git Bash on Windows, never WSL's launcher; with none found it is refused here, running nothing.
+        if (GitBash.Refusal(line) is { } noGitBash)
+        {
+            return state.Complete(command, noGitBash);
         }
 
         SessionRow? owner = null;
@@ -824,13 +829,21 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _holds[job.Id] = hold;
         }
         // What a later node needs to find it again, on the row before it is put. The scripts stay until the job has ended.
-        job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = shell.Script };
+        job = job with { ExitPath = exitPath, Pid = process.Pid, ProcessStartedAt = process.StartedAt, ScriptPath = shell.Script, Shell = shell.Shell };
         // In _running before the Running row is put: a cancel that sees the row must find the process.
         _running[job.Id] = process;
         state.PutJob(job);
         _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: false), CancellationToken.None);
         return null;
     }
+
+    /// <summary>Whether <paramref name="line"/> is the shell header the job's log opens with (<see cref="ShellScript.LogHeader"/>), which is no progress.</summary>
+    private static bool IsShellHeader(string line, JobRow job) =>
+        job.Shell is { } shell && line.TrimEnd() == ShellScript.LogHeader(shell);
+
+    /// <summary>A job's step from its last lines: the last non-empty one, but never the shell header, so a job that wrote nothing has no step rather than its shell.</summary>
+    private static string? StepOf(string[] lines, JobRow job) =>
+        lines.LastOrDefault(l => l.Trim().Length > 0 && !IsShellHeader(l, job)) is { } l ? Clip(l) : null;
 
     /// <summary>When <paramref name="process"/> started, in UTC; now when it cannot be read (it ended already, and the watch finds it so).</summary>
     private DateTimeOffset StartOf(Process process)
@@ -1111,7 +1124,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 tail.Add(line);
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
-                if (now - lastStep >= StepEvery && line.Trim().Length > 0)
+                if (now - lastStep >= StepEvery && line.Trim().Length > 0 && !IsShellHeader(line, job))
                 {
                     lastStep = now;
                     lock (_rowLock)
@@ -1239,7 +1252,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
         }
-        ended = ended with { Step = last.LastOrDefault(l => l.Trim().Length > 0) is { } l ? Clip(l) : null, EndedAt = time.GetUtcNow() };
+        ended = ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() };
         if (memory.Count > 0)
         {
             ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
