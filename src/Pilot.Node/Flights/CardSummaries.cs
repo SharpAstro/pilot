@@ -86,6 +86,7 @@ public static partial class CardSummaries
             DesignDecisionMirror.FailedKind => "A design decision was recorded but GitHub refused its comment on the PR or the flight's issue. The decision stays in the black box (pilot decisions --kind design); post it by hand if it should be there.",
             "repo-setup" => "What repo setup made and found in a repo: the Priority field and the labels the node reads. Nothing to do; a refusal has its own card.",
             "node-label-refused" => "GitHub refused the node's label on a flight's PR or issue. Add it by hand if the flight should show which node flies it.",
+            DiskSweep.Kind => "The node's disk sweep deleted job scratch (of landed flights' ended sessions, or older than the scratch-days setting) and old probe outputs, and says how much by unique bytes. Nothing to do.",
             "plane-left" => "A flight's plane folder could not be deleted because a process holds it. The node tries again at its next start; delete it by hand if it stays.",
             "issue-left-open" => "A landed flight's issue is still open on GitHub. Close it by hand; its work is in the merged PR.",
             FlightCommander.FoldedKind => $"{what} was folded into another flight, whose planner now plans its points. Nothing to do.",

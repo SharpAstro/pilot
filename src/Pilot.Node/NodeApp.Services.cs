@@ -71,6 +71,12 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => new DiskSweep(
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+        });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));

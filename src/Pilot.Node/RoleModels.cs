@@ -427,6 +427,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Days a job's scratch may sit before the disk sweep deletes it (<see cref="NodeSettings.ScratchDaysKey"/>); 2 by default.</summary>
+    public int ScratchDays
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.ScratchDays ?? NodeSettings.DefaultScratchDays;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {
