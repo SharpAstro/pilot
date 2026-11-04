@@ -28,7 +28,7 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task ABranchHoldingAMergeOfItsBaseIsMergedBySquashFromTheStartAndRebaseIsNeverTried()
+    public async Task ABranchHoldingAMergeOfItsBaseIsRebasedFirstAndMergedLinearByRebase()
     {
         var (flight, head) = await FlightWithMergeOfMain();
         Git(flight.Worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").ShouldBe("1");
@@ -36,20 +36,12 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head, "rebase");
 
         merge.Error.ShouldBeNull();
-        _github.Merged.ShouldBe([(_github.Pr!.Number, head, "squash")]);
+        var shaped = Git(flight.Worktree, "rev-parse", "HEAD");
+        shaped.ShouldNotBe(head);
+        Git(flight.Worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").ShouldBe("0");
+        _github.Merged.ShouldBe([(_github.Pr!.Number, shaped, "rebase")]);
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
-    }
-
-    [Fact]
-    public async Task AMergeIsUsedWhereSquashIsNotAllowed()
-    {
-        var (flight, head) = await FlightWithMergeOfMain();
-        _github.AllowedMethods = new AllowedMergeMethods(Squash: false, Rebase: true, Merge: true);
-
-        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head, "rebase")).Error.ShouldBeNull();
-
-        _github.Merged.ShouldBe([(_github.Pr!.Number, head, "merge")]);
     }
 
     [Fact]
