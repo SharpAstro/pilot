@@ -155,6 +155,15 @@ public sealed record CommandResult
     public required long Seq { get; init; }
 }
 
+/// <summary>The standard messages a person's button tells the watchtower, one constant each, so no UI builds the words.</summary>
+public static class WatchtowerAsks
+{
+    /// <summary>The panel's <b>Clean up</b>: the tidy-up the person asks of the watchtower (issue #706).</summary>
+    public const string CleanUp =
+        "Clean up, at the person's request: close or dismiss cards that need nothing now (their session, leg, flight or PR is already gone or done), " +
+        "stop sessions past their purpose with `session end` and a reason, and reply with one line per thing you did. Answer no person-only card.";
+}
+
 /// <summary>The verbs and targets the node knows.</summary>
 public static class Verbs
 {
