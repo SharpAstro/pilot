@@ -20,11 +20,19 @@ internal static class PullRequestLink
     /// the whole text, else where the link goes. <paramref name="fill"/> makes the text take the room it is given, as a line's title does.
     /// <paramref name="size"/> is the text's size, <paramref name="tipSide"/> the side of the text its tooltip opens on (null for the default),
     /// <paramref name="tall"/> says the link stands in a row of a height of its own, which the caller sets: its parts then take that height,
-    /// and <paramref name="browserAction"/> names the ↗'s hit where it is not <c>&lt;action&gt;:browser</c>.
+    /// and <paramref name="browserAction"/> names the ↗'s hit where it is not <c>&lt;action&gt;:browser</c>. A <paramref name="wrapLines"/> above 0
+    /// makes the text wrap, over that many lines at most, every word carrying the link's hit, hover and menu, and the ↗ (the small one beside
+    /// the title of an in-app link) standing at the top of its own column, so a long title is read whole instead of cut to one row; the
+    /// link then takes the room it is given, whatever <paramref name="fill"/> says, and its height is its lines' (no <paramref name="tall"/>).
     /// </summary>
     public static Layout.Node Of(LinkMenu links, string action, string text, string pr, string? url, Action<string>? open, Action? route, string routeName,
-        RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, bool fill, float size = 12f, Layout.DockSide? tipSide = null, bool tall = false, string? browserAction = null)
+        RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, bool fill, float size = 12f, Layout.DockSide? tipSide = null, bool tall = false, string? browserAction = null,
+        int wrapLines = 0)
     {
+        if (wrapLines > 0)
+        {
+            return Wrapped(links, action, text, pr, url, open, route, routeName, color, hover, mayBeCut, size, tipSide, browserAction, wrapLines);
+        }
         if (route is null)
         {
             var away = Tip(Layout.Builder.Text(text + Followable.Away, size, color).BgHover(hover)
@@ -49,6 +57,28 @@ internal static class PullRequestLink
         }
         var row = Layout.Builder.HStack(Menu(links, fill ? title.WStar() : title.WAuto(), url), Menu(links, browser, url));
         return fill ? row.WStar() : row.WAuto();
+    }
+
+    private static Layout.Node Wrapped(LinkMenu links, string action, string text, string pr, string? url, Action<string>? open, Action? route, string routeName,
+        RGBAColor32 color, RGBAColor32 hover, bool mayBeCut, float size, Layout.DockSide? tipSide, string? browserAction, int lines)
+    {
+        Layout.Node Word(Layout.Node word) => Menu(links, word.BgHover(hover).Follows(new HitResult.ButtonHit(action), _ => { if (route is null) { Open(open, url); } else { route(); } }), url);
+        // The whole text on hover where the cap may cut it, else where the link goes.
+        var title = Tip(WrappedProse.Linked(text, size, color, lines, Word, route is null ? Followable.Away : ""),
+            mayBeCut ? text : route is null ? $"Open {pr} on GitHub" : $"Show {pr} on {routeName}", tipSide);
+        if (route is null)
+        {
+            return title;
+        }
+        // The browser's own, small, in a column of its own at the top right: it reads as the way out and the title as the way in.
+        var browser = Layout.Builder.Text("↗", 11f, color, TextAlign.Center, TextAlign.Near)
+            .Pad(6f, 0f)
+            .WAuto()
+            .BgHover(hover)
+            .Follows(new HitResult.ButtonHit(browserAction ?? $"{action}:browser"), _ => Open(open, url))
+            .WithTooltip($"Open {pr} on GitHub", Layout.DockSide.Left);
+        // A grid, not a stack: a stack measures the title against the whole width, taking off no sibling's (DIR.Lib: Engine.MeasureStack).
+        return Layout.Builder.Grid(2, title, Menu(links, browser, url)).WithColumns(Layout.Sizing.Star(), Layout.Sizing.Auto).WithAutoRows().WStar().HAuto();
     }
 
     private static Layout.Node Tip(Layout.Node node, string text, Layout.DockSide? side) =>

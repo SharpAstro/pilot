@@ -96,7 +96,7 @@ public sealed class PullRequestLinksTests
     }
 
     private static void Click(PixelWidgetBase<RgbaImage> widget, string action) =>
-        Regions(widget).Single(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
+        Regions(widget).First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
 
     private static bool Has(PixelWidgetBase<RgbaImage> widget, string action) => Regions(widget).Any(r => r.Result is HitResult.ButtonHit b && b.Action == action);
 
@@ -204,16 +204,36 @@ public sealed class PullRequestLinksTests
         opened.ShouldBe([pr.Url]);
         chrome.Page.ShouldBe(PilotPage.Home, "the arrow only opens the browser");
 
-        // Side by side on one row of the card, the arrow the smaller of the two, the title the wider.
+        // Side by side: the title wraps in a column of its own, every word of it the link, and the arrow, the smaller of the two, stands at the top of the column beside it.
         var arranged = Layout.Engine.Arrange(chrome.Cards.Tree(cards), new Rect<float>(0, 0, CardsView<RgbaImage>.Width, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        Rect<float> Of(string action) => arranged.Single(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Bounds;
-        var title = Of("card:c1:title");
-        var away = Of("card:c1:browser");
-        away.Y.ShouldBe(title.Y);
-        away.Height.ShouldBe(title.Height);
-        away.X.ShouldBeGreaterThanOrEqualTo(title.X + title.Width - 0.5f);
-        away.Width.ShouldBeLessThan(title.Width);
+        var words = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: "card:c1:title" }).Select(a => a.Bounds).ToList();
+        var away = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "card:c1:browser" }).Bounds;
+        words.Count.ShouldBeGreaterThan(1);
+        away.Y.ShouldBe(words.Min(w => w.Y), 1f);
+        away.X.ShouldBeGreaterThanOrEqualTo(words.Max(w => w.X + w.Width) - 0.5f);
+        away.Width.ShouldBeLessThan(words.Sum(w => w.Width));
         arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "card:c1:browser" }).Node.Tooltip.ShouldNotBeNull().ShouldContain("GitHub");
+    }
+
+    [Fact]
+    public void ALongPullRequestTitleWrapsAtTheNarrowestPanelAndTheArrowStaysBesideItsFirstLine()
+    {
+        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        var chrome = Window(renderer);
+        var screen = Prs();
+        var pr = screen.Row!.PullRequests.Single(p => p.Number == 252);
+        var cards = CardsScreen.From([ReadyCard("PIL252", pr) with { Title = "PIL252's PR #252 is ready to merge: its review passed with two notes on the renderer and the writer" }]);
+        Draw(chrome, null, cards, screen);
+
+        var arranged = Layout.Engine.Arrange(chrome.Cards.Tree(cards), new Rect<float>(0, 0, CardsView<RgbaImage>.MinWidth, 1200), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var words = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: "card:c1:title" }).ToList();
+        var rows = words.Select(w => w.Bounds.Y).Distinct().ToList();
+
+        // Wrapped over two or three rows, not cut to one, and every word is the link: one hit, one hover.
+        rows.Count.ShouldBeInRange(2, CardsView<RgbaImage>.TitleLines);
+        words.Select(w => w.Bounds.X + w.Bounds.Width).Max().ShouldBeLessThanOrEqualTo(CardsView<RgbaImage>.MinWidth);
+        arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "card:c1:browser" }).Bounds.Y.ShouldBe(rows.Min(), 1f);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
     }
 
     [Theory]

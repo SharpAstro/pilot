@@ -69,7 +69,7 @@ public sealed class CursorAndLinksTests
             .Select(a => (((HitResult.ButtonHit)a.Node.Hit!).Action, a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } ? t.Value : "")),
     ];
 
-    private static string TextOf(List<(string Action, string Text)> buttons, string action) => buttons.First(b => b.Action == action).Text;
+    private static string TextOf(List<(string Action, string Text)> buttons, string action) => string.Concat(buttons.Where(b => b.Action == action).Select(b => b.Text)).TrimEnd();
 
     [Fact]
     public void TheFlightPageAndItsPanelPointAtEveryButtonAndMarkTheirOutsideLinks()

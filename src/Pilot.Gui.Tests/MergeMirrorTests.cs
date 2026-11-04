@@ -53,7 +53,7 @@ public sealed class MergeMirrorTests
         [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value.Trim())];
 
     private static string[] Actions(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
-        [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)];
+        [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Distinct()];
 
     [Theory]
     [InlineData(ChoiceStatus.Passing, null, "Merge")]

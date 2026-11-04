@@ -524,7 +524,7 @@ public sealed partial class LegCommander
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} "
                 + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
             link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} passed with {notes.Count} not blocking {(notes.Count == 1 ? "note" : "notes")}. The flight holds (no merge) while the watchtower makes the small ones in the plane ({flight.Worktree}) and commits them; no leg goes round. It then clears the hold (`flight clear {flight.Code}`) or pushes (`flight pr {flight.Code}`).");
+            summary: CardSummaries.ReviewNotes(flight.Code, notes));
     }
 
     /// <summary>The Handled card kind that says a flight was cleared to land.</summary>

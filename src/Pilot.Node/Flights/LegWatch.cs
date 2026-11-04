@@ -1010,6 +1010,27 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     private void LookAtStrays(SessionRow[] sessions, DateTimeOffset now)
     {
+        // A stray card for a session that is no longer live closes: Stop it would have nothing to stop.
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == StraySession).ToList())
+        {
+            var gone = sessions.FirstOrDefault(s => Verbs.SessionTarget(s.Id) == card.Subject);
+            if (gone is { Gone: false, Archived: false } && gone.State is not (SessionState.Ended or SessionState.Failed))
+            {
+                continue;
+            }
+            var outcome = "the session ended";
+            if (gone is { Gone: true })
+            {
+                outcome += ": its process is gone";
+            }
+            else if (gone is not null && Ledger?.Find([gone.SessionId, gone.Id, .. gone.EarlierSessionIds ?? []]) is { EndedAt: not null } entry)
+            {
+                outcome += entry.EndedBy == "claude"
+                    ? ": it finished by itself"
+                    : $": stopped by {entry.EndedBy}" + (string.IsNullOrEmpty(entry.EndReason) ? "" : $" ({entry.EndReason})");
+            }
+            state.CloseCardsAbout(card.Subject, outcome, StraySession);
+        }
         foreach (var row in sessions.Where(s => s is { Kind: SessionKind.Background, Gone: false, Archived: false } && s.State is not (SessionState.Ended or SessionState.Failed)))
         {
             string? why = WindDown.Why(state, Ledger, row);
@@ -1045,11 +1066,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 // The node stopped it, or its flight just landed: give the stop time to take before a person is rung.
                 continue;
             }
-            if (why is null || !_strays.Add(row.Id))
+            var subject = Verbs.SessionTarget(row.Id);
+            if (why is null || state.Cards(openOnly: true).Any(c => c.Kind == StraySession && c.Subject == subject) || !_strays.Add(row.Id))
             {
                 continue;
             }
-            var subject = Verbs.SessionTarget(row.Id);
             state.RaiseCard(CardBin.Ring, StraySession, subject, $"{row.Name} is running but should not be", why,
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");

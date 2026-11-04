@@ -3,6 +3,7 @@ using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
+using SharpAstro.Png;
 using Xunit;
 
 namespace Pilot.Gui.Tests;
@@ -40,7 +41,7 @@ public sealed class WatchtowerPanelTests
         using var _ = renderer;
         var screen = CardsScreen.From([Card("c1"), Card("c2", CardState.Closed, CardBin.Handled)], [Tower()]);
 
-        var text = Describe(view, screen);
+        var text = ArrangedText.Spoken(Describe(view, screen));
 
         var order = new[] { "Watchtower", "For you", "card c1", "Handled", "card c2", "Chat with the watchtower" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
         order.ShouldAllBe(i => i >= 0);
@@ -113,7 +114,7 @@ public sealed class WatchtowerPanelTests
         var handled = Card("c2", CardState.Closed, CardBin.Handled) with { Title = "PIL21 landed" };
         var other = Card("c3") with { Kind = "pr", Title = "PR 4 is ready" };
 
-        var text = Describe(view, CardsScreen.From([open, handled, other]));
+        var text = ArrangedText.Spoken(Describe(view, CardsScreen.From([open, handled, other])));
 
         text.ShouldContain("🛬 PIL20 landed");
         text.ShouldContain("🛬 PIL21 landed");
@@ -285,6 +286,65 @@ public sealed class WatchtowerPanelTests
 
         var stopped = Describe(view, CardsScreen.From([Card("c1")], [Tower() with { State = SessionState.Ended, ApiError = "rate limited" }]));
         stopped.ShouldContain("ended: rate limited");
+    }
+
+    [Fact]
+    public void TheFootReadsTasksThenChatThenCleanUp()
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+
+        var text = ArrangedText.Spoken(Describe(view, CardsScreen.From([Card("c1")], [Tower()])));
+
+        var order = new[] { "card c1", "Tasks", "Chat with the watchtower", "Clean up" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
+        order.ShouldAllBe(i => i >= 0);
+        order.ShouldBe([.. order.OrderBy(i => i)]);
+    }
+
+    [Theory]
+    [InlineData(240)]
+    [InlineData(400)]
+    public void TheTwoFootPillsShareOneHeightAndMiddleAndNothingIsClipped(int width)
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+        var tree = view.Tree(CardsScreen.From([Card("c1")], [Tower()]));
+
+        var arranged = Layout.Engine.Arrange(tree, new Rect<float>(0, 0, width, 600), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var chat = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "cards:chat" }).Bounds;
+        var clean = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "cards:cleanup" }).Bounds;
+
+        chat.Height.ShouldBe(clean.Height, 0.5f);
+        if (Math.Abs(chat.Y - clean.Y) < 1f)
+        {
+            (chat.Y + chat.Height / 2).ShouldBe(clean.Y + clean.Height / 2, 0.5f);
+        }
+        foreach (var b in new[] { chat, clean })
+        {
+            b.X.ShouldBeGreaterThanOrEqualTo(0f);
+            (b.X + b.Width).ShouldBeLessThanOrEqualTo(width);
+        }
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CapturesOfTheFootAtANarrowAndAWidePanel()
+    {
+        // Where the captures go (docs/captures, for the PR) when a person asks for them; PILOT_CARD_CAPTURE_TAG says "before" or "after".
+        if (Environment.GetEnvironmentVariable("PILOT_CARD_CAPTURES") is not { Length: > 0 } folder)
+        {
+            return;
+        }
+        var tag = Environment.GetEnvironmentVariable("PILOT_CARD_CAPTURE_TAG") is { Length: > 0 } t ? t : "after";
+        Directory.CreateDirectory(folder);
+        foreach (var width in new[] { 240, 400 })
+        {
+            const int height = 360;
+            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            var view = new CardsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, CanTell = true };
+            view.Render(CardsScreen.From([Card("c1"), Card("c2")], [Tower()]), new RectF32(0, 0, width, height));
+            File.WriteAllBytes(Path.Combine(folder, $"cleanup-foot-{tag}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+        }
     }
 
     [Fact]

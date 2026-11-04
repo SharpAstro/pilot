@@ -72,13 +72,12 @@ public sealed class DesignAnswerCardTests
         var arranged = Arrange(card, width, out var renderer);
         using (renderer)
         {
-            var text = string.Join('\n', arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+            var text = ArrangedText.Concat(arranged);
             text.ShouldContain("should this be a service at all?");
             foreach (var choice in card.Choices)
             {
-                // A long button is cut to what the panel holds, with the whole label as its tooltip; a short one shows whole.
-                var drawn = arranged.Select(x => x.Node).OfType<Layout.Node.Leaf>().Any(l => l.Content is Layout.Content.Text t && (t.Value.Trim() == choice.Label || l.Tooltip == choice.Label));
-                drawn.ShouldBeTrue(choice.Label);
+                // A button's label is wrapped in the button when it is long (pilot#677); past its two lines the whole label is on hover.
+                (text.Contains(choice.Label, StringComparison.Ordinal) || arranged.Any(a => a.Node.Tooltip == choice.Label)).ShouldBeTrue(choice.Label);
             }
             arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.TextInput>().ShouldHaveSingleItem();
             TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
