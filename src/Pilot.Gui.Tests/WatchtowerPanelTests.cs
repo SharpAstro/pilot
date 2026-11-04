@@ -289,6 +289,45 @@ public sealed class WatchtowerPanelTests
     }
 
     [Fact]
+    public void TheFootReadsTasksThenChatThenCleanUp()
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+
+        var text = ArrangedText.Spoken(Describe(view, CardsScreen.From([Card("c1")], [Tower()])));
+
+        var order = new[] { "card c1", "Tasks", "Chat with the watchtower", "Clean up" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
+        order.ShouldAllBe(i => i >= 0);
+        order.ShouldBe([.. order.OrderBy(i => i)]);
+    }
+
+    [Theory]
+    [InlineData(240)]
+    [InlineData(400)]
+    public void TheTwoFootPillsShareOneHeightAndMiddleAndNothingIsClipped(int width)
+    {
+        var view = NewView(out var renderer);
+        using var _ = renderer;
+        var tree = view.Tree(CardsScreen.From([Card("c1")], [Tower()]));
+
+        var arranged = Layout.Engine.Arrange(tree, new Rect<float>(0, 0, width, 600), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var chat = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "cards:chat" }).Bounds;
+        var clean = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "cards:cleanup" }).Bounds;
+
+        chat.Height.ShouldBe(clean.Height, 0.5f);
+        if (Math.Abs(chat.Y - clean.Y) < 1f)
+        {
+            (chat.Y + chat.Height / 2).ShouldBe(clean.Y + clean.Height / 2, 0.5f);
+        }
+        foreach (var b in new[] { chat, clean })
+        {
+            b.X.ShouldBeGreaterThanOrEqualTo(0f);
+            (b.X + b.Width).ShouldBeLessThanOrEqualTo(width);
+        }
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void CapturesOfTheFootAtANarrowAndAWidePanel()
     {
         // Where the captures go (docs/captures, for the PR) when a person asks for them; PILOT_CARD_CAPTURE_TAG says "before" or "after".

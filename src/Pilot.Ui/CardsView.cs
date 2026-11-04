@@ -268,6 +268,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Opens the Chat page: what the panel's foot, the watchtower's shortcut, does.</summary>
     public Action? OnChat { get; set; }
 
+    /// <summary>What the foot's <b>Clean up</b> does: sends the watchtower the standard tidy-up message.</summary>
+    public Action? OnCleanUp { get; set; }
+
     /// <summary>
     /// Opens the Chat page about a card: the card's <b>Chat about this</b>. Null leaves the button off, as a host with no chat has it.
     /// </summary>
@@ -514,10 +517,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).Selectable().RowH(16f));
         }
-        rows.Add(Layout.Builder.HStack(
+        rows.Add(Layout.Builder.Text("Tasks", 18f, Bright).Selectable().RowH(30f));
+        rows.Add(Layout.Builder.WrapH(
                 Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()).WStarUpToContent().WithTooltip("Chat with the watchtower"),
-                Layout.Builder.Spacer().WStar())
-            .RowH(30f));
+                Pill("Clean up", "cards:cleanup", () => OnCleanUp?.Invoke()).WStarUpToContent().WithTooltip("Sends the watchtower the standard tidy-up message"))
+            .WithGap(8f).WithLineGap(4f).WStar());
         rows.Add(Layout.Builder.Spacer().RowH(6f));
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
