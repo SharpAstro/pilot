@@ -137,7 +137,7 @@ public static partial class CardSummaries
             LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
-            LegWatch.StraySession => "A live session the node did not start and that matches no role, leg, flight or PR. Stop it if it is a stray; a role's current session never rings here.",
+            LegWatch.StraySession => "A live session that should not be running: one past its purpose (its leg is done or was redone, or its flight landed), or one the node did not start and no role claims. Stop it ends the session; the card closes by itself when the session ends. A role's current session never rings here.",
             PrReviews.FixEndedKind => "A fixer ended without pushing. Fix it starts another fixer on the same findings.",
             PrReviews.FixFollowUpKind => "A PR merged while its fixer worked, so the fixer's commits went to a new branch and a follow-up PR, which is reviewed as any PR. Nothing to do.",
             PrReviews.FixFollowUpFailedKind => "A PR merged while its fixer worked and the fixer's commits could not be pushed or opened as a follow-up PR. The detail names the commit and the local branch that holds it; push it by hand.",
