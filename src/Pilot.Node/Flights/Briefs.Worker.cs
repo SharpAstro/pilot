@@ -147,6 +147,7 @@ public static partial class Briefs
         text.AppendLine($"  Give `{run} run --` the command itself (`{run} run -- dotnet test ...`); the node runs it in its own shell, so");
         text.AppendLine("  never wrap it in `pwsh` or `bash -c`, which is refused: several steps are a job each, one after the other. Run");
         text.AppendLine($"  git plainly, one command or a few joined by `&&`, never inside a loop: tick steps as `{run} check 1 && {run} check 2`.");
+        text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
         text.AppendLine();
         text.AppendLine("## When you stop");

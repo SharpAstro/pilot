@@ -152,6 +152,14 @@ public static partial class Briefs
         "has reached your session when the rest of the leg is done, finish without the load and say in your report that it was not run\n" +
         "and why. A build or a test run that is merely heavy is not load in this sense.";
 
+    /// <summary>
+    /// The line every role that hands over a job or writes a check is told, in one line (pilot #697): which shell runs it. A bare
+    /// <c>bash</c> on Windows is WSL's launcher, which ran a Linux dotnet (NETSDK1147), so the node runs it in Git Bash instead, and says
+    /// so on the job's row and the first line of its log.
+    /// </summary>
+    internal const string JobShellRule =
+        "A job or a check runs in pwsh on Windows; `bash -c` there runs Git Bash (never WSL), and calling dotnet directly is best.";
+
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
         "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +

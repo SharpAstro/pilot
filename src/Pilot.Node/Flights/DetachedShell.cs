@@ -23,11 +23,18 @@ public sealed class DetachedShell : IDisposable
     private readonly string[] _files;
     private readonly Func<Process> _start;
 
-    private DetachedShell(string[] files, Func<Process> start)
+    private DetachedShell(string[] files, string shell, Func<Process> start)
     {
         _files = files;
+        Shell = shell;
         _start = start;
     }
+
+    /// <summary>
+    /// What really runs the line, as the job's row (<see cref="Pilot.Contracts.JobRow.Shell"/>) and the first line of its log say:
+    /// <c>pwsh</c>, <c>git-bash &lt;path&gt;</c> on Windows, the shell the wrapper runs under on Linux (<c>/bin/bash</c>, else <c>/bin/sh</c>).
+    /// </summary>
+    public string Shell { get; }
 
     /// <summary>The script files a Windows job runs from: deleted on <see cref="Dispose"/>, and by the wrapper when it ends.</summary>
     public IReadOnlyList<string> Scripts => _files;
@@ -44,14 +51,16 @@ public sealed class DetachedShell : IDisposable
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new DetachedShell([], () => StartUnix(jobId, command, cwd, logPath, exitPath, priority));
+            return new DetachedShell([], UnixShell(), () => StartUnix(jobId, command, cwd, logPath, exitPath, priority));
         }
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-        File.WriteAllText(inner, Utf8Output + "\n" + ShellScript.Body(ShellScript.Prepared(command)), utf8);
+        var (line, shell) = ShellScript.Resolved(command);
+        // The shell is the first line of the log, written by the script before the line's own output.
+        File.WriteAllText(inner, Utf8Output + "\n" + $"Write-Output {Quote(ShellScript.LogHeader(shell))}\n" + ShellScript.Body(line), utf8);
         File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
-        return new DetachedShell([inner, outer], () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
+        return new DetachedShell([inner, outer], shell, () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
     }
 
     /// <summary>The wrapper script beside a job's own <paramref name="script"/>.</summary>
@@ -109,16 +118,22 @@ public sealed class DetachedShell : IDisposable
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
     }
 
+    private static string? BashPath() => new[] { "/bin/bash", "/usr/bin/bash" }.FirstOrDefault(File.Exists);
+
+    /// <summary>The shell a Linux job's line runs under: the wrapper's, bash where it exists, else <c>/bin/sh</c>.</summary>
+    internal static string UnixShell() => BashPath() ?? "/bin/sh";
+
     /// <summary>What a Linux job starts: the wrapper under <c>setsid /bin/sh -c</c>, in a scope of its own under systemd, in the build environment.</summary>
     internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal)
     {
         // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
         // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
-        var bash = new[] { "/bin/bash", "/usr/bin/bash" }.FirstOrDefault(File.Exists);
+        var bash = BashPath();
         var closeFds = bash is null
             ? "for n in 3 4 5 6 7 8 9; do eval \"exec $n>&-\"; done\n"
             : "for f in /proc/self/fd/* /dev/fd/*; do n=${f##*/}; case $n in ''|*[!0-9]*) continue;; esac; [ \"$n\" -gt 2 ] && eval \"exec $n>&-\"; done 2>/dev/null\n";
-        var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( {command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
+        // The shell is the first line of the log: written inside the redirect, before the line's own output.
+        var wrapper = $"{closeFds}exec </dev/null >/dev/null 2>&1\n( printf '%s\\n' {ShQuote(ShellScript.LogHeader(UnixShell()))}\n{command}\n) </dev/null >{ShQuote(logPath)} 2>&1\ncode=$?\n" +
             $"echo \"$code\" > {ShQuote(exitPath + ".tmp")} && mv -f {ShQuote(exitPath + ".tmp")} {ShQuote(exitPath)}\nexit $code\n";
         var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
         var scoped = UnderSystemd(out var systemdRun) && ScopeWorks(systemdRun);

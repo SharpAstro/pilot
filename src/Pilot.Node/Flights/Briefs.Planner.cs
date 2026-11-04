@@ -120,6 +120,7 @@ public static partial class Briefs
         text.AppendLine("the leg over it with the work done (TIA1853, twice on 2026-10-28). End a leg on its last commit and its check passing.");
         text.AppendLine("The check runs as written in pwsh on Windows (sh elsewhere): quote anything holding a |, as a test filter");
         text.AppendLine("(`--filter 'FullyQualifiedName~A|FullyQualifiedName~B'`). A bare | is refused, since it would pipe.");
+        text.AppendLine(JobShellRule);
         // SDL144: a Debug check on a worktree needed what the Release package never carries, and failed for nothing of the leg's.
         text.AppendLine(CiRule);
         // A leg whose way to a number is loading the machine plans the ask, never the load (TIA1910).
