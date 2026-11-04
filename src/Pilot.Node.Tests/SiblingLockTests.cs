@@ -51,7 +51,7 @@ public sealed class SiblingLockTests : JobTestsBase
         var second = Hand(jobs, "echo 'two'; sleep 20");
 
         // Still building: the second stays queued, naming the build.
-        await Task.Delay(300);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
         Row(second).State.ShouldBe(JobState.Queued);
         Row(second).Step.ShouldNotBeNull().ShouldContain($"waiting for job {first}'s build");
 
