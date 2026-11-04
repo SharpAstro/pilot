@@ -50,9 +50,11 @@ public sealed record HeadWords(HeadRelation Relation, string Words, string Shas,
         var unchanged = await CodeUnchangedAsync(git, plane, baseRef, reviewed, head, cancellationToken);
         var baseTip = await git.RunAsync(["rev-parse", baseRef], plane, cancellationToken);
         var baseIn = baseTip.Ok && (await git.RunAsync(["merge-base", "--is-ancestor", baseTip.Output.Trim(), head], plane, cancellationToken)).Ok;
-        var newer = await git.RunAsync(["log", "--format=%s", $"{reviewed}..{head}"], plane, cancellationToken);
-        var subjects = newer.Ok ? newer.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
-        if (unchanged && baseIn && subjects.Length > 0 && subjects.All(s => s.StartsWith("Merge ", StringComparison.Ordinal)))
+        var newer = await git.RunAsync(["log", "--format=%P\t%s", $"{reviewed}..{head}"], plane, cancellationToken);
+        var lines = newer.Ok ? newer.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var subjects = lines.Select(l => l[(l.IndexOf('\t') + 1)..]).ToArray();
+        var onlyMerges = lines.All(l => l[..Math.Max(l.IndexOf('\t'), 0)].Contains(' ', StringComparison.Ordinal));
+        if (unchanged && baseIn && subjects.Length > 0 && onlyMerges)
         {
             return new HeadWords(HeadRelation.UpToDateWithBase, $"up to date with {baseName}: {baseName} merged in since review, code unchanged", shas, true);
         }

@@ -68,7 +68,8 @@ public sealed class BranchShapeTests : ReviewTestsBase
     public async Task AHeadMovedOnlyByAMergeOfItsBaseIsRepinnedAndMergesWithNoCard()
     {
         var (flight, _) = await Passed("1");
-        var reviewed = _github.Pr!.Head;
+        var reviewed = Git(flight.Worktree, "rev-parse", "HEAD");
+        _state.UpdateFlight(flight.Code, f => f with { Review = f.Review is { } r ? r with { ReviewedHead = reviewed } : null });
         File.WriteAllText(Path.Combine(Repo, "base.txt"), "base\n");
         Git(Repo, "add", "base.txt");
         Commit(Repo, "base moves");
@@ -79,6 +80,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         Git(plane, "push", "-q", "origin", flight.Branch);
         var head = Git(plane, "rev-parse", "HEAD");
         head.ShouldNotBe(reviewed);
+        _github.Pr = _github.Pr! with { Head = head };
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
 
@@ -92,12 +94,14 @@ public sealed class BranchShapeTests : ReviewTestsBase
     public async Task AHeadMovedByACodeChangeIsRefusedInWordsAndIsNotRepinned()
     {
         var (flight, _) = await Passed("1");
-        var reviewed = _github.Pr!.Head;
         var plane = flight.Worktree;
+        var reviewed = Git(plane, "rev-parse", "HEAD");
+        _state.UpdateFlight(flight.Code, f => f with { Review = f.Review is { } r ? r with { ReviewedHead = reviewed } : null });
         File.WriteAllText(Path.Combine(plane, "new.cs"), "class N { }\n");
         Git(plane, "add", ".");
         Commit(plane, "Add N");
         Git(plane, "push", "-q", "origin", flight.Branch);
+        _github.Pr = _github.Pr! with { Head = Git(plane, "rev-parse", "HEAD") };
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
 

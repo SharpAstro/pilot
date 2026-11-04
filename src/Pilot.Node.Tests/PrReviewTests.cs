@@ -643,7 +643,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
-        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("head moved");
+        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("newer than the review");
     }
 
     [Fact]

@@ -236,7 +236,7 @@ internal static class CardKindCatalog
     public static readonly (string Kind, string TitleHas, string? LabelHas)[] SourcePins =
     [
         ("issue-left-open", "is still open", null),
-        ("pr-review-queue-refused", "refused to queue", "once more at"),
+        ("pr-review-queue-refused", "refused to queue", "once more"),
         ("pr-fix-failed", "the fixer could not start", "Start the fixer on"),
         ("pr-fix-left", "fixer worktree is still there", null),
         ("pr-recheck", "recheck of", null),
