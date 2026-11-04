@@ -380,6 +380,8 @@ public static partial class NodeApp
                     }
                     return owners;
                 },
+                // The repos' drive, else the Claude profile's (one and the same on most machines).
+                DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });
