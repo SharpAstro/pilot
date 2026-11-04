@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
