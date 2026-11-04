@@ -140,9 +140,13 @@ public sealed partial class PrReviews
             throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
+        if (outcome.Kind == LandKind.RetryLater)
+        {
+            throw new FlightException($"GitHub did not answer the merge ({outcome.Said ?? "no answer"}): press Merge again");
+        }
         if (!outcome.Done)
         {
-            throw new FlightException(outcome.Said ?? "GitHub did not answer the merge: try again");
+            throw new FlightException(outcome.Said ?? "GitHub refused the merge");
         }
         var queued = outcome.Kind == LandKind.Queued;
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });

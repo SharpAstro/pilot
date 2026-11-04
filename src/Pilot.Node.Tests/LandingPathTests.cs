@@ -6,14 +6,15 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// One landing routine for every merge path (pilot #691): each path times each shape of GitHub's answer ends merged, retried, or in
-/// exactly one open card (or the refusal the caller shows) whose detail is GitHub's whole text. Done answers and a "can't be
-/// rebased" that squashed ring nothing. FakeGitHub is scripted per call.
+/// One landing routine for every merge path (pilot #691): each flight path times each shape of GitHub's answer
+/// (<see cref="LandingAnswers"/>) ends merged, retried, or in exactly one open card (or the refusal the caller shows) whose detail is
+/// GitHub's whole text. Done answers and a "can't be rebased" that squashed ring nothing. The reviewed-PR paths are
+/// <see cref="LandingReviewPathTests"/>, the recheck's <see cref="LandingRecheckPathTests"/>.
 /// </summary>
 [Trait("Category", "Slow")]
 public sealed class LandingPathTests : ReviewTestsBase
 {
-    private const string Marker = "marker-7431";
+    private const string Marker = LandingAnswers.Marker;
 
     public enum Path
     {
@@ -21,43 +22,61 @@ public sealed class LandingPathTests : ReviewTestsBase
         Hand,
         /// <summary>The node's own merge on autopilot (PrChecks.MergeOnAutopilotAsync).</summary>
         Autopilot,
-        /// <summary>The routine itself, as the laid-head requeue and the reviewed-PR queue call it.</summary>
+        /// <summary>The routine itself (LegCommander.LandPrAsync), as every caller reaches it.</summary>
         Routine,
+        /// <summary>A merge armed while checks ran, taken once they pass (PrChecks.MergeWhenGreenAsync).</summary>
+        ArmedAtGreen,
+        /// <summary>A PR the queue dropped, laid on its base and queued again at the laid head (LegCommander.Lay.cs).</summary>
+        Laid,
     }
 
-    public enum Shape { Done, Retried, Refused }
+    public static TheoryData<Path, string, LandingAnswers.Shape> Cases() => LandingAnswers.Cases<Path>();
 
-    public static TheoryData<Path, string, Shape> Cases()
+    private static void Commit(string cwd, string message) =>
+        Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", message);
+
+    // As RebaseLayFlightTests: a branch whose merge with main is clean but which does not rebase, so a drop is laid as one commit.
+    private async Task<(FlightRow Flight, string Old)> KeepOursFlight()
     {
-        var answers = new (string Text, Shape Shape)[]
-        {
-            ($"GraphQL: Pull request is already in the queue {Marker}", Shape.Done),
-            ($"Pull request is already merged {Marker}", Shape.Done),
-            ($"GraphQL: Auto merge is already enabled {Marker}", Shape.Done),
-            ($"GraphQL: This branch can't be rebased {Marker} (mergePullRequest)", Shape.Done),
-            ($"HTTP 502 Bad Gateway {Marker}", Shape.Retried),
-            ($"gh timed out {Marker}", Shape.Retried),
-            ($"GraphQL: Base branch was modified {Marker}. Review and try the merge again.", Shape.Refused),
-            ($"GraphQL: Pull request has a merge conflict {Marker}", Shape.Refused),
-            ($"GraphQL: Head branch was modified {Marker}. Review and try the merge again.", Shape.Refused),
-            ($"GraphQL: Repository rule violations found {Marker}\nA second line GitHub gave.", Shape.Refused),
-        };
-        var data = new TheoryData<Path, string, Shape>();
-        foreach (var path in Enum.GetValues<Path>())
-        {
-            foreach (var (text, shape) in answers)
-            {
-                data.Add(path, text, shape);
-            }
-        }
-        return data;
+        var (flight, _) = await Passed("1");
+        File.WriteAllText(System.IO.Path.Combine(Repo, "f.txt"), "x\n");
+        Git(Repo, "add", "f.txt");
+        Commit(Repo, "f");
+        File.WriteAllText(System.IO.Path.Combine(Repo, "f.txt"), "side\n");
+        Commit(Repo, "side");
+        Git(Repo, "push", "-q", "origin", "main");
+        var plane = flight.Worktree;
+        Git(plane, "fetch", "-q", "origin");
+        File.WriteAllText(System.IO.Path.Combine(plane, "f.txt"), "mine1\n");
+        Git(plane, "add", ".");
+        Commit(plane, "mine 1");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "-s", "ours", "-m", "keep ours", "origin/main");
+        File.WriteAllText(System.IO.Path.Combine(plane, "f.txt"), "mine2\n");
+        Commit(plane, "mine 2");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+        var old = Git(plane, "rev-parse", "HEAD");
+        _state.UpdateFlight(flight.Code, f => f.Review is { } r ? f with { Review = r with { ReviewedHead = old } } : f);
+        return (F(flight.Code), old);
     }
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public async Task EveryPathEndsMergedRetriedOrInOneCardWithGitHubsWholeText(Path path, string answer, Shape shape)
+    public async Task EveryPathEndsMergedRetriedOrInOneCardWithGitHubsWholeText(Path path, string answer, LandingAnswers.Shape shape)
     {
-        var (flight, _) = await Passed("1");
+        FlightRow flight;
+        if (path == Path.Laid)
+        {
+            _github.MergeQueueMethod = "REBASE";
+            _github.Queues = true;
+            (flight, var old) = await KeepOursFlight();
+            // The PR-ready card offers the merge itself while it is open; a dropped PR is looked at once it is closed.
+            _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
+            _github.Queue = new MergeQueueState("OPEN", old, Queued: false, RemovedAt: DateTimeOffset.UtcNow, RemovedReason: "merge conflict");
+        }
+        else
+        {
+            (flight, _) = await Passed("1");
+        }
         var head = _github.Pr!.Head;
         _github.MergeScript.Enqueue(answer);
 
@@ -76,79 +95,67 @@ public sealed class LandingPathTests : ReviewTestsBase
             case Path.Routine:
                 outcome = await LegCommander.LandPrAsync(_github, Repo, _github.Pr.Number, head, "squash", Ct);
                 break;
+            case Path.ArmedAtGreen:
+                _state.UpdateFlight(flight.Code, f => f with { MergeWhenGreen = [head, "squash", LegCommander.ArmedByNode] });
+                _github.Checks = ChoiceStatus.Passing;
+                await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
+                break;
+            case Path.Laid:
+                await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
+                break;
         }
 
-        var cards = Open().Where(c => c.Kind != LegCommander.PrReady).ToArray();
         switch (shape)
         {
-            case Shape.Done:
+            case LandingAnswers.Shape.Done:
                 error.ShouldBeNull();
                 outcome?.Done.ShouldBeTrue();
-                cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
+                LandingAnswers.NothingAsks(_state);
                 _github.Merged.Count.ShouldBeLessThanOrEqualTo(1);
                 break;
-            case Shape.Retried:
+            case LandingAnswers.Shape.Retried:
                 error.ShouldBeNull();
                 if (outcome is not null)
                 {
                     outcome.Kind.ShouldBe(LandKind.RetryLater);
                     outcome.Said.ShouldNotBeNull().ShouldContain(Marker);
                 }
-                cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
+                LandingAnswers.NothingAsks(_state);
                 _github.Merged.ShouldBeEmpty();
+                if (path != Path.Routine)
+                {
+                    // The merge waits on the flight and is asked again at the next look.
+                    F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
+                }
                 break;
-            case Shape.Refused:
+            case LandingAnswers.Shape.Refused:
                 _github.Merged.ShouldBeEmpty();
                 switch (path)
                 {
                     case Path.Hand:
                         error.ShouldNotBeNull().ShouldContain(Marker);
-                        if (answer.Contains("second line", StringComparison.Ordinal))
+                        if (answer.Contains(LandingAnswers.SecondLine, StringComparison.Ordinal))
                         {
-                            error.ShouldContain("A second line GitHub gave.");
+                            error.ShouldContain(LandingAnswers.SecondLine);
                         }
-                        cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
+                        Open().Where(c => c.Bin is CardBin.Ring && c.Kind != LegCommander.PrReady).ShouldBeEmpty();
                         break;
-                    case Path.Autopilot:
-                        if (answer.Contains("Base branch was modified", StringComparison.Ordinal))
-                        {
-                            // Behind: the node brings the branch up to date and offers the merge again, so nothing is refused to show.
-                            cards.Where(c => c.Bin is CardBin.Ring).ShouldBeEmpty();
-                            break;
-                        }
-                        var one = cards.ShouldHaveSingleItem();
-                        $"{one.Title} {one.Detail}".ShouldContain(Marker);
-                        break;
-                    default:
+                    case Path.Routine:
                         outcome.ShouldNotBeNull().Kind.ShouldBe(LandKind.Refused);
                         outcome.Said.ShouldNotBeNull().ShouldContain(Marker);
+                        break;
+                    case Path.Autopilot or Path.ArmedAtGreen when LandingAnswers.UpdatesTheBranch(answer):
+                        // Behind or conflicting: the node brings the branch up to date and offers the merge again, nothing to show.
+                        LandingAnswers.NothingAsks(_state);
+                        break;
+                    default:
+                        LandingAnswers.OneCardHoldsTheWholeText(_state, answer);
+                        Open().Where(c => c.Bin is CardBin.Ring && c.Kind != LegCommander.PrReady && !$"{c.Detail}".Contains(Marker, StringComparison.Ordinal)).ShouldBeEmpty();
                         break;
                 }
                 break;
         }
-        EveryShaIsALink();
-    }
-
-    // Every 7-to-40 hex run a card shows (a sha mixes digits and letters) is a commit the card links; a button label holds none.
-    private static readonly System.Text.RegularExpressions.Regex HexRun = new(@"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z])", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-
-    private void EveryShaIsALink()
-    {
-        foreach (var card in _state.Cards())
-        {
-            foreach (var text in new[] { card.Title, card.Detail, card.Summary }.Concat(card.Choices.Select(c => c.Note)))
-            {
-                foreach (System.Text.RegularExpressions.Match m in HexRun.Matches(text ?? ""))
-                {
-                    card.Commits.ShouldContainKey(m.Value, $"card {card.Id} ({card.Kind}) shows {m.Value} without linking it: {text}");
-                    card.Commits[m.Value].ShouldEndWith($"/commit/{m.Value}");
-                }
-            }
-            foreach (var choice in card.Choices)
-            {
-                HexRun.IsMatch(choice.Label).ShouldBeFalse($"card {card.Id} ({card.Kind}): label '{choice.Label}' holds a sha");
-            }
-        }
+        LandingAnswers.EveryShaIsALink(_state);
     }
 
     [Fact]
@@ -164,7 +171,7 @@ public sealed class LandingPathTests : ReviewTestsBase
         await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
 
         _state.Cards().ShouldNotBeEmpty();
-        EveryShaIsALink();
+        LandingAnswers.EveryShaIsALink(_state);
     }
 
     [Fact]

@@ -161,7 +161,10 @@ public sealed partial class LegCommander
         SetEntry(flight.Code, MergeEntryState.Merging, $"merging #{pr.Number} ({method})");
         // The merge itself is the longest ask: nothing of the flight is held over it, and what follows reads the flight afresh.
         var outcome = await LandFlightAsync(flight, pr, method, cancellationToken);
-        var laid = !string.Equals(outcome.Head, pr.Head, StringComparison.OrdinalIgnoreCase);
+        // Read again: the armed mark was cleared above and the shape step may have re-pinned the review, so an arm below checks the
+        // flight as it is now, not the copy read before (a retried merge at green was refused as "changed while asked").
+        flight = FlightOf(command.Target);
+        var laid =!string.Equals(outcome.Head, pr.Head, StringComparison.OrdinalIgnoreCase);
         switch (outcome.Kind)
         {
             case LandKind.Merged:
@@ -615,9 +618,10 @@ public sealed partial class LegCommander
     private static string JoinOffers(IReadOnlyList<string> offers) =>
         offers.Count == 1 ? offers[0] : string.Join(", ", offers.Take(offers.Count - 1)) + " or " + offers[^1];
 
-    // A merge refused because the PR no longer merges into its base (main moved under it).
+    // A merge refused because the PR no longer merges into its base (main moved under it), in the node's own words as RefusalOf
+    // writes them; GitHub's texts are sorted by MergeAnswers alone.
     private static bool Conflicts(string error) =>
-        error.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase) || error.Contains("not mergeable", StringComparison.OrdinalIgnoreCase);
+        error.Contains("conflicts with its base", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Marks the Merge choice of every open card about <paramref name="target"/> with <paramref name="status"/>, for every client to show.</summary>
     public void MarkMerge(string target, string? status)

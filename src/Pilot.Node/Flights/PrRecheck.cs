@@ -467,6 +467,11 @@ public sealed class PrRecheck : IHostedService
                 // Handled line that says so; the running merge reports its own result on the flight's card.
                 return await FinishAsync(entry, pr, $"a merge is already running at {head}", null, cancellationToken);
             }
+            if (merged.Way == MergeWays.Armed)
+            {
+                // GitHub did not answer, or the merge waits for a check: it stays armed on the flight and the node asks again.
+                return await FinishAsync(entry, pr, $"passed and green, the merge waits at {head}: {merged.Made}", PilotMarks.Passed, cancellationToken);
+            }
             return merged.Way is null
                 ? await FinishAsync(entry, pr, $"passed and green, merged at {head}", null, cancellationToken)
                 : await FinishAsync(entry, pr, $"passed and green, queued for merge at {head}", PilotMarks.Queued, cancellationToken);

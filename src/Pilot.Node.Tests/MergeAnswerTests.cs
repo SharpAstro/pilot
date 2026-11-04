@@ -15,7 +15,10 @@ public sealed class MergeAnswerTests
     [InlineData(1, "", "GraphQL: Pull request is already in the queue (enqueuePullRequest)", MergeAnswerKind.Done)]
     [InlineData(1, "", "GraphQL: Auto-merge is already enabled for this pull request (enablePullRequestAutoMerge)", MergeAnswerKind.Done)]
     [InlineData(1, "", "X Pull request #5 was already merged", MergeAnswerKind.Done)]
-    [InlineData(1, "", "GraphQL: Pull request is not in the merge queue (dequeuePullRequest)", MergeAnswerKind.Done)]
+    [InlineData(1, "", "GraphQL: Pull request is not in the merge queue (dequeuePullRequest)", MergeAnswerKind.Refused)]
+    [InlineData(1, "", "GraphQL: Pull request is not currently mergeable by this actor (mergePullRequest)", MergeAnswerKind.Refused)]
+    [InlineData(1, "", "GraphQL: Merging is not currently allowed (mergePullRequest)", MergeAnswerKind.Refused)]
+    [InlineData(1, "", "gh: Pull Request is not mergeable", MergeAnswerKind.Conflicts)]
     [InlineData(1, "", "GraphQL: This branch can't be rebased (mergePullRequest)", MergeAnswerKind.NotRebaseable)]
     [InlineData(1, "", "GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)", MergeAnswerKind.HeadMoved)]
     [InlineData(1, "", "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)", MergeAnswerKind.Behind)]
@@ -28,6 +31,20 @@ public sealed class MergeAnswerTests
     [InlineData(1, "", "", MergeAnswerKind.Refused)]
     public void EveryAnswerHasItsRow(int exit, string stdout, string stderr, MergeAnswerKind expected) =>
         MergeAnswers.Classify(exit, stdout, stderr).Kind.ShouldBe(expected);
+
+    [Theory]
+    [InlineData("GraphQL: Pull request is not in the merge queue (dequeuePullRequest)")]
+    [InlineData("GraphQL: Pull request is not queued")]
+    [InlineData("GraphQL: Pull request is not currently in a merge queue")]
+    public void LeavingTheQueueWhenNotInItIsDoneForADequeueOnly(string said)
+    {
+        MergeAnswers.Classify(1, "", said, leavingQueue: true).Kind.ShouldBe(MergeAnswerKind.Done);
+        MergeAnswers.Classify(1, "", said).Kind.ShouldNotBe(MergeAnswerKind.Done);
+    }
+
+    [Fact]
+    public void AMergeAnswerSayingNotCurrentlyIsNoMerge() =>
+        MergeAnswers.Classify(1, "", "GraphQL: Merging is not currently allowed for this pull request").Kind.ShouldNotBe(MergeAnswerKind.Done);
 
     [Fact]
     public void AGraphQlErrorOnExitZeroIsAnAnswerToo() =>

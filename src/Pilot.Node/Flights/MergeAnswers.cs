@@ -83,20 +83,25 @@ public static class MergeAnswers
         (MergeAnswerKind.Done, AlreadyQueued),
         (MergeAnswerKind.Done, AlreadyArmed),
         (MergeAnswerKind.Done, said => Has(said, "already merged")),
-        // Leaving the queue when not in it (dequeuePullRequest).
-        (MergeAnswerKind.Done, said => Has(said, "not in the merge queue") || Has(said, "not queued") || Has(said, "not currently")),
         (MergeAnswerKind.NotRebaseable, said => Has(said, "can't be rebased") || Has(said, "cannot be rebased") || Has(said, "can not be rebased")),
         (MergeAnswerKind.HeadMoved, said => Has(said, "Head branch was modified") || Has(said, "Head sha didn't match")),
         (MergeAnswerKind.Behind, said => Has(said, "Base branch was modified") || Has(said, "branch is behind")),
-        (MergeAnswerKind.Conflicts, said => Has(said, "merge conflict") || Has(said, "has conflicts")),
+        (MergeAnswerKind.Conflicts, said => Has(said, "merge conflict") || Has(said, "has conflicts") || Has(said, "not mergeable")),
         (MergeAnswerKind.Transient, said => Http5xx.IsMatch(said) || Has(said, "timed out") || Has(said, "timeout") || Has(said, "time-out")),
     ];
+
+    // Leaving the queue when not in it (dequeuePullRequest) is the state wanted. Read only for that call: for a merge, an enqueue or
+    // an arm, an answer saying "not currently" is no merge.
+    private static readonly Func<string, bool> NotInQueue = said => Has(said, "not in the merge queue") || Has(said, "not queued") || Has(said, "not currently");
 
     /// <summary>The text of an answer: stderr when it has any, else stdout, trimmed, every line kept.</summary>
     public static string Said(string stdout, string stderr) => (stderr.Trim().Length > 0 ? stderr : stdout).Trim();
 
-    /// <summary>Sorts gh's exit code and streams. Exit 0 with no GraphQL <c>errors</c> is done.</summary>
-    public static MergeAnswer Classify(int exit, string stdout, string stderr)
+    /// <summary>
+    /// Sorts gh's exit code and streams. Exit 0 with no GraphQL <c>errors</c> is done. <paramref name="leavingQueue"/> is set for a
+    /// dequeue only: there "not in the queue" is done too.
+    /// </summary>
+    public static MergeAnswer Classify(int exit, string stdout, string stderr, bool leavingQueue = false)
     {
         var said = Said(stdout, stderr);
         var failed = exit != 0 || stdout.Contains("\"errors\"", StringComparison.Ordinal);
@@ -105,6 +110,10 @@ public static class MergeAnswers
             return new MergeAnswer(MergeAnswerKind.Done, said);
         }
         var all = stderr + "\n" + stdout;
+        if (leavingQueue && NotInQueue(all))
+        {
+            return new MergeAnswer(MergeAnswerKind.Done, said);
+        }
         foreach (var (kind, matches) in Table)
         {
             if (matches(all))

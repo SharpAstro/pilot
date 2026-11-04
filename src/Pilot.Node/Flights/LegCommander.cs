@@ -390,9 +390,10 @@ public sealed partial class LegCommander(
                 {
                     SetEntry(code, MergeEntryState.Checks, kept is not null ? "brought up to date with its base, its review carried over: merges once GitHub shows the new head" : "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true, head: kept);
                 }
-                if (!conflicting && command.Who == "node" && command.Verb == Verbs.Merge)
+                if (command.Who == "node" && command.Verb == Verbs.Merge)
                 {
-                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did,
+                    // a conflict GitHub saw that the base merged in cleanly as much as a branch behind its base.
                     made = updated;
                     error = null;
                     way = MergeWays.Updated;

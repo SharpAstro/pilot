@@ -33,12 +33,12 @@ public sealed partial class GhCli
 
     // One merge-shaped call, sorted by MergeAnswers: a transient answer is asked again (3 retries after 1 s, 2 s, 4 s), anything
     // else comes back for the caller to act on.
-    private async Task<MergeAnswer> AnswerAsync(IReadOnlyList<string> args, string repoPath, CancellationToken cancellationToken)
+    private async Task<MergeAnswer> AnswerAsync(IReadOnlyList<string> args, string repoPath, CancellationToken cancellationToken, bool leavingQueue = false)
     {
         for (var attempt = 1; ; attempt++)
         {
             var (exit, output, error) = await GhAsync(args, repoPath, cancellationToken);
-            var answer = MergeAnswers.Classify(exit, output, error);
+            var answer = MergeAnswers.Classify(exit, output, error, leavingQueue);
             if (answer.Kind != MergeAnswerKind.Transient || attempt >= MergeAttempts)
             {
                 return answer;
@@ -359,8 +359,8 @@ public sealed partial class GhCli
         {
             return;
         }
-        // Not queued (or merged, or closed) already is the state wanted: a Done row of the table.
-        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken), $"take #{number} out of the merge queue");
+        // Not queued (or merged, or closed) already is the state wanted: the table's leave-the-queue row, read for this call only.
+        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken, leavingQueue: true), $"take #{number} out of the merge queue");
     }
 
     public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)
