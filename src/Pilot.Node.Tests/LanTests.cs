@@ -14,6 +14,7 @@ namespace Pilot.Node.Tests;
 /// a card, and a granted command goes out under the grant's label. A client on loopback stands in for another machine:
 /// over TCP is over TCP, and the node tells the LAN from its socket by that alone.
 /// </summary>
+[Collection(ClientGrantsCollection.Name)]
 public sealed class LanTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

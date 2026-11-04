@@ -7,14 +7,14 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
+    /// <summary>The --repo description of every command that reads <see cref="RepoPath"/>; it is the MCP schema's text too.</summary>
+    internal const string RepoOptionDescription = "The repo's checkout (any of its worktrees); else this folder. On another node (a node argument or --node) it is required and is that machine's checkout path, as its repos list shows";
+
     /// <summary>
     /// The repo a flight is created on, as the node will read it. On this machine's node, the folder resolved here (this
     /// folder when none is named). On a node on the LAN it is that machine's path, sent as given and never resolved
     /// against this one (a Windows client turned a Linux node's /home/… into C:\home\…), and it must be named.
     /// </summary>
-    /// <summary>The --repo description of every command that reads <see cref="RepoPath"/>; it is the MCP schema's text too.</summary>
-    internal const string RepoOptionDescription = "The repo's checkout (any of its worktrees); else this folder. On another node (a node argument or --node) it is required and is that machine's checkout path, as its repos list shows";
-
     internal static string RepoPath(NodeClient client, string? named, string cwd) => client.IsRemote
         ? named ?? throw new UsageException($"--repo is needed on a node on the LAN ({client.SocketPath}): it is that machine's checkout path, not one of this machine's. Find it with `pilot repos --node {client.SocketPath}` (from MCP, the repos tool with node set to {client.SocketPath})")
         : Path.GetFullPath(named ?? cwd, cwd);

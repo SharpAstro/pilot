@@ -12,7 +12,7 @@ public sealed class McpTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}""";
+    internal const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}""";
 
     private NodeHarness _node = null!;
 
@@ -23,17 +23,17 @@ public sealed class McpTests : IAsyncLifetime
     private McpServer Server() => new(_node.Folder, node: null, socket: _node.SocketPath);
 
     /// <summary>Feeds the lines to the server as its stdin and reads back what it wrote, a message a line.</summary>
-    private static async Task<JsonElement[]> Serve(McpServer server, params string[] lines)
+    internal static async Task<JsonElement[]> Serve(McpServer server, params string[] lines)
     {
         var output = new StringWriter();
         await server.RunAsync(new StringReader(string.Join('\n', lines) + "\n"), output, Ct);
         return [.. output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonDocument.Parse(l).RootElement.Clone())];
     }
 
-    private static string Call(int id, string tool, string arguments) =>
+    internal static string Call(int id, string tool, string arguments) =>
         $$$"""{"jsonrpc":"2.0","id":{{{id}}},"method":"tools/call","params":{"name":"{{{tool}}}","arguments":{{{arguments}}}}}""";
 
-    private static (bool IsError, string Text) Result(JsonElement reply)
+    internal static (bool IsError, string Text) Result(JsonElement reply)
     {
         var result = reply.GetProperty("result");
         return (result.GetProperty("isError").GetBoolean(), result.GetProperty("content")[0].GetProperty("text").GetString()!);
@@ -651,92 +651,6 @@ public sealed class McpTests : IAsyncLifetime
         var connect = tools.Single(t => t.GetProperty("name").GetString() == "connect").GetProperty("inputSchema");
         connect.GetProperty("properties").GetProperty("node").GetProperty("description").GetString().ShouldBe("The node, host:port");
         connect.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ShouldContain("node");
-    }
-
-    [Fact]
-    public async Task ACallNamingANodeRunsThereAndOneWithoutRunsOnTheServersNode_AReadIgnoresIt()
-    {
-        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        await using var second = await NodeHarness.StartAsync(Ct, lanPort: port);
-        var tokens = Path.Combine(second.Options.DataFolder, "client-grants.json");
-        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
-        var ticket = (await asking.AskGrantAsync("tests@mcp", Ct)).Response.ShouldNotBeNull();
-        var card = second.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
-        (await second.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
-        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
-        token.ShouldNotBeNullOrEmpty();
-        NodeTargets.Save($"127.0.0.1:{port}", token, tokens);
-        await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.NodeTarget, Args = ["for-you", "On the first node"], Who = "cli" }, Ct);
-
-        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
-        try
-        {
-            var replies = await Serve(Server(), Initialize,
-                Call(2, "note", $$"""{"text":["there"],"node":"127.0.0.1:{{port}}"}"""),
-                Call(3, "note", """{"text":["here"]}"""),
-                Call(4, "note", """{"text":["nowhere"],"node":"NoSuchNodeAnywhere"}"""),
-                $$$"""{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"pilot://cards","node":"127.0.0.1:{{{port}}}"}}""");
-
-            Result(replies[1]).IsError.ShouldBeFalse();
-            Result(replies[2]).IsError.ShouldBeFalse();
-            second.State.Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("there");
-            _node.State.Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("here");
-
-            var unknown = Result(replies[3]);
-            unknown.IsError.ShouldBeTrue();
-            unknown.Text.ShouldContain("NoSuchNodeAnywhere");
-            unknown.Text.ShouldContain("nodes tool");
-
-            var text = replies[4].GetProperty("result").GetProperty("contents")[0].GetProperty("text").GetString()!;
-            JsonDocument.Parse(text).RootElement.EnumerateArray().Select(c => c.GetProperty("title").GetString()).ShouldContain("On the first node");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
-        }
-    }
-
-    [Fact]
-    public async Task FlightCreateOnAnotherNodeWithoutRepo_SaysWhereToFindItAndTheSchemaSaysItIsRequiredThere()
-    {
-        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        await using var second = await NodeHarness.StartAsync(Ct, lanPort: port);
-        var tokens = Path.Combine(second.Options.DataFolder, "client-grants.json");
-        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
-        var ticket = (await asking.AskGrantAsync("tests@mcp", Ct)).Response.ShouldNotBeNull();
-        var card = second.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
-        (await second.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
-        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
-        token.ShouldNotBeNullOrEmpty();
-        NodeTargets.Save($"127.0.0.1:{port}", token!, tokens);
-
-        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
-        try
-        {
-            var replies = await Serve(Server(), Initialize,
-                """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",
-                Call(3, "flight_create", $$"""{"issue":"1","node":"127.0.0.1:{{port}}"}"""));
-
-            var tool = replies[1].GetProperty("result").GetProperty("tools").EnumerateArray().Single(t => t.GetProperty("name").GetString() == "flight_create");
-            var description = tool.GetProperty("inputSchema").GetProperty("properties").GetProperty("repo").GetProperty("description").GetString()!;
-            description.ShouldContain("required");
-            description.ShouldContain("that machine's");
-
-            var refusal = Result(replies[2]);
-            refusal.IsError.ShouldBeTrue();
-            refusal.Text.ShouldContain("repos");
-            refusal.Text.ShouldContain($"127.0.0.1:{port}");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
-        }
     }
 
     [Fact]
