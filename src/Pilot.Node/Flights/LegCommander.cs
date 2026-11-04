@@ -419,7 +419,11 @@ public sealed partial class LegCommander(
             state.MarkMerged(command.Target);
             try
             {
-                await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, (command.Args ?? [""])[0].Trim(), cancellationToken);
+                // The head that merged is the review's head: a head re-pinned by the look (moved only by its base) is no longer the one asked for.
+                var asked = (command.Args ?? [""])[0].Trim();
+                var landed = FlightOf(command.Target);
+                var mergedAt = landed.Review?.ReviewedHead is { Length: > 0 } pinned && !pinned.StartsWith(asked, StringComparison.OrdinalIgnoreCase) ? pinned : asked;
+                await flights.LandAfterMergeAsync(landed.Code, mergedAt, cancellationToken);
             }
             catch (FlightException ex)
             {
