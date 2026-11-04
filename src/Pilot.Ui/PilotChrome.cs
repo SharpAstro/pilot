@@ -298,7 +298,12 @@ internal sealed class PilotChrome<TSurface>
         Flights.Opening = RecordOpening;
         // The per-view Back pills and Escape are the window's Back: where there is no place to go back to, the view closes itself.
         sessions.Transcript.OnBack = BackOrClose(sessions.Transcript.Close);
-        Flights.OnBack = BackOrClose(Flights.CloseDetail);
+        // The flight's page goes up, not back: to the Flights page as it was left, with the flight selected. A move, so the rail's back returns here.
+        Flights.OnUp = () => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, _show);
+            Flights.CloseDetail();
+        });
         Nav = new NavControls<TSurface>(renderer)
         {
             CanGoBack = () => CanGoBack,
