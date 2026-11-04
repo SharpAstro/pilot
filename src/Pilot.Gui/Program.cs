@@ -554,6 +554,13 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: tell watchtower: {refused ?? "told"}");
         return refused;
     };
+    // The panel's Clean up: the standard tidy-up message, told as a person's request through the same tell; the panel says what came of it.
+    chrome.Cards.OnCleanUp = async () =>
+    {
+        var refused = await ChatCommands.TellAsync(client, WatchtowerAsks.CleanUp, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell watchtower (clean up): {refused ?? "told"}");
+        return refused;
+    };
     // The chat with another node's watchtower (a card raised there was chatted about): its feed is read through its own
     // client, which needs no grant, and what is typed is told through the grant's, a refusal said in the chat.
     chrome.Chat.LoadOn = async (node, after, ct) => (await clients.For(node, command: false)!.GetChatAsync(after, ct)) is { Success: true, Response: { } chat }

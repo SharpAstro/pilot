@@ -49,6 +49,9 @@ public static class DecisionKinds
     public const string Priority = "priority";
     public const string Dismiss = "dismiss";
 
+    /// <summary>A flight created with <c>--anyway</c> over another node's label.</summary>
+    public const string CreateAnyway = "create-anyway";
+
     /// <summary>Any other card choice.</summary>
     public const string Card = "card";
 }

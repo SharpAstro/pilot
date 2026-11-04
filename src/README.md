@@ -856,6 +856,12 @@ claude mcp add --scope user pilot -- pilot mcp                  # pilot on PATH;
 claude mcp add --scope user pilot-desk -- pilot mcp --node desk:7700   # a node on the LAN, after pilot connect
 ```
 
+Every tool also takes an optional `node` argument (a name such as `DE1`, a host, or `host:port`, as `pilot nodes` lists
+them): a call with it runs on that node, a call without it on the server's own node. Resources stay on the server's node.
+A command that needs a path on the target machine (`--repo` of `flight_create` and the issue tools) says in its schema
+that on another node it is required and is that machine's checkout path; the refusal for a missing one names the node and
+points to the `repos` tool (`pilot repos --node <node>`) to learn it.
+
 The **tools** are the command tree itself, so a new command is a tool with no change here: every command with an action
 is one, named by its path with `_` (`status`, `flight_create`, `flight_review`, `leg_plan`, `leg_go-around`,
 `job_cancel`), its arguments and options its input schema (by their long names, `done-when`; a `string[]` argument an
