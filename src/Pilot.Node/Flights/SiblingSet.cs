@@ -7,8 +7,6 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public static class SiblingSet
 {
-    private static readonly HashSet<string> Verbs = new(StringComparer.OrdinalIgnoreCase) { "build", "test", "restore", "publish", "pack", "run" };
-
     /// <summary>
     /// The full paths of the clones the build in <paramref name="command"/> compiles when run in <paramref name="cwd"/>: the job's
     /// own repo (its main clone), and each sibling its checkout's <c>UseLocal*</c> properties probe that exists beside that clone,
@@ -17,26 +15,44 @@ public static class SiblingSet
     /// </summary>
     public static IReadOnlyList<string> Of(string command, string cwd)
     {
-        var key = JobKey.Of(command, cwd);
-        var parts = key.ToolVerb.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var builds = parts switch
+        var found = new List<string>();
+        foreach (var (tool, verb, flags, folder) in JobKey.Steps(command, cwd))
         {
-            ["dotnet", var verb, ..] => Verbs.Contains(verb),
-            ["msbuild", ..] => true,
-            _ => false,
-        };
-        if (!builds)
-        {
-            return [];
+            if (Builds(tool, verb, flags))
+            {
+                Add(found, folder);
+            }
         }
+        return found;
+    }
 
+    /// <summary>dotnet build, restore, publish and pack and msbuild always; dotnet test and run unless <c>--no-build</c>.</summary>
+    private static bool Builds(string tool, string verb, IReadOnlyList<string> flags) => tool switch
+    {
+        "msbuild" => true,
+        "dotnet" => verb.ToLowerInvariant() switch
+        {
+            "build" or "restore" or "publish" or "pack" => true,
+            "test" or "run" => !flags.Contains("--no-build", StringComparer.OrdinalIgnoreCase),
+            _ => false,
+        },
+        _ => false,
+    };
+
+    private static void Add(List<string> found, string cwd)
+    {
         var full = Path.GetFullPath(cwd);
         var repo = MainCloneOf(full);
         var orgRoot = Path.GetDirectoryName(repo);
-        var found = new List<string> { repo };
+        // A plane's obj is its own; only a job run in the main clone itself builds in it.
+        var inPlane = !string.Equals(Path.TrimEndingDirectorySeparator(CheckoutRootOf(full)), repo, StringComparison.OrdinalIgnoreCase);
+        if (!inPlane && !found.Contains(repo, StringComparer.OrdinalIgnoreCase))
+        {
+            found.Add(repo);
+        }
         if (orgRoot is null)
         {
-            return found;
+            return;
         }
         var queue = new Queue<string>();
         queue.Enqueue(CheckoutRootOf(full));
@@ -53,7 +69,6 @@ public static class SiblingSet
                 }
             }
         }
-        return found;
     }
 
     private static string MainCloneOf(string full)
