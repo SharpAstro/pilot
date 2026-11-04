@@ -100,12 +100,14 @@ public sealed partial class LegCommander
                         {
                             break;
                         }
+                        var sibling = SiblingRestoreFailure.In(run.Tail, flight.Worktree);
+                        var head = sibling is null ? "" : sibling.Text + "\n\n";
                         state.PutLeg(leg with
                         {
-                            Report = $"check `{check}` failed ({run.ExitCode}):\n{run.Tail}",
+                            Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}",
                             Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
                         });
-                        throw new FlightException($"{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
+                        throw new FlightException($"{head}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }
                     leg = leg with { Recheck = null };
                     state.PutLeg(leg);
@@ -130,6 +132,12 @@ public sealed partial class LegCommander
                 if (await TryHoldAsync(flight, leg, report, cancellationToken))
                 {
                     break;
+                }
+                // A stale restore in a sibling clone is another plane's build, not the leg's: the first report naming one is refused
+                // with the restore that fixes it, and a second rings as before.
+                if (SiblingRestoreFailure.In(report, flight.Worktree) is { } stale && _siblingRefused.TryAdd($"{flight.Code}/{leg.Name}", 0))
+                {
+                    throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
                 }
                 // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it.
                 var (selfFinished, notWhy) = await TrySelfFinishAsync(flight, leg, report, cancellationToken);
@@ -185,6 +193,9 @@ public sealed partial class LegCommander
             }
         }
     }
+
+    // The legs whose first failed report naming a sibling's stale restore was refused.
+    private readonly ConcurrentDictionary<string, byte> _siblingRefused = new(StringComparer.Ordinal);
 
     /// <summary>The outcome of <c>finish-leg</c> that pushes a rebased branch over origin's with a lease on the sha the card named (the controller's).</summary>
     public const string PushedWithLease = "pushed-with-lease";
