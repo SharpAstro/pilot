@@ -36,10 +36,12 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head, "rebase");
 
         merge.Error.ShouldBeNull();
-        var shaped = Git(flight.Worktree, "rev-parse", "HEAD");
+        // The plane goes when the flight lands, so the merged head is read from what GitHub was asked to merge, and checked in the repo.
+        var (number, shaped, method) = _github.Merged.ShouldHaveSingleItem();
+        number.ShouldBe(_github.Pr!.Number);
+        method.ShouldBe("rebase");
         shaped.ShouldNotBe(head);
-        Git(flight.Worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").ShouldBe("0");
-        _github.Merged.ShouldBe([(_github.Pr!.Number, shaped, "rebase")]);
+        Git(Repo, "rev-list", "--merges", "--count", $"origin/main..{shaped}").ShouldBe("0");
         F(flight.Code).State.ShouldBe(FlightState.Landed);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
     }
