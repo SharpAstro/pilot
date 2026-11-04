@@ -41,9 +41,12 @@ public sealed partial record SiblingRestoreFailure(string Sibling, string Projec
             {
                 continue;
             }
-            foreach (Match m in PathIn().Matches(line))
+            // The project in brackets is the one that failed (MSB3243's own path is the SDK's targets file): it alone counts when named.
+            var paths = Bracketed().Match(line) is { Success: true } named
+                ? [named.Groups["p"].Value]
+                : PathIn().Matches(line).Select(m => m.Value.TrimEnd(':', ',', '.')).ToList();
+            foreach (var path in paths)
             {
-                var path = m.Value.TrimEnd(':', ',', '.');
                 var n = Norm(path);
                 if (n.Length < 4 || n.Contains("/.nuget/", StringComparison.OrdinalIgnoreCase)
                     || n.Equals(inside, StringComparison.OrdinalIgnoreCase) || n.StartsWith(inside + "/", StringComparison.OrdinalIgnoreCase)
