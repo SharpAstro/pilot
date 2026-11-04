@@ -152,6 +152,10 @@ public static partial class Briefs
         "has reached your session when the rest of the leg is done, finish without the load and say in your report that it was not run\n" +
         "and why. A build or a test run that is merely heavy is not load in this sense.";
 
+    /// <summary>The line a worker and a fixer are told: a repo-wide guard test carries the Invariant category the node widens checks with.</summary>
+    internal const string InvariantRule =
+        "A new test that guards the whole repo (a catalog, a size limit, a fixture, a rule over every source file) carries `[Trait(\"Category\", \"Invariant\")]` (`InvariantChecks.Category` or the test project's constant), so checks run it.";
+
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
         "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +

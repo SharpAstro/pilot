@@ -344,6 +344,13 @@ public sealed partial class LegCommander
             state.PutLeg(leg);
             check = corrected;
         }
+        // A leg planned before the invariant tests rode along gets them now, and keeps them.
+        if (InvariantChecks.With(check) is var widened && widened != check)
+        {
+            leg = leg with { Check = widened };
+            state.PutLeg(leg);
+            check = widened;
+        }
         // Recorded on the leg while it runs, so pilot status, the GUI and the TUI show it, and cleared whichever way it ends.
         // A rerun whose answer may not have reached its worker (it outlasted the reply deadline, or a retry was refused meanwhile)
         // keeps its outcome on the leg for the leg watch to tell the worker, which was told to end its turn (pilot #487).
