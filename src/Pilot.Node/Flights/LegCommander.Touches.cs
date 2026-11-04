@@ -14,7 +14,8 @@ public sealed partial class LegCommander
     private const int TouchesNamed = 8;
 
     /// <summary>One other flight or PR the files are compared with: whom it is and what it changes, or why that is not known.</summary>
-    private sealed record Touched(string Label, string[]? Files, string? Unknown, string? FlightCode, bool OnPeer, string? Node = null, int? PrNumber = null);
+    private sealed record Touched(string Label, string[]? Files, string? Unknown, string? FlightCode, bool OnPeer, string? Node = null, int? PrNumber = null,
+        IReadOnlyDictionary<string, int>? Lines = null);
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: a line per flight and PR, the matches first (fold, connect), then those not known,
@@ -141,9 +142,46 @@ public sealed partial class LegCommander
             return new Touched(label, null, $"its base {other.Base} is not in this clone, so what it changes is not known", other.Code, onPeer);
         }
         var diff = await git.RunAsync(["diff", "--name-only", $"{baseRef}...{tip}"], repoPath, cancellationToken);
-        return diff.ExitCode == 0
-            ? new Touched(label, [.. diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)], null, other.Code, onPeer)
-            : new Touched(label, null, $"git diff of {other.Branch} failed: {FirstLine(diff.Error)}", other.Code, onPeer);
+        if (diff.ExitCode != 0)
+        {
+            return new Touched(label, null, $"git diff of {other.Branch} failed: {FirstLine(diff.Error)}", other.Code, onPeer);
+        }
+        var lines = await LineCountsAsync($"{baseRef}...{tip}", repoPath, cancellationToken);
+        return new Touched(label, [.. diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)], null, other.Code, onPeer, Lines: lines);
+    }
+
+    /// <summary>The flight's own changes per file (added plus removed lines), <c>Base...HEAD</c> in its plane; null when git would not say.</summary>
+    private async Task<Dictionary<string, int>?> OwnLinesAsync(FlightRow flight, CancellationToken cancellationToken) =>
+        await LineCountsAsync($"{flight.Base}...HEAD", flight.Worktree, cancellationToken);
+
+    /// <summary>Per-file added plus removed lines of <c>git diff --numstat</c> over a range; a binary file ('-') counts 0. Null on failure, never an error.</summary>
+    private async Task<Dictionary<string, int>?> LineCountsAsync(string range, string workDir, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await git.RunAsync(["diff", "--numstat", "--no-renames", range], workDir, cancellationToken);
+            if (result.ExitCode != 0)
+            {
+                return null;
+            }
+            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var cols = line.Split('\t', 3);
+                if (cols.Length < 3)
+                {
+                    continue;
+                }
+                var n = (int.TryParse(cols[0], out var added) ? added : 0) + (int.TryParse(cols[1], out var removed) ? removed : 0);
+                var path = cols[2].Replace('\\', '/');
+                map[path] = map.GetValueOrDefault(path) + n;
+            }
+            return map;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private async Task<string?> ExistingRefAsync(IEnumerable<string> candidates, string repoPath, CancellationToken cancellationToken)

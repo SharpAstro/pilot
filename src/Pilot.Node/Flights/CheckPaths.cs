@@ -39,7 +39,7 @@ public static class CheckPaths
     // holds other flights' planes).
     private static readonly HashSet<string> Skipped = new(StringComparer.OrdinalIgnoreCase) { ".git", "bin", "obj", "node_modules" };
 
-    private readonly record struct Token(string Raw, string Value);
+    internal readonly record struct Token(string Raw, string Value);
 
     private readonly record struct PathRef(int Index, string Prefix, string Value);
 
@@ -354,7 +354,7 @@ public static class CheckPaths
     }
 
     /// <summary>The lines of a check, split on <c>&amp;&amp;</c>, <c>||</c>, <c>;</c> and newlines outside quotes (as <c>CiShape</c> does, but quote-aware).</summary>
-    private static IEnumerable<string> Segments(string check)
+    internal static IEnumerable<string> Segments(string check)
     {
         var current = new StringBuilder();
         char? quote = null;
@@ -393,7 +393,7 @@ public static class CheckPaths
     }
 
     /// <summary>The words of a segment: split on whitespace outside quotes, the quotes dropped from the value and kept in the raw text.</summary>
-    private static List<Token> Tokenize(string segment)
+    internal static List<Token> Tokenize(string segment)
     {
         var tokens = new List<Token>();
         var text = segment.Trim().TrimStart('(').TrimEnd(')');

@@ -71,6 +71,17 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => new DiskSweep(
+            Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"), Path.GetTempPath(),
+            services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+            DiskAlertGb = () => services.GetRequiredService<RoleModels>().DiskAlertGb,
+            Planes = services.GetRequiredService<Planes>(),
+            GitHub = services.GetService<IGitHub>(),
+            Queue = services.GetRequiredService<RemovalQueue>(),
+            Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
+        });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
         builder.Services.AddSingleton(new Attachments(options.DataFolder));
@@ -297,6 +308,7 @@ public static partial class NodeApp
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
                 StopSession = legs.StopSessionAsync,
+                TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
@@ -380,6 +392,8 @@ public static partial class NodeApp
                     }
                     return owners;
                 },
+                // The repos' drive, else the Claude profile's (one and the same on most machines).
+                DiskPath = () => options.RepoRoots.FirstOrDefault(Directory.Exists) ?? services.GetRequiredService<SessionTrackerOptions>().Profile.Root,
                 Logger = services.GetService<ILogger<MachineSampler>>(),
             };
         });

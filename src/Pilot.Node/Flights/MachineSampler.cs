@@ -30,6 +30,9 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
     /// <summary>A top process's command line and folder (<see cref="ProcessDetails.Read"/>): only the few the row names are read.</summary>
     public Func<int, (string? CommandLine, string? WorkingDirectory)> Details { get; init; } = ProcessDetails.Read;
 
+    /// <summary>A path on the drive whose free space the row reports: the repos' and the job folders' drive.</summary>
+    public Func<string?> DiskPath { get; init; } = () => null;
+
     public ILogger<MachineSampler>? Logger { get; init; }
 
     /// <summary>The same sample again is put once it is this old, so a client can tell a quiet machine from a node that stopped looking.</summary>
@@ -145,6 +148,7 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
         {
             return null;
         }
+        var disk = DiskPath() is { } diskPath ? DiskUsage.FreeSpace(diskPath) : null;
         return new MachineRow
         {
             SampledAt = time.GetUtcNow(),
@@ -156,6 +160,9 @@ public sealed class MachineSampler(NodeState state, TimeProvider time) : Backgro
             NetInBytesPerSecond = net?.In,
             NetOutBytesPerSecond = net?.Out,
             NetLinkBitsPerSecond = net is null ? null : linkBits,
+            DiskFree = disk?.Free,
+            DiskTotal = disk?.Total,
+            DiskName = disk?.Name,
             Processes = top,
         };
     }

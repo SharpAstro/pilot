@@ -7,6 +7,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>The contract's sample snapshot, which the GUI leg draws from before a node fills real rows.</summary>
+[Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class FixtureTests
 {
     private static readonly string FixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "snapshot.sample.json");
