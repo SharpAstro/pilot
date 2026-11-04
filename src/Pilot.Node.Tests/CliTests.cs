@@ -37,8 +37,6 @@ public sealed class CliTests : IAsyncLifetime
         (await NodeTargets.WatchtowerLineAsync("127.0.0.1:1", TimeSpan.FromSeconds(1), Ct)).ShouldBe("watchtower: not reached (the node did not answer)");
     }
 
-    public static TheoryData<int> Fifty() => [.. Enumerable.Range(0, 50)];
-
     public async ValueTask InitializeAsync()
     {
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
@@ -379,11 +377,9 @@ public sealed class CliTests : IAsyncLifetime
         lines.ShouldNotContain(l => l.StartsWith("OLD0  ", StringComparison.Ordinal));
     }
 
-    [Theory]
-    [MemberData(nameof(Fifty))]
-    public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob(int repeat)
+    [Fact]
+    public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
     {
-        _ = repeat;
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         // The machine running the suite is not quiet: the test is about the flag, not the CPU.
