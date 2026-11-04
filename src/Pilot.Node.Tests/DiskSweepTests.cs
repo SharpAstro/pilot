@@ -399,4 +399,80 @@ public sealed class DiskSweepTests : IDisposable
 
         Directory.Exists(Path.Combine(free, "tmp")).ShouldBeFalse();
     }
+
+    // ---- obj folders of a flying flight's finished legs ----
+
+    private string ObjPlane(string name, LegState[] legs)
+    {
+        var plane = Path.Combine(_root, "planes", name);
+        foreach (var dir in new[] { "src/A/obj", "src/A/bin", "src/B/obj", ".git/obj" })
+        {
+            Directory.CreateDirectory(Path.Combine(plane, dir));
+            File.WriteAllBytes(Path.Combine(plane, dir, "x.bin"), new byte[100]);
+        }
+        _state.PutFlight(new FlightRow
+        {
+            Code = name, Repo = "pilot", Issue = 1, Title = "t", RepoPath = "/r", Branch = "b", Worktree = plane, Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        for (var i = 0; i < legs.Length; i++)
+        {
+            _state.PutLeg(new LegRow
+            {
+                Flight = name, Name = "l" + i, Order = i + 1, Goal = "g", DoneWhen = "d", State = legs[i],
+                FinishedAt = legs[i] == LegState.Done ? Start : null,
+            });
+        }
+        return plane;
+    }
+
+    [Fact]
+    public async Task AFlyingFlightWithLegsDoneAndNothingRunningInItsPlaneLosesObjAndKeepsBinAndGit()
+    {
+        var plane = ObjPlane("PIL21", [LegState.Done, LegState.Planned]);
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "src/B/obj")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(plane, "src/A/bin")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, ".git/obj")).ShouldBeTrue();
+        _state.Cards().Single(c => c.Kind == "disk-swept").Title.ShouldContain("2 obj folders");
+    }
+
+    [Fact]
+    public async Task ALiveWorkerOrARunningJobInThePlaneKeepsObj()
+    {
+        var withWorker = ObjPlane("PIL22", [LegState.Done]);
+        var withJob = ObjPlane("PIL23", [LegState.Done]);
+        var flying = ObjPlane("PIL24", [LegState.Done, LegState.Flying]);
+        _state.PutSession(new SessionRow
+        {
+            Id = "wk000001", SessionId = "wk000001-0000-4000-8000-000000000000", Name = "s-wk", Kind = SessionKind.Background, Cwd = Path.Combine(withWorker, "src"),
+            Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        _state.PutJob(new JobRow { Id = "j1", Command = "dotnet test", Cwd = withJob, State = JobState.Running, LogPath = "x.log", Timeout = TimeSpan.FromMinutes(5), StartedAt = Start });
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        foreach (var plane in new[] { withWorker, withJob, flying })
+        {
+            Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeTrue(plane);
+        }
+    }
+
+    [Fact]
+    public async Task APlaneAlreadySweptIsNotSweptAgainUntilAnotherLegIsDone()
+    {
+        var plane = ObjPlane("PIL25", [LegState.Done, LegState.Planned]);
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.CreateDirectory(Path.Combine(plane, "src/A/obj"));
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+        Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeTrue();
+
+        _state.PutLeg(new LegRow { Flight = "PIL25", Name = "l1", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = Start.AddHours(1) });
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+        Directory.Exists(Path.Combine(plane, "src/A/obj")).ShouldBeFalse();
+    }
 }

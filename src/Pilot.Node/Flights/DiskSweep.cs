@@ -72,6 +72,9 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
+        var (obj, objBytes) = SweepObjFolders(sessions);
+        bytes += objBytes;
+
         var probeCutoff = now - ProbeAge;
         foreach (var probe in Safe(() => Directory.EnumerateDirectories(tempFolder, "p2o-*")))
         {
@@ -82,11 +85,11 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
             }
         }
 
-        if (scratch + probes > 0)
+        if (scratch + probes + obj > 0)
         {
             state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget,
-                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}",
-                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
+                $"Disk sweep freed {Size(bytes)}: {scratch} job scratch folder{(scratch == 1 ? "" : "s")}, {probes} probe folder{(probes == 1 ? "" : "s")}{(obj > 0 ? $", {obj} obj folder{(obj == 1 ? "" : "s")} of finished legs" : "")}",
+                $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{(obj > 0 ? $", and {obj} obj folders in planes whose legs are done and idle (bin kept)" : "")}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
         }
 
         var reclaimable = new List<(string Name, long Bytes)>();
@@ -102,6 +105,84 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         RetryLandedPlanes(sessions, reclaimable);
         RingDisk(reclaimable);
         return (scratch, probes, bytes);
+    }
+
+    // The last done leg's FinishedAt a plane was swept for: a plane is swept once per finished leg.
+    private readonly Dictionary<string, DateTimeOffset> _objSwept = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A flight not landed with a leg done, none flying, no live session and no queued or running job inside its plane loses
+    /// every <c>obj</c> folder under it (rebuilt on demand); bin stays for the next leg or the review. Reparse points and
+    /// <c>.git</c> are not entered. Returns the folders removed and the unique bytes freed.
+    /// </summary>
+    private (int Folders, long Bytes) SweepObjFolders(IReadOnlyList<SessionRow> sessions)
+    {
+        int folders = 0;
+        long bytes = 0;
+        var liveCwds = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed)).Select(s => s.Cwd).Where(c => !string.IsNullOrEmpty(c)).ToList();
+        var jobCwds = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued).Select(j => j.Cwd).Where(c => !string.IsNullOrEmpty(c)).ToList();
+        foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && !string.IsNullOrEmpty(f.Worktree)))
+        {
+            try
+            {
+                var legs = state.Legs(flight.Code);
+                if (legs.Length == 0 || legs.Any(l => l.State == LegState.Flying) || !legs.Any(l => l.State == LegState.Done)
+                    || liveCwds.Any(c => Inside(flight.Worktree, c)) || jobCwds.Any(c => Inside(flight.Worktree, c))
+                    || !Directory.Exists(flight.Worktree))
+                {
+                    continue;
+                }
+                var finished = legs.Where(l => l.State == LegState.Done).Max(l => l.FinishedAt ?? DateTimeOffset.MinValue);
+                if (_objSwept.TryGetValue(flight.Worktree, out var seen) && seen >= finished)
+                {
+                    continue;
+                }
+                foreach (var obj in ObjFolders(flight.Worktree))
+                {
+                    var size = DiskUsage.UniqueBytes(obj);
+                    if (RemovalQueue.TryDelete(obj, out _))
+                    {
+                        folders++;
+                        bytes += size;
+                    }
+                }
+                _objSwept[flight.Worktree] = finished;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Left for the next sweep.
+            }
+        }
+        return (folders, bytes);
+    }
+
+    private static List<string> ObjFolders(string root)
+    {
+        var found = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            foreach (var sub in Safe(() => Directory.EnumerateDirectories(dir)))
+            {
+                var name = Path.GetFileName(sub);
+                if (name.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                    || (File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0)
+                {
+                    continue;
+                }
+                if (name.Equals("obj", StringComparison.OrdinalIgnoreCase))
+                {
+                    found.Add(sub);
+                }
+                else
+                {
+                    pending.Push(sub);
+                }
+            }
+        }
+        return found;
     }
 
     /// <summary>The repo folders whose <c>.claude/worktrees</c> the sweep looks in; none (no worktree pass) unless set.</summary>
