@@ -95,6 +95,36 @@ public sealed class OverrideReasonTests
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AnAcceptClosesTheLegsCardBySessionWithItsReasonAndDecisionsShowsIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        FailedLeg(node);
+        var card = node.State.RaiseCard(CardBin.Ring, "leg-failed", Verbs.LegTarget("TIA1", "parser"), "TIA1/parser failed", "x");
+        const string Reason = "j962 shows the ephemeris is not needed";
+
+        var result = await Send(node, Accept(Assistant, agent: true, why: Reason));
+
+        result.Error.ShouldBeNull();
+        var closed = node.State.Cards().Single(c => c.Id == card.Id);
+        closed.State.ShouldBe(CardState.Closed);
+        closed.ClosedBy.ShouldBe(Assistant);
+        closed.Outcome.ShouldNotBeNull().ShouldContain(Reason);
+
+        var snapshot = new SnapshotEvent { Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Sessions = [], Cards = [closed] };
+        var line = PilotCommand.Cards(snapshot, all: true);
+        line.ShouldContain($"[closed: ");
+        line.ShouldContain(Reason);
+        line.ShouldContain($", by {Assistant}]");
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exit = await PilotCommand.RunAsync(["--node-socket", node.SocketPath, "decisions", "--kind", "accept-leg"], node.Folder, output, error, Ct);
+        exit.ShouldBe(0, error.ToString() + output);
+        output.ToString().ShouldContain(Reason);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AnAcceptWithItsReasonGivenStraightAsWordsAfterTheOutcomeCounts()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

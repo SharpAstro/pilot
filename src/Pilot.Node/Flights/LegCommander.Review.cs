@@ -313,7 +313,9 @@ public sealed partial class LegCommander
         flight = FlightOf(command.Target);
         if (verdict == "pass")
         {
-            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "passed", ReviewChanges, ReviewLoopKind, LegWatch.ReviewStalled);
+            state.CloseCardsAboutBy(fromReviewer ? "node" : command.Who, Verbs.FlightTarget(flight.Code),
+                !fromReviewer && command.Why?.Trim() is { Length: > 0 } passWhy ? $"passed anyway by {command.Who}: {passWhy}" : "passed",
+                ReviewChanges, ReviewLoopKind, LegWatch.ReviewStalled);
             var reviewed = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
             // The verdict is kept already: a card that could not be raised (gh failing, the node stopping) is the sweep's to restore,
             // never a reason to throw the pass away (PIL682, 2026-11-03: a restart mid-verdict left a passed flight with no merge card).
@@ -554,7 +556,7 @@ public sealed partial class LegCommander
     private void ReleaseHolding(FlightRow flight, string? who, string why)
     {
         Record(flight.Code, f => f with { Holding = null });
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{who} cleared it to land", ReviewNotesKind, HoldingTimeoutKind);
+        state.CloseCardsAboutBy(who ?? "node", Verbs.FlightTarget(flight.Code), $"{who} cleared it to land{(why.Length > 0 ? $": {why}" : "")}", ReviewNotesKind, HoldingTimeoutKind);
         state.RaiseCard(CardBin.Handled, HoldingClearedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is cleared to land",
             why.Length > 0 ? $"{who}: {why}" : $"cleared by {who}");
     }
