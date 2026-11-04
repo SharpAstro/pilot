@@ -62,6 +62,7 @@ public static partial class Briefs
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
         text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
         text.AppendLine("finding was a behaviour.");
+        text.AppendLine(InvariantRule);
         text.Append(LfsRule(review.FixWorktree, "worktree"));
         text.AppendLine();
         text.AppendLine("## Build and test");

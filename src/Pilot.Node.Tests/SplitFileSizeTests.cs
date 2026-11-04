@@ -8,6 +8,7 @@ namespace Pilot.Node.Tests;
 /// <see cref="Globs"/> stays at or under <see cref="MaxLines"/> lines, so a part that grows past it is split again rather than
 /// becoming the next 3,000-line file. A later split adds its glob to the one array.
 /// </summary>
+[Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class SplitFileSizeTests
 {
     private const int MaxLines = 850;

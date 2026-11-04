@@ -112,6 +112,9 @@ public sealed partial class LegCommander
             var quiet = new List<(Touched Other, string[] Files)>();
             var prParallel = new List<(Touched Other, string[] Files)>();
             var mutual = new List<(Touched Other, string[] Files)>();
+            var oneWay = new List<(Touched Other, string[] Files)>();
+            Dictionary<string, int>? ownLines = null;
+            var ownLinesRead = false;
             foreach (var other in others.Where(o => o.Files is not null))
             {
                 var unforeseen = Unforeseen(flight, own, other);
@@ -135,12 +138,28 @@ public sealed partial class LegCommander
                     // A PR no flight owns has no flight to connect to: the node answers parallel itself and leaves a note.
                     prParallel.Add((other, unforeseen));
                 }
-                else if (unforeseen.Length > bestFiles.Length)
+                else
                 {
-                    (best, bestFiles) = (other, unforeseen);
+                    if (answered is null)
+                    {
+                        if (!ownLinesRead)
+                        {
+                            (ownLines, ownLinesRead) = (await OwnLinesAsync(flight, cancellationToken), true);
+                        }
+                        if (!OverlapChoice.Rings(unforeseen, ownLines, other.Lines))
+                        {
+                            // Small, one-way and not answered yet: the node plans in parallel itself and leaves a note (PIL726).
+                            oneWay.Add((other, unforeseen));
+                            continue;
+                        }
+                    }
+                    if (unforeseen.Length > bestFiles.Length)
+                    {
+                        (best, bestFiles) = (other, unforeseen);
+                    }
                 }
             }
-            if (best is null && quiet.Count == 0 && prParallel.Count == 0 && mutual.Count == 0)
+            if (best is null && quiet.Count == 0 && prParallel.Count == 0 && mutual.Count == 0 && oneWay.Count == 0)
             {
                 return;
             }
@@ -160,6 +179,10 @@ public sealed partial class LegCommander
                 foreach (var (other, files) in prParallel)
                 {
                     now = AnswerPrParallel(now, leg.Name, other, files);
+                }
+                foreach (var (other, files) in oneWay)
+                {
+                    now = AnswerOneWayParallel(now, leg.Name, other, files);
                 }
                 var goOn = new List<(FlightRow Other, OverlapRow Row)>();
                 foreach (var (other, files) in mutual)
@@ -306,6 +329,36 @@ public sealed partial class LegCommander
             $"Found at {leg}: {flight.Code}'s plane changes {files.Length} file{(files.Length == 1 ? "" : "s")} that open PR {code} changes too, which its plan did not foresee. "
             + $"A PR has no flight to connect to, so the node answered plan in parallel itself and {flight.Code} goes on. The second to land resolves the conflicts. Both change: {string.Join(", ", names)}.");
         Error.WriteLine($"leg-end overlap: {flight.Code} shares {string.Join(", ", files)} with open PR {code}; answered parallel by the node, no card rang");
+        return updated;
+    }
+
+    /// <summary>
+    /// A small unforeseen overlap, one-way, with another flight that has no answer on the pair yet (PIL726): the node records the pair
+    /// <see cref="OverlapAnswer.Separate"/> on this side only and raises a handled card, not a ring, so <see cref="Due"/> holds nothing.
+    /// </summary>
+    private FlightRow AnswerOneWayParallel(FlightRow flight, string leg, Touched other, string[] files)
+    {
+        var code = OtherCode(other);
+        var union = OverlapChoice.Normalise([.. flight.Overlaps.Where(o => string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)).SelectMany(o => o.Files ?? []), .. files])
+            .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var limits = $"at most {OverlapChoice.RingMoreThanShared} shared files, and no shared source file changed by {OverlapChoice.HotLines}+ lines on both sides";
+        var row = new OverlapRow
+        {
+            Other = code, Node = other.Node, Files = union, Pick = Verbs.OverlapPickConnect,
+            Why = $"after {leg} the plane changes {string.Join(", ", ShortNames(files))}, which {other.Label} changes too; the node planned this small one-way overlap in parallel ({limits})",
+            Answer = OverlapAnswer.Separate, AfterLeg = leg, At = time.GetUtcNow(),
+        };
+        var updated = flight with { Overlaps = [.. flight.Overlaps.Where(o => !string.Equals(o.Other, code, StringComparison.OrdinalIgnoreCase)), row] };
+        state.PutFlight(updated);
+
+        var names = ShortNames(files);
+        var named = names.Length > OverlapNamed ? $"{string.Join(", ", names.Take(OverlapNamed))} and {names.Length - OverlapNamed} more" : string.Join(", ", names);
+        var at = other.Node is null ? code : $"{code} on {other.Node}";
+        state.RaiseCard(CardBin.Handled, OverlapParallelKind, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}/{leg} planned in parallel with {at} ({named})",
+            $"Found at {leg}: {flight.Code}'s plane changes {files.Length} file{(files.Length == 1 ? "" : "s")} that {at} changes too, which its plan did not foresee. "
+            + $"The overlap is small ({limits}), so no card rang: the node planned in parallel itself and {flight.Code} goes on. The second to land resolves the conflicts. Both change: {string.Join(", ", names)}.");
+        Error.WriteLine($"leg-end overlap: {flight.Code} shares {string.Join(", ", files)} with {at}; small, answered parallel by the node, no card rang");
         return updated;
     }
 
