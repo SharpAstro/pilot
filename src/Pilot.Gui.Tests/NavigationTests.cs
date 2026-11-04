@@ -345,7 +345,8 @@ public sealed class NavigationTests
         Press(window, chrome.Sessions, "transcript:back");
         chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
         chrome.Page.ShouldBe(PilotPage.Sessions);
-        chrome.CanGoForward.ShouldBeTrue();
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
     }
 
     private static PullRequestRow PrOf(string flight) => new()
