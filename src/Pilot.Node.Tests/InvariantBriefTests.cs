@@ -34,7 +34,10 @@ public sealed class InvariantBriefTests
     [Fact]
     public void TheFixerIsToldANewRepoWideGuardCarriesTheInvariantTrait()
     {
-        var review = new PrReviewRow { Repo = "SharpAstro/pilot", Number = 1, Head = "abcdef012345", Base = "main", FixWorktree = "/r/fix" };
+        var review = new PrReviewRow { Repo = "SharpAstro/pilot", Number = 1, Head = "abcdef012345", Base = "main", FixWorktree = "/r/fix",
+            Url = "https://github.com/SharpAstro/pilot/pull/1", ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-pilot-1", Reviewer = "r",
+            State = PrReviewState.Closed, StartedAt = DateTimeOffset.UnixEpoch,
+        };
 
         Briefs.FixPr(review, "feature", null).ShouldContain("[Trait(\"Category\", \"Invariant\")]");
     }
