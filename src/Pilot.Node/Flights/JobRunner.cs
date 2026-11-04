@@ -1104,11 +1104,17 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // The looks at the machine's CPU while this job ran, and how many found it above 90%.
         int looks = 0, hot = 0;
 
+        var failures = new TestFailures();
+
         void Follow(bool final)
         {
             foreach (var line in follower.Read(final))
             {
                 tail.Add(line);
+                if (failures.Read(line) is { } failure)
+                {
+                    NoteFailure(job, failure);
+                }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
                 if (now - lastStep >= StepEvery && line.Trim().Length > 0)
@@ -1263,6 +1269,72 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
+    }
+
+    /// <summary>
+    /// A failed test or build error read in a running job's output: counted on its row now, and the owner told the first one,
+    /// once, at once (a check has no owner, so it only gets the row). A refused say is no card: the end-of-run tell still comes.
+    /// </summary>
+    private void NoteFailure(JobRow job, TestFailures.Failure failure)
+    {
+        JobRow? toTell = null;
+        lock (_rowLock)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is not { State: JobState.Running } current)
+            {
+                return;
+            }
+            var updated = failure.IsBuildError
+                ? current with { BuildErrors = current.BuildErrors + 1, FirstBuildError = current.FirstBuildError ?? failure.Name }
+                : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && Say is not null)
+            {
+                updated = updated with { FailureTold = true };
+                toTell = updated;
+            }
+            state.PutJob(updated);
+        }
+        if (toTell is not null)
+        {
+            _ = TellFirstFailureAsync(toTell, failure);
+        }
+    }
+
+    private async Task TellFirstFailureAsync(JobRow job, TestFailures.Failure failure)
+    {
+        try
+        {
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(job.Owner!, sessions);
+            var target = WakeTarget(job.Owner!, job.OwnerName);
+            var handed = "";
+            if (ownerRow is not null)
+            {
+                var candidates = ownerRow.Role == SessionRole.Worker
+                    ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
+                    : sessions;
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+                {
+                    target = replacement.Id;
+                    handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
+                }
+                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                {
+                    return;
+                }
+            }
+            else if (Ledger?.Find([job.Owner!]) is { EndedAt: not null })
+            {
+                return;
+            }
+            var what = failure.IsBuildError ? $"a build error ({failure.Name})" : $"a failed test ({failure.Name})";
+            var text = $"{handed}Your job {job.Id} (`{job.Command}`, in {job.Cwd}) has {what} so far, and runs on. You will be told how it ends; the output so far is in {job.LogPath}.";
+            await Say!(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, _stopping);
+        }
+        catch (Exception)
+        {
+            // Not told early: no card for it, the end of the run is still told.
+        }
     }
 
     private void ReleaseHold(string id)

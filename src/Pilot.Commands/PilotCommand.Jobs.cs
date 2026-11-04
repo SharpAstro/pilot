@@ -19,7 +19,7 @@ public static partial class PilotCommand
         {
             state = $"paused since {pausedAt.ToLocalTime():HH:mm}";
         }
-        var end = job.Error is { } error ? $": {error}" : "";
+        var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
         return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
