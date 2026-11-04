@@ -37,6 +37,15 @@ public sealed record MachineRow
     /// <summary>The fastest up interface's link speed in bits per second, which the net bar is a share of; null where unknown.</summary>
     public long? NetLinkBitsPerSecond { get; init; }
 
+    /// <summary>Free bytes on the drive holding the repos and the job folders; null where not read (an older node, or no drive said).</summary>
+    public long? DiskFree { get; init; }
+
+    /// <summary>That drive's size in bytes; null with <see cref="DiskFree"/>.</summary>
+    public long? DiskTotal { get; init; }
+
+    /// <summary>That drive's name, such as <c>C:</c> or <c>/</c>; null where not read.</summary>
+    public string? DiskName { get; init; }
+
     /// <summary>The processes using most CPU, busiest first. Not required, so a row without them reads as none.</summary>
     public MachineProcess[] Processes
     {
@@ -65,11 +74,16 @@ public sealed record MachineRow
             var bar = NetLinkBitsPerSecond is > 0 ? Math.Clamp(Math.Max(netIn, netOut) * 8d / NetLinkBitsPerSecond.Value, 0d, 1d) : 0d;
             gauges.Add(new("net", bar, $"{Mbps(netIn)}/{Mbps(netOut)} Mbps (in/out)"));
         }
+        if (DiskFree is { } free && DiskTotal is > 0 and var size)
+        {
+            var name = string.IsNullOrEmpty(DiskName) ? "" : $" on {DiskName}";
+            gauges.Add(new("disk", Fraction((size - free) * 100d / size), $"{Gigabytes(free)}/{Gigabytes(size)} GB free{name}"));
+        }
         return [.. gauges];
     }
 
     /// <summary>
-    /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB · net 2.3/0.4 Mbps (in/out)</c>. The net part is left out when the node sends no figures, the GPU part is
+    /// The row in a line, as every client shows it: <c>cpu 34% · gpu 81% (6.1/12 GB) · mem 21/32 GB · net 2.3/0.4 Mbps (in/out) · disk 120/930 GB free on C:</c>. The disk part is left out when the node sends no drive figures, the net part is left out when the node sends no figures, the GPU part is
     /// left out when the node has no GPU, and its memory when the platform does not say it; GB go to one decimal only
     /// where they are not whole.
     /// </summary>
