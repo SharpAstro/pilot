@@ -113,7 +113,7 @@ public static partial class PilotCommand
         // What an assistant says it acted on, for the commands that are the person's alone (merge, land, a setting, setup, an
         // update) and a card's answer or dismissal: the node keeps it in the black box and on the card it raises (autopilot off)
         // or the Handled line it leaves (on).
-        private readonly Option<string?> actingOn = new Option<string?>("--why") { Description = "The message you are acting on, in your words: recorded with a command only the person may do, whose card or Handled line shows it" };
+        private readonly Option<string?> actingOn = new Option<string?>("--why") { Description = "The message you are acting on, in your words: recorded with a command only the person may do, whose card or Handled line shows it. An override (Mark done anyway, Ready anyway, Pass with notes, create --anyway, merge as it is) takes it in your own words naming the evidence (a job id, a commit, a card), or the node refuses it" };
 
         Argument<string> Arg(string name, string description) => new(name) { Description = description };
 

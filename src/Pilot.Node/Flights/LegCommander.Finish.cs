@@ -47,9 +47,11 @@ public sealed partial class LegCommander
             {
                 await StopQuietly(flyingJob, cancellationToken);
             }
-            var accepted = $"{(leg.State == LegState.Flying ? "accepted as it stands" : "failed, marked done anyway")} by {command.Who}{(report.Length > 0 ? $": {report}" : "")}";
+            // Its reason is the session's own: its --why, else the words after the outcome (the node refuses an override with neither).
+            var reason = command.Why?.Trim() is { Length: > 0 } why ? why : report;
+            var accepted = $"{(leg.State == LegState.Flying ? "accepted as it stands" : "failed, marked done anyway")} by {command.Who}{(reason.Length > 0 ? $": {reason}" : "")}";
             state.PutLeg(leg with { State = LegState.Done, Report = leg.Report is { Length: > 0 } was ? $"{accepted}\n{was}" : accepted });
-            state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} marked done anyway");
+            state.CloseCardsAboutBy(command.Who, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} marked done anyway{(reason.Length > 0 ? $": {reason}" : "")}");
             return;
         }
         if (outcome == "verified")
