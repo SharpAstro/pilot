@@ -160,6 +160,234 @@ public sealed class DiskSweepTests : IDisposable
         _state.Cards().Count(c => c.Kind == "disk-swept").ShouldBe(1);
     }
 
+    // ---- hand-made worktrees, landed planes and the disk ring ----
+
+    private string Repo => Path.Combine(_root, "repo");
+
+    private string Wt(string name) => Path.Combine(Repo, ".claude", "worktrees", name);
+
+    private sealed class ScriptedGit : IGit
+    {
+        public List<string> Listed { get; } = [];
+
+        public HashSet<string> Dirty { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public HashSet<string> Throws { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public string Main { get; init; } = "";
+
+        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken)
+        {
+            if (args[0] == "worktree" && args[1] == "list")
+            {
+                var text = $"worktree {Main}\nbranch refs/heads/main\n\n" + string.Concat(Listed.Select(p => $"worktree {p}\nbranch refs/heads/b-{Path.GetFileName(p)}\n\n"));
+                return Task.FromResult(new GitRun(0, text, ""));
+            }
+            if (Throws.Contains(cwd))
+            {
+                throw new InvalidOperationException("git blew up");
+            }
+            if (args[0] == "status")
+            {
+                return Task.FromResult(new GitRun(0, Dirty.Contains(cwd) ? " M file.cs\n" : "", ""));
+            }
+            if (args[0] == "worktree" && args[1] == "remove")
+            {
+                var path = args[^1];
+                Listed.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                Directory.Delete(path, true);
+            }
+            return Task.FromResult(new GitRun(0, "", ""));
+        }
+    }
+
+    private (DiskSweep Sweep, ScriptedGit Git, FakeGitHub GitHub) WorktreeSweep(string prState = "MERGED")
+    {
+        Directory.CreateDirectory(Repo);
+        var git = new ScriptedGit { Main = Repo };
+        var github = new FakeGitHub { Pr = new PullRequest(7, prState, "sha", "https://example.invalid/pr/7") };
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time)
+        {
+            ScratchDays = () => 2, Planes = new Planes(git), GitHub = github, Repos = () => [Repo],
+            FreeSpace = _ => (500L << 30, 1000L << 30, "D:"),
+        };
+        return (sweep, git, github);
+    }
+
+    private string MakeWt(ScriptedGit git, string name, bool create = true)
+    {
+        var path = Wt(name);
+        if (create)
+        {
+            Directory.CreateDirectory(path);
+            File.WriteAllBytes(Path.Combine(path, "a.bin"), new byte[300]);
+        }
+        git.Listed.Add(path);
+        return path;
+    }
+
+    [Fact]
+    public async Task AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine()
+    {
+        var (sweep, git, _) = WorktreeSweep();
+        var path = MakeWt(git, "hand");
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(path).ShouldBeFalse();
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.WorktreeRemovedKind);
+        card.Bin.ShouldBe(CardBin.Handled);
+        card.Title.ShouldContain("hand");
+        card.Title.ShouldContain("#7");
+    }
+
+    [Fact]
+    public async Task AClosedPrsCleanWorktreeGoesToo()
+    {
+        var (sweep, git, _) = WorktreeSweep("CLOSED");
+        var path = MakeWt(git, "gone");
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(path).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ADirtyHandMadeWorktreeRaisesOneForYouCardAndNoSecondOnTheNextSweep()
+    {
+        var (sweep, git, _) = WorktreeSweep();
+        var path = MakeWt(git, "dirty");
+        git.Dirty.Add(path);
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(path).ShouldBeTrue();
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.WorktreeDirtyKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Subject.ShouldBe(path);
+    }
+
+    [Fact]
+    public async Task AWorktreeWithAnOpenPrOrNoPrIsLeft()
+    {
+        var (sweep, git, github) = WorktreeSweep();
+        var open = MakeWt(git, "open");
+        var none = MakeWt(git, "none");
+        github.PrOf["b-open"] = new PullRequest(8, "OPEN", "sha", "https://example.invalid/pr/8");
+        github.PrOf["b-none"] = null!;
+        github.Pr = null;
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(open).ShouldBeTrue();
+        Directory.Exists(none).ShouldBeTrue();
+        _state.Cards().ShouldNotContain(c => c.Kind == DiskSweep.WorktreeRemovedKind);
+    }
+
+    [Fact]
+    public async Task AFlightsPlaneAReviewsWorktreeABenchWorktreeAndOneWithALiveSessionAreLeft()
+    {
+        var (sweep, git, _) = WorktreeSweep();
+        var plane = MakeWt(git, "plane");
+        var review = MakeWt(git, "review");
+        var bench = MakeWt(git, "b1");
+        var busy = MakeWt(git, "busy");
+        _state.PutFlight(new FlightRow
+        {
+            Code = "PIL9", Repo = "pilot", Issue = 1, Title = "t", RepoPath = Repo, Branch = "b-plane", Worktree = plane, Base = "origin/main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        _state.PutPrReview(new PrReviewRow
+        {
+            Repo = "x/pilot", Number = 3, Url = "https://example.invalid/pr/3", Base = "main", Head = "abc", ClonePath = Repo, Worktree = review,
+            Reviewer = "r", Author = "ada", State = PrReviewState.Reviewing, StartedAt = Start,
+        });
+        _state.PutSession(new SessionRow
+        {
+            Id = "live0001", SessionId = "live0001-0000-4000-8000-000000000000", Name = "s-live", Kind = SessionKind.Background, Cwd = Path.Combine(busy, "src"),
+            Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        foreach (var kept in new[] { plane, review, bench, busy })
+        {
+            Directory.Exists(kept).ShouldBeTrue(kept);
+        }
+    }
+
+    [Fact]
+    public async Task AMissingFolderOrAGitFailureOnOneRowDoesNotStopTheRest()
+    {
+        var (sweep, git, _) = WorktreeSweep();
+        MakeWt(git, "missing", create: false);
+        var boom = MakeWt(git, "boom");
+        git.Throws.Add(boom);
+        var fine = MakeWt(git, "fine");
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(boom).ShouldBeTrue();
+        Directory.Exists(fine).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ALandedFlightsPlaneStillOnDiskIsDeletedAndOneThatCannotBeIsQueued()
+    {
+        var queue = new RemovalQueue(Path.Combine(_root, "pending.json"), _time);
+        var (sweep, _, _) = WorktreeSweep();
+        sweep = new DiskSweep(Jobs, Temp, _state, _time) { Queue = queue, FreeSpace = _ => null };
+        var free = Wt("landed-free");
+        var held = Wt("landed-held");
+        Directory.CreateDirectory(free);
+        Directory.CreateDirectory(held);
+        File.WriteAllBytes(Path.Combine(held, "x.bin"), new byte[10]);
+        foreach (var (code, path) in new[] { ("PIL1", free), ("PIL2", held) })
+        {
+            _state.PutFlight(new FlightRow
+            {
+                Code = code, Repo = "pilot", Issue = 1, Title = "t", RepoPath = Repo, Branch = "b", Worktree = path, Base = "origin/main",
+                State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
+            });
+        }
+        using var hold = new FileStream(Path.Combine(held, "x.bin"), FileMode.Open, FileAccess.Read, FileShare.None);
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(free).ShouldBeFalse();
+        Directory.Exists(held).ShouldBeTrue();
+        queue.Contains(held).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack()
+    {
+        var free = 5L << 30;
+        var (sweep, _, _) = WorktreeSweep();
+        sweep = new DiskSweep(Jobs, Temp, _state, _time) { DiskAlertGb = () => 20, FreeSpace = _ => (free, 100L << 30, "D:"), Repos = () => [Repo] };
+        var big = Job("bbbbbbbb", TimeSpan.FromMinutes(5));
+        File.WriteAllBytes(Path.Combine(big, "tmp", "more.bin"), new byte[9000]);
+        Session("bbbbbbbb", "PIL1", SessionState.Working);
+        Job("cccccccc", TimeSpan.FromMinutes(5));
+        Session("cccccccc", "PIL1", SessionState.Working);
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        var card = _state.Cards().Single(c => c.Kind == DiskSweep.DiskLowKind);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldContain("D:");
+        card.Title.ShouldContain("5.0 GB");
+        card.Detail!.ShouldContain("job scratch bbbbbbbb");
+        card.Detail!.IndexOf("bbbbbbbb", StringComparison.Ordinal).ShouldBeLessThan(card.Detail!.IndexOf("cccccccc", StringComparison.Ordinal));
+
+        free = 50L << 30;
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == DiskSweep.DiskLowKind);
+    }
+
     [Fact]
     public async Task AFolderThatCannotBeRemovedDoesNotStopTheRest()
     {

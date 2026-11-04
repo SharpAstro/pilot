@@ -76,6 +76,11 @@ public static partial class NodeApp
             services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             ScratchDays = () => services.GetRequiredService<RoleModels>().ScratchDays,
+            DiskAlertGb = () => services.GetRequiredService<RoleModels>().DiskAlertGb,
+            Planes = services.GetRequiredService<Planes>(),
+            GitHub = services.GetService<IGitHub>(),
+            Queue = services.GetRequiredService<RemovalQueue>(),
+            Repos = () => [.. services.GetRequiredService<RepoCatalog>().Repos().Where(r => r.GitHub is not null).Select(r => r.Path)],
         });
         builder.Services.AddSingleton(services => new Planes(services.GetRequiredService<IGit>(), services.GetRequiredService<RemovalQueue>()));
         builder.Services.AddSingleton<StopGate>();
