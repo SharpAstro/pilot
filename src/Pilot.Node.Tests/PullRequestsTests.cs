@@ -792,8 +792,11 @@ public sealed class PullRequestsTests : IDisposable
 
     private static string Show(string[][] batches) => string.Join(" ", batches.Select(b => string.Join(",", b)));
 
-    [Fact]
-    public async Task TheWatchSplitsManyReposIntoSearchesThatEachStayWithinTheQueryLimit()
+    public static IEnumerable<object[]> Fifty() => Enumerable.Range(0, 50).Select(i => new object[] { i });
+
+    [Theory]
+    [MemberData(nameof(Fifty))]
+    public async Task TheWatchSplitsManyReposIntoSearchesThatEachStayWithinTheQueryLimit(int run)
     {
         var repos = Enumerable.Range(0, 23).Select(i => $"SharpAstro/clone-{i:00}").ToArray();
         foreach (var repo in repos)
