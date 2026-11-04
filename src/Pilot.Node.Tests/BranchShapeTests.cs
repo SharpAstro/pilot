@@ -112,6 +112,39 @@ public sealed class BranchShapeTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ALaidHeadItsReviewDoesNotCarryToIsNotMerged()
+    {
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        var (flight, _) = await Passed("1");
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        File.WriteAllText(Path.Combine(Repo, "f.txt"), "x\n");
+        Git(Repo, "add", "f.txt");
+        Commit(Repo, "f");
+        File.WriteAllText(Path.Combine(Repo, "f.txt"), "side\n");
+        Commit(Repo, "side");
+        Git(Repo, "push", "-q", "origin", "main");
+        var plane = flight.Worktree;
+        Git(plane, "fetch", "-q", "origin");
+        // Commits past the review, which nobody read: the laid head holds them, so the pass does not go with it.
+        File.WriteAllText(Path.Combine(plane, "f.txt"), "mine1\n");
+        Git(plane, "add", ".");
+        Commit(plane, "mine 1");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "-s", "ours", "-m", "keep ours", "origin/main");
+        File.WriteAllText(Path.Combine(plane, "f.txt"), "mine2\n");
+        Commit(plane, "mine 2");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head);
+
+        merge.Error.ShouldNotBeNull().ShouldContain("its review did not carry");
+        merge.Error.ShouldContain(CommitRefs.Short(reviewed));
+        _github.Merged.ShouldBeEmpty();
+        F(flight.Code).Review!.ReviewedHead.ShouldBe(reviewed);
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.LaidKind && c.Bin == CardBin.Handled && c.Title.Contains("review not carried"));
+    }
+
+    [Fact]
     public async Task ARebaseThatConflictsIsLaidAsOneCommit()
     {
         _github.MergeQueueMethod = "REBASE";
@@ -133,6 +166,8 @@ public sealed class BranchShapeTests : ReviewTestsBase
         Commit(plane, "mine 2");
         Git(plane, "push", "-q", "origin", flight.Branch);
         var old = Git(plane, "rev-parse", "HEAD");
+        // The review passed at the head the branch holds now, so it carries to the laid head (whose flight files are the same).
+        _state.UpdateFlight(flight.Code, f => f.Review is { } r ? f with { Review = r with { ReviewedHead = old } } : f);
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head);
 

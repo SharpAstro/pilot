@@ -96,9 +96,16 @@ public sealed partial class LegCommander
             // Pushed, but the flight's files there are not the ones reviewed: nobody has read this head, so it does not merge. The look
             // before the next merge relates it to the review in words and asks for the review it needs.
             var reviewed = flight.Review?.ReviewedHead is { Length: > 0 } r ? $" (reviewed {CommitRefs.Short(r)})" : "";
-            state.RaiseCard(CardBin.Handled, laidFiles is null ? ShapedKind : LaidKind, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} {how}, its review not carried",
-                $"{flight.Base} merges by rebase, so the branch was {how} and pushed as {CommitRefs.Short(shaped)}; the old head is kept as refs/pilot/laid/{flight.Code}. The flight's files there differ from the head reviewed{reviewed}, so the review does not carry and it does not merge until that head is reviewed.");
+            var title = $"{flight.Code} {how}, its review not carried";
+            var detail = $"{flight.Base} merges by rebase, so the branch was {how} and pushed as {CommitRefs.Short(shaped)}; the old head is kept as refs/pilot/laid/{flight.Code}. The flight's files there differ from the head reviewed{reviewed}, so the review does not carry and it does not merge until that head is reviewed.";
+            if (laidFiles is null)
+            {
+                state.RaiseCard(CardBin.Handled, ShapedKind, Verbs.FlightTarget(flight.Code), title, detail);
+            }
+            else
+            {
+                state.RaiseCard(CardBin.Handled, LaidKind, Verbs.FlightTarget(flight.Code), title, detail);
+            }
             throw new FlightException($"{flight.Code} was {how} as {CommitRefs.Short(shaped)}, but its files differ from the head reviewed{reviewed}: its review did not carry, look again before it lands");
         }
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} shaped for {flight.Base}; its review carries to {CommitRefs.Short(shaped)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);

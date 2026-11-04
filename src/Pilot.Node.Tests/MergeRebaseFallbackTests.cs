@@ -82,8 +82,11 @@ public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "node", _github.Pr!.Head, "rebase");
 
-        // The plane has main merged in and pushed, and the entry waits for the review of the new head.
-        merge.Error.ShouldNotBeNull().ShouldContain("conflicts with its base");
+        // The plane has main merged in and pushed, and the entry waits for the review of the new head. The node's own merge is not
+        // refused for it: bringing the branch up to date is what it did.
+        merge.Error.ShouldBeNull();
+        merge.Way.ShouldBe(MergeWays.Updated);
+        merge.Made.ShouldNotBeNull().ShouldContain("conflicts with its base");
         Git(flight.Worktree, "rev-list", "--merges", "--count", $"{before}..HEAD").ShouldBe("1");
         Git(Repo, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(Git(flight.Worktree, "rev-parse", "HEAD"));
         var entry = _state.Merges().Single(m => m.Flight == flight.Code);
