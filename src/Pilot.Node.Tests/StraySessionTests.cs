@@ -183,6 +183,74 @@ public sealed class StraySessionTests
         Strays().ShouldBe(0);
     }
 
+    private void FinishLegAndPutWorker()
+    {
+        _state.PutLeg(_state.Legs("TIA1").First(l => l.Name == "parser") with { State = LegState.Done, FinishedAt = Start });
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        _time.Advance(TimeSpan.FromHours(1));
+    }
+
+    private static string StrayOutcome(NodeState state) => state.Cards().Single(c => c.Kind == LegWatch.StraySession).Outcome ?? "";
+
+    [Fact]
+    public async Task ADoneLegsWorkerRingsAndTheNextLookAfterItEndsClosesTheCard()
+    {
+        FinishLegAndPutWorker();
+        var watch = NewWatch();
+        await watch.LookAsync(Ct);
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(1);
+
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser") with { State = SessionState.Ended });
+        await watch.LookAsync(Ct);
+
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(0);
+        StrayOutcome(_state).ShouldStartWith("the session ended");
+    }
+
+    [Fact]
+    public async Task ASessionTheLedgerEndsByTheWatchtowerClosesItsCardNamingTheWatchtower()
+    {
+        FinishLegAndPutWorker();
+        _ledger.Adopt(_state.Sessions().First(s => s.Id == "work1111"), null);
+        var watch = NewWatch();
+        await watch.LookAsync(Ct);
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(1);
+
+        _ledger.Stopped(["work1111"], SessionEndReasons.Watchtower, "watchtower");
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser") with { State = SessionState.Ended });
+        await watch.LookAsync(Ct);
+
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(0);
+        StrayOutcome(_state).ShouldStartWith("the session ended");
+        StrayOutcome(_state).ShouldContain("watchtower");
+    }
+
+    [Fact]
+    public async Task AFreshLegWatchOverTheSameStateDoesNotRingASecondTime()
+    {
+        FinishLegAndPutWorker();
+        await NewWatch().LookAsync(Ct);
+        await NewWatch().LookAsync(Ct);
+
+        Strays().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ADoneLegsWorkerCardSummaryIsNotTheStrangersText()
+    {
+        FinishLegAndPutWorker();
+        _state.PutSession(Row("zzz99999", "someone-elses", SessionRole.AdHoc));
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await NewWatch().LookAsync(Ct);
+
+        var cards = _state.Cards(openOnly: true).Where(c => c.Kind == LegWatch.StraySession).ToList();
+        var worker = cards.Single(c => c.Subject == "session/work1111").Summary.ShouldNotBeNull();
+        var stranger = cards.Single(c => c.Subject == "session/zzz99999").Summary.ShouldNotBeNull();
+        worker.ShouldContain("is done");
+        worker.ShouldNotBe(stranger);
+        stranger.ShouldNotContain("is done");
+    }
+
     [Fact]
     public async Task AReviewerOfAFlightThatJustLandedRingsNothingInsideTheGraceAndOnceAfter()
     {

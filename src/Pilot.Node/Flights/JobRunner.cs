@@ -129,6 +129,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly ConcurrentDictionary<string, byte> _mine = new(StringComparer.Ordinal);
     // The watches of the running jobs, so the node's stop waits for each to let go of its job without touching its row.
     private readonly ConcurrentDictionary<string, Task> _watches = new(StringComparer.Ordinal);
+    // Rows whose end this node run has already tried to tell (or is telling): the sweep tries each once, so a refused tell rings once.
+    private readonly ConcurrentDictionary<string, byte> _tried = new(StringComparer.Ordinal);
+    // Rows whose tell threw and rang: a retry that throws again does not ring again.
+    private readonly ConcurrentDictionary<string, byte> _rang = new(StringComparer.Ordinal);
     // What the dispatcher acts on, one at a time: a job handed over, a cancel of a waiting one, and "look again" (a job
     // ended, the timer for memory). No lock anywhere: everything that decides who runs happens on the dispatcher alone.
     private readonly Channel<Signal> _signals = Channel.CreateUnbounded<Signal>(new UnboundedChannelOptions { SingleReader = true });
@@ -200,12 +204,48 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             while (await timer.WaitForNextTickAsync(stopping))
             {
                 Pump();
+                try
+                {
+                    await TellUntoldAsync(null, stopping);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The next tick looks again.
+                }
             }
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
         }
     }
+
+    /// <summary>
+    /// Tells every ended, owned, untold row that is not a check and that no live watch of this node holds, once per row per
+    /// node run (a refused or failing tell has rung once and is not tried again). <paramref name="owners"/> limits it to
+    /// those owners' jobs. Returns whether any row was told.
+    /// </summary>
+    internal async Task<bool> TellUntoldAsync(IReadOnlyCollection<string>? owners, CancellationToken cancellationToken)
+    {
+        if (Say is null)
+        {
+            return false;
+        }
+        var told = false;
+        foreach (var row in state.Jobs().Where(j => j is { EndedAt: not null, Owner: not null, Told: false } && j.Kind != JobKind.Check).ToList())
+        {
+            if (owners is not null && !owners.Contains(row.Owner!) || _watches.ContainsKey(row.Id) || !_tried.TryAdd(row.Id, 0))
+            {
+                continue;
+            }
+            await TellAsync(row, cancellationToken);
+            told |= state.Jobs().FirstOrDefault(j => j.Id == row.Id) is { Told: true };
+        }
+        return told;
+    }
+
+    /// <summary>One owner set's untold ended jobs, told now (for an idle check); whether any was told.</summary>
+    internal Task<bool> TellUntoldOf(IReadOnlyCollection<string> owners, CancellationToken cancellationToken = default) =>
+        TellUntoldAsync(owners, cancellationToken);
 
     /// <summary>
     /// Takes up the jobs a previous node left: a running one still alive is followed again, one that ended while no node was
@@ -282,6 +322,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Step = StepOf(last, job),
             EndedAt = EndOf(job, exitPath),
         };
+        _tried[job.Id] = 0;
         state.PutJob(ended);
         DetachedShell.DeleteScripts(job.ScriptPath);
         await TellAsync(ended, cancellationToken, last);
@@ -549,6 +590,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             if (Start(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
+                _tried[next.Id] = 0;
                 state.PutJob(ended);
                 Finish(ended, null);
                 _ = TellAsync(ended, _stopping);
@@ -638,7 +680,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var cancelled = dropped is null
             ? job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() }
             : job with { State = JobState.Cancelled, Error = $"dropped: {dropped}", Step = null, EndedAt = time.GetUtcNow(), Told = true };
+        _tried[job.Id] = 0;
         state.PutJob(cancelled);
+        _siblings.TryRemove(job.Id, out _);
         Finish(cancelled, null);
         if (dropped is null)
         {
@@ -667,6 +711,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return holds;
         }
+        if (SiblingHold(job) is { } shared)
+        {
+            return shared;
+        }
         if (_running.Count >= MaxRunning)
         {
             var slots = MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
@@ -681,6 +729,49 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return FreeMemory() is { } free && free < need
             ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
+    }
+
+    /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
+    public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
+
+    private readonly ConcurrentDictionary<string, IReadOnlyCollection<string>> _siblings = new(StringComparer.Ordinal);
+
+    private IReadOnlyCollection<string> SiblingsFor(JobRow job)
+    {
+        if (_siblings.TryGetValue(job.Id, out var known))
+        {
+            return known;
+        }
+        IReadOnlyCollection<string> set;
+        try
+        {
+            set = SiblingsOf(job);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            set = [];
+        }
+        return _siblings[job.Id] = set;
+    }
+
+    /// <summary>Why a job may not start beside the running ones: its build shares a sibling clone with one of them. Null when it shares none.</summary>
+    private string? SiblingHold(JobRow job)
+    {
+        if (_running.IsEmpty || SiblingsFor(job) is not { Count: > 0 } mine)
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            var theirs = SiblingsFor(state.Jobs().FirstOrDefault(j => j.Id == id) ?? job with { Id = id });
+            var shared = mine.Where(m => theirs.Contains(m, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileName).ToList();
+            if (shared.Count > 0)
+            {
+                var owner = state.Jobs().FirstOrDefault(j => j.Id == id) is { } row ? row.OwnerName ?? row.Owner ?? "the node" : "the node";
+                return $"shares the sibling clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)} with job {id} ({owner})";
+            }
+        }
+        return null;
     }
 
     /// <summary>Why a job other than a benchmark may not start: a benchmark runs, or heads the queue waiting for quiet. Null when none does.</summary>
@@ -1133,6 +1224,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         ReleaseHold(job.Id);
 
         _running.TryRemove(job.Id, out _);
+        _siblings.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
         _nudges.TryRemove(job.Id, out _);
         Tree.Forget(job.Id);
@@ -1165,14 +1257,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
         }
+        // This watch tells it, so the sweep leaves it alone (marked before the row shows it ended).
+        _tried[job.Id] = 0;
         state.PutJob(ended);
         if (looks > 0)
         {
             _saturation[job.Id] = (double)hot / looks;
         }
-        Finish(ended, last);
-        // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
-        Pump();
+        try
+        {
+            Finish(ended, last);
+            // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
+            Pump();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The job's owner is told all the same.
+        }
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
     }
@@ -1282,15 +1383,53 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return;
             }
         }
-        var result = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
-        if (result.Ok)
+        else if (Ledger?.Find([job.Owner]) is { EndedAt: not null })
         {
+            // No row for the owner, and the ledger says its session ended: nobody is waiting on this job.
+            state.PutJob(job with { Told = true });
+            return;
+        }
+        bool ok;
+        string? error;
+        var threw = false;
+        try
+        {
+            var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
+            (ok, error) = (said.Ok, said.Error);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The node is stopping: the row stays untold for the next node's sweep.
+            return;
+        }
+        catch (Exception ex)
+        {
+            // A say that throws is a say that failed: it rings like a refused one (once), rather than faulting the caller
+            // silently, and unlike a refusal it is tried again by the next sweep, as the fault may have been a passing one.
+            _tried.TryRemove(job.Id, out _);
+            threw = true;
+            (ok, error) = (false, $"{ex.GetType().Name}: {ex.Message}");
+            if (!_rang.TryAdd(job.Id, 0))
+            {
+                return;
+            }
+        }
+        if (ok)
+        {
+            state.PutJob(job with { Told = true });
+            // A card an earlier try rang ("could not be told") is out of date now it has been told.
+            state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
+        }
+        else if (ownerRow is null && !threw)
+        {
+            // The node has no row for the owner and its session refused the say (it is gone): nobody is waiting on this job.
+            // Marked told, quietly, so a session long gone is not rung for again on every node start.
             state.PutJob(job with { Told = true });
         }
         else
         {
-            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told: its session refused the say ({LegCommander.OneLine(result.Error ?? "no reason given")})",
-                $"{how}; the say was refused: {result.Error}");
+            state.RaiseCard(CardBin.Ring, UntoldKind, Verbs.JobTarget(job.Id), $"{job.Id} ended but {job.OwnerName ?? job.Owner} could not be told: its session refused the say ({LegCommander.OneLine(error ?? "no reason given")})",
+                $"{how}; the say was refused: {error}");
         }
     }
 

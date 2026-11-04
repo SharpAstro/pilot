@@ -336,7 +336,7 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is not null && args.Length > 2 && args[2] == MergeAsIs && IsPerson(flight, command.Who))
         {
-            ReleaseHolding(flight, command.Who, "merged as it is, the watchtower had not cleared it in time");
+            ReleaseHolding(flight, command.Who, command.Why?.Trim() is { Length: > 0 } asIsWhy ? asIsWhy : "merged as it is, the watchtower had not cleared it in time");
             flight = FlightOf(command.Target);
         }
         if (flight.Holding is { } holding)

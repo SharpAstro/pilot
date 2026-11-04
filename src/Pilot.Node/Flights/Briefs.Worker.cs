@@ -132,6 +132,8 @@ public static partial class Briefs
         text.AppendLine($"  report it with `{run} leg finish failed \"<the NU line, verbatim>\"` and end your turn. The node reads the line, holds the");
         text.AppendLine("  leg until nuget.org serves that version, and flies it again with a fresh worker. Do not work around it: no local");
         text.AppendLine("  feed, no pin changed back, no package reference removed.");
+        text.AppendLine("- A CS1704 or MSB3243 in a sibling clone's path is a stale restore left by another plane's build: run the restore the node");
+        text.AppendLine($"  names through `{run} run -- dotnet restore <project>`, then the check again.");
         text.AppendLine($"- A full build or test run, or anything else long: `{run} run -- <command>`, then end your turn. The node");
         text.AppendLine("  runs it as a job and wakes you with how it ended and its last lines; do not wait for it or poll it. The machine");
         text.AppendLine("  is shared with other flights, so it may wait its turn first; that costs you nothing. Short commands (one test,"
@@ -150,6 +152,7 @@ public static partial class Briefs
         text.AppendLine("  " + JobShellRule);
         text.Append(BranchHistoryRule);
         text.AppendLine();
+        text.AppendLine(InvariantRule);
         text.AppendLine("## When you stop");
         text.AppendLine("End your turn with a short report: what you did, how you checked it (the Done-when, rerun), and anything");
         text.AppendLine("left. Start it with DONE when every step is done and the Done-when holds, or BLOCKED: and why.");
