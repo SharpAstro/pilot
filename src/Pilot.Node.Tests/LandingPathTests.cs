@@ -163,7 +163,7 @@ public sealed class LandingPathTests : ReviewTestsBase
         _github.MergeScript.Enqueue("GraphQL: Pull request has a merge conflict");
         await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", head);
 
-        _state.Cards().Count.ShouldBeGreaterThan(0);
+        _state.Cards().ShouldNotBeEmpty();
         EveryShaIsALink();
     }
 
