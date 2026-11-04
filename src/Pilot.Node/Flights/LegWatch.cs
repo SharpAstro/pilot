@@ -382,6 +382,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return;
         }
+        // An ended job of this worker its owner was never told (a node restart lost the watch) is told now, instead of nudging
+        // or ringing a worker that waits for exactly that word. A tell that fails falls through to the nudge.
+        if (await TellEndedJobAsync(leg, worker, cancellationToken))
+        {
+            return;
+        }
         var cause = ClassifyIdle(leg, worker);
         if (cause == IdleCause.OwnJob)
         {
@@ -433,6 +439,45 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             Ring(leg, Idle, $"{Name(leg)}'s worker has been idle {Ago(now, since)} with {Steps(leg)}, and could not be nudged: {Clip(result.Error ?? "no reason given")}", $"{RoomLead(worker)}the node tried to nudge it: {result.Error}", worker);
         }
+    }
+
+    /// <summary>Tells the owners given their ended, untold jobs (JobRunner.TellUntoldOf); whether any was told. The node sets it.</summary>
+    public Func<IReadOnlyCollection<string>, CancellationToken, Task<bool>>? TellEndedJobs { get; set; }
+
+    private async Task<bool> TellEndedJobAsync(LegRow leg, SessionRow worker, CancellationToken cancellationToken)
+    {
+        if (TellEndedJobs is null)
+        {
+            return false;
+        }
+        var mine = new HashSet<string>(StringComparer.Ordinal) { worker.Id };
+        foreach (var earlier in worker.EarlierSessionIds ?? [])
+        {
+            mine.Add(earlier);
+        }
+        var owners = state.Jobs()
+            .Where(j => j is { EndedAt: not null, Owner: not null, Told: false } && j.Kind != JobKind.Check
+                && (mine.Contains(j.Owner!) || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase)
+                    || (string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase))))
+            .Select(j => j.Owner!).Distinct(StringComparer.Ordinal).ToList();
+        if (owners.Count == 0)
+        {
+            return false;
+        }
+        bool told;
+        try
+        {
+            told = await TellEndedJobs(owners, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+        if (told)
+        {
+            state.RaiseCard(CardBin.Handled, "worker-told-job", Subject(leg), $"{Name(leg)}'s worker was idle because a job of its own had ended without it being told; the node told it");
+        }
+        return told;
     }
 
     /// <summary>Why an idle worker is idle (pilot #578): its context is full, it waits on a job of its own, or it is idle with room.</summary>

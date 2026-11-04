@@ -277,6 +277,63 @@ public sealed class LegWatchTests
         Open().ShouldBeEmpty();
     }
 
+    private void EndedUntoldJob()
+    {
+        _state.PutJob(new JobRow
+        {
+            Id = "j9", Command = "dotnet test", Cwd = "/work/tia1", State = JobState.Succeeded, Owner = "a1b2c3d4", OwnerName = "du1-tia1-parser",
+            LogPath = "/tmp/j9.log", Timeout = TimeSpan.FromMinutes(30), StartedAt = Start, EndedAt = Start.AddMinutes(1), Told = false,
+        });
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWithAnEndedUntoldJobIsToldItAndNeitherNudgedNorRung()
+    {
+        Worker(SessionState.Idle);
+        EndedUntoldJob();
+        _watch.TellEndedJobs = (owners, _) =>
+        {
+            owners.ShouldContain("a1b2c3d4");
+            _state.PutJob(_state.Jobs().Single(j => j.Id == "j9") with { Told = true });
+            return Task.FromResult(true);
+        };
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+
+        _state.Jobs().Single(j => j.Id == "j9").Told.ShouldBeTrue();
+        _said.ShouldBeEmpty();
+        Open().ShouldBeEmpty();
+        Handled().ShouldNotContain(c => c.Kind == "worker-nudged");
+        Handled().ShouldContain(c => c.Kind == "worker-told-job");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWhoseEndedJobCouldNotBeToldFallsThroughToTheNudge()
+    {
+        Worker(SessionState.Idle);
+        EndedUntoldJob();
+        _watch.TellEndedJobs = (_, _) => Task.FromResult(false);
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem();
+        Handled().ShouldContain(c => c.Kind == "worker-nudged");
+    }
+
+    [Fact]
+    public async Task AnIdleWorkerWithNoUntoldJobIsStillNudgedWhenTheHookIsSet()
+    {
+        Worker(SessionState.Idle);
+        _watch.TellEndedJobs = (_, _) => throw new InvalidOperationException("must not be called");
+        _time.Advance(TimeSpan.FromMinutes(10));
+
+        await _watch.LookAsync(Ct);
+
+        _said.ShouldHaveSingleItem();
+    }
+
     [Fact]
     public async Task AnIdleWorkerIsLeftItsGraceThenNudgedTwiceThenRungFor()
     {

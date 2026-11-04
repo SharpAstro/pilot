@@ -297,6 +297,7 @@ public static partial class NodeApp
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
                 StopSession = legs.StopSessionAsync,
+                TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<LegWatch>());
