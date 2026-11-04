@@ -798,6 +798,7 @@ public sealed class PullRequestsTests : IDisposable
     [MemberData(nameof(Fifty))]
     public async Task TheWatchSplitsManyReposIntoSearchesThatEachStayWithinTheQueryLimit(int run)
     {
+        run.ShouldBeGreaterThanOrEqualTo(0);
         var repos = Enumerable.Range(0, 23).Select(i => $"SharpAstro/clone-{i:00}").ToArray();
         foreach (var repo in repos)
         {
