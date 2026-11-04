@@ -631,6 +631,75 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EveryToolTakesAnOptionalNode_ConnectKeepsItsOwn()
+    {
+        var replies = await Serve(Server(), Initialize, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""");
+        var tools = replies[1].GetProperty("result").GetProperty("tools").EnumerateArray().ToList();
+        tools.ShouldNotBeEmpty();
+        foreach (var tool in tools)
+        {
+            var schema = tool.GetProperty("inputSchema");
+            var name = tool.GetProperty("name").GetString()!;
+            schema.GetProperty("properties").TryGetProperty("node", out var node).ShouldBeTrue(name);
+            node.GetProperty("type").GetString().ShouldBe("string", name);
+            if (name != "connect")
+            {
+                schema.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ShouldNotContain("node", name);
+            }
+        }
+        // connect's own node argument (host:port) wins: its schema keeps connect's meaning and requiredness.
+        var connect = tools.Single(t => t.GetProperty("name").GetString() == "connect").GetProperty("inputSchema");
+        connect.GetProperty("properties").GetProperty("node").GetProperty("description").GetString().ShouldBe("The node, host:port");
+        connect.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ShouldContain("node");
+    }
+
+    [Fact]
+    public async Task ACallNamingANodeRunsThereAndOneWithoutRunsOnTheServersNode_AReadIgnoresIt()
+    {
+        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        await using var second = await NodeHarness.StartAsync(Ct, lanPort: port);
+        var tokens = Path.Combine(second.Options.DataFolder, "client-grants.json");
+        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
+        var ticket = (await asking.AskGrantAsync("tests@mcp", Ct)).Response.ShouldNotBeNull();
+        var card = second.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
+        (await second.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
+        token.ShouldNotBeNullOrEmpty();
+        NodeTargets.Save($"127.0.0.1:{port}", token, tokens);
+        await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.NodeTarget, Args = ["for-you", "On the first node"], Who = "cli" }, Ct);
+
+        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
+        try
+        {
+            var replies = await Serve(Server(), Initialize,
+                Call(2, "note", $$"""{"text":["there"],"node":"127.0.0.1:{{port}}"}"""),
+                Call(3, "note", """{"text":["here"]}"""),
+                Call(4, "note", """{"text":["nowhere"],"node":"NoSuchNodeAnywhere"}"""),
+                $$$"""{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"pilot://cards","node":"127.0.0.1:{{{port}}}"}}""");
+
+            Result(replies[1]).IsError.ShouldBeFalse();
+            Result(replies[2]).IsError.ShouldBeFalse();
+            second.State.Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("there");
+            _node.State.Snapshot().Notes.ShouldHaveSingleItem().Text.ShouldBe("here");
+
+            var unknown = Result(replies[3]);
+            unknown.IsError.ShouldBeTrue();
+            unknown.Text.ShouldContain("NoSuchNodeAnywhere");
+            unknown.Text.ShouldContain("nodes tool");
+
+            var text = replies[4].GetProperty("result").GetProperty("contents")[0].GetProperty("text").GetString()!;
+            JsonDocument.Parse(text).RootElement.EnumerateArray().Select(c => c.GetProperty("title").GetString()).ShouldContain("On the first node");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
+        }
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task ARemoteNodeNobodyListensOn_IsTheSameToolErrorAndTheServerKeepsGoing()
     {
