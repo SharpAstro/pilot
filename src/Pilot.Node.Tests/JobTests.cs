@@ -500,7 +500,9 @@ public sealed class JobTests1 : JobTestsBase
         var job = await Ended(Run(command).Made!);
 
         job.State.ShouldBe(JobState.Succeeded);
-        ReadLog(job.LogPath).ReplaceLineEndings("\n").ShouldBe("to stdout é\nto stderr\nand stdout again\n");
+        // The first line of the log names the shell that ran the job (pilot #697); what follows is the command's own output.
+        var header = $"shell: {(OperatingSystem.IsWindows() ? "pwsh" : DetachedShell.UnixShell())}\n";
+        ReadLog(job.LogPath).ReplaceLineEndings("\n").ShouldBe(header + "to stdout é\nto stderr\nand stdout again\n");
         job.Step.ShouldBe("and stdout again");
     }
 
