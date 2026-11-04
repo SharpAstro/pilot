@@ -1225,10 +1225,6 @@ internal sealed class PilotChrome<TSurface>
         More.Render(bounds);
     }
 
-    /// <summary>
-    /// The rail's cells in <paramref name="area"/>: all of them when they fit, else the whole cells that fit less one and a "..."
-    /// cell that opens the menu of the rest (<see cref="RailOverflow"/>), so no cell is ever cropped.
-    /// </summary>
     private void ChooseHidden(TabItem<PilotPage> item)
     {
         // The Cards cue is not a page: it keeps its own action when it lands in the menu.
@@ -1242,6 +1238,10 @@ internal sealed class PilotChrome<TSurface>
         }
     }
 
+    /// <summary>
+    /// The rail's cells in <paramref name="area"/>: all of them when they fit, else the whole cells that fit less one and a "..."
+    /// cell that opens the menu of the rest (<see cref="RailOverflow"/>), so no cell is ever cropped.
+    /// </summary>
     private void RenderRail(RectF32 area, PilotPage active)
     {
         // Uniform cells are as tall as the rail is wide.
