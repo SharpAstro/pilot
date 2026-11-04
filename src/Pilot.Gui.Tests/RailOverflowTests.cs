@@ -122,6 +122,8 @@ public sealed class RailOverflowTests
 
         var rows = window.MenuRegions().Where(r => r.Result is HitResult.ListItemHit { ListId: DropdownMenuState<PilotPage>.ListId }).ToList();
         rows.Count.ShouldBe(hidden.Count);
+        // The rows are wider than the rail's cell, so no name is cut to the rail's width.
+        rows.ShouldAllBe(r => r.Width > 100f);
         rows[1].OnClick!.Invoke(InputModifier.None);
         window.Draw();
 

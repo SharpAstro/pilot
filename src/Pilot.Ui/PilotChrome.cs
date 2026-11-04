@@ -1229,6 +1229,19 @@ internal sealed class PilotChrome<TSurface>
     /// The rail's cells in <paramref name="area"/>: all of them when they fit, else the whole cells that fit less one and a "..."
     /// cell that opens the menu of the rest (<see cref="RailOverflow"/>), so no cell is ever cropped.
     /// </summary>
+    private void ChooseHidden(TabItem<PilotPage> item)
+    {
+        // The Cards cue is not a page: it keeps its own action when it lands in the menu.
+        if (item.Value == PilotPage.Cards)
+        {
+            ToggleCards();
+        }
+        else
+        {
+            Show(item.Value);
+        }
+    }
+
     private void RenderRail(RectF32 area, PilotPage active)
     {
         // Uniform cells are as tall as the rail is wide.
@@ -1254,10 +1267,11 @@ internal sealed class PilotChrome<TSurface>
             $"{h.Icon}  {h.Label}{(h.Shortcut is { } chord ? $"  ({ChordText(chord)})" : "")}", h.Value)
         {
             IsEnabled = h.IsEnabled,
-            OnChoose = () => Show(h.Value),
+            OnChoose = () => ChooseHidden(h),
         })];
-        More.Chords = [.. hidden.Where(h => h.IsEnabled && h.Shortcut is not null).Select(h => (h.Shortcut!.Value, (Action)(() => Show(h.Value))))];
-        More.Anchor = new RectF32(area.X, area.Y + (cells.Count - 1) * area.Width, area.Width, area.Width);
+        More.Chords = [.. hidden.Where(h => h.IsEnabled && h.Shortcut is not null).Select(h => (h.Shortcut!.Value, (Action)(() => ChooseHidden(h))))];
+        // A zero-width anchor at the cell's right edge: the menu hangs to the right at its natural width, not the cell's.
+        More.Anchor = new RectF32(area.X + area.Width, area.Y + (cells.Count - 1) * area.Width, 0f, area.Width);
         Rail.Render(area, cells, active);
     }
 }
