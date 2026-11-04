@@ -22,6 +22,26 @@ internal static class WrappedProse
     }
 
     /// <summary>
+    /// A link that wraps: every word of <paramref name="text"/> is a leaf run through <paramref name="decorate"/>, which gives it the link's
+    /// hit, hover and menu, so a click or the pointer on any word is on the whole link. <paramref name="tail"/> (the ↗ of a link that leaves
+    /// the app) ends the last word, so it can never wrap onto a line of its own. <paramref name="maxLines"/> and <paramref name="lineChars"/> are as in <see cref="Of"/>.
+    /// </summary>
+    public static Layout.Node Linked(string text, float size, RGBAColor32 color, int maxLines, Func<Layout.Node, Layout.Node> decorate, string tail = "",
+        int lineChars = 0)
+    {
+        var pieces = (maxLines > 0 && lineChars > 0 ? Bound(text, maxLines * lineChars) : text).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(Pieces)
+            .ToList();
+        if (tail.Length > 0 && pieces.Count > 0)
+        {
+            pieces[^1] = pieces[^1].TrimEnd() + tail + " ";
+        }
+        var words = pieces.Select(piece => decorate(Layout.Builder.Text(piece, size, color).WAuto())).ToArray();
+        var wrap = Layout.Builder.WrapH(words).WithLineGap(size * 0.2f);
+        return (maxLines > 0 ? wrap.WithMaxLines(maxLines) : wrap).WStar();
+    }
+
+    /// <summary>
     /// <paramref name="text"/> cut after the last whole word within <paramref name="chars"/> characters: the words past what
     /// <paramref name="chars"/> could fill the capped lines with are never made into leaves, so each frame fits a bounded few
     /// however long the text (the whole text is on hover where the caller keeps it). A text with no whitespace within the budget

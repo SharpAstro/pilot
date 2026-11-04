@@ -807,7 +807,7 @@ public sealed class SessionTracker : BackgroundService
     }
 
     /// <summary>
-    /// The rows a restored journal holds are the tracker's to end or drop too, though it never listed them. Taken when the
+    /// The rows a restored journal holds are the tracker's to end or discard too, though it never listed them. Taken when the
     /// tracker is made, not at its first poll: a row put by anyone else after that is not the tracker's, and the first poll
     /// may run at any moment after the host starts.
     /// </summary>

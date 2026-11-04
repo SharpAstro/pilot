@@ -164,10 +164,10 @@ public abstract class ReviewTestsBase : IDisposable
         _state.PutUsage(new UsageRow { ReadAt = DateTimeOffset.UtcNow, FiveHour = new UsageWindow { UsedPercent = used, ResetsAt = DateTimeOffset.UtcNow + resetsIn } });
 
     // A flight with its PR passed and ready, then armed natively on its head while the checks run.
-    private protected async Task<(FlightRow Flight, PullRequest Pr, PrChecks Checks)> ArmedPassedFlight(string issue)
+    private protected async Task<(FlightRow Flight, PullRequest Pr, PrChecks Checks)> ArmedPassedFlight(string issue, string leg = "parser")
     {
-        var flight = await NewFlight(issue, "parser");
-        await Fly(flight, "parser");
+        var flight = await NewFlight(issue, leg);
+        await Fly(flight, leg);
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
         var pr = _github.Pr.ShouldNotBeNull();
