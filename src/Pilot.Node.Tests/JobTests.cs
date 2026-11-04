@@ -352,11 +352,31 @@ public abstract class JobTestsBase : IDisposable
     private protected async Task<string> Running(string id)
     {
         var job = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && (!File.Exists(job.LogPath) || new FileInfo(job.LogPath).Length == 0); i++)
+        // Every log opens with the shell header the job's own script writes before the command runs, so a non-empty log no
+        // longer means the busy child is alive: wait for a line after the header, which is the child's first output.
+        for (var i = 0; i < 300 && !HasOutputBeyondHeader(job.LogPath); i++)
         {
             await Task.Delay(50, Ct);
         }
         return job.LogPath;
+    }
+
+    private static bool HasOutputBeyondHeader(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd().Split((char)10, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length > 1;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private protected static long LogLength(string path) => new FileInfo(path).Length;
