@@ -22,6 +22,11 @@ namespace Pilot.Commands;
 /// by the same handler as the CLI, so a new verb lands here with no change. A call is from the client by the name it gave
 /// in <c>initialize</c> (else <c>mcp</c>), or from the Claude session running the server where the node knows it, as a
 /// CLI command is, so the watchtower's own merge or land is still refused when it comes this way.
+/// <para>Every tool also takes an optional <c>node</c> (a name, a host or <c>host:port</c>): that call runs on that node,
+/// resolved as the server's own is (kept per name, a name not heard tried again, an unknown one a tool error pointing to the
+/// <c>nodes</c> tool); without it a call runs on the node the server started with. Resources stay on the server's node.
+/// The one command with its own <c>node</c> argument, <c>connect</c>, keeps its meaning: there the key is connect's host:port
+/// and the call itself stays on the server's node.</para>
 /// <para>A server lives as long as its host session, so it outlives an update, and a host never restarts a stdio server
 /// it lost (Claude Code does not), so ending on an update would drop pilot's tools from the session until it is
 /// restarted by hand. The server the client started therefore watches the version installed beside it, after each message
@@ -439,7 +444,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(ListChanged: true), new ResourcesCapability()), new McpImplementation("pilot", version),
             "pilot v2's node. The tools are pilot's commands, named by their path (flight_create, leg_plan, check, cards, answer), and do what "
             + "the CLI does: a refusal says why. Inside a flight's plane a leg's tools need no leg named. The resources are the node's flights, "
-            + "legs, cards and sessions as JSON.");
+            + "legs, cards and sessions as JSON. Every tool takes an optional node (a name like DE1, a host, or host:port, as the nodes tool lists "
+            + "them) to run that call on another node; without it a call runs on the node this server started with, and the resources are always that node's.");
     }
 
     /// <summary>Runs the tool's command through the CLI's own handler, with what it printed as the result.</summary>
@@ -449,10 +455,25 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(InvalidParams, $"there is no tool {call.Name}; tools/list lists them");
         }
+        var given = call.Arguments;
+        string? named = null;
+        if (!OwnsNode(tool.Command) && given is not null && given.TryGetValue(NodeKey, out var nodeValue))
+        {
+            given = new Dictionary<string, JsonElement>(given);
+            given.Remove(NodeKey);
+            if (nodeValue.ValueKind == JsonValueKind.String && nodeValue.GetString() is { Length: > 0 } text)
+            {
+                named = text;
+            }
+            else if (nodeValue.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
+            {
+                return new ToolCallResult([new TextContent($"pilot: {NodeKey} takes a node as a string (a name, host or host:port; the nodes tool lists them)")], IsError: true);
+            }
+        }
         string[] args;
         try
         {
-            args = Spell(tool.Path, tool.Command, call.Arguments);
+            args = Spell(tool.Path, tool.Command, given);
         }
         catch (PilotCommand.UsageException ex)
         {
@@ -460,7 +481,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         var output = new StringWriter();
         var error = new StringWriter();
-        var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+        var (target, here, unknown) = named is null ? await ResolvedAsync(cancellationToken) : await ResolvedNamedAsync(named, cancellationToken);
         if (unknown is not null)
         {
             return new ToolCallResult([new TextContent($"pilot: {unknown}")], IsError: true);
@@ -531,6 +552,29 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         return resolved;
     }
 
+    /// <summary>A call's node, by name, resolved as <see cref="ResolvedAsync"/> does the server's: kept per name, a name not heard tried again.</summary>
+    private async Task<(string? Node, bool Here, string? Why)> ResolvedNamedAsync(string name, CancellationToken cancellationToken)
+    {
+        if (!_resolvedNamed.TryGetValue(name, out var resolved))
+        {
+            resolved = await NodeTargets.ResolveAsync(name, cancellationToken);
+            if (resolved.Why is null)
+            {
+                _resolvedNamed[name] = resolved;
+            }
+        }
+        return resolved.Why is null ? resolved : (null, false, $"{resolved.Why}; the nodes tool lists the nodes that can be named");
+    }
+
+    private readonly Dictionary<string, (string? Node, bool Here, string? Why)> _resolvedNamed = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The property every tool takes to name the node it runs on.</summary>
+    internal const string NodeKey = "node";
+
+    /// <summary>Whether the command has its own argument or option named <c>node</c> (connect's): then that is what the key means, and the call stays on the server's node.</summary>
+    private static bool OwnsNode(Command command) =>
+        command.Arguments.Any(a => !a.Hidden && a.Name == NodeKey) || OwnOptions(command).Any(o => Key(o) == NodeKey);
+
     /// <summary>Every command with an action, by its tool name: its path from the root, joined with <c>_</c>.</summary>
     internal static Dictionary<string, (string[] Path, Command Command)> Tools(RootCommand root)
     {
@@ -578,6 +622,10 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             {
                 required.Add(Key(option));
             }
+        }
+        if (!OwnsNode(command))
+        {
+            properties[NodeKey] = new PropertySchema("string", "The node to run on: a name like DE1, a host, or host:port, as the nodes tool lists them (default: the node pilot mcp started with)");
         }
         return new McpTool(name, $"{command.Description} (pilot {string.Join(' ', path)})", new ToolSchema(properties, [.. required]));
     }

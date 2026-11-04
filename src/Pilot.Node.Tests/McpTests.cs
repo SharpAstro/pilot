@@ -12,7 +12,7 @@ public sealed class McpTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}""";
+    internal const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}""";
 
     private NodeHarness _node = null!;
 
@@ -23,17 +23,17 @@ public sealed class McpTests : IAsyncLifetime
     private McpServer Server() => new(_node.Folder, node: null, socket: _node.SocketPath);
 
     /// <summary>Feeds the lines to the server as its stdin and reads back what it wrote, a message a line.</summary>
-    private static async Task<JsonElement[]> Serve(McpServer server, params string[] lines)
+    internal static async Task<JsonElement[]> Serve(McpServer server, params string[] lines)
     {
         var output = new StringWriter();
         await server.RunAsync(new StringReader(string.Join('\n', lines) + "\n"), output, Ct);
         return [.. output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonDocument.Parse(l).RootElement.Clone())];
     }
 
-    private static string Call(int id, string tool, string arguments) =>
+    internal static string Call(int id, string tool, string arguments) =>
         $$$"""{"jsonrpc":"2.0","id":{{{id}}},"method":"tools/call","params":{"name":"{{{tool}}}","arguments":{{{arguments}}}}}""";
 
-    private static (bool IsError, string Text) Result(JsonElement reply)
+    internal static (bool IsError, string Text) Result(JsonElement reply)
     {
         var result = reply.GetProperty("result");
         return (result.GetProperty("isError").GetBoolean(), result.GetProperty("content")[0].GetProperty("text").GetString()!);
@@ -628,6 +628,29 @@ public sealed class McpTests : IAsyncLifetime
                 Directory.Delete(folder, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task EveryToolTakesAnOptionalNode_ConnectKeepsItsOwn()
+    {
+        var replies = await Serve(Server(), Initialize, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""");
+        var tools = replies[1].GetProperty("result").GetProperty("tools").EnumerateArray().ToList();
+        tools.ShouldNotBeEmpty();
+        foreach (var tool in tools)
+        {
+            var schema = tool.GetProperty("inputSchema");
+            var name = tool.GetProperty("name").GetString()!;
+            schema.GetProperty("properties").TryGetProperty("node", out var node).ShouldBeTrue(name);
+            node.GetProperty("type").GetString().ShouldBe("string", name);
+            if (name != "connect")
+            {
+                schema.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ShouldNotContain("node", name);
+            }
+        }
+        // connect's own node argument (host:port) wins: its schema keeps connect's meaning and requiredness.
+        var connect = tools.Single(t => t.GetProperty("name").GetString() == "connect").GetProperty("inputSchema");
+        connect.GetProperty("properties").GetProperty("node").GetProperty("description").GetString().ShouldBe("The node, host:port");
+        connect.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ShouldContain("node");
     }
 
     [Fact]

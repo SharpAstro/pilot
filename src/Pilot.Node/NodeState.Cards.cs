@@ -201,6 +201,10 @@ public sealed partial class NodeState
     /// of the given kinds or all: its thing is done, so its card leaves.
     /// </summary>
     public void CloseCardsAbout(string subject, string outcome, params string[] kinds)
+        => CloseCardsAboutBy("node", subject, outcome, kinds);
+
+    /// <summary>As above, closed by <paramref name="closedBy"/> (an override names its session, not the node).</summary>
+    public void CloseCardsAboutBy(string closedBy, string subject, string outcome, params string[] kinds)
     {
         lock (_gate)
         {
@@ -209,7 +213,7 @@ public sealed partial class NodeState
                 && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
             {
                 var now = _time.GetUtcNow();
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = "node", ClosedAt = now } });
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now } });
             }
         }
     }

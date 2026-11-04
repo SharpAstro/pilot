@@ -79,6 +79,7 @@ pilot flight merge <code> <head>          # once its review has passed and CI is
 pilot nodes                               # the fleet; pilot --node <host:port> status reads another node
 pilot job <id> cancel [--force]           # stop a job; --force kills its whole process tree at once
 pilot mcp                                 # the same commands as an MCP server over stdio; an update hands the session to the new binary
+                                          # every tool takes an optional node (DE1, a host, host:port) to run that call there; --repo is then that machine's path
 ```
 
 The GUI has the same with buttons: Home, Sessions, Flights (with a new-flight wizard from a repo's issues), Repos,
