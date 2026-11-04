@@ -121,6 +121,33 @@ public sealed class RestartTests
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AJobAcrossARestartIsToldOnItsEndAlsoWhenTheFirstSayThrows()
+    {
+        var first = await StartAsync();
+        var gate = Path.Combine(first.Folder, "gate");
+        var id = Run(first, WaitingFor(gate, 0));
+        await Until(first, id, j => j.State == JobState.Running);
+        await first.StopKeepingFolderAsync();
+
+        await using var second = await StartAsync(first.Folder);
+        var jobs = second.App.Services.GetRequiredService<JobRunner>();
+        for (var i = 0; i < 200 && !jobs.IsRunning(id); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        var real = jobs.Say!;
+        var thrown = 0;
+        jobs.Say = (command, token) => Interlocked.Increment(ref thrown) == 1 ? throw new InvalidOperationException("the say blew up") : real(command, token);
+        await File.WriteAllTextAsync(gate, "go", Ct);
+
+        var ended = await Until(second, id, j => j.EndedAt is not null && j.Told, seconds: 60);
+
+        ended.State.ShouldBe(JobState.Succeeded);
+        Deliveries(second).ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AJobThatEndedWhileNoNodeRanIsEndedFromItsExitFileOnRestart()
     {
         var first = await StartAsync();
