@@ -700,6 +700,46 @@ public sealed class McpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FlightCreateOnAnotherNodeWithoutRepo_SaysWhereToFindItAndTheSchemaSaysItIsRequiredThere()
+    {
+        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        await using var second = await NodeHarness.StartAsync(Ct, lanPort: port);
+        var tokens = Path.Combine(second.Options.DataFolder, "client-grants.json");
+        using var asking = NodeClient.Remote($"127.0.0.1:{port}");
+        var ticket = (await asking.AskGrantAsync("tests@mcp", Ct)).Response.ShouldNotBeNull();
+        var card = second.State.Cards(openOnly: true).First(c => c.Kind == NodeLan.AskedKind);
+        (await second.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct)).Success.ShouldBeTrue();
+        var token = (await asking.GrantTicketAsync(ticket.Id, Ct)).Response.ShouldNotBeNull().Token;
+        token.ShouldNotBeNullOrEmpty();
+        NodeTargets.Save($"127.0.0.1:{port}", token!, tokens);
+
+        Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
+        try
+        {
+            var replies = await Serve(Server(), Initialize,
+                """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",
+                Call(3, "flight_create", $$"""{"issue":"1","node":"127.0.0.1:{{port}}"}"""));
+
+            var tool = replies[1].GetProperty("result").GetProperty("tools").EnumerateArray().Single(t => t.GetProperty("name").GetString() == "flight_create");
+            var description = tool.GetProperty("inputSchema").GetProperty("properties").GetProperty("repo").GetProperty("description").GetString()!;
+            description.ShouldContain("required");
+            description.ShouldContain("that machine's");
+
+            var refusal = Result(replies[2]);
+            refusal.IsError.ShouldBeTrue();
+            refusal.Text.ShouldContain("repos");
+            refusal.Text.ShouldContain($"127.0.0.1:{port}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", null);
+        }
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task ARemoteNodeNobodyListensOn_IsTheSameToolErrorAndTheServerKeepsGoing()
     {
