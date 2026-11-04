@@ -271,7 +271,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             $"{why}; expected {expected} on nuget.org, latest published: {latest}. {subject} stays held until it appears");
     }
 
-    private static string Short(string commit) => commit[..Math.Min(8, commit.Length)];
+    private static string Short(string commit) => CommitRefs.Short(commit);
 
     private static string Span(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{span.TotalHours:0.#} h" : $"{Math.Max(1, (int)span.TotalMinutes)} min";

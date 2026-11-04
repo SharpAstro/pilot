@@ -521,7 +521,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var add = await git.RunAsync(["worktree", "add", "--detach", path, commit], repoPath, cancellationToken);
         if (!add.Ok)
         {
-            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} at {path}: {add.Why}");
+            throw new FlightException($"git could not check out {CommitRefs.Short(commit)} at {path}: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(path);
         await LfsFill.FillAsync(git, path, cancellationToken);
@@ -550,7 +550,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         var add = await git.RunAsync(["worktree", "add", "--detach", worktree, commit], repoPath, cancellationToken);
         if (!add.Ok)
         {
-            throw new FlightException($"git could not check out {commit[..Math.Min(8, commit.Length)]} detached at {worktree}: {add.Why}");
+            throw new FlightException($"git could not check out {CommitRefs.Short(commit)} detached at {worktree}: {add.Why}");
         }
         PlaneSettings.DisableRepoMcpServers(worktree);
         await LfsFill.FillAsync(git, worktree, cancellationToken);

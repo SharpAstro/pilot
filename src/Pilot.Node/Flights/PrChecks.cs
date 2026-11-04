@@ -364,7 +364,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 return false;
             }
             state.RaiseCard(CardBin.Handled, "checks-rerun", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number}: {runs} failed {(runs == 1 ? "run" : "runs")} running again",
-                $"once at {head[..Math.Min(8, head.Length)]}, before its leg is sent round: a test that fails by chance is not a go-around");
+                $"once at {CommitRefs.Short(head)}, before its leg is sent round: a test that fails by chance is not a go-around");
             return true;
         }
         catch (FlightException)
@@ -402,7 +402,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             var moved = pr is { State: "OPEN" } && pr.Number == number && !string.Equals(pr.Head, head, StringComparison.OrdinalIgnoreCase);
             string? dropped = pr is null || pr.Number != number || pr.State != "OPEN" ? $"#{number} is no longer open"
-                : moved ? $"#{number}'s head moved from {head[..Math.Min(8, head.Length)]} to {pr.Head[..Math.Min(8, pr.Head.Length)]} while its checks ran: look at what is new, then merge again"
+                : moved ? $"#{number}'s head moved from {CommitRefs.Short(head)} to {CommitRefs.Short(pr.Head)} while its checks ran: look at what is new, then merge again"
                 : null;
             // What GitHub says of the PR is what the card says of the merge: an auto-merge somebody turned off on the PR page, or a
             // merge GitHub blocks (a review required, changes requested, behind its base), is no merge waiting any more, and the
@@ -474,7 +474,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
                 // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
                 state.PutFlight(flight with { MergeWhenGreen = null });
-                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {head[..Math.Min(8, head.Length)]}: sent back as changes");
+                legs.DropMerge(flight.Code, $"#{number}'s checks failed on {CommitRefs.Short(head)}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
                 {
                     var failChoices = legs.ChecksFailedChoices(flight.Code, head, number);
@@ -528,16 +528,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {head[..Math.Min(8, head.Length)]}" : dropped);
+            legs?.DropMerge(flight.Code, failed && checks is { FailedName: { } failedName } ? $"check {failedName} failed on {CommitRefs.Short(head)}" : dropped);
             var headNow = pr?.Head ?? head;
             var (title, detail, link) = failed && checks is { FailedName: { } name }
-                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {head[..Math.Min(8, head.Length)]}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
+                ? ($"{flight.Code}'s PR #{number}: check {name} failed", $"The merge waited for the checks to pass, and {name} failed on {CommitRefs.Short(head)}. Redo the leg to fix it, re-run the checks if it was a flake, or merge again.{autoMergeNote}", checks.FailedLink)
                 : ($"{flight.Code}'s merge did not go through: {(dropped.Split('\n')[0].Length > 70 ? dropped.Split('\n')[0][..67].TrimEnd() + "..." : dropped.Split('\n')[0])}", dropped + autoMergeNote, null);
             if (legs is null || !legs.ShowMergeFailed(flight.Code, headNow, method, title, detail, link ?? flight.PullRequestUrl, rerun: failed,
-                    goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
+                    goAroundWhy: failed ? $"the PR's checks failed{(checks?.FailedName is { } n ? $" ({n})" : "")} on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push" : dropped))
             {
                 state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(dropped)}", dropped,
-                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {headNow[..Math.Min(8, headNow.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
+                    [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {CommitRefs.Short(headNow)}", Verb = Verbs.Merge, Target = subject, Args = [headNow] }], link: flight.PullRequestUrl);
             }
         }
     }
@@ -612,7 +612,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 _ => $"GitHub shows it as {merge.Kind}",
             };
             state.RaiseCard(CardBin.ForYou, MergeDropped, subject, $"{flight.Code}'s merge did not go through: {LegCommander.OneLine(why)}", $"{why}. Merge again once that is dealt with.",
-                [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {pr.Head[..Math.Min(8, pr.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
+                [new CardChoice { Label = $"Merge {flight.Code}'s PR again at {CommitRefs.Short(pr.Head)}", Verb = Verbs.Merge, Target = subject, Args = [pr.Head] }], link: flight.PullRequestUrl);
         }
         return true;
     }

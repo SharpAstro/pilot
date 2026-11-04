@@ -57,7 +57,7 @@ public sealed record ReviewCostReport(IReadOnlyList<ReviewCostFlight> Flights, D
             text.AppendLine($"{flight.Code}  {flight.Repo}{(flight.PullRequest is { } pr ? $" #{pr}" : "")}  landed {flight.LandedAt.UtcDateTime:yyyy-MM-dd HH:mm}Z  {Plural(flight.Sessions.Count, "reviewer session")}");
             foreach (var s in flight.Sessions)
             {
-                text.AppendLine($"  round {s.Round}  {s.Model ?? "?"}  head {(s.Head is { Length: > 8 } h ? h[..8] : s.Head ?? "?")}  {Tokens(s.Usage, s.Weighted)}{(s.FromTranscript ? "" : "  (no transcript: the row's spend only)")}");
+                text.AppendLine($"  round {s.Round}  {s.Model ?? "?"}  head {(s.Head is { Length: > 9 } h ? h[..9] : s.Head ?? "?")}  {Tokens(s.Usage, s.Weighted)}{(s.FromTranscript ? "" : "  (no transcript: the row's spend only)")}");
             }
             if (flight.Sessions.Count > 1)
             {

@@ -16,7 +16,7 @@ namespace Pilot.Node.Flights;
 public static class SummaryRecords
 {
     /// <summary>How many characters of a commit a record quotes.</summary>
-    public const int HashLength = 8;
+    public const int HashLength = CommitRefs.ShortLength;
 
     /// <summary>The longest a report, a card's detail or a review's findings run in a record before they are cut.</summary>
     public const int MaxReport = 1500;
@@ -219,7 +219,7 @@ public static class SummaryRecords
         return string.Equals(card.Subject, subject, StringComparison.OrdinalIgnoreCase) || card.Subject.StartsWith(subject + "/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Short(string hash) => hash.Length > HashLength ? hash[..HashLength] : hash;
+    private static string Short(string hash) => CommitRefs.Short(hash);
 
     private static string Stamp(DateTimeOffset at) => at.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
 

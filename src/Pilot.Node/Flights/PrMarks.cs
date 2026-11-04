@@ -206,7 +206,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         }
     }
 
-    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+    private static string Short(string sha) => CommitRefs.Short(sha);
 
     /// <summary>Sets what a refused write left, for every flying flight whose row says it is still to do.</summary>
     public async Task RetryAsync(CancellationToken cancellationToken)
@@ -234,7 +234,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
     {
         var text = review.State switch
         {
-            ReviewState.Passed => $"passed at {head[..Math.Min(8, head.Length)]}",
+            ReviewState.Passed => $"passed at {CommitRefs.Short(head)}",
             ReviewState.Changes => $"changes: {FirstFinding(review.Report)}",
             _ => review.GoAround > 0 ? $"reviewing, go-around {review.GoAround}" : "reviewing",
         };
@@ -252,7 +252,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         var repo = RepoOf(flight.PullRequestUrl)
             ?? throw new FlightException($"{flight.Code}'s PR page {flight.PullRequestUrl ?? "(none)"} does not say which repo it is on");
         var shown = review.State == ReviewState.Passed ? "passed" : "asks for changes";
-        var body = $"**pilot's review {(review.GoAround > 0 ? $"(go-around {review.GoAround}) " : "")}{shown}**{(head is { Length: > 0 } ? $" on `{head[..Math.Min(8, head.Length)]}`" : "")}\n\n{(review.Report ?? "").Trim()}";
+        var body = $"**pilot's review {(review.GoAround > 0 ? $"(go-around {review.GoAround}) " : "")}{shown}**{(head is { Length: > 0 } ? $" on `{CommitRefs.Short(head)}`" : "")}\n\n{(review.Report ?? "").Trim()}";
         var path = Path.Combine(Path.GetFullPath(options.DataFolder), "reviews", "flights", $"{flight.Code}-{review.GoAround}-{review.State.ToString().ToLowerInvariant()}.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllBytesAsync(path, Payload(head, body), cancellationToken);

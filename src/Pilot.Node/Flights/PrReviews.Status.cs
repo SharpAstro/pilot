@@ -91,7 +91,7 @@ public sealed partial class PrReviews
     /// <summary>The status a verdict leaves: approve and comment block nothing, changes fail; the description says which, at the head it read.</summary>
     internal static (string State, string Description) StatusOf(PrReviewRow review)
     {
-        var at = review.Head[..Math.Min(8, review.Head.Length)];
+        var at = CommitRefs.Short(review.Head);
         return review.Verdict switch
         {
             "changes" => ("failure", Clip($"changes: {PrMarks.FirstFinding(review.Report)}")),

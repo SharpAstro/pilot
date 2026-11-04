@@ -32,7 +32,7 @@ public sealed partial class PrReviews
         {
             return;
         }
-        var at = review.Head[..Math.Min(8, review.Head.Length)];
+        var at = CommitRefs.Short(review.Head);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             state.PutPrReview(review with { QueueNote = $"the PR is {read.State.ToLowerInvariant()}" });
@@ -66,7 +66,7 @@ public sealed partial class PrReviews
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
-            state.PutPrReview(review with { QueueNote = $"its head moved to {read.Head[..Math.Min(8, read.Head.Length)]} after the review of {at}" });
+            state.PutPrReview(review with { QueueNote = $"its head moved to {CommitRefs.Short(read.Head)} after the review of {at}" });
             return;
         }
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
@@ -110,7 +110,7 @@ public sealed partial class PrReviews
             var said = outcome.Said ?? "GitHub refused";
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
             state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
-                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {review.Head[..Math.Min(8, review.Head.Length)]}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
+                [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
             return;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
@@ -137,7 +137,7 @@ public sealed partial class PrReviews
         }
         if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"{pr}'s head moved to {read.Head[..Math.Min(8, read.Head.Length)]} past the {head[..7]} reviewed: review it again");
+            throw new FlightException($"{pr}'s head moved to {CommitRefs.Short(read.Head)} past the {CommitRefs.Short(head)} reviewed: review it again");
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
         if (!outcome.Done)
@@ -147,6 +147,6 @@ public sealed partial class PrReviews
         var queued = outcome.Kind == LandKind.Queued;
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, Verbs.PrTarget(pr.Repo, pr.Number),
-            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {head[..7]}.", link: review.Url);
+            queued ? $"Queued {pr} in {read.Base}'s merge queue" : $"Merged {pr}", $"{command.Who} chose Merge at {CommitRefs.Short(head)}.", link: review.Url);
     }
 }

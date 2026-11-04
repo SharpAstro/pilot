@@ -333,7 +333,7 @@ public sealed partial class LegCommander
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number}'s head is {pr.Head[..Math.Min(8, pr.Head.Length)]}, not the {head} you reviewed: look again before it lands");
+            throw new FlightException($"#{pr.Number}'s head is {CommitRefs.Short(pr.Head)}, not the {head} you reviewed: look again before it lands");
         }
         // A commit made in the plane after the PR's last push would be left behind by the merge, and the landing would
         // then take the plane with it (TIA1658's plan read, 2026-10-23, landed by hand afterwards).

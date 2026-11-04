@@ -49,7 +49,7 @@ public sealed partial class PrReviews
         await git.RunAsync(["fetch", "--quiet", "origin", read.Base], clone, cancellationToken);
         if (!(await git.RunAsync(["cat-file", "-e", $"{read.Head}^{{commit}}"], clone, cancellationToken)).Ok)
         {
-            throw new FlightException($"{pr}'s head {read.Head[..Math.Min(8, read.Head.Length)]} was not fetched: it moved while it was; review it again");
+            throw new FlightException($"{pr}'s head {CommitRefs.Short(read.Head)} was not fetched: it moved while it was; review it again");
         }
 
         var name = Slug(pr.Name);
@@ -115,7 +115,7 @@ public sealed partial class PrReviews
         // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
-            $"Started {reviewer} on {pr} at {read.Head[..Math.Min(8, read.Head.Length)]}", $"in {worktree}");
+            $"Started {reviewer} on {pr} at {CommitRefs.Short(read.Head)}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
         if (read.Draft)
         {

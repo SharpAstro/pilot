@@ -17,7 +17,7 @@ public sealed partial class LegCommander
     /// failed two of its tests, and no verb could send it round (2026-10-23). Null when done; else why not.
     /// </summary>
     public Task<string?> ChecksFailedAsync(string code, string head, CancellationToken cancellationToken) =>
-        SendBackAsync(code, number => $"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken, SendBackReason.ChecksFailed);
+        SendBackAsync(code, number => $"the PR's checks failed on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push", "its checks failed", cancellationToken, SendBackReason.ChecksFailed);
 
     /// <summary>One line of a reason, cut at 80 characters: what a card title carries of a longer detail.</summary>
     public static string OneLine(string text)
@@ -39,7 +39,7 @@ public sealed partial class LegCommander
     public IReadOnlyList<CardChoice> ChecksFailedChoices(string code, string head, int number) =>
         state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last
             ? [new CardChoice { Label = Models.RedoLabel(last, "left the PR's checks failing"), Verb = Verbs.GoAround, Target = Verbs.LegTarget(code, last.Name),
-                Args = [$"the PR's checks failed on {head[..Math.Min(8, head.Length)]}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
+                Args = [$"the PR's checks failed on {CommitRefs.Short(head)}: read them (gh pr checks {number}, then gh run view <run> --log-failed), make them pass on every runner, and push"] }]
             : [];
 
     /// <summary>

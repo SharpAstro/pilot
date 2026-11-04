@@ -334,7 +334,7 @@ public sealed class PrRecheck : IHostedService
         return reviews.RunAsync(new CommandRequest { Verb = Verbs.ReviewPr, Target = subject, Who = "node" }, cancellationToken);
     }
 
-    private static string Short8(string sha) => sha[..Math.Min(8, sha.Length)];
+    private static string Short8(string sha) => CommitRefs.Short(sha);
 
     private FlightRow? Now(string code) => state.Flights().FirstOrDefault(f => f.Code == code);
 

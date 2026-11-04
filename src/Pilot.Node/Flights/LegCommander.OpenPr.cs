@@ -55,7 +55,7 @@ public sealed partial class LegCommander
                     if (!onto.Ok)
                     {
                         await git.RunAsync(["merge", "--abort"], repaired.Worktree, cancellationToken);
-                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {CommitRefs.Short(mergedHead)}), then open the PR");
                     }
                 }
                 repaired = repaired with { MergedHead = null };
@@ -178,7 +178,7 @@ public sealed partial class LegCommander
         throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
     }
 
-    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
+    private static string Short(string sha) => CommitRefs.Short(sha);
 
     /// <summary>
     /// Fetches, takes in what the remote holds that the plane lacks (<see cref="TakeRemoteAsync"/>), then merges the base in

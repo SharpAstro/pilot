@@ -72,5 +72,5 @@ internal sealed record FlightMarks(string? Status, string? Label, string? Warnin
         || IssuePriorities.IsPriority(flight.HasPriorityField, flight.IssuePriority, flight.GitHubLabel);
 
     /// <summary>A commit as the pages name it: its first seven characters.</summary>
-    public static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
+    public static string Short(string sha) => sha.Length > 9 ? sha[..9] : sha;
 }

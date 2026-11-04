@@ -407,7 +407,7 @@ public sealed partial class LegCommander
         // What the receiver makes its plane from is what origin holds, so that is what is compared with the plane's head.
         if (remote.Sha != planeHead)
         {
-            return $"origin has {(remote.Sha is null ? "no" : remote.Sha[..Math.Min(8, remote.Sha.Length)])} for {branch} after the push, not the plane's {planeHead[..Math.Min(8, planeHead.Length)]}. Look at {branch} on origin, then move it again.";
+            return $"origin has {(remote.Sha is null ? "no" : CommitRefs.Short(remote.Sha))} for {branch} after the push, not the plane's {CommitRefs.Short(planeHead)}. Look at {branch} on origin, then move it again.";
         }
         return null;
     }

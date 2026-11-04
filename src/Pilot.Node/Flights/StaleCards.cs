@@ -310,7 +310,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         _ => $"{kind} card",
     };
 
-    private static string Short(string hash) => hash.Length > SummaryRecords.HashLength ? hash[..SummaryRecords.HashLength] : hash;
+    private static string Short(string hash) => CommitRefs.Short(hash);
 
     private static string Stamp(DateTimeOffset at) => at.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
 }
