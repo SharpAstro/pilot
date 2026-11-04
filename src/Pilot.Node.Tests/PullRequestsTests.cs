@@ -471,14 +471,16 @@ public sealed class PullRequestsTests : IDisposable
         // unless the test is about a clone pilot never worked in.
         if (flown)
         {
+            var index = 0;
             foreach (var clone in Directory.EnumerateDirectories(_root).Where(d => Directory.Exists(Path.Combine(d, ".git"))))
             {
+                index++;
                 if (!state.Flights().Any(f => string.Equals(f.RepoPath, clone, StringComparison.OrdinalIgnoreCase)))
                 {
                     var name = Path.GetFileName(clone);
                     state.PutFlight(new FlightRow
                     {
-                        Code = $"OLD{Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(name)) % 100000}", Repo = name, RepoPath = clone, Issue = 1,
+                        Code = $"OLD{index}", Repo = name, RepoPath = clone, Issue = 1,
                         Branch = $"flight/old-{name}", Worktree = Path.Combine(clone, ".claude", "worktrees", "old"), Base = "origin/main",
                         State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
                     });

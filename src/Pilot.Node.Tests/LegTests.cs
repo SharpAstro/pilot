@@ -156,7 +156,7 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The repos of each search, in order.</summary>
-    public List<string[]> Searches { get; } = [];
+    public Recorded<string[]> Searches { get; } = [];
 
     /// <summary>The GraphQL points each search costs, as <c>rateLimit { cost }</c> says.</summary>
     public int SearchCost { get; set; } = 3;
@@ -174,10 +174,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
-        lock (Searches)
-        {
-            Searches.Add(repos);
-        }
+        Searches.Add(repos);
         if (_searchHold is { } hold)
         {
             await hold.Task.WaitAsync(cancellationToken);
@@ -199,7 +196,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
-    public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
+    public Recorded<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
@@ -224,7 +221,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>
-    public List<(int Number, string Comment)> ClosedIssues { get; } = [];
+    public Recorded<(int Number, string Comment)> ClosedIssues { get; } = [];
 
     /// <summary>When set, CloseIssueAsync fails with it.</summary>
     public string? CloseIssueFails { get; set; }
@@ -255,13 +252,13 @@ internal sealed class FakeGitHub : IGitHub
     public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
 
     /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
-    public List<(string Repo, string Title)> MilestonesMade { get; } = [];
+    public Recorded<(string Repo, string Title)> MilestonesMade { get; } = [];
 
     /// <summary>Every issue moved to a milestone, in order.</summary>
-    public List<(int Number, string Milestone)> Moves { get; } = [];
+    public Recorded<(int Number, string Milestone)> Moves { get; } = [];
 
     /// <summary>Every issue closed as not planned, with its comment, in order.</summary>
-    public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
+    public Recorded<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
     public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0, int closedIssues = 0)
