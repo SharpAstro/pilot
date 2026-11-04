@@ -268,8 +268,20 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>Opens the Chat page: what the panel's foot, the watchtower's shortcut, does.</summary>
     public Action? OnChat { get; set; }
 
-    /// <summary>What the foot's <b>Clean up</b> does: sends the watchtower the standard tidy-up message.</summary>
-    public Action? OnCleanUp { get; set; }
+    /// <summary>
+    /// What the foot's <b>Clean up</b> does: tells the watchtower the standard tidy-up message (<see cref="WatchtowerAsks.CleanUp"/>)
+    /// through the node's tell. Answers null once the node took it, else its refusal in words (no watchtower included).
+    /// </summary>
+    public Func<Task<string?>>? OnCleanUp { get; set; }
+
+    /// <summary>The key of the foot's Clean up press, for a test or a dump.</summary>
+    internal const string CleanUpKey = "cards:cleanup";
+
+    /// <summary>The node's refusal of the last Clean up, as it stands; null when none.</summary>
+    public string? CleanUpRefused => Presses.RefusedOf(CleanUpKey);
+
+    /// <summary>Whether a Clean up is with the node now.</summary>
+    public bool CleanUpPending => Presses.PendingOf(CleanUpKey) is not null;
 
     /// <summary>
     /// Opens the Chat page about a card: the card's <b>Chat about this</b>. Null leaves the button off, as a host with no chat has it.
@@ -518,10 +530,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             rows.Add(Layout.Builder.Text("no watchtower is running; a message starts one", 10f, Ring).Selectable().RowH(16f));
         }
         rows.Add(Layout.Builder.Text("Tasks", 18f, Bright).Selectable().RowH(30f));
+        var cleanUp = Presses.Button(CleanUpKey, CleanUpKey,
+            () => Pill("Clean up", CleanUpKey, () =>
+            {
+                if (OnCleanUp is { } send)
+                {
+                    _ = Presses.PressAsync(CleanUpKey, CleanUpKey, _ => send());
+                }
+            }),
+            _ => Dead("Sent to the watchtower…"));
         rows.Add(Layout.Builder.WrapH(
                 Pill("Chat with the watchtower", "cards:chat", () => OnChat?.Invoke()).WStarUpToContent().WithTooltip("Chat with the watchtower"),
-                Pill("Clean up", "cards:cleanup", () => OnCleanUp?.Invoke()).WStarUpToContent().WithTooltip("Sends the watchtower the standard tidy-up message"))
+                cleanUp.WStarUpToContent().WithTooltip(WatchtowerAsks.CleanUp))
             .WithGap(8f).WithLineGap(4f).WStar());
+        if (Presses.RefusalLine(CleanUpKey, 11f, Ring, DetailLines) is { } refusal)
+        {
+            rows.Add(refusal);
+        }
         rows.Add(Layout.Builder.Spacer().RowH(6f));
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }

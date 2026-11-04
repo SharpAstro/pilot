@@ -211,6 +211,7 @@ public sealed class ButtonFeedbackTests
                 chrome.Cards.OnAnswer = (_, _) => { };
                 chrome.Cards.OnDismiss = _ => { };
                 chrome.Cards.OnConnect = _ => Took();
+                chrome.Cards.OnCleanUp = () => Took();
                 chrome.PullRequests.OnReview = (_, _) => Task.CompletedTask;
                 chrome.PullRequests.OnFixReview = (_, _) => Task.CompletedTask;
                 chrome.Jobs.OnCancel = _ => Took();
