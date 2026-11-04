@@ -634,6 +634,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             ? job with { State = JobState.Cancelled, Error = $"cancelled by {who} before its turn", Step = null, EndedAt = time.GetUtcNow() }
             : job with { State = JobState.Cancelled, Error = $"dropped: {dropped}", Step = null, EndedAt = time.GetUtcNow(), Told = true };
         state.PutJob(cancelled);
+        _siblings.TryRemove(job.Id, out _);
         Finish(cancelled, null);
         if (dropped is null)
         {
@@ -662,6 +663,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return holds;
         }
+        if (SiblingHold(job) is { } shared)
+        {
+            return shared;
+        }
         if (_running.Count >= MaxRunning)
         {
             var slots = MaxRunning == 1 ? "another job is running" : $"{_running.Count} jobs are running, {MaxRunning} at a time";
@@ -676,6 +681,49 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return FreeMemory() is { } free && free < need
             ? $"waiting for {MemoryEstimate.Gigabytes(need)} of free memory ({Basis(estimate, need)}; {MemoryEstimate.Gigabytes(free)} now)"
             : null;
+    }
+
+    /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
+    public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
+
+    private readonly ConcurrentDictionary<string, IReadOnlyCollection<string>> _siblings = new(StringComparer.Ordinal);
+
+    private IReadOnlyCollection<string> SiblingsFor(JobRow job)
+    {
+        if (_siblings.TryGetValue(job.Id, out var known))
+        {
+            return known;
+        }
+        IReadOnlyCollection<string> set;
+        try
+        {
+            set = SiblingsOf(job);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            set = [];
+        }
+        return _siblings[job.Id] = set;
+    }
+
+    /// <summary>Why a job may not start beside the running ones: its build shares a sibling clone with one of them. Null when it shares none.</summary>
+    private string? SiblingHold(JobRow job)
+    {
+        if (_running.IsEmpty || SiblingsFor(job) is not { Count: > 0 } mine)
+        {
+            return null;
+        }
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            var theirs = SiblingsFor(state.Jobs().FirstOrDefault(j => j.Id == id) ?? job with { Id = id });
+            var shared = mine.Where(m => theirs.Contains(m, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileName).ToList();
+            if (shared.Count > 0)
+            {
+                var owner = state.Jobs().FirstOrDefault(j => j.Id == id) is { } row ? row.OwnerName ?? row.Owner ?? "the node" : "the node";
+                return $"shares the sibling clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)} with job {id} ({owner})";
+            }
+        }
+        return null;
     }
 
     /// <summary>Why a job other than a benchmark may not start: a benchmark runs, or heads the queue waiting for quiet. Null when none does.</summary>
@@ -1120,6 +1168,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         ReleaseHold(job.Id);
 
         _running.TryRemove(job.Id, out _);
+        _siblings.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
         _nudges.TryRemove(job.Id, out _);
         Tree.Forget(job.Id);

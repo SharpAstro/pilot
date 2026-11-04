@@ -358,7 +358,7 @@ public sealed partial class LegCommander
         var dirty = status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (dirty.Length > 0)
         {
-            return $"the plane holds {dirty.Length} change{(dirty.Length == 1 ? "" : "s")} not committed ({string.Join(", ", dirty.Take(3).Select(l => l.Trim()))}{(dirty.Length > 3 ? ", ..." : "")}). Commit or drop {(dirty.Length == 1 ? "it" : "them")}, then move it again.";
+            return $"the plane holds {dirty.Length} change{(dirty.Length == 1 ? "" : "s")} not committed ({string.Join(", ", dirty.Take(3).Select(l => l.Trim()))}{(dirty.Length > 3 ? ", ..." : "")}). Commit {(dirty.Length == 1 ? "it" : "them")}, then move it again.";
         }
         var head = await git.RunAsync(["rev-parse", "HEAD"], plane, cancellationToken);
         if (!head.Ok)

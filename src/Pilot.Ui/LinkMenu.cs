@@ -204,9 +204,11 @@ internal sealed class LinkMenu
         widget.CollectPaintedRegions(regions);
         // A property pattern, not a member access: NothingInTheUiWaits reads that member's name as a blocking wait on a task.
         var links = new List<(string Action, ClickableRegion Region)>();
+        // A link that wraps is a region for each of its words, all of the one action: the first is the link, where its menu hangs.
+        var seen = new HashSet<string>();
         foreach (var region in regions)
         {
-            if (region is { Result: HitResult.ButtonHit b } && _urls.ContainsKey(b.Action))
+            if (region is { Result: HitResult.ButtonHit b } && _urls.ContainsKey(b.Action) && seen.Add(b.Action))
             {
                 links.Add((b.Action, region));
             }

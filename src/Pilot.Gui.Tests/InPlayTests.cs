@@ -305,7 +305,7 @@ public sealed partial class InPlayTests
         var screen = CardsScreen.From([Card("c1"), Card("h1", CardState.Closed, CardBin.Handled), Card("h2", CardState.Closed, CardBin.Handled), Card("h3", CardState.Closed, CardBin.Handled)]);
 
         var folded = Describe(view.Tree(screen));
-        folded.ShouldContain("card c1");
+        ArrangedText.Spoken(folded).ShouldContain("card c1");
         folded.ShouldContain("Handled · 3");
         folded.ShouldNotContain("card h1");
 

@@ -46,7 +46,7 @@ public sealed class LinkMenuTests
     }
 
     private static ClickableRegion Link(List<ClickableRegion> regions, string action) =>
-        regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+        regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action);
 
     [Fact]
     public void ARightClickOnACardsTitleLinkOffersCopyUrlAndNothingElse()

@@ -108,8 +108,8 @@ public sealed class TextSelectionHostTests
         window.Render();
         window.Chrome.ShowsCards.ShouldBeTrue();
         var regions = window.Chrome.Cards.SelectableTextRegions.ToArray();
-        var first = regions.First(r => r.Text.Contains("Planets draw", StringComparison.Ordinal));
-        var last = regions.First(r => r.Text.Contains("Shader compile", StringComparison.Ordinal));
+        var first = regions.First(r => r.Text.Trim() == "Planets");
+        var last = regions.First(r => r.Text.Trim() == "red");
 
         window.Drag(Start(first), End(last));
 
@@ -193,7 +193,7 @@ public sealed class TextSelectionHostTests
 
         window.Chrome.Show(PilotPage.Home);
         window.Render();
-        var title = window.Chrome.Cards.SelectableTextRegions.ToArray().First(r => r.Text.Contains("Planets draw", StringComparison.Ordinal));
+        var title = window.Chrome.Cards.SelectableTextRegions.ToArray().First(r => r.Text.Trim() == "Planets");
         window.Drag(Start(title), End(title));
         window.Chrome.Cards.Selection.HasSelection.ShouldBeTrue();
 

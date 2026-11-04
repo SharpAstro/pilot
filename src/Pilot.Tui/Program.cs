@@ -183,6 +183,12 @@ chat.OnSend = async text =>
     Redraw();
     return refused;
 };
+cards.OnCleanUp = async () =>
+{
+    var refused = await ChatCommands.TellAsync(client, WatchtowerAsks.CleanUp, Who, stop.Token);
+    Redraw();
+    return refused;
+};
 chat.OnSendAboutCard = async (card, node, words) =>
 {
     var refused = clients.For(node) is { } to

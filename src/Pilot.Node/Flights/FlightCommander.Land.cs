@@ -95,7 +95,10 @@ public sealed partial class FlightCommander
         return marked;
     }
 
-    private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) => LandFlightAsync(Find(command.Target), cancellationToken);
+    // A landing asked for by a card that names the head its PR merged at (the not-landed ring's Land it) is judged as the merge's own
+    // was: everything up to that head is in. The CLI's land names none.
+    private Task LandAsync(CommandRequest command, CancellationToken cancellationToken) =>
+        LandFlightAsync(Find(command.Target), cancellationToken, command.Args is [{ Length: > 0 } mergedHead, ..] ? mergedHead : null);
 
     private async Task LandFlightAsync(FlightRow flight, CancellationToken cancellationToken, string? mergedHead = null, string? foldedInto = null)
     {
@@ -199,7 +202,7 @@ public sealed partial class FlightCommander
             }
             else if (await planes.UnlandedAsync(flight.Worktree, mainRef, cancellationToken) is { Count: > 0 } loose)
             {
-                throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr) or drop {(loose.Count == 1 ? "it" : "them")}, then land");
+                throw new FlightException($"{flight.Code}'s plane holds {loose.Count} commit{(loose.Count == 1 ? "" : "s")} on no remote and not in {mainRef}: {string.Join("; ", loose)}. Push {(loose.Count == 1 ? "it" : "them")} (flight pr), then land");
             }
             // Work not in main lands only once a passed review has read it, at the head the plane holds now: TIA368 was landed by
             // hand with a leg added after its pass, whose two commits no reviewer had seen. A folded flight's work goes on in the
@@ -207,7 +210,7 @@ public sealed partial class FlightCommander
             else if (foldedInto is null && await planes.NotInMainAsync(flight.Worktree, mainRef, cancellationToken) is { Head: { } head, Commits.Count: > 0 } work
                 && !(flight.Review is { State: ReviewState.Passed, ReviewedHead: { } reviewed } && string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)))
             {
-                throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, or drop {(work.Commits.Count == 1 ? "it" : "them")}, then land");
+                throw new FlightException($"{flight.Code}'s plane holds {work.Commits.Count} commit{(work.Commits.Count == 1 ? "" : "s")} not in {mainRef} that no passed review has read: {string.Join("; ", work.Commits)}. Review {(work.Commits.Count == 1 ? "it" : "them")} (flight review) and merge, then land");
             }
 
             var released = foldedInto is null && packages is not null && consumers.Count > 0
