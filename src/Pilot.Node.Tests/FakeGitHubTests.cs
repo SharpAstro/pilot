@@ -1,3 +1,6 @@
+using Shouldly;
+using Xunit;
+
 namespace Pilot.Node.Tests;
 
 public sealed class FakeGitHubTests
