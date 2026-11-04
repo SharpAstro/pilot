@@ -222,7 +222,8 @@
       "firstTestFailed": null,
       "buildErrors": 0,
       "firstBuildError": null,
-      "failureTold": false
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j15",
@@ -256,7 +257,8 @@
       "firstTestFailed": null,
       "buildErrors": 0,
       "firstBuildError": null,
-      "failureTold": false
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j13",
@@ -290,7 +292,8 @@
       "firstTestFailed": null,
       "buildErrors": 0,
       "firstBuildError": null,
-      "failureTold": false
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j12",
@@ -324,7 +327,8 @@
       "firstTestFailed": null,
       "buildErrors": 0,
       "firstBuildError": null,
-      "failureTold": false
+      "failureTold": false,
+      "failFast": false
     }
   ],
   "merges": [],
