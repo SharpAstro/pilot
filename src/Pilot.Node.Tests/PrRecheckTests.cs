@@ -191,7 +191,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         return _state.Flights().Single();
     }
 
-    private protected static string Short(string sha) => sha[..8];
+    private protected static string Short(string sha) => sha[..9];
 
     /// <summary>Main moves on after the flight was cut, as it does while a PR waits.</summary>
     private protected void MainMoves(string file = "later.txt", string text = "later\n")

@@ -27,6 +27,7 @@ internal static class CardKindCatalog
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
+    private const string Shape = "Flights/LegCommander.Shape.cs";
     private const string Watch = "Flights/LegWatch.cs";
     private const string FlightCommanderConnect = "Flights/FlightCommander.Connect.cs";
     private const string FlightCommanderCreate = "Flights/FlightCommander.Create.cs";
@@ -100,8 +101,9 @@ internal static class CardKindCatalog
 
         // Flights: landing, moving, PRs.
         new("review-changes", "Ring", [LegReview], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
-        new("laid-on-base", "Handled", [Lay], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
-        new("lay-failed", "Ring", [Lay], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
+        new("rebased-on-base", "Handled", [Shape], "BranchShapeTests.ABranchHoldingAMergeOfItsBaseIsPushedLinearOnARebaseBaseWithItsReviewCarried"),
+        new("laid-on-base", "Handled", [Shape], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
+        new("lay-failed", "Ring", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain"),
         new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
         new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
