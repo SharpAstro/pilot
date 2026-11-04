@@ -335,6 +335,7 @@ public sealed class DiskSweepTests : IDisposable
     [Fact]
     public async Task ALandedFlightsPlaneStillOnDiskIsDeletedAndOneThatCannotBeIsQueued()
     {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
         var queue = new RemovalQueue(Path.Combine(_root, "pending.json"), _time);
         var (sweep, _, _) = WorktreeSweep();
         sweep = new DiskSweep(Jobs, Temp, _state, _time) { Queue = queue, FreeSpace = _ => null };
@@ -391,6 +392,7 @@ public sealed class DiskSweepTests : IDisposable
     [Fact]
     public async Task AFolderThatCannotBeRemovedDoesNotStopTheRest()
     {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a folder held open cannot be deleted on Windows only");
         var held = Job("99999999", TimeSpan.FromDays(4));
         var free = Job("88888888", TimeSpan.FromDays(4));
         using var hold = new FileStream(Path.Combine(held, "tmp", "scratch.bin"), FileMode.Open, FileAccess.Read, FileShare.None);
@@ -400,16 +402,65 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(free, "tmp")).ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task AResumedSessionsJobFolderIsKeptWhileLiveAndGoesAtOnceOnceEndedInALandedFlight()
+    {
+        Flight("PIL1", FlightState.Landed);
+        // Id is the first session's prefix; the job folder is named by the current session id, the old one is in EarlierSessionIds.
+        _state.PutSession(new SessionRow
+        {
+            Id = "aaaa0001", SessionId = "bbbb0001-0000-4000-8000-000000000000", EarlierSessionIds = ["aaaa0001-0000-4000-8000-000000000000"],
+            Name = "s-live", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker, Flight = "PIL1",
+            ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        _state.PutSession(new SessionRow
+        {
+            Id = "aaaa0002", SessionId = "bbbb0002-0000-4000-8000-000000000000", EarlierSessionIds = ["aaaa0002-0000-4000-8000-000000000000"],
+            Name = "s-done", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker, Flight = "PIL1",
+            ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Ended, SpendWeighted = 0, StartedAt = Start,
+        });
+        var live = Job("bbbb0001", TimeSpan.FromDays(10));
+        var ended = Job("bbbb0002", TimeSpan.FromMinutes(5));
+
+        await _sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(Path.Combine(live, "tmp")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(ended, "tmp")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ALandedPlaneQueuedAsHeldIsTriedAgainEachSweepAndDroppedOnceGone()
+    {
+        var queue = new RemovalQueue(Path.Combine(_root, "pending.json"), _time);
+        var sweep = new DiskSweep(Jobs, Temp, _state, _time) { Queue = queue, FreeSpace = _ => null };
+        var plane = Wt("landed-queued");
+        Directory.CreateDirectory(plane);
+        File.WriteAllBytes(Path.Combine(plane, "x.bin"), new byte[10]);
+        _state.PutFlight(new FlightRow
+        {
+            Code = "PIL3", Repo = "pilot", Issue = 1, Title = "t", RepoPath = Repo, Branch = "b", Worktree = plane, Base = "origin/main",
+            State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+        queue.Add(plane, RemovalQueue.PlaneKind, "PIL3", "held");
+
+        await sweep.SweepAsync(TestContext.Current.CancellationToken);
+
+        Directory.Exists(plane).ShouldBeFalse();
+        queue.Contains(plane).ShouldBeFalse();
+    }
+
     // ---- obj folders of a flying flight's finished legs ----
 
     private string ObjPlane(string name, LegState[] legs)
     {
         var plane = Path.Combine(_root, "planes", name);
-        foreach (var dir in new[] { "src/A/obj", "src/A/bin", "src/B/obj", ".git/obj" })
+        foreach (var dir in new[] { "src/A/obj", "src/A/bin", "src/B/obj", ".git/obj", "models/obj" })
         {
             Directory.CreateDirectory(Path.Combine(plane, dir));
             File.WriteAllBytes(Path.Combine(plane, dir, "x.bin"), new byte[100]);
         }
+        File.WriteAllText(Path.Combine(plane, "src/A/A.csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(plane, "src/B/B.csproj"), "<Project />");
         _state.PutFlight(new FlightRow
         {
             Code = name, Repo = "pilot", Issue = 1, Title = "t", RepoPath = "/r", Branch = "b", Worktree = plane, Base = "origin/main",
@@ -437,6 +488,7 @@ public sealed class DiskSweepTests : IDisposable
         Directory.Exists(Path.Combine(plane, "src/B/obj")).ShouldBeFalse();
         Directory.Exists(Path.Combine(plane, "src/A/bin")).ShouldBeTrue();
         Directory.Exists(Path.Combine(plane, ".git/obj")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(plane, "models/obj")).ShouldBeTrue();
         _state.Cards().Single(c => c.Kind == "disk-swept").Title.ShouldContain("2 obj folders");
     }
 

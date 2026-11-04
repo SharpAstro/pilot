@@ -49,10 +49,11 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
         var landed = state.Flights().Where(f => f.State == FlightState.Landed).Select(f => f.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var live = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed)).Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // A job folder is named by the session id current when it started, so every id a row ever had counts (a resume only replaces SessionId).
+        var live = sessions.Where(s => s.State is not (SessionState.Ended or SessionState.Failed)).SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var done = sessions
             .Where(s => s.State is SessionState.Ended or SessionState.Failed && s.Flight is { } code && landed.Contains(code))
-            .Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .SelectMany(JobFolderNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var cutoff = now - TimeSpan.FromDays(Math.Max(1, ScratchDays()));
         int scratch = 0, probes = 0;
         long bytes = 0;
@@ -92,19 +93,27 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 $"Deleted {scratch} job scratch folders (jobs/<id>/tmp of landed flights' ended sessions, or older than the scratch-days setting) and {probes} p2o-* probe folders older than a day{(obj > 0 ? $", and {obj} obj folders in planes whose legs are done and idle (bin kept)" : "")}; {Size(bytes)} by unique bytes. state.json and the timeline of each job stay.");
         }
 
-        var reclaimable = new List<(string Name, long Bytes)>();
-        foreach (var job in Safe(() => Directory.EnumerateDirectories(jobsFolder)))
-        {
-            var tmp = Path.Combine(job, "tmp");
-            if (Directory.Exists(tmp))
-            {
-                reclaimable.Add(($"job scratch {Path.GetFileName(job)}", DiskUsage.UniqueBytes(tmp)));
-            }
-        }
+        var reclaimable = new List<(string Name, string Path)>();
         await SweepWorktreesAsync(sessions, reclaimable, cancellationToken);
         RetryLandedPlanes(sessions, reclaimable);
         RingDisk(reclaimable);
         return (scratch, probes, bytes);
+    }
+
+    private static IEnumerable<string> JobFolderNames(SessionRow row)
+    {
+        yield return row.Id;
+        if (row.SessionId is { Length: > 0 } current)
+        {
+            yield return current[..Math.Min(8, current.Length)];
+        }
+        foreach (var earlier in row.EarlierSessionIds ?? [])
+        {
+            if (earlier.Length > 0)
+            {
+                yield return earlier[..Math.Min(8, earlier.Length)];
+            }
+        }
     }
 
     // The last done leg's FinishedAt a plane was swept for: a plane is swept once per finished leg.
@@ -137,6 +146,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 {
                     continue;
                 }
+                var allGone = true;
                 foreach (var obj in ObjFolders(flight.Worktree))
                 {
                     var size = DiskUsage.UniqueBytes(obj);
@@ -145,8 +155,15 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                         folders++;
                         bytes += size;
                     }
+                    else
+                    {
+                        allGone = false;
+                    }
                 }
-                _objSwept[flight.Worktree] = finished;
+                if (allGone)
+                {
+                    _objSwept[flight.Worktree] = finished;
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -174,7 +191,15 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 }
                 if (name.Equals("obj", StringComparison.OrdinalIgnoreCase))
                 {
-                    found.Add(sub);
+                    // Build output only: a project file sits beside it. A tracked folder of model files named obj stays.
+                    if (Safe(() => Directory.EnumerateFiles(dir, "*proj")).Any())
+                    {
+                        found.Add(sub);
+                    }
+                    else
+                    {
+                        pending.Push(sub);
+                    }
                 }
                 else
                 {
@@ -221,7 +246,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
     private static bool Inside(string folder, string path) =>
         Norm(path).StartsWith(Norm(folder) + Path.DirectorySeparatorChar, PathComparison) || Same(folder, path);
 
-    private async Task SweepWorktreesAsync(IReadOnlyList<SessionRow> sessions, List<(string Name, long Bytes)> reclaimable, CancellationToken cancellationToken)
+    private async Task SweepWorktreesAsync(IReadOnlyList<SessionRow> sessions, List<(string Name, string Path)> reclaimable, CancellationToken cancellationToken)
     {
         if (Planes is null || GitHub is null)
         {
@@ -262,16 +287,28 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         }
     }
 
-    private async Task SweepWorktreeAsync(string repo, string root, WorktreeEntry entry, List<string> kept, List<string> liveCwds, List<(string Name, long Bytes)> reclaimable, CancellationToken cancellationToken)
+    private async Task SweepWorktreeAsync(string repo, string root, WorktreeEntry entry, List<string> kept, List<string> liveCwds, List<(string Name, string Path)> reclaimable, CancellationToken cancellationToken)
     {
         if (entry.Branch is not { Length: > 0 } branch || entry.Prunable
             || Path.GetDirectoryName(Norm(entry.Path)) is not { } parent || !Same(parent, root)
             || kept.Any(k => Same(k, entry.Path))
             || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(Norm(entry.Path)), @"^b\d+$")
             || liveCwds.Any(c => Inside(entry.Path, c))
-            || !Directory.Exists(entry.Path)
-            || Queue?.Contains(entry.Path) == true)
+            || !Directory.Exists(entry.Path))
         {
+            return;
+        }
+        if (Queue?.Contains(entry.Path) == true)
+        {
+            // Held when it was removed: try again each sweep; the queue drops the entry once the folder is gone.
+            if (Queue.TryOne(entry.Path))
+            {
+                state.CloseCardsAbout(entry.Path, "the folder is gone", WorktreeDirtyKind);
+            }
+            else
+            {
+                reclaimable.Add(($"worktree {Path.GetFileName(Norm(entry.Path))} (held)", entry.Path));
+            }
             return;
         }
         var pr = await GitHub!.PullRequestAsync(repo, branch, cancellationToken);
@@ -287,7 +324,7 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         }
         if (dirty)
         {
-            reclaimable.Add(($"worktree {name} (holds changes)", size));
+            reclaimable.Add(($"worktree {name} (holds changes)", entry.Path));
             state.RaiseCard(CardBin.ForYou, WorktreeDirtyKind, entry.Path,
                 $"Worktree {name} has changes not committed and its PR #{pr.Number} is {pr.State.ToLowerInvariant()}",
                 $"{entry.Path} on branch {branch}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, so the disk sweep would remove it, but it holds changes not committed ({Size(size)} by unique bytes). Commit or discard them by hand and the next sweep removes it.");
@@ -297,14 +334,18 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         if (held is not null)
         {
             Queue?.Add(entry.Path, RemovalQueue.PlaneKind, branch, held);
-            reclaimable.Add(($"worktree {name} (held)", size));
+            reclaimable.Add(($"worktree {name} (held)", entry.Path));
+        }
+        else
+        {
+            state.CloseCardsAbout(entry.Path, "the folder is gone", WorktreeDirtyKind);
         }
         state.RaiseCard(CardBin.Handled, WorktreeRemovedKind, entry.Path,
             $"Removed worktree {name}: PR #{pr.Number} is {pr.State.ToLowerInvariant()}, {Size(size)}{(held is null ? "" : ", folder held and queued for the next start")}",
             $"{entry.Path} on branch {branch} was clean and its PR #{pr.Number} {pr.State.ToLowerInvariant()}; the worktree is removed and the branch kept. {Size(size)} by unique bytes.{(held is null ? "" : " " + held)}");
     }
 
-    private void RetryLandedPlanes(IReadOnlyList<SessionRow> sessions, List<(string Name, long Bytes)> reclaimable)
+    private void RetryLandedPlanes(IReadOnlyList<SessionRow> sessions, List<(string Name, string Path)> reclaimable)
     {
         if (Queue is null)
         {
@@ -319,15 +360,16 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
                 {
                     continue;
                 }
-                var size = DiskUsage.UniqueBytes(flight.Worktree);
-                if (Queue.Contains(flight.Worktree))
+                var gone = Queue.Contains(flight.Worktree)
+                    ? Queue.TryOne(flight.Worktree)
+                    : RemovalQueue.TryDelete(flight.Worktree, out var why) || QueueHeld(flight, why);
+                if (gone)
                 {
-                    reclaimable.Add(($"landed plane {flight.Code}", size));
+                    state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "the plane folder is gone", "plane-left");
                 }
-                else if (!RemovalQueue.TryDelete(flight.Worktree, out var why))
+                else
                 {
-                    Queue.Add(flight.Worktree, RemovalQueue.PlaneKind, flight.Code, why);
-                    reclaimable.Add(($"landed plane {flight.Code}", size));
+                    reclaimable.Add(($"landed plane {flight.Code}", flight.Worktree));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -337,7 +379,14 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         }
     }
 
-    private void RingDisk(List<(string Name, long Bytes)> reclaimable)
+    // Queues a plane that could not be deleted; always false, so the caller reads "still there".
+    private bool QueueHeld(FlightRow flight, string why)
+    {
+        Queue!.Add(flight.Worktree, RemovalQueue.PlaneKind, flight.Code, why);
+        return false;
+    }
+
+    private void RingDisk(List<(string Name, string Path)> items)
     {
         var probe = Repos().FirstOrDefault(Directory.Exists) ?? jobsFolder;
         if (FreeSpace(probe) is not { } space)
@@ -349,6 +398,16 @@ public sealed class DiskSweep(string jobsFolder, string tempFolder, NodeState st
         {
             state.CloseCardsAbout(space.Name, "free space is back above the alert", DiskLowKind);
             return;
+        }
+        // Sized only now: unique bytes cost a file open each, so a pass with free space in hand skips it.
+        var reclaimable = items.Select(i => (i.Name, Bytes: DiskUsage.UniqueBytes(i.Path))).ToList();
+        foreach (var job in Safe(() => Directory.EnumerateDirectories(jobsFolder)))
+        {
+            var tmp = Path.Combine(job, "tmp");
+            if (Directory.Exists(tmp))
+            {
+                reclaimable.Add(($"job scratch {Path.GetFileName(job)}", DiskUsage.UniqueBytes(tmp)));
+            }
         }
         var top = reclaimable.Where(r => r.Bytes > 0).OrderByDescending(r => r.Bytes).Take(5).ToList();
         var list = top.Count == 0 ? "nothing the node can reclaim by itself" : string.Join("; ", top.Select(r => $"{r.Name} {Size(r.Bytes)}"));
