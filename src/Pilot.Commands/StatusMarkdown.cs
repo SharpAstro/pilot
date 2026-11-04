@@ -143,7 +143,7 @@ internal static class StatusMarkdown
                     PrReviewState.Closed => $"{review.Verdict}, closed",
                     _ => $"{review.Verdict}, on card {review.Card}",
                 };
-                text.AppendLine($"- [{Text($"{review.Repo}#{review.Number}")}]({review.Url}) {Text(review.Title ?? "")} ({Text(how)}, at `{review.Head[..Math.Min(8, review.Head.Length)]}`)");
+                text.AppendLine($"- [{Text($"{review.Repo}#{review.Number}")}]({review.Url}) {Text(review.Title ?? "")} ({Text(how)}, at `{review.Head[..Math.Min(9, review.Head.Length)]}`)");
                 if (review.Fixer is { } fixer)
                 {
                     text.AppendLine($"  - {Text($"fixing, {fixer}, round {review.FixRound ?? 1}")}");

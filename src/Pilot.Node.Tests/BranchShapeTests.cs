@@ -61,6 +61,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         F(flight.Code).Review!.State.ShouldBe(ReviewState.Passed);
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(shaped);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.LayFailedKind);
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.ShapedKind && c.Bin == CardBin.Handled);
     }
 
     [Fact]

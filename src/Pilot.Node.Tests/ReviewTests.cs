@@ -717,7 +717,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
         var drifted = F(flight.Code);
         (drifted.GitHubHead, drifted.GitHubLabel).ShouldBe(("beef1111beef1111", null));
-        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111 since the review read {reviewed[..8]}");
+        drifted.GitHubDisagrees.ShouldBe($"pilot: passed was removed on GitHub; the head moved to beef1111b since the review read {reviewed[..9]}");
         // Recorded, not put right: the node's own marks stand as it set them.
         (drifted.Review!.Label, drifted.Review.StatusState).ShouldBe(("pilot: passed", "success"));
         _github.LabelCalls.Count(c => c.Number == number).ShouldBe(2);

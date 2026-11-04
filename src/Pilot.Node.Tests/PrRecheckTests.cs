@@ -727,7 +727,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         _workers.Started.Count.ShouldBe(started + 1);
         var review = _state.Flights().Single().Review.ShouldNotBeNull();
         review.State.ShouldBe(ReviewState.Reviewing);
-        Handled().ShouldBe([$"recheck of widget#7: head ab12cd34 was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
+        Handled().ShouldBe([$"recheck of widget#7: head ab12cd34a was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
 
