@@ -350,6 +350,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         var args = command.Args ?? [];
         // A leading --alone asks for the node to itself (a benchmark); the rest is as for any run.
+        var failFast = args.Length > 0 && args[0] == Verbs.FailFastArg;
+        if (failFast)
+        {
+            args = [.. args.Skip(1)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
         if (alone)
         {
@@ -418,6 +423,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
+            FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -426,6 +432,25 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="owner"/> is a reviewer or a fixer and <paramref name="command"/>, trimmed, is one of its flight's legs'
+    /// checks (every leg's when its session names no flight, as a PR review's does): such a run stops at its first failed test, as a check does.
+    /// </summary>
+    private bool IsLegCheckOfReviewerOrFixer(SessionRow? owner, string command)
+    {
+        if (owner is null)
+        {
+            return false;
+        }
+        var fixer = owner.Role != SessionRole.Reviewer && state.PrReviews().Any(r => r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal));
+        if (owner.Role != SessionRole.Reviewer && !fixer)
+        {
+            return false;
+        }
+        var wanted = command.Trim();
+        return state.Legs(owner.Flight).Any(l => l.Check is { } check && string.Equals(check.Trim(), wanted, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -448,6 +473,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Command = command,
             Cwd = cwd,
             Kind = JobKind.Check,
+            FailFast = true,
             Flight = flight,
             Leg = leg,
             State = JobState.Queued,
@@ -1105,6 +1131,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         int looks = 0, hot = 0;
 
         var failures = new TestFailures();
+        // The first failed test a fail-fast job read, and whether the node ended the job for it.
+        string? firstFailedTest = null;
+        string? stoppedAt = null;
 
         void Follow(bool final)
         {
@@ -1114,6 +1143,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 if (failures.Read(line) is { } failure)
                 {
                     NoteFailure(job, failure);
+                    if (job.FailFast && !failure.IsBuildError)
+                    {
+                        firstFailedTest ??= failure.Name;
+                    }
                 }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
@@ -1168,6 +1201,16 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     }
                     if (!alive)
                     {
+                        break;
+                    }
+                    if (firstFailedTest is not null && !_cancelled.ContainsKey(job.Id) && TimeLeft(job) > TimeSpan.Zero)
+                    {
+                        // A fail-fast job read its first failed test: its whole tree ends now, as a timeout ends it, and the queue moves on.
+                        stoppedAt = firstFailedTest;
+                        Kill(job.Id, process);
+                        Tree.KillAll(job.Id, process);
+                        await GoneAsync(process);
+                        exitCode = null;
                         break;
                     }
                     var left = TimeLeft(job);
@@ -1234,6 +1277,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         else if (timedOut)
         {
             ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
+        }
+        else if (stoppedAt is not null)
+        {
+            ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
         }
         else if (exitCode is { } code)
         {

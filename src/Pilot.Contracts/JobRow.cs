@@ -113,6 +113,9 @@ public sealed record JobRow
     /// <summary>Whether the owner was told the job's first failure while it ran, so a node restart does not tell it again.</summary>
     public bool FailureTold { get; init; }
 
+    /// <summary>Whether the node ends the job's whole tree at the first failed test it reads: a check, a run handed over with <c>--fail-fast</c>, a reviewer's or fixer's check run.</summary>
+    public bool FailFast { get; init; }
+
     /// <summary>
     /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,
     /// or both; null while there are none.
