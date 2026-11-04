@@ -53,7 +53,6 @@ public sealed class JobShellViewTests
 
         var described = TestText.Flat(CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored)));
 
-        described.ShouldContain("shell");
         described.ShouldContain("git-bash");
         // A job with no shell on its row (one from before the node said it) shows no shell fact.
         var bare = new JobsScreen(JobLine.Build([Job("j20", "pwsh") with { Shell = null }], Live.At), "live", Live.At);

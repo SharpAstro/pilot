@@ -158,7 +158,7 @@ public static partial class Briefs
     /// so on the job's row and the first line of its log.
     /// </summary>
     internal const string JobShellRule =
-        "A job or a check runs in pwsh on Windows; `bash -c` there runs Git Bash (never WSL), and calling dotnet directly is best.";
+        "A job or a check runs in pwsh on Windows; a check is given without a wrapper, and a job line headed `bash` or `sh` runs Git Bash (never WSL); calling dotnet directly is best.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =

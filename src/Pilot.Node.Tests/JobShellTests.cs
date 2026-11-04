@@ -94,7 +94,7 @@ public sealed class JobShellTests : JobTestsBase
         Briefs.JobShellRule.ShouldNotContain("\n");
         foreach (var brief in briefs)
         {
-            brief.ShouldContain("runs in pwsh on Windows; `bash -c` there runs Git Bash (never WSL), and calling dotnet directly is best.");
+            brief.ShouldContain("a check is given without a wrapper, and a job line headed `bash` or `sh` runs Git Bash (never WSL); calling dotnet directly is best.");
         }
     }
 }
