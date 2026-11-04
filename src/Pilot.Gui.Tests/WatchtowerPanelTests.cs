@@ -40,7 +40,7 @@ public sealed class WatchtowerPanelTests
         using var _ = renderer;
         var screen = CardsScreen.From([Card("c1"), Card("c2", CardState.Closed, CardBin.Handled)], [Tower()]);
 
-        var text = Describe(view, screen);
+        var text = ArrangedText.Spoken(Describe(view, screen));
 
         var order = new[] { "Watchtower", "For you", "card c1", "Handled", "card c2", "Chat with the watchtower" }.Select(s => text.IndexOf(s, StringComparison.Ordinal)).ToArray();
         order.ShouldAllBe(i => i >= 0);
@@ -113,7 +113,7 @@ public sealed class WatchtowerPanelTests
         var handled = Card("c2", CardState.Closed, CardBin.Handled) with { Title = "PIL21 landed" };
         var other = Card("c3") with { Kind = "pr", Title = "PR 4 is ready" };
 
-        var text = Describe(view, CardsScreen.From([open, handled, other]));
+        var text = ArrangedText.Spoken(Describe(view, CardsScreen.From([open, handled, other])));
 
         text.ShouldContain("🛬 PIL20 landed");
         text.ShouldContain("🛬 PIL21 landed");

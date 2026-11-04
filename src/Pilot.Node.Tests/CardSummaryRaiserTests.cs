@@ -64,8 +64,36 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         var card = Open().Single(c => c.Kind == LegCommander.MergeFailed);
-        card.Summary.ShouldNotBeNull().ShouldContain("Start a fresh worker on parser (the last one left the PR's checks failing)");
-        card.Summary.ShouldContain("Re-run the checks of TIA43's PR");
+        var summary = card.Summary.ShouldNotBeNull();
+        summary.ShouldContain("TIA43/parser");
+        // The panel shows at most 240 characters of a summary (CardsView.SummaryChars).
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
+        // Why it did not go through: the failed check by name, not only "failed".
+        summary.ShouldContain("because check build (linux) failed");
+        summary.ShouldContain("fresh worker can fix the last leg");
+        summary.ShouldContain("checks can be run again");
+        summary.ShouldContain("merge can be tried once more");
+        // The buttons show their whole labels, so the sentence says what each is for in other words.
+        card.Choices.Length.ShouldBeGreaterThan(1);
+        foreach (var choice in card.Choices)
+        {
+            summary.ShouldNotContain(choice.Label);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeThatFailedWithALongLegNameAndALongReasonStaysWithinTheSummaryCap()
+    {
+        var (_, _, checks) = await ArmedPassedFlight("46", "a-leg-with-a-very-long-name-for-the-cap");
+        _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 2, 3, new string('x', 120), "https://github.com/x/tianwen/actions/runs/1/job/2");
+
+        await checks.LookAsync(Ct);
+
+        var summary = Open().Single(c => c.Kind == LegCommander.MergeFailed).Summary.ShouldNotBeNull();
+        // The panel shows at most 240 characters of a summary (CardsView.SummaryChars): a longer one is cut there, with the whole text on hover.
+        // Pinned so the reason's cap (MaxBecause) and the leg name together are noticed if they ever grow past it.
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
     }
 
     [Fact]

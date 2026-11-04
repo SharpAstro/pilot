@@ -694,7 +694,7 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
 
         await _senderLegs.AdvanceAllAsync(Ct);
 
-        var card = StayedWith("TIA900 could not move to DE1: the plane holds 1 change not committed (?? stray.txt). Commit or drop it, then move it again.");
+        var card = StayedWith("TIA900 could not move to DE1: the plane holds 1 change not committed (?? stray.txt). Commit it, then move it again.");
         _peer.Sent.ShouldBeEmpty();
         OriginHead().ShouldBe(_pushedHead);
 

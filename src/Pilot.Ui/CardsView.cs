@@ -381,22 +381,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The least the panel is given: a window that would give it less shows the page alone (the panel is dropped, as an optional column is).</summary>
     public const float MinWidth = 240f;
 
-    // How many characters of a button's words show before an ellipsis: a card's button is no wider than the panel, and its tooltip has
-    // the whole of them.
-    private const int ButtonFits = 28;
-
-    // A button of a card with its words cut to what the panel holds, ending in an ellipsis with the whole of them on hover.
-    private static Layout.Node Fit(Layout.Node button)
-    {
-        // Only a button: a state chip (an armed merge) says what it is in words that stay whole, with its tooltip.
-        if (button is not Layout.Node.Leaf { Content: Layout.Content.Text text, Hit: HitResult.ButtonHit } leaf)
-        {
-            return button;
-        }
-        var cut = Ellipsize(text.Value, ButtonFits);
-        return cut == text.Value ? button : leaf with { Content = text with { Value = cut }, Tooltip = leaf.Tooltip ?? text.Value };
-    }
-
     internal override Action<string>? SelectionCopy => CopyText;
 
     internal override LinkMenu? SelectionLinks => _links;
@@ -636,18 +620,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The width of the bar down a card's left edge, in its bin's colour.</summary>
     private const float AccentBar = 3f;
 
-    /// <summary>How many lines an overlap card's title may take: it names both flights, the shared files and the choice, which one clipped row loses.</summary>
-    internal const int OverlapTitleLines = 3;
+    /// <summary>How many lines a card's title may take: it says what happened and to what (an overlap's names both flights, the shared files and the choice), which one clipped row loses (pilot#677).</summary>
+    internal const int TitleLines = 3;
 
     /// <summary>The cap on a card's detail: more for a card that offers a merge, and for an overlap's, which says what each of its choices does.</summary>
     internal static int DetailLinesOf(CardRow card) =>
         card.Choices.Any(c => c.Verb == Verbs.Merge) || card.Kind is "pr-ready" or "merge-failed" or CardKinds.Overlap ? MergeDetailLines : DetailLines;
 
-    // Past these a card's title or detail may well be cut in the panel (a title is one line, a detail three), so it carries
+    // Past these a card's title or detail may well be cut in the panel (a title is three lines, a detail three), so it carries
     // its whole text as hover text, opening to the left, into the window rather than off its edge. DIR.Lib's capped wrap
     // drops the words past its last line with no "…" (SharpAstro/DIR.Lib#155), so the hover text is the only way to read
     // the rest (TIA1818's ring, SE1 2026-10-25).
-    private const int TitleFits = 34;
+    // A title of about 26 characters to the line, three lines, at the panel's narrowest; judged short of that, so a cut is never without it.
+    private const int TitleFits = 60;
     private const int DetailFits = 120;
 
     /// <summary>
@@ -734,23 +719,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            PullRequestTitle(card)
-                ?? (card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting
-                ? Whole(_links.OnLink(Layout.Builder.Text(Titled(card) + (InAppLinks.Is(titleLink) ? "" : Followable.Away), 14f, Link)
-                    .BgHover(CardHover)
-                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (InAppLinks.Is(titleLink) ? OnGoTo : OnOpen)?.Invoke(titleLink))
-                    .RowH(22f), titleLink), card.Title, card.Title.Length > TitleFits)
-                : card.Kind == CardKinds.Overlap
-                    // Wraps, up to three lines; the whole title is on hover where it could pass them (a long file list in a narrow panel).
-                    ? Whole(WrappedProse.Paragraphs(Titled(card), 14f, Bright, OverlapTitleLines), card.Title, card.Title.Length > TitleFits * OverlapTitleLines / 2)
-                    : Whole((leg is { } titled && LegWord(card.Title, titled) ? WrappedProse.Of(Titled(card), 14f, Bright, 1, linker(14f)) : Layout.Builder.Text(Titled(card), 14f, Bright).Selectable()).RowH(22f),
-                        card.Title, card.Title.Length > TitleFits)),
+            Title(card, linker),
         };
-        if (card.Kind == CardKinds.Overlap)
-        {
-            // A title of several lines is set off from the detail under it.
-            lines.Add(Layout.Builder.Spacer().RowH(4f));
-        }
+        // A title of several lines is set off from the detail under it.
+        lines.Add(Layout.Builder.Spacer().RowH(4f));
         // The summary is the card's body; the raw detail is folded under it. A card from an old node has no summary and shows its detail as before.
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
@@ -794,7 +766,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(refusal);
         }
 
-        var buttons = new List<Layout.Node>();
+        // The buttons in order, each with whether its label is long enough to be wrapped inside a button of the panel's width, which then has a row of its own.
+        var buttons = new List<(Layout.Node Node, bool Full)>();
+        void Put(Layout.Node button, string? label = null) => buttons.Add((button, label is not null && Wraps(label)));
+        // A choice's button as it is dead (the card closed, or a press with the node), the size of the live one: the one pressed says "…".
+        static Layout.Node DeadChoice(string label, bool pressed) => ChoicePill(label, pressed, null, null, null, Dim, wrap: true, bg: CardBg);
         // While a press is with the node, the card says so on the button pressed and takes no second press: a Merge on a
         // merge-queue repo is several GitHub calls, seconds in which the button looked dead and was pressed again (SE1,
         // 2026-10-25).
@@ -811,7 +787,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // Connect stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             // A grant asks the node like any other press: working at once, and a refusal on the card.
             var connectHit = $"card:{card.Id}:connect";
-            buttons.Add(NodeButton("Connect", connectHit, () =>
+            Put(NodeButton("Connect", connectHit, () =>
             {
                 if (OnConnect is { } connect)
                 {
@@ -828,7 +804,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 // A merge that finished: only what it came to, as the chip it was; nothing else on it is pressed.
                 if (IsChip(choice.Status))
                 {
-                    buttons.Add(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }));
+                    Put(ChoiceControl(choice, card.Detail, $"card:{card.Id}:{number}", () => { }, wrap: true), StatusLabel(choice, card.Detail));
                 }
                 continue;
             }
@@ -839,52 +815,52 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 var words = WordsOf(card, choice);
                 lines.Add(Layout.Builder.TextInput(words, 14f, Palette.Input).RowH(28f));
-                buttons.Add(closed
-                    ? Dead(label)
-                    : Presses.Button(card.Id, action, () => Pill(label, action, () =>
+                Put(closed
+                    ? DeadChoice(label, false)
+                    : Presses.Button(card.Id, action, () => ChoicePill(label, false, action, () =>
                     {
                         var typed = words.Text.Trim();
                         if (typed.Length > 0)
                         {
                             OnAnswerWords?.Invoke(card, number, typed);
                         }
-                    }), pressed => Dead(pressed ? $"{label} …" : label)));
+                    }, null, Bright, wrap: true), pressed => DeadChoice(label, pressed)), label);
                 continue;
             }
-            buttons.Add(closed
-                ? Dead(label)
+            Put(closed
+                ? DeadChoice(label, false)
                 : IsChip(choice.Status)
-                    ? ChoiceControl(choice, card.Detail, action, () => { })
-                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number)), pressed => Dead(pressed ? $"{label} …" : label)));
+                    ? ChoiceControl(choice, card.Detail, action, () => { }, wrap: true)
+                    : Presses.Button(card.Id, action, () => ChoiceControl(choice, card.Detail, action, () => OnAnswer?.Invoke(card, number), wrap: true), pressed => DeadChoice(label, pressed)), label);
         }
         // A waiting session is answered where its Remote Control has it: the card's link, one click away.
         if (card.Kind == CardKinds.SessionWaiting && card.Link is { } answerUrl)
         {
-            buttons.Add(_links.OnLink(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)), answerUrl));
+            Put(_links.OnLink(Button("Answer in the browser" + Followable.Away, $"card:{card.Id}:answer", () => OnOpen?.Invoke(answerUrl)), answerUrl));
         }
         // A card about a leg's worker reads best beside what the worker was doing when it was raised.
         var session = merged ? null : TranscriptOf?.Invoke(card);
         if (OnTranscript is { } open && session is not null)
         {
-            buttons.Add(Button("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
+            Put(Button("Its transcript", $"card:{card.Id}:transcript", () => open(card, session)));
         }
         // An interactive session is someone's terminal: shown on the Sessions page, where its row is.
         if (OnOpenSession is { } show && card.Kind == CardKinds.SessionWaiting && session is { Row.Kind: SessionKind.Interactive })
         {
-            buttons.Add(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
+            Put(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
         }
         if (watched is null && !merged && OnChatAbout is { } about)
         {
-            buttons.Add(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
+            Put(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
         }
         if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            buttons.Add(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
+            Put(NodeButton("Dismiss", $"card:{card.Id}:dismiss", () => OnDismiss?.Invoke(card)));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
-        lines.Add(Layout.Builder.WrapH([.. buttons.Select(Fit)]).WithGap(8f).WithLineGap(4f).WStar());
+        lines.Add(ButtonRows(buttons));
 
         // A grid, not a stack with the accent bar beside the content and the content padded: a stack measures each child against its
         // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
@@ -902,6 +878,30 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             .HAuto();
     }
 
+    /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
+    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)
+    {
+        // The whole title is on hover where the cap (three lines) could cut it.
+        var cut = card.Title.Length > TitleFits;
+        // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
+        // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
+        // session's link is its button, Answer in the browser, so its title is no second one.
+        if (PullRequestTitle(card) is { } pullRequest)
+        {
+            return pullRequest;
+        }
+        if (card.Link is { } titleLink && card.Kind != CardKinds.SessionWaiting)
+        {
+            var inApp = InAppLinks.Is(titleLink);
+            // Wraps like the plain one, every word the link: the same hit, hover and menu, and the ↗ on the last word.
+            return Whole(WrappedProse.Linked(Titled(card), 14f, Link, TitleLines,
+                word => _links.OnLink(word.BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (inApp ? OnGoTo : OnOpen)?.Invoke(titleLink)), titleLink),
+                inApp ? "" : Followable.Away, LineChars), card.Title, cut);
+        }
+        return Whole(WrappedProse.Of(Titled(card), 14f, Bright, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
+    }
+
     /// <summary>
     /// The title of a card about an open PR (<see cref="PullRequestLinks.Of(CardRow)"/>): a link that opens the Pull requests page on that
     /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
@@ -914,9 +914,91 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return null;
         }
         return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
-                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left, tall: true,
-                browserAction: $"card:{card.Id}:browser")
-            .HFixed(22f);
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left,
+            browserAction: $"card:{card.Id}:browser", wrapLines: TitleLines);
+    }
+
+    /// <summary>The buttons of a card in rows: the short ones side by side, wrapping onto further rows, each long one (see <see cref="Wraps"/>) a row of its own, in order.</summary>
+    private static Layout.Node ButtonRows(List<(Layout.Node Node, bool Full)> buttons)
+    {
+        var rows = new List<Layout.Node>();
+        var run = new List<Layout.Node>();
+        void Flush()
+        {
+            if (run.Count > 0)
+            {
+                rows.Add(Layout.Builder.WrapH([.. run]).WithGap(8f).WithLineGap(4f).WStar());
+                run.Clear();
+            }
+        }
+        foreach (var (node, full) in buttons)
+        {
+            if (full)
+            {
+                Flush();
+                rows.Add(node);
+            }
+            else
+            {
+                run.Add(node);
+            }
+        }
+        Flush();
+        return rows.Count switch
+        {
+            0 => Layout.Builder.WrapH().WithGap(8f).WithLineGap(4f).WStar(),
+            1 => rows[0],
+            _ => Layout.Builder.VStack([.. rows]).WithGap(4f).WStar().HAuto(),
+        };
+    }
+
+    /// <summary>Labels up to this long stay one pill in a row of buttons; a longer one is wrapped inside a pill of the panel's width (pilot#677).</summary>
+    internal const int ButtonInline = 24;
+
+    /// <summary>How many lines a button's label may take before it is cut, the whole label then on hover.</summary>
+    internal const int ButtonLines = 2;
+
+    // What two lines of a button hold at the panel's narrowest: a label past this is cut, so it carries its whole text on hover.
+    private const int ButtonFits = 44;
+
+    // The width reserved at a wrapped button's right edge for its "…", so a press that says "…" wraps its label at the same width as the live one.
+    private const float WorkingSlot = 22f;
+
+    /// <summary>Whether a choice's label is wrapped inside its button, which takes a row of its own, rather than set on one line.</summary>
+    internal static bool Wraps(string label) => label.Length > ButtonInline;
+
+    /// <summary>
+    /// A choice's button, or its dead twin (<paramref name="action"/> null) or its state chip: one line in a pill as wide as its words for a
+    /// short <paramref name="label"/>, else, where <paramref name="wrap"/> allows it, the label wrapped in a pill the width of the panel, up to
+    /// <see cref="ButtonLines"/> lines, the whole label on hover past that. The live, the dead and the working form of a button are the same
+    /// size: a press that says "…" puts it in a slot of its own, so the label wraps as it did and nothing under the pointer moves.
+    /// </summary>
+    internal static Layout.Node ChoicePill(string label, bool working, string? action, Action? onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint, RGBAColor32 textColor,
+        string? tooltip = null, Layout.DockSide? tipSide = null, bool wrap = false, RGBAColor32? bg = null)
+    {
+        var fill = bg ?? tint?.Bg ?? Button;
+        Layout.Node pill;
+        if (wrap && Wraps(label))
+        {
+            var slot = working ? Layout.Builder.Text("…", 12f, textColor, TextAlign.Center) : Layout.Builder.Spacer();
+            // A grid, not a stack with padding: a stack measures its words against the whole width, taking off no padding (DIR.Lib: Engine.MeasureStack).
+            pill = Layout.Builder.Grid(3, Layout.Builder.Spacer(), WrappedProse.Of(label, 12f, textColor, ButtonLines, selectable: false), slot)
+                .WithColumns(Layout.Sizing.Fixed(10f), Layout.Sizing.Star(), Layout.Sizing.Fixed(WorkingSlot))
+                .WithAutoRows()
+                .Pad(0f, 4f)
+                .WStar()
+                .Bg(fill);
+            tooltip ??= label.Length > ButtonFits ? label : null;
+        }
+        else
+        {
+            pill = Layout.Builder.Text(working ? $"{label} …" : label, 12f, textColor, TextAlign.Center).Pad(10f, 4f).WAuto().Bg(fill);
+        }
+        if (action is not null)
+        {
+            pill = pill.BgHover(tint?.Hover ?? ButtonHover).Follows(new HitResult.ButtonHit(action), _ => onClick?.Invoke());
+        }
+        return tooltip is null ? pill : tipSide is { } side ? pill.WithTooltip(tooltip, side) : pill.WithTooltip(tooltip);
     }
 
     // A closed card's button as it was, the same size, answering nothing.
@@ -1056,12 +1138,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// on and not pressed (a second press would only arm it again), a state chip in the same size and place with no hover and
     /// no click. The one place a Merge is drawn, so the card and the flight's page cannot disagree about it.
     /// </summary>
-    internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick) =>
+    internal static Layout.Node ChoiceControl(CardChoice choice, string? detail, string action, Action onClick, bool wrap = false) =>
         IsChip(choice.Status)
-            ? Layout.Builder.Text(StatusLabel(choice, detail), 12f, ArmedText, TextAlign.Center)
-                .Pad(10f, 4f)
-                .WAuto()
-                .Bg(StatusTint(choice.Status)!.Value.Bg)
-                .WithTooltip(ChipTooltip(choice), Layout.DockSide.Left)
-            : Pill(StatusLabel(choice, detail), action, onClick, StatusTint(choice.Status));
+            ? ChoicePill(StatusLabel(choice, detail), false, null, null, null, ArmedText, ChipTooltip(choice), Layout.DockSide.Left, wrap, StatusTint(choice.Status)!.Value.Bg)
+            : ChoicePill(StatusLabel(choice, detail), false, action, onClick, StatusTint(choice.Status), Bright, wrap: wrap);
 }

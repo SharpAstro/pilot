@@ -550,9 +550,10 @@ public sealed partial class LegCommander
     /// Turns an armed merge's card, open still, into what failed: <paramref name="title"/> and <paramref name="detail"/> say why, its
     /// link the failed check's page, and it offers a go-around of the flight's last leg, a re-run of the failed checks
     /// (<paramref name="rerun"/>, when checks failed rather than the head moved) and the merge again. False when the flight has no
-    /// such card, and nothing is changed.
+    /// such card, and nothing is changed. <paramref name="because"/> is why it is unmergeable, as a clause that follows "did not go
+    /// through" ("because check build failed", "because the PR conflicts with main"): the summary says it, never only that it failed.
     /// </summary>
-    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy, bool mergeAgain = true, string kind = MergeFailed)
+    public bool ShowMergeFailed(string code, string head, string method, string title, string detail, string? link, bool rerun, string goAroundWhy, bool mergeAgain = true, string kind = MergeFailed, string? because = null)
     {
         var target = Verbs.FlightTarget(code);
         // A go-around card (no Merge) is the one a conflicting PR already turned; it is turned again for the head it conflicts on.
@@ -574,23 +575,41 @@ public sealed partial class LegCommander
         {
             choices.Add(new CardChoice { Label = $"Merge {code}'s PR again as it is", Verb = Verbs.Merge, Target = target, Args = [head, method] });
         }
+        // What each choice is for, in other words: the buttons show their whole labels, so the sentence must not repeat them.
         var offers = new List<string>();
-        if (choices.FirstOrDefault(c => c.Verb == Verbs.GoAround) is { } redoChoice)
+        if (choices.Any(c => c.Verb == Verbs.GoAround) && state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } lastLeg)
         {
-            offers.Add($"{redoChoice.Label} sends a fresh worker to fix it");
+            offers.Add($"a fresh worker can fix the last leg ({code}/{lastLeg.Name})");
         }
         if (rerun)
         {
-            offers.Add($"Re-run the checks of {code}'s PR runs them again");
+            offers.Add("the checks can be run again");
         }
         if (mergeAgain)
         {
-            offers.Add($"Merge {code}'s PR again as it is tries once more");
+            offers.Add("the merge can be tried once more as the PR stands");
         }
-        var summary = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " " + string.Join("; ", offers) + ".")}";
+        // The panel shows 240 characters of a summary: the reason gets what the rest of the sentence leaves (at most MaxBecause, at
+        // least MinBecause), and a longer one is cut here, whole in the detail. A long leg name takes room from it, not from the offers.
+        var said = because is { Length: > 0 } ? because : rerun ? "because the PR's checks failed" : null;
+        var rest = $"The merge of {code} did not go through.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
+        var room = Math.Clamp(PanelSummaryChars - rest.Length - 1, MinBecause, MaxBecause);
+        var why = said is null ? "" : " " + (said.Length > room ? said[..(room - 3)].TrimEnd() + "..." : said);
+        var summary = $"The merge of {code} did not go through{why}.{(offers.Count == 0 ? "" : " Choose: " + JoinOffers(offers) + ".")}";
         state.UpdateCard(card.Id, title, detail, choices, link ?? card.Link, kind, summary, CardBin.Ring);
         return true;
     }
+
+    // The longest reason a merge-failed summary says, and the shortest it is cut to, so the summary with its choices stays inside the panel's 240 characters.
+    private const int MaxBecause = 70;
+    private const int MinBecause = 12;
+
+    // What the For-you panel shows of a summary (CardsView.SummaryChars, in Pilot.Ui, which the node does not reference).
+    private const int PanelSummaryChars = 240;
+
+    // "a", "a or b", "a, b or c".
+    private static string JoinOffers(IReadOnlyList<string> offers) =>
+        offers.Count == 1 ? offers[0] : string.Join(", ", offers.Take(offers.Count - 1)) + " or " + offers[^1];
 
     // A merge refused because the PR no longer merges into its base (main moved under it).
     private static bool Conflicts(string error) =>

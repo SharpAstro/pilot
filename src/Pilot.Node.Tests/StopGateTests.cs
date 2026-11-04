@@ -104,6 +104,9 @@ public sealed class StopGateTests : IDisposable
         reason.ShouldContain("1 file not committed");
         reason.ShouldContain("stray.txt");
         reason.ShouldContain("commit them");
+        // Work is committed, never dropped (the owner, 2026-11-03): a file that is not work goes in .gitignore or the commit message.
+        reason.ShouldNotContain("drop", Case.Insensitive);
+        reason.ShouldContain(".gitignore");
         // Told, not rung: the session is still at it.
         Rings().ShouldBeEmpty();
     }
@@ -130,10 +133,22 @@ public sealed class StopGateTests : IDisposable
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Subject.ShouldBe(Verbs.LegTarget("TIA7", "parser"));
         ring.Title.ShouldContain("stray.txt");
-        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit or drop them");
+        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit them");
         var again = ring.Choices.ShouldHaveSingleItem();
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
+        // The only choice is to tell it to commit: no card button drops files.
+        again.Label.ShouldBe("Tell the session to commit its files in TIA7's plane");
+        again.Args.ShouldHaveSingleItem().ShouldNotContain("drop", Case.Insensitive);
+        // The summary names the file, says it was told once and stopped again, and does not repeat the button.
+        var summary = ring.Summary.ShouldNotBeNull();
+        summary.ShouldContain("stray.txt");
+        summary.ShouldContain("told once");
+        summary.ShouldContain("stopped again");
+        summary.ShouldNotContain("drop", Case.Insensitive);
+        summary.ShouldNotContain(again.Label);
+        CardSummaries.Usable(summary).ShouldBeTrue();
+        summary.Length.ShouldBeLessThanOrEqualTo(240);
 
         // Committed at last: the next stop goes through and the ring closes.
         Git(Plane, "add", ".");

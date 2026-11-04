@@ -7,7 +7,7 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The node's answer to a Stop hook: a session ending its turn in a flight's plane with files not committed there is
-/// told to commit them (or drop them) and carries on, once per turn; a second stop is let through and rings, so a
+/// told to commit them and carries on, once per turn; a second stop is let through and rings, so a
 /// session that will not commit cannot loop. Nothing is left behind starts here, before a leg finishes or a flight lands.
 /// </summary>
 /// <remarks>
@@ -45,15 +45,39 @@ public sealed class StopGate(NodeState state, Planes planes)
             return null;
         }
 
-        var reason = $"{uncommitted} in {flight.Worktree}: commit them, or drop them, before you stop. Nothing is left behind in a plane.";
+        // Work is committed, never dropped: a file that is clearly not work (build output, a scratch file) goes in .gitignore or is
+        // named in the commit message, and nothing is deleted without someone having looked at it.
+        var reason = $"{uncommitted} in {flight.Worktree}: commit them before you stop. A file that is clearly not work (build output, a scratch file) goes in .gitignore or is named in the commit message; never delete a file silently. Nothing is left behind in a plane.";
         // Claude Code sets stop_hook_active on a stop that a Stop hook already sent back to work: told once this turn.
         if (hook.TryGetProperty("stop_hook_active", out var active) && active.ValueKind == JsonValueKind.True)
         {
-            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit or drop them and stopped again, so the node will not tell it a third time by itself",
-                [new CardChoice { Label = $"Tell the session to commit or drop those files in {flight.Code}'s plane", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }]);
+            var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
+            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit them and stopped again, so the node will not tell it a third time by itself",
+                [new CardChoice { Label = $"Tell the session to commit its files in {flight.Code}'s plane", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }],
+                summary: Summary(flight.Code, files));
             return null;
         }
         return Decision(reason);
+    }
+
+    /// <summary>
+    /// What the ring says: which files (their names, or how many plus the first few), that the session was told once and stopped
+    /// again, and that they stay in the plane until committed. It does not repeat the choice's label.
+    /// </summary>
+    internal static string Summary(string code, IReadOnlyList<string> porcelain)
+    {
+        // Names only, never a path: a path of three folders would read as a log line and the summary would be thrown away.
+        // A porcelain line is two status letters, a space, then the path (a rename "old -> new": the new one).
+        var names = porcelain
+            .Select(l => l.Length > 3 ? l[3..] : l)
+            .Select(p => p.Contains(" -> ", StringComparison.Ordinal) ? p[(p.LastIndexOf(" -> ", StringComparison.Ordinal) + 4)..] : p)
+            .Select(p => Path.GetFileName(p.Trim().Trim('"').TrimEnd('/', '\\')))
+            .Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var count = porcelain.Count;
+        var which = count == 1 && names.Count == 1
+            ? $"{names[0]}"
+            : $"{count} files, {string.Join(", ", names.Take(3))}{(count > 3 ? " and more" : "")}";
+        return $"The worker of {code} was told once to commit {which} and stopped again with {(count == 1 ? "it" : "them")} still there. It can be told once more; the files stay in the plane until they are committed.";
     }
 
     /// <summary>The flight not landed whose plane holds <paramref name="cwd"/>, the plane itself or a folder in it.</summary>

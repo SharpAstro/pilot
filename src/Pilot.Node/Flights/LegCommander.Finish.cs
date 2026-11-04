@@ -68,7 +68,7 @@ public sealed partial class LegCommander
                 // A leg's work is its commits: a worker that ends with files not committed would leave them to the plane.
                 if (await planes.UncommittedAsync(flight.Worktree, cancellationToken) is { } dirty)
                 {
-                    throw new FlightException($"{flight.Code}/{leg.Name}'s plane has {dirty}: commit them (or drop them), then finish");
+                    throw new FlightException($"{flight.Code}/{leg.Name}'s plane has {dirty}: commit them, then finish");
                 }
                 if (leg.Checklist.Where(i => !i.Done).Select(i => i.Text).ToList() is { Count: > 0 } open)
                 {

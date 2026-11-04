@@ -680,13 +680,19 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>
     public async Task<string?> UncommittedAsync(string worktree, CancellationToken cancellationToken)
     {
+        var lines = await UncommittedFilesAsync(worktree, cancellationToken);
+        return lines.Count == 0 ? null : $"{lines.Count} file{(lines.Count == 1 ? "" : "s")} not committed ({string.Join(", ", lines.Take(3).Select(l => l.Trim()))}{(lines.Count > 3 ? ", ..." : "")})";
+    }
+
+    /// <summary>The plane's changes not committed, one porcelain line each (<c>?? stray.txt</c>); none when it is clean, gone or unreadable.</summary>
+    public async Task<IReadOnlyList<string>> UncommittedFilesAsync(string worktree, CancellationToken cancellationToken)
+    {
         if (!Directory.Exists(worktree))
         {
-            return null;
+            return [];
         }
         var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
-        var lines = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [];
-        return lines.Length == 0 ? null : $"{lines.Length} file{(lines.Length == 1 ? "" : "s")} not committed ({string.Join(", ", lines.Take(3).Select(l => l.Trim()))}{(lines.Length > 3 ? ", ..." : "")})";
+        return status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [];
     }
 
     /// <summary>
@@ -721,7 +727,7 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
             }
             if (status.Output.Trim().Length > 0)
             {
-                throw new FlightException($"{worktree} holds changes not committed; commit or drop them, then land it");
+                throw new FlightException($"{worktree} holds changes not committed; commit them, then land it");
             }
         }
         // A worker's claude -w locks the worktree it enters; a clean one is let go before it is removed.

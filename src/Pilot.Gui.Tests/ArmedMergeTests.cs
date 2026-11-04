@@ -109,10 +109,10 @@ public sealed class ArmedMergeTests
     {
         var arranged = Arrange(Armed(), 340, out var renderer);
         using var _ = renderer;
-        var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Distinct().ToList();
 
         // The Merge is drawn, with its words, and answers nothing; Dismiss and the title link still do.
-        Words(arranged).ShouldContain("Merging when checks pass · 6 of 7");
+        ArrangedText.Concat(arranged).ShouldContain("Merging when checks pass · 6 of 7");
         actions.ShouldNotContain("card:c1:1");
         actions.ShouldContain("card:c1:dismiss");
         actions.ShouldContain("card:c1:title");
@@ -123,7 +123,7 @@ public sealed class ArmedMergeTests
     {
         var arranged = Arrange(Disarmed(), 340, out var renderer);
         using var _ = renderer;
-        var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).ToList();
+        var actions = arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action).Distinct().ToList();
 
         // The go-around names a leg, so the card also links it (card:c2:leg).
         actions.ShouldBe(["card:c2:title", "card:c2:leg", "card:c2:1", "card:c2:2", "card:c2:3", "card:c2:dismiss"], ignoreOrder: true);
