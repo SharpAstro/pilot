@@ -90,7 +90,7 @@ public sealed partial class LegCommander
         var outcome = await OffLockAsync(null, () => LandPrAsync(github, flight.RepoPath, pr.Number, head, method, cancellationToken));
         if (outcome.Done && !string.Equals(outcome.Method, method, StringComparison.Ordinal))
         {
-            SetEntry(flight.Code, MergeEntryState.Merging, $"GitHub could not rebase {Short(head)}, so #{pr.Number} merged by {outcome.Method} at the same head");
+            SetEntry(flight.Code, MergeEntryState.Merging, $"GitHub could not rebase {CommitRefs.Short(head)}, so #{pr.Number} merged by {outcome.Method} at the same head");
         }
         return outcome;
     }

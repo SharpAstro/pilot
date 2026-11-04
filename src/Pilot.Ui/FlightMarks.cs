@@ -71,6 +71,6 @@ internal sealed record FlightMarks(string? Status, string? Label, string? Warnin
         admission?.Priority.Contains(flight.Code, StringComparer.Ordinal) == true
         || IssuePriorities.IsPriority(flight.HasPriorityField, flight.IssuePriority, flight.GitHubLabel);
 
-    /// <summary>A commit as the pages name it: its first seven characters.</summary>
-    public static string Short(string sha) => sha.Length > 9 ? sha[..9] : sha;
+    /// <summary>A commit as the pages name it: its first <see cref="CardRow.ShortShaLength"/> characters, as the node cuts it.</summary>
+    public static string Short(string sha) => sha.Length > CardRow.ShortShaLength ? sha[..CardRow.ShortShaLength] : sha;
 }

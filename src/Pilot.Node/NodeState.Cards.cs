@@ -114,7 +114,7 @@ public sealed partial class NodeState
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
             next = next with { Commits = CommitsOf(next, link) };
-            if (next.Bin == card.Bin && next.Commits.Count == card.Commits.Count && next.Commits.All(c => card.Commits.TryGetValue(c.Key, out var u) && u == c.Value) && next.Bin == card.Bin && next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
+            if (next.Bin == card.Bin && next.Commits.Count == card.Commits.Count && next.Commits.All(c => card.Commits.TryGetValue(c.Key, out var u) && u == c.Value) && next.Title == card.Title && next.Detail == card.Detail && next.Link == card.Link && next.Kind == card.Kind && next.Summary == card.Summary
                 && next.Choices.SequenceEqual(card.Choices, EqualityComparer<CardChoice>.Create((a, b) => a! with { Args = [] } == b! with { Args = [] } && a.Args.SequenceEqual(b.Args))))
             {
                 return false;

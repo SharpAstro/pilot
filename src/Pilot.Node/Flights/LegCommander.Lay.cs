@@ -204,7 +204,7 @@ public sealed partial class LegCommander
                 reason = $"no cause found ({ex.Message})";
             }
             state.RaiseCard(CardBin.Ring, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s PR was dropped from the merge queue for a conflict",
-                $"GitHub's queue dropped {Short(head)} for a conflict: {reason}. It is not queued again at this head; push a changed head, or look at the PR page.");
+                $"GitHub's queue dropped {CommitRefs.Short(head)} for a conflict: {reason}. It is not queued again at this head; push a changed head, or look at the PR page.");
         }
         return true;
     }
@@ -213,7 +213,7 @@ public sealed partial class LegCommander
     private void RaiseReadyAtLaid(FlightRow flight, string laid, string why) =>
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{flight.PullRequest} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
+            $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {CommitRefs.Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,
             summary: $"{flight.Code} was laid on its base and is reviewed; its PR is ready. Merge lands it.");
 

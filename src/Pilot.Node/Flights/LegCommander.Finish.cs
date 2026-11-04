@@ -249,12 +249,12 @@ public sealed partial class LegCommander
         state.PutLeg(leg with { State = LegState.Failed, FinishedAt = time.GetUtcNow(), Report = report.Length > 0 ? report : "branch needs a force push", Wait = null });
         state.RaiseCard(CardBin.Ring, PushBlockedKind, target,
             $"{flight.Code}/{leg.Name} is done, but its rebased branch needs a force push with lease or a merge",
-            $"Check passed at {Short(blocked.Head)}, origin/{flight.Branch} at {Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
+            $"Check passed at {CommitRefs.Short(blocked.Head)}, origin/{flight.Branch} at {CommitRefs.Short(blocked.Origin)} is not an ancestor of it, so a plain push is refused. Nothing was pushed or overwritten.{(report.Length > 0 ? $"\nThe worker said: {report}" : "")}",
             [
                 new CardChoice { Label = "Push the rebased branch with lease", Verb = Verbs.FinishLeg, Target = target, Args = [PushedWithLease, blocked.Origin] },
                 new CardChoice { Label = $"Merge origin/{flight.Branch} into the plane and push", Verb = Verbs.FinishLeg, Target = target, Args = [MergedWithOrigin] },
             ],
-            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
+            summary: $"{flight.Code}/{leg.Name} is done and its check passes, but its branch was rebased off origin/{flight.Branch}. Push the rebased branch with lease overwrites origin's only if it is still at {CommitRefs.Short(blocked.Origin)}; Merge origin/{flight.Branch} keeps its commits and pushes plain.");
         return true;
     }
 
@@ -317,7 +317,7 @@ public sealed partial class LegCommander
         leg = UnchangedFinishing(flight.Code, seen) is { } current
             ? current
             : throw new FlightException($"{flight.Code}/{seen.Name} changed while its branch was pushed: it is up, look again and finish again");
-        var done = leased is null ? $"origin/{flight.Branch} merged into the plane and pushed, check passing" : $"rebased branch pushed with lease over origin/{flight.Branch} at {Short(leased)}, check passing";
+        var done = leased is null ? $"origin/{flight.Branch} merged into the plane and pushed, check passing" : $"rebased branch pushed with lease over origin/{flight.Branch} at {CommitRefs.Short(leased)}, check passing";
         state.PutLeg(leg with { State = LegState.Done, FinishedAt = time.GetUtcNow(), Report = leg.Report is { Length: > 0 } was ? $"{done}\n{was}" : done });
         state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} pushed and done", PushBlockedKind, "leg-failed");
     }
@@ -535,7 +535,7 @@ public sealed partial class LegCommander
         leg = leg with { Recheck = null };
         if (run is { Passed: false })
         {
-            return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
+            return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
         var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
             && state.Legs(flight.Code).All(l => l.State == LegState.Done || l.Name == leg.Name);
@@ -547,12 +547,12 @@ public sealed partial class LegCommander
                 throw new FlightException($"{flight.Code}/{leg.Name} changed while GitHub was being asked: nothing was recorded, look again and finish again");
             }
         }
-        var seen = $"finished by the node: its plane matched origin/{flight.Branch} at {Short(head)} and its check passed";
+        var seen = $"finished by the node: its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)} and its check passed";
         var asked = who is null ? "The worker said it failed" : $"Verified on {who}'s word, the leg had failed";
         var was = who is not null && leg.Report is { Length: > 0 } old ? $"\n{old}" : "";
         await RecordDoneAsync(flight, leg, (report.Length > 0 ? $"{seen}. {asked}: {report}" : seen) + was, push: false, cancellationToken);
         state.RaiseCard(CardBin.Handled, SelfFinishedKind, Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} finished by the node",
-            $"{(who is null ? "The worker reported it failed" : $"{who} asked the node to verify it, after it failed")}{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
+            $"{(who is null ? "The worker reported it failed" : $"{who} asked the node to verify it, after it failed")}{(report.Length > 0 ? $": {report}" : "")}. Its checklist was ticked, its plane was clean and matched origin/{flight.Branch} at {CommitRefs.Short(head)}, and its check passed there, so the node finished {flight.Code}/{leg.Name} itself.");
         return (true, null, false);
     }
 

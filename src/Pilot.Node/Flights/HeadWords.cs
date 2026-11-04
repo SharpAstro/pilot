@@ -108,6 +108,21 @@ public sealed record HeadWords(HeadRelation Relation, string Words, string Shas,
         {
             return true;
         }
-        return (await git.RunAsync(["diff", "-w", "--quiet", reviewed, head, "--", .. code], plane, cancellationToken)).Ok;
+        // Whitespace-only, not all whitespace: -b treats a run of spaces as any other run, so "a b" becoming "ab" is a change (-w would
+        // let it through). Where indentation is meaning (Python, YAML, a Makefile) only a line's end and blank lines are ignored.
+        var strict = code.Where(IndentationMatters).ToArray();
+        var loose = code.Except(strict, StringComparer.Ordinal).ToArray();
+        return (loose.Length == 0 || (await git.RunAsync(["diff", "-b", "--ignore-blank-lines", "--quiet", reviewed, head, "--", .. loose], plane, cancellationToken)).Ok)
+            && (strict.Length == 0 || (await git.RunAsync(["diff", "--ignore-space-at-eol", "--ignore-blank-lines", "--quiet", reviewed, head, "--", .. strict], plane, cancellationToken)).Ok);
+    }
+
+    private static readonly string[] IndentedExtensions = [".py", ".pyi", ".yml", ".yaml", ".mk", ".haml", ".pug", ".nim", ".fs", ".fsx", ".coffee"];
+
+    /// <summary>A file whose indentation is part of what it means, so a change of indentation is a change of code.</summary>
+    internal static bool IndentationMatters(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.Equals("Makefile", StringComparison.OrdinalIgnoreCase) || name.Equals("GNUmakefile", StringComparison.OrdinalIgnoreCase)
+            || IndentedExtensions.Any(e => name.EndsWith(e, StringComparison.OrdinalIgnoreCase));
     }
 }

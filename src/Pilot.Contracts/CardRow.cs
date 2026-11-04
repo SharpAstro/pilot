@@ -62,6 +62,9 @@ public sealed record CardRow
     /// GitHub (#691). A client draws each such sha as a link to that URL; a card an older node wrote has none and reads as before.
     /// </summary>
     public Dictionary<string, string> Commits { get; init => field = value ?? []; } = [];
+
+    /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
+    public const int ShortShaLength = 9;
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>

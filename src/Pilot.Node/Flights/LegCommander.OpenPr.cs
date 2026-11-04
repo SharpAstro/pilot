@@ -172,13 +172,11 @@ public sealed partial class LegCommander
         await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
         var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
         var theirs = remote.Output.Trim();
-        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({Short(theirs)}) holds commits the plane ({Short(plane)}) lacks, and merging them conflicts";
+        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({CommitRefs.Short(theirs)}) holds commits the plane ({CommitRefs.Short(plane)}) lacks, and merging them conflicts";
         state.RaiseCard(CardBin.Ring, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
             $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.");
         throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
     }
-
-    private static string Short(string sha) => CommitRefs.Short(sha);
 
     /// <summary>
     /// Fetches, takes in what the remote holds that the plane lacks (<see cref="TakeRemoteAsync"/>), then merges the base in

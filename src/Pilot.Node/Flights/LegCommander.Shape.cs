@@ -18,7 +18,7 @@ public sealed partial class LegCommander
         if (!push.Ok)
         {
             await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
-            throw new FlightException($"git could not push {branch} ({push.Why}); the plane is back at {Short(old)}");
+            throw new FlightException($"git could not push {branch} ({push.Why}); the plane is back at {CommitRefs.Short(old)}");
         }
     }
 
@@ -26,7 +26,7 @@ public sealed partial class LegCommander
     /// A passed review read <paramref name="old"/>; the branch is now at <paramref name="shaped"/>. The pass goes with it where that is
     /// the head reviewed, or where the flight's files at the reviewed head are the new head's exactly (status and label set again).
     /// </summary>
-    private async Task CarryReviewAsync(FlightRow flight, string old, string shaped, CancellationToken cancellationToken)
+    private async Task<bool> CarryReviewAsync(FlightRow flight, string old, string shaped, CancellationToken cancellationToken)
     {
         if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read }
             && (string.Equals(read, old, StringComparison.OrdinalIgnoreCase)
@@ -34,7 +34,9 @@ public sealed partial class LegCommander
         {
             Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = shaped, StatusState = null } : null });
             await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
+            return true;
         }
+        return false;
     }
 
     /// <summary>
@@ -68,29 +70,18 @@ public sealed partial class LegCommander
                 return head;
             }
         }
+        string shaped;
+        string old;
+        IReadOnlyList<string>? laidFiles;
+        bool carried;
         try
         {
-            var (shaped, old, laidFiles) = await OffLockAsync(null, () => RebaseOrLayAsync(flight, cancellationToken));
+            (shaped, old, laidFiles) = await OffLockAsync(null, () => RebaseOrLayAsync(flight, cancellationToken));
             if (string.Equals(shaped, old, StringComparison.OrdinalIgnoreCase))
             {
                 return head;
             }
-            await CarryReviewAsync(flight, old, shaped, cancellationToken);
-            _laidAt[$"{flight.Code} {shaped}"] = DateTimeOffset.UtcNow;
-            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} shaped for {flight.Base}; its review carries to {Short(shaped)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
-            if (laidFiles is null)
-            {
-                state.RaiseCard(CardBin.Handled, ShapedKind, Verbs.FlightTarget(flight.Code),
-                    $"{flight.Code} rebased onto {flight.Base}",
-                    $"{flight.Base} merges by rebase and the branch held a merge or did not replay as it was, so it was rebased onto {flight.Base} and pushed as {Short(shaped)}; the old head is kept as refs/pilot/laid/{flight.Code}. Its review carries to the new head.");
-            }
-            else
-            {
-                state.RaiseCard(CardBin.Handled, LaidKind, Verbs.FlightTarget(flight.Code),
-                    $"{flight.Code} laid on {flight.Base} as one commit",
-                    $"Its merge with {flight.Base} was clean but its branch did not rebase onto it (stopped at {string.Join(", ", laidFiles)}), which {flight.Base}'s rebase merge needs. Laid as {Short(shaped)}, one commit with the clean merge's tree; the old head is kept as refs/pilot/laid/{flight.Code}. Its review carries to the new head, and it merges there.");
-            }
-            return shaped;
+            carried = await CarryReviewAsync(flight, old, shaped, cancellationToken);
         }
         catch (FlightException ex)
         {
@@ -98,6 +89,32 @@ public sealed partial class LegCommander
                 $"{flight.Code} could not be laid on {flight.Base}", ex.Message);
             throw new FlightException($"{flight.Code} does not rebase onto {flight.Base} and could not be laid on it: {ex.Message}");
         }
+        _laidAt[$"{flight.Code} {shaped}"] = DateTimeOffset.UtcNow;
+        var how = laidFiles is null ? $"rebased onto {flight.Base}" : $"laid on {flight.Base} as one commit";
+        if (!carried)
+        {
+            // Pushed, but the flight's files there are not the ones reviewed: nobody has read this head, so it does not merge. The look
+            // before the next merge relates it to the review in words and asks for the review it needs.
+            var reviewed = flight.Review?.ReviewedHead is { Length: > 0 } r ? $" (reviewed {CommitRefs.Short(r)})" : "";
+            state.RaiseCard(CardBin.Handled, laidFiles is null ? ShapedKind : LaidKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code} {how}, its review not carried",
+                $"{flight.Base} merges by rebase, so the branch was {how} and pushed as {CommitRefs.Short(shaped)}; the old head is kept as refs/pilot/laid/{flight.Code}. The flight's files there differ from the head reviewed{reviewed}, so the review does not carry and it does not merge until that head is reviewed.");
+            throw new FlightException($"{flight.Code} was {how} as {CommitRefs.Short(shaped)}, but its files differ from the head reviewed{reviewed}: its review did not carry, look again before it lands");
+        }
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} shaped for {flight.Base}; its review carries to {CommitRefs.Short(shaped)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        if (laidFiles is null)
+        {
+            state.RaiseCard(CardBin.Handled, ShapedKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code} rebased onto {flight.Base}",
+                $"{flight.Base} merges by rebase and the branch held a merge or did not replay as it was, so it was rebased onto {flight.Base} and pushed as {CommitRefs.Short(shaped)}; the old head is kept as refs/pilot/laid/{flight.Code}. Its review carries to the new head.");
+        }
+        else
+        {
+            state.RaiseCard(CardBin.Handled, LaidKind, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code} laid on {flight.Base} as one commit",
+                $"Its merge with {flight.Base} was clean but its branch did not rebase onto it (stopped at {string.Join(", ", laidFiles)}), which {flight.Base}'s rebase merge needs. Laid as {CommitRefs.Short(shaped)}, one commit with the clean merge's tree; the old head is kept as refs/pilot/laid/{flight.Code}. Its review carries to the new head, and it merges there.");
+        }
+        return shaped;
     }
 
     /// <summary>

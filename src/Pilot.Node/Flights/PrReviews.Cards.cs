@@ -4,8 +4,6 @@ namespace Pilot.Node.Flights;
 
 public sealed partial class PrReviews
 {
-    private static string Short(string sha) => CommitRefs.Short(sha);
-
     /// <summary>The cards that belong to the review and the head it read; they close when either is overtaken (pilot #527).</summary>
     private static readonly string[] ReviewCardKinds = [DesignKind, FixCappedKind, FixOfferKind, FixFailedKind, NoFixerKind, ReadyKind];
 
@@ -77,7 +75,7 @@ public sealed partial class PrReviews
         {
             return false;
         }
-        state.CloseCardsAbout(subject, $"the head moved past {Short(review.Head)} to {Short(head)}", ReviewCardKinds);
+        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", ReviewCardKinds);
         return true;
     }
 

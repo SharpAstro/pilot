@@ -210,7 +210,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         var what = $"#{pull} {noun}";
         if (pr.State == "MERGED")
         {
-            return (new Found(flight.Code, what, $"#{pull} merged on GitHub{(pr.MergeCommit.Length > 0 ? $" as {Short(pr.MergeCommit)}" : "")}", pr.Url), "");
+            return (new Found(flight.Code, what, $"#{pull} merged on GitHub{(pr.MergeCommit.Length > 0 ? $" as {CommitRefs.Short(pr.MergeCommit)}" : "")}", pr.Url), "");
         }
         if (pr.State == "CLOSED")
         {
@@ -250,7 +250,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         {
             return (null, $"GitHub still shows #{pull} as {merge.Kind}");
         }
-        return (new Found(flight.Code, what, $"the branch merges cleanly at {Short(pr.Head)}", pr.Url), "");
+        return (new Found(flight.Code, what, $"the branch merges cleanly at {CommitRefs.Short(pr.Head)}", pr.Url), "");
     }
 
     private async Task<(Found? Found, string Note)> CheckChecksAsync(CardRow card, FlightRow flight, int pull, PullRequest pr, string what, CancellationToken cancellationToken)
@@ -266,7 +266,7 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         }
         // The head the card was about, where its Merge choice kept it: the checks are green at a newer one, or the same re-run.
         var was = card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.FirstOrDefault();
-        var newer = was is { Length: > 0 } && !string.Equals(was, pr.Head, StringComparison.OrdinalIgnoreCase) ? $" at a newer head ({Short(pr.Head)}, was {Short(was)})" : $" at {Short(pr.Head)}";
+        var newer = was is { Length: > 0 } && !string.Equals(was, pr.Head, StringComparison.OrdinalIgnoreCase) ? $" at a newer head ({CommitRefs.Short(pr.Head)}, was {CommitRefs.Short(was)})" : $" at {CommitRefs.Short(pr.Head)}";
         return (new Found(flight.Code, what, $"its checks pass{newer}", pr.Url), "");
     }
 
@@ -309,8 +309,6 @@ public sealed class StaleCards(NodeState state, IGitHub github)
         LegWatch.ValidationStalled => "validation stall",
         _ => $"{kind} card",
     };
-
-    private static string Short(string hash) => CommitRefs.Short(hash);
 
     private static string Stamp(DateTimeOffset at) => at.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
 }

@@ -113,7 +113,7 @@ public sealed partial class PrReviews
         }
         state.PutPrReview(row with { ReviewerJob = job });
         // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {CommitRefs.Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {CommitRefs.Short(read.Head)}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);
@@ -121,7 +121,7 @@ public sealed partial class PrReviews
         {
             await SetDraftAsync(row, draft: false, cancellationToken);
         }
-        return $"started {reviewer} at {Short(read.Head)}";
+        return $"started {reviewer} at {CommitRefs.Short(read.Head)}";
     }
 
     /// <summary>

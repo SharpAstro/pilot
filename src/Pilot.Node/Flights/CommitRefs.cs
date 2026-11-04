@@ -9,7 +9,7 @@ namespace Pilot.Node.Flights;
 public static partial class CommitRefs
 {
     /// <summary>How many characters of a sha show.</summary>
-    public const int ShortLength = 9;
+    public const int ShortLength = Pilot.Contracts.CardRow.ShortShaLength;
 
     /// <summary>The sha cut to <see cref="ShortLength"/> characters (all of it when it is shorter).</summary>
     public static string Short(string sha) => sha.Length > ShortLength ? sha[..ShortLength] : sha;

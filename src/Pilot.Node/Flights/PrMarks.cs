@@ -195,7 +195,7 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         }
         if (now.ReviewedHead is { } read && pr.Head.Length > 0 && pr.Head != read)
         {
-            disagrees.Add($"the head moved to {Short(pr.Head)} since the review read {Short(read)}");
+            disagrees.Add($"the head moved to {CommitRefs.Short(pr.Head)} since the review read {CommitRefs.Short(read)}");
         }
         var why = disagrees.Count > 0 ? string.Join("; ", disagrees) : null;
         var head = pr.Head.Length > 0 ? pr.Head : null;
@@ -205,8 +205,6 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
             state.UpdateFlight(code, f => f with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why, GitHubDraft = pr.Draft });
         }
     }
-
-    private static string Short(string sha) => CommitRefs.Short(sha);
 
     /// <summary>Sets what a refused write left, for every flying flight whose row says it is still to do.</summary>
     public async Task RetryAsync(CancellationToken cancellationToken)

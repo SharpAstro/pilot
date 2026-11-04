@@ -141,6 +141,37 @@ public sealed class HeadWordsTests : IDisposable
     }
 
     [Fact]
+    public async Task SpaceInsideALineAndIndentationWhereItIsMeaningAreChangesOfCode()
+    {
+        Write("code.cs", "class C\n{\n    string s = \"a b\";\n}\n");
+        Commit("a string");
+        var reviewed = Head;
+        Write("code.cs", "class C\n{\n    string s = \"ab\";\n}\n");
+        Commit("space inside a string");
+        (await Describe(reviewed, Head)).Repinnable.ShouldBeFalse();
+
+        Write("run.py", "if x:\n    y()\nz()\n");
+        Commit("py");
+        var py = Head;
+        Write("run.py", "if x:\n    y()\n    z()\n");
+        Commit("py indent");
+        (await Describe(py, Head)).Repinnable.ShouldBeFalse();
+
+        var indented = Head;
+        Write("run.py", "if x:\n    y()   \n    z()\n\n");
+        Commit("py trailing space and a blank line");
+        (await Describe(indented, Head)).Repinnable.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("src/run.py", true)]
+    [InlineData(".github/workflows/dotnet.yml", true)]
+    [InlineData("Makefile", true)]
+    [InlineData("src/Pilot.Node/Flights/HeadWords.cs", false)]
+    public void IndentationMattersWhereItIsMeaning(string path, bool matters) =>
+        HeadWords.IndentationMatters(path).ShouldBe(matters);
+
+    [Fact]
     public async Task AHeadBehindItsBaseSaysByHowManyCommitsAndANotBehindOneSaysNothing()
     {
         var head = Head;

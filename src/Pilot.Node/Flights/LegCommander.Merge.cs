@@ -123,7 +123,7 @@ public sealed partial class LegCommander
         // that is neither queued nor waiting on checks is refused as dropped (the mark outlives a requeue by hand or a re-run).
         if (DroppedForConflict(flight.Code, pr.Head) && mergeState?.Kind != MergeKinds.Queued && checks?.Status != ChoiceStatus.Pending)
         {
-            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {Short(pr.Head)} for a conflict: it is queued again once its head moves");
+            throw new FlightException($"GitHub's merge queue dropped #{pr.Number} at {CommitRefs.Short(pr.Head)} for a conflict: it is queued again once its head moves");
         }
         if (checks?.Status == ChoiceStatus.Failing)
         {
@@ -404,7 +404,7 @@ public sealed partial class LegCommander
             {
                 Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = pr.Head, StatusState = null } : null });
                 await _marks.ApplyAsync(flight.Code, cancellationToken);
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
                 return pr;
             }
             throw new FlightException($"#{pr.Number}'s head is {words.Text}: look again before it lands");

@@ -104,7 +104,7 @@ public sealed partial class LegCommander
         }
         if (_conflictSent.TryGetValue(flight.Code, out var sent) && sent == key)
         {
-            return $"already sent round for {Short(key)}";
+            return $"already sent round for {CommitRefs.Short(key)}";
         }
         if (state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is not { State: LegState.Done } last)
         {
