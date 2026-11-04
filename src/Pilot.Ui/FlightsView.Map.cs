@@ -133,8 +133,9 @@ internal sealed partial class FlightsView<TSurface>
 
     /// <summary>
     /// The map's pointer input, which the window gives the page ahead of the router (a middle press over a target would be its
-    /// click's otherwise): a pinch zooms about its point, a middle-button drag or a left drag with Space held moves the map, and
-    /// Space's release is noted. A plain left press is left alone, so a click still picks what is under it. True for what it took.
+    /// click's otherwise): a pinch zooms about its point, a middle-button drag, a left drag with Space held, or a left drag that starts on empty canvas
+    /// moves the map, and Space's release is noted. A left press on a row (or the pill, the layers menu or a continent's name) is left alone,
+    /// so a click picks what is under it and a drag from a row never pans. True for what it took.
     /// </summary>
     internal bool HandleMapPointer(InputEvent evt)
     {
@@ -152,7 +153,7 @@ internal sealed partial class FlightsView<TSurface>
                 }
                 return true;
             case InputEvent.MouseDown down when MapLive && _mapBody is { } body && body.Contains(down.X, down.Y)
-                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && _space)):
+                && (down.Button == MouseButton.Middle || (down.Button == MouseButton.Left && (_space || IsEmptyCanvas(body, down.X, down.Y)))):
                 _panButton = down.Button;
                 var (vx, vy) = ToView(body, down.X, down.Y);
                 _vp.BeginPan(vx, vy);
@@ -172,6 +173,44 @@ internal sealed partial class FlightsView<TSurface>
             default:
                 return false;
         }
+    }
+
+    // Whether a surface point is empty canvas: in no row band, no continent header, and not on the zoom pill or the layers menu.
+    // A left press there pans; a press on a row is left to the router (a click selects, and a drag is kept for reordering).
+    private bool IsEmptyCanvas(RectF32 body, float x, float y)
+    {
+        if (_layersOnShow && MapLayers.Palette.PanelRect.Contains(x, y))
+        {
+            return false;
+        }
+        var (vx, vy) = ToView(body, x, y);
+        var pillX = _vp.ViewWidth - PillWidth - PillGap - (MapLayers.Palette.Side == Layout.DockSide.Right ? FlightMapLayerPalette.PanelWidth + PillGap : 0f);
+        var pillY = _vp.ViewHeight - PillHeight - PillGap;
+        if (vx >= pillX && vx <= pillX + PillWidth && vy >= pillY && vy <= pillY + PillHeight)
+        {
+            return false;
+        }
+        var (dx, dy) = (_vp.DesignX(vx), _vp.DesignY(vy));
+        foreach (var c in _map.Continents)
+        {
+            if (dx >= c.X && dx <= c.X + c.Width && dy >= c.Y && dy <= c.Y + FlightMap.Header)
+            {
+                return false;
+            }
+        }
+        foreach (var route in _map.Routes)
+        {
+            if (IndexOf(_screen, route) < 0)
+            {
+                continue;
+            }
+            var (bx, by, bw, bh) = _map.RowBand(route);
+            if (dx >= bx && dx <= bx + bw && dy >= by && dy <= by + bh)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     // The keys the map takes while it is shown. Ctrl+0 and Ctrl+1 are also the Ideas and Home pages' chords: the chrome offers them
@@ -504,8 +543,10 @@ internal sealed partial class FlightsView<TSurface>
             }
             var line = screen.Lines[at];
             var (bx, by, bw, bh) = _map.RowBand(route);
+            var bandWidth = bw * _vp.Scale;
+            var bandHeight = bh * _vp.Scale;
             yield return Layout.Builder.Anchored(
-                Layout.Builder.Spacer().WFixed(bw * _vp.Scale).HFixed(bh * _vp.Scale)
+                Layout.Builder.Spacer().WFixed(bandWidth).HFixed(bandHeight)
                     .Clickable(new HitResult.ButtonHit($"map:{line.Code}:row"), _ => ListCursor.MoveTo(at))
                     .WithContextMenu(pt => OpenMenu(line, at, pt)),
                 null, _vp.ViewX(bx), _vp.ViewY(by), 0f, false);
