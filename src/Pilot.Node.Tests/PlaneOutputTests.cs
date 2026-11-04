@@ -197,5 +197,13 @@ public sealed class PlaneOutputTests : JobTestsBase
         }
         Directory.Exists(Path.Combine(lib, "obj")).ShouldBeFalse("the lib clone has no obj");
         Directory.Exists(Path.Combine(lib, "bin")).ShouldBeFalse("the lib clone has no bin");
+
+        // Nothing of the build lands outside the planes: removing the planes (what landing does) leaves the org as it was.
+        foreach (var plane in planes)
+        {
+            Directory.Delete(plane, recursive: true);
+        }
+        var left = Directory.EnumerateFiles(org, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(org, f).Replace(Path.DirectorySeparatorChar, '/')).Order().ToArray();
+        left.ShouldBe(["lib/Lib.cs", "lib/lib.csproj"], "nothing of the per-plane build remains once the planes are gone");
     }
 }
