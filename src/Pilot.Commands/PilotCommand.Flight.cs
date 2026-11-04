@@ -28,7 +28,7 @@ public static partial class PilotCommand
             // flight
             var issue = Arg("issue", "The issue the flight flies");
             var title = Words("title", "What it is for, in a line", required: false);
-            var repo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
+            var repo = new Option<string?>("--repo") { Description = RepoOptionDescription };
             var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label; says so on the issue" };
             var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway } },
                 (p, client, ct) => Send(client, Verbs.CreateFlight, Verbs.RepoTarget(RepoPath(client, p.GetValue(repo), cwd)),

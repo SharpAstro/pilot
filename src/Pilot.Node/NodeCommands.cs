@@ -174,6 +174,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return state.Complete(command, refused);
         }
+        // A gate override (PIL702) needs a reason of the session's own, from anyone but the person and the node: the black box
+        // keeps it. A card choice's canned words never count, so a card's answer is held to the same rule through its Why.
+        if (standing.Kind != StandingKind.Person && !(command.Who == "node" && command.PersonsWord is null)
+            && DecisionSources.IsOverride(command, ReviewerOfTarget(command))
+            && DecisionSources.OwnReasonOf(command, _fromCard.Value).Length == 0)
+        {
+            return state.Complete(command,
+                $"{command.Verb} {command.Target} overrides a gate, and the black box keeps why: give --why in your own words, naming the evidence (a job id such as j962, a commit, a card id). A card's canned words do not count");
+        }
         // What the watchtower is told starts its next turn: the person's words make it theirs, the node's cards and nudges do not.
         // A say finds its session as the messenger does, by row id or by name, so a say to the watchtower by name is noted too.
         if (command.Verb == Verbs.Tell || command.Verb == Verbs.Say && watchtower.Current() is { } row
@@ -248,6 +257,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         return command.Who == Get<Watchtower>().Name ? DecisionByKinds.Watchtower : DecisionByKinds.Node;
     }
+
+    // The reviewer of the flight a command targets, or null when the target is no flight or it has no review.
+    private string? ReviewerOfTarget(CommandRequest command) =>
+        command.Verb == Verbs.Review
+            ? state.Flights().FirstOrDefault(f => Verbs.FlightTarget(f.Code) == command.Target)?.Review?.Reviewer
+            : null;
 
     private string ByKindOf(CommandRequest command) =>
         ByKindOf(command, command.PersonsWord is not null ? Standing.Person : Standing.Of(command, state, Get<Watchtower>().Name, Get<Watchtower>().ActingForPerson));
@@ -678,7 +693,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     // A card answered or dismissed: what it asked (its title), what it offered (its choices' labels), what was chosen and why.
     private void RecordCardDecision(CommandRequest command, CardRow card, string kind, string choice, string words)
     {
-        var reason = words.Trim().Length > 0 ? words.Trim() : command.Why?.Trim() is { Length: > 0 } why ? why : $"answered card {card.Id}";
+        var byKind = ByKindOf(command);
+        var reason = words.Trim().Length > 0 ? words.Trim() : command.Why?.Trim() is { Length: > 0 } why ? why
+            : byKind == DecisionByKinds.Person && kind is DecisionKinds.AcceptLeg or DecisionKinds.PassWithNotes or DecisionKinds.Merge or DecisionKinds.CreateAnyway
+                ? $"pressed by {command.Who} on card {card.Id}"
+                : $"answered card {card.Id}";
         state.RecordDecision(card.Subject, kind, card.Title, [.. card.Choices.Select(c => c.Label)],
             words.Trim().Length > 0 && kind != DecisionKinds.Dismiss ? $"{choice}: {words.Trim()}" : choice,
             command.Who, ByKindOf(command), reason);
