@@ -296,11 +296,10 @@ public sealed class NavigationTests
 
         chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
 
-        // Back, not a bare close: the place the transcript was opened from, with the move to it still there to come forward to.
+        // Up, recorded as a move: the rail's back returns to the transcript.
         chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
         chrome.Page.ShouldBe(PilotPage.Sessions);
-        chrome.CanGoForward.ShouldBeTrue();
-        chrome.Forward().ShouldBeTrue();
+        chrome.Back().ShouldBeTrue();
         chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
     }
 
