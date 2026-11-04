@@ -130,10 +130,56 @@ public sealed class McpParentTests : IDisposable
 
     private Process StartMcp() => Start("--node-socket", Socket, "mcp");
 
+    /// <summary>
+    /// Waits, bounded, until a just-started child has exec'd the pilot image (#714). On Linux a forked child still shows the test
+    /// host's command line until exec, so reading it at once gives a false negative (or a vacuous False). Judged from
+    /// /proc/pid/cmdline here, never through <see cref="McpParent"/>, so the assertion that follows stays independent.
+    /// Windows has no fork window (CreateProcess starts the image), so it returns at once.
+    /// </summary>
+    private static void WaitUntilExeced(Process process, string verb)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+        var pid = process.Id;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        var seen = "(nothing read)";
+        while (true)
+        {
+            if (process.HasExited)
+            {
+                Assert.Fail($"pid {pid} exited before it was seen to exec pilot {verb}; last cmdline read: {seen}");
+            }
+            try
+            {
+                var arguments = Encoding.UTF8.GetString(File.ReadAllBytes($"/proc/{pid}/cmdline"))
+                    .Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                seen = string.Join(' ', arguments);
+                if (arguments.Length > 0
+                    && arguments[0].EndsWith("pilot", StringComparison.Ordinal)
+                    && arguments.Skip(1).Contains(verb, StringComparer.Ordinal))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                seen = ex.Message;
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                Assert.Fail($"pid {pid} had not exec'd pilot {verb} within 5 s; last cmdline read: {seen}");
+            }
+            Thread.Sleep(20);
+        }
+    }
+
     [Fact]
     public void ARunningPilotMcpIsOneAndTheTestProcessIsNot()
     {
         var mcp = StartMcp();
+        WaitUntilExeced(mcp, "mcp");
         McpParent.IsPilotMcp(mcp.Id).ShouldBeTrue();
         McpParent.IsPilotMcp(Environment.ProcessId).ShouldBeFalse();
     }
@@ -143,6 +189,7 @@ public sealed class McpParentTests : IDisposable
     {
         // 'nodes' listens for the LAN announcements for a few seconds, so it is alive when asked.
         var nodes = Start("--node-socket", Socket, "nodes");
+        WaitUntilExeced(nodes, "nodes");
         McpParent.IsPilotMcp(nodes.Id).ShouldBeFalse();
         nodes.HasExited.ShouldBeFalse("it should still be running when asked, or the answer proves nothing");
     }
@@ -154,6 +201,7 @@ public sealed class McpParentTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "a Unix process cannot be given a parent");
 
         var parent = StartMcp();
+        WaitUntilExeced(parent, "mcp");
         parent.StandardInput.WriteLine(Initialize);
         parent.StandardInput.Flush();
         McpParent.IsPilotMcp(parent.Id).ShouldBeTrue();
@@ -187,6 +235,7 @@ public sealed class McpParentTests : IDisposable
 
         // The control: with the test host as its parent the same server does hand over, so the check above can see a child at all.
         var root = StartMcp();
+        WaitUntilExeced(root, "mcp");
         await root.StandardInput.WriteLineAsync(Initialize);
         await root.StandardInput.FlushAsync(Ct);
         (await root.StandardOutput.ReadLineAsync(Ct).AsTask().WaitAsync(Bound, Ct))!.ShouldContain("\"serverInfo\"");
