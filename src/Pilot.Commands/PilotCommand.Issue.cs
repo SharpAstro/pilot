@@ -156,7 +156,7 @@ public static partial class PilotCommand
             // issue
             var issueTitle = Arg("title", "The issue's title");
             var issueBody = new Option<string?>("--body") { Description = "The issue's text" };
-            var issueRepo = new Option<string?>("--repo") { Description = "The repo's checkout (any of its worktrees); else this folder" };
+            var issueRepo = new Option<string?>("--repo") { Description = RepoOptionDescription };
             var issueCreate = Action(new Command("create", "A new issue in the repo, through gh; prints its number") { Arguments = { issueTitle }, Options = { issueRepo, issueBody } },
                 (p, client, ct) => Send(client, Verbs.CreateIssue, Verbs.RepoTarget(RepoPath(client, p.GetValue(issueRepo), cwd)),
                     p.GetValue(issueBody) is { Length: > 0 } text ? [p.GetValue(issueTitle)!, text] : [p.GetValue(issueTitle)!], who, ct));
