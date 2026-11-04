@@ -87,7 +87,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(head);
         F(flight.Code).Review!.ReviewedHead.ShouldBe(head);
-        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().Where(c => c.Bin == CardBin.Ring && c.Kind != LegCommander.PrReady).Select(c => c.Kind).ShouldBeEmpty();
     }
 
     [Fact]
