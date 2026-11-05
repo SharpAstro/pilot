@@ -48,8 +48,15 @@ internal sealed record JobLine
     public bool Live => Row.State is JobState.Running or JobState.Queued;
 
     /// <summary>The line as a dump writes it.</summary>
-    public string ToDumpLine() =>
-        (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, (Failing is { } failing ? $"{State} · {failing}" : State) is var shown && StateDetail is null ? shown : $"{shown} ({StateDetail})", Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+    public string ToDumpLine()
+    {
+        var shown = Failing is { } failing ? $"{State} · {failing}" : State;
+        if (StateDetail is { } detail)
+        {
+            shown = $"{shown} ({detail})";
+        }
+        return (Node is { } node ? $"{node.Name} | " : "") + string.Join(" | ", Id, Command, For, shown, Started, Took.Length == 0 ? "-" : Took) + (Untold ? " | owner not told" : "");
+    }
 
     /// <summary>The jobs in drawing order: running, then queued in the order they wait, then the ended, last ended first.</summary>
     public static IReadOnlyList<JobLine> Build(IEnumerable<JobRow> jobs, DateTimeOffset now) => Order(jobs.Select(j => From(j, now)));

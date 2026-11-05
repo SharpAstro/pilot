@@ -11,30 +11,81 @@ public sealed class JobTestsFailFast : JobTestsBase
 {
     private const string Test = "Pilot.Node.Tests.BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit";
     private const string Short = "BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit";
+    private const string Assertion = "Shouldly.ShouldAssertException : commits.Count should be 1 but was 2";
+
+    // The test's report as VSTest prints it, up to its stack trace: what says why it failed.
+    private static readonly string Report = $"echo '  Failed {Test} [1 s]'; echo '  Error Message:'; echo '   {Assertion}'; echo '  Stack Trace:'; echo '     at {Test}() in B.cs:line 4'";
 
     // Prints the failure at once, then would run for a minute.
-    private static readonly string FailsThenWaits = $"echo '  Failed {Test} [1 s]'; sleep 60; echo slept";
+    private static readonly string FailsThenWaits = $"{Report}; sleep 60; echo slept";
+
+    // Longer than the commands' minute: a check that was never stopped ends by itself and fails the asserts that say so, rather
+    // than a wait. How soon it stopped is read from its row, which a loaded machine's slow start does not move.
+    private static readonly TimeSpan CheckWait = TimeSpan.FromMinutes(2);
+
+    // Starts a child that would sleep a minute and writes its pid, then prints the failure: the job's tree is more than its shell.
+    private static string FailsWithAChild(string pidFile) => OperatingSystem.IsWindows()
+        ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; {Report}; $p.WaitForExit()"
+        : $"sleep 60 & echo $! > '{pidFile}'; {Report}; wait";
 
     [Fact]
     public async Task ACheckEndsAtItsFirstFailedTestNamesItFreesTheQueueAndLeavesNoProcess()
     {
-        var check = _jobs.RunCheckAsync("TIA1", "parser", FailsThenWaits, _root, TimeSpan.FromMinutes(30), Ct);
+        var pidFile = Path.Combine(_root, "child.pid");
+        var check = _jobs.RunCheckAsync("TIA1", "parser", FailsWithAChild(pidFile), _root, TimeSpan.FromMinutes(30), Ct);
         var queued = Run("echo 'behind'; exit 0").Made.ShouldNotBeNull();
 
-        var run = await check.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        var run = await check.WaitAsync(CheckWait, Ct);
 
         run.Passed.ShouldBeFalse();
         run.Tail.ShouldContain($"stopped at its first failure: {Short}");
+        run.Tail.ShouldContain(Assertion);
         var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
         (row.State, row.Error).ShouldBe((JobState.Failed, $"stopped at its first failure: {Short}"));
+        row.EndedAt!.Value.ShouldBeLessThan(row.StartedAt + TimeSpan.FromSeconds(30));
         IsAlive(row.Pid!.Value).ShouldBeFalse();
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
         (await Ended(queued)).State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact]
+    public async Task ACheckStoppedAtItsFirstFailureWaitsForWhyItFailedBeforeTheKill()
+    {
+        // xunit's [FAIL] line comes first; the block that says why comes later, here half a second.
+        var command = $"echo '[xUnit.net 00:00:01.62]     {Test} [FAIL]'; sleep 0.5; {Report}; echo '  Failed Pilot.Node.Tests.Other.Test [15 ms]'; sleep 60; echo slept";
+
+        var run = await _jobs.RunCheckAsync("TIA1", "parser", command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(CheckWait, Ct);
+
+        run.Tail.ShouldContain($"stopped at its first failure: {Short}");
+        run.Tail.ShouldContain(Assertion);
+        // The tail ends with the first failure's report: the next test's is cut off with the run.
+        run.Tail.ShouldNotContain("Other.Test");
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+        row.EndedAt!.Value.ShouldBeLessThan(row.StartedAt + TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task AFirstFailureWhoseReportNeverComesStopsTheCheckAfterTheGrace()
+    {
+        _jobs.FailFastGrace = TimeSpan.FromMilliseconds(500);
+
+        var run = await _jobs.RunCheckAsync("TIA1", "parser", $"echo '  Failed {Test} [1 s]'; sleep 60; echo slept", _root, TimeSpan.FromMinutes(30), Ct)
+            .WaitAsync(CheckWait, Ct);
+
+        run.Tail.ShouldContain($"stopped at its first failure: {Short}");
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check);
+        row.EndedAt!.Value.ShouldBeLessThan(row.StartedAt + TimeSpan.FromSeconds(30));
     }
 
     [Fact]
     public async Task APlainRunKeepsRunningToItsOwnEndAfterAFailedTest()
     {
-        var id = Run($"echo '  Failed {Test} [1 s]'; sleep 2; echo slept; exit 1").Made.ShouldNotBeNull();
+        var id = Run($"{Report}; sleep 2; echo slept; exit 1").Made.ShouldNotBeNull();
 
         var ended = await Ended(id);
 
@@ -43,11 +94,12 @@ public sealed class JobTestsFailFast : JobTestsBase
     }
 
     [Fact]
-    public async Task ARunHandedOverWithFailFastStopsLikeACheck()
+    public async Task ARunHandedOverWithFailFastStopsLikeACheckAndTellsItsOwnerOnce()
     {
+        var pidFile = Path.Combine(_root, "child.pid");
         var id = _jobs.Run(new CommandRequest
         {
-            Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [Verbs.FailFastArg, _root, "0", FailsThenWaits], Who = "se1-tia1-parser",
+            Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [Verbs.FailFastArg, _root, "0", FailsWithAChild(pidFile)], Who = "se1-tia1-parser",
         }).Made.ShouldNotBeNull();
 
         var ended = await Ended(id);
@@ -55,6 +107,14 @@ public sealed class JobTestsFailFast : JobTestsBase
         (ended.State, ended.Error, ended.FailFast).ShouldBe((JobState.Failed, $"stopped at its first failure: {Short}", true));
         ended.EndedAt!.Value.ShouldBeLessThan(ended.StartedAt + TimeSpan.FromSeconds(30));
         IsAlive(ended.Pid!.Value).ShouldBeFalse();
+        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        for (var i = 0; i < 100 && IsAlive(childPid); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        IsAlive(childPid).ShouldBeFalse();
+        // No early "runs on" word: the end, which names the test, is the one message.
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain($"stopped at its first failure: {Short}");
     }
 
     [Theory]
@@ -75,6 +135,7 @@ public sealed class JobTestsFailFast : JobTestsBase
         {
             var ended = await Ended(id);
             (ended.State, ended.Error).ShouldBe((JobState.Failed, $"stopped at its first failure: {Short}"));
+            _said.ShouldHaveSingleItem().Args[0].ShouldContain($"stopped at its first failure: {Short}");
         }
         else
         {
@@ -105,5 +166,6 @@ public sealed class JobTestsFailFast : JobTestsBase
         var id = Run(FailsThenWaits, target: "session/c1b2c3d4").Made.ShouldNotBeNull();
 
         (await Ended(id)).Error.ShouldBe($"stopped at its first failure: {Short}");
+        _said.ShouldHaveSingleItem();
     }
 }

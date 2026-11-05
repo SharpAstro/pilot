@@ -54,6 +54,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's log and exit file are looked at.</summary>
     public TimeSpan FollowEvery { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// How long a fail-fast job runs on after its first failed test, at most, for that test's report (its error message, up to
+    /// its stack trace) to reach the log: xunit's <c>[FAIL]</c> line comes before it, often by several lines. It stops as soon as
+    /// the report is in.
+    /// </summary>
+    public TimeSpan FailFastGrace { get; set; } = TimeSpan.FromSeconds(3);
+
     /// <summary>Where a job's exit code is written when it ends: its log's path plus <c>.exit</c>.</summary>
     public static string ExitPathOf(string logPath) => logPath + ".exit";
 
@@ -1348,22 +1355,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         int looks = 0, hot = 0;
 
         var failures = new TestFailures();
-        // The first failed test a fail-fast job read, and whether the node ended the job for it.
-        string? firstFailedTest = null;
+        // When a fail-fast job read its first failed test, and the test it was stopped at.
+        DateTimeOffset? failedAt = null;
         string? stoppedAt = null;
 
         void Follow(bool final)
         {
             foreach (var line in follower.Read(final))
             {
-                tail.Add(line);
-                if (failures.Read(line) is { } failure)
+                var failure = failures.Read(line);
+                // A fail-fast job's tail ends with its first failed test's report: what came after is cut short by the stop, and
+                // other tests' reports read in the same look would push why it failed out of the tail.
+                if (!(job.FailFast && failures.PastFirstReport))
                 {
-                    NoteFailure(job, failure);
-                    if (job.FailFast && !failure.IsBuildError)
-                    {
-                        firstFailedTest ??= failure.Name;
-                    }
+                    tail.Add(line);
+                }
+                if (failure is { } found)
+                {
+                    NoteFailure(job, found);
                 }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
@@ -1421,15 +1430,22 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         break;
                     }
-                    if (firstFailedTest is not null && !_cancelled.ContainsKey(job.Id) && TimeLeft(job) > TimeSpan.Zero)
+                    var grace = TimeSpan.MaxValue;
+                    if (job.FailFast && failures.FirstTest is { } first && !_cancelled.ContainsKey(job.Id) && TimeLeft(job) > TimeSpan.Zero)
                     {
-                        // A fail-fast job read its first failed test: its whole tree ends now, as a timeout ends it, and the queue moves on.
-                        stoppedAt = firstFailedTest;
-                        Kill(job.Id, process);
-                        Tree.KillAll(job.Id, process);
-                        await GoneAsync(process);
-                        exitCode = null;
-                        break;
+                        // A fail-fast job read its first failed test: once that test's report says why (or the grace is over), its
+                        // whole tree ends, as a timeout ends it, and the queue moves on.
+                        failedAt ??= time.GetUtcNow();
+                        grace = FailFastGrace - (time.GetUtcNow() - failedAt.Value);
+                        if (failures.FirstTestReported || grace <= TimeSpan.Zero)
+                        {
+                            stoppedAt = first;
+                            Kill(job.Id, process);
+                            Tree.KillAll(job.Id, process);
+                            await GoneAsync(process);
+                            exitCode = null;
+                            break;
+                        }
                     }
                     var left = TimeLeft(job);
                     if (left <= TimeSpan.Zero)
@@ -1444,9 +1460,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         exitCode = ReadExit(exitPath);
                         break;
                     }
-                    // Between two looks, or sooner when a cancel says so, or the timeout is due.
+                    // Between two looks, or sooner when a cancel says so, or the timeout or a fail-fast grace is due.
                     using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                    var tick = Task.Delay(left < FollowEvery ? left : FollowEvery, time, pause.Token);
+                    var wait = left < FollowEvery ? left : FollowEvery;
+                    var tick = Task.Delay(grace < wait ? grace : wait, time, pause.Token);
                     if (await Task.WhenAny(tick, nudge.Task) == tick)
                     {
                         await tick;
@@ -1556,7 +1573,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var updated = failure.IsBuildError
                 ? current with { BuildErrors = current.BuildErrors + 1, FirstBuildError = current.FirstBuildError ?? failure.Name }
                 : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
-            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && Say is not null)
+            // A fail-fast run ends at its first failed test and its end names it at once: an early word would say it twice, the
+            // first time wrongly ("runs on"). A build error does not stop it, so that one is still told early.
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && Say is not null)
             {
                 updated = updated with { FailureTold = true };
                 toTell = updated;
