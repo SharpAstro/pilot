@@ -1724,15 +1724,6 @@ public sealed class JobTests3 : JobTestsBase
         return $"sh '{sh}' '{flag}'";
     }
 
-    /// <summary>Waits (up to 15 s) until the work a resumed tree should show has shown, polling; the caller then asserts it.</summary>
-    private async Task WorkedAsync(Func<bool> worked)
-    {
-        for (var i = 0; i < 150 && !worked(); i++)
-        {
-            await Task.Delay(100, Ct);
-        }
-    }
-
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
