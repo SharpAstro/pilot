@@ -690,8 +690,6 @@ public sealed class JobTests1 : JobTestsBase
     }
 
     [Fact]
-    // Slow: the job's shell starts a second pwsh, and that cold start on a busy machine has taken 19 s.
-    [Trait("Category", "Slow")]
     public async Task APwshCommandJobKeepsTheExitCodeOfItsLastNativeCommand()
     {
         if (!OperatingSystem.IsWindows())
@@ -1533,14 +1531,12 @@ public sealed class JobTests3 : JobTestsBase
         await first.StopAsync();
         await Task.Delay(2000, Ct);
 
-        var restarted = DateTimeOffset.UtcNow;
         using var second = await Node.StartAsync(_root);
         var job = await second.EndedAsync(id, Ct);
 
         (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 3s"));
-        // From the start: its deadline had passed when the second node came up, so it ends before 3 s anew from the restart.
-        // Measured from the restart, so a slow stop of the first node does not count against it.
-        job.EndedAt.ShouldNotBeNull().ShouldBeLessThan(restarted + TimeSpan.FromSeconds(3));
+        // From the start: it had 1s left when the second node came up, not 3s anew.
+        (DateTimeOffset.UtcNow - job.StartedAt).ShouldBeLessThan(TimeSpan.FromSeconds(8));
     }
 
     [Fact]
@@ -1718,14 +1714,12 @@ public sealed class JobTests3 : JobTestsBase
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
-        // 60 s: the job's tree runs below normal, and on a busy machine its pwsh took 25 s to print its first line before the
-        // pause and several more to see the flag after the resume; both count against the timeout, as they should.
-        var id = Run(Busy(flag), timeoutSeconds: 60).Made!;
+        var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
         await Running(id);
 
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         // Past the deadline it would have had without the pause.
-        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(61))
+        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
         {
             await Task.Delay(100, Ct);
         }
