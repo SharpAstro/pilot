@@ -86,6 +86,14 @@ internal static class TopBar
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
+    /// <summary>A title longer than this (the pages that name their node: "SE1's settings (this machine)") wraps at its spaces where the bar is narrower than it; the short ones are one leaf.</summary>
+    internal const int WrappedTitleChars = 20;
+
+    // The page's name: one leaf where it is short, words that wrap within the bar where it is long (a title 436 px wide cut at the edge of a 422 px page).
+    private static Layout.Node Title(string title, RGBAColor32 color) => title.Length > WrappedTitleChars
+        ? WrappedProse.Of(title, 20f, color, selectable: false).WAuto()
+        : Layout.Builder.Text(title, 20f, color, TextAlign.Near, TextAlign.Far).WAuto();
+
     /// <summary>The bar as one tree, <paramref name="page"/> laid out among <paramref name="parts"/>.</summary>
     public static Layout.Node Build(PageHeader page, TopBarParts parts)
     {
@@ -94,7 +102,7 @@ internal static class TopBar
         var items = new List<Layout.Node>
         {
             Layout.Builder.Text("pilot v2", 20f, palette.Bright, TextAlign.Near, TextAlign.Far).WAuto(),
-            Layout.Builder.Text(page.Title, 20f, palette.Dim, TextAlign.Near, TextAlign.Far).WAuto(),
+            Title(page.Title, palette.Dim),
         };
         items.AddRange(parts.NodePills ?? parts.Nodes?.Pills(night) ?? []);
         items.AddRange(parts.Play?.Pills(night) ?? []);

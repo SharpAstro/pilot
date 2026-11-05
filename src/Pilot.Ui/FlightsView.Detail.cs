@@ -179,11 +179,11 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (line.PriorityMark is not null)
         {
-            facts.Add(Layout.Builder.Text($"{line.ShownPriority}: skips the Opus cap and the repo hold", 12f, Held).WAuto().Selectable());
+            facts.Add(WrappedProse.Of($"{line.ShownPriority}: skips the Opus cap and the repo hold", 12f, Held, selectable: true).WAuto());
         }
         else if (line.LevelMark is { } quiet)
         {
-            facts.Add(Layout.Builder.Text($"priority {quiet}: queues after the urgent and high flights", 12f, Dim).WAuto().Selectable());
+            facts.Add(WrappedProse.Of($"priority {quiet}: queues after the urgent and high flights", 12f, Dim, selectable: true).WAuto());
         }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)

@@ -102,13 +102,19 @@ public sealed class PageTextOverlapTests
             }
         }
 
+        // With PILOT_TEXT_OVERLAP_CAPTURE set to a folder, every case with a fault (the allowed ones too) is written there as a PNG: what to look at to fix an allow-list entry.
+        if (faults.Count > 0 && Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_CAPTURE") is { Length: > 0 } captureFolder)
+        {
+            await CaptureOf(page, state, width, dpi, height, key, captureFolder);
+        }
+
         var failing = Failures(key, faults, TextOverlapAllowList.Covers);
         if (failing.Count == 0)
         {
             return;
         }
         // A picture to start the fix from: the page as the chrome paints it, beside the test's output.
-        var capture = await CaptureOf(page, state, width, dpi, height, key);
+        var capture = await CaptureOf(page, state, width, dpi, height, key, Path.Combine(AppContext.BaseDirectory, "text-overlap"));
         Assert.Fail(Message(key, failing, capture));
     }
 
@@ -121,9 +127,8 @@ public sealed class PageTextOverlapTests
         $"{key} [{failing.Count} faults]" + string.Concat(failing.Select(f => $"{Environment.NewLine}  {key}: {f.Line}" + (capture is null ? "" : $" (capture: {capture})")));
 
     /// <summary>Writes the page of a failing case as a PNG, as the chrome paints it, to <c>text-overlap/&lt;case&gt;.png</c> beside the test's output; the path.</summary>
-    private static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key)
+    private static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key, string folder)
     {
-        var folder = Path.Combine(AppContext.BaseDirectory, "text-overlap");
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".png");
         using var prepared = await Prepare(page, state, width, dpi, null, height);
