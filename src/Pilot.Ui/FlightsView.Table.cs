@@ -56,7 +56,7 @@ internal sealed partial class FlightsView<TSurface>
         }
 
         var marked = screen.Lines.Any(l => l.Node is not null);
-        var columns = Table.Fit(Columns(marked, screen.Lines.Any(l => l.Stale is not null)));
+        var columns = Table.Fit(Columns(marked, screen.Lines.Any(l => l.Stale is not null || l.StaleSummary is not null)));
         var rows = new Layout.Node[screen.Lines.Count];
         for (var i = 0; i < rows.Length; i++)
         {
@@ -160,12 +160,23 @@ internal sealed partial class FlightsView<TSurface>
                 ? Layout.Builder.VStack(
                     Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
                     Whole(Layout.Builder.Text(mark, 11f, Held).RowH(18f), mark, 0))
+                : line.StaleWorkMark is { } workMark
+                    ? Layout.Builder.VStack(
+                        Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
+                        Whole(Layout.Builder.Text(workMark, 11f, Held).RowH(18f), workMark, 0))
                 : line.ShownPriority is { } priority
                     ? Layout.Builder.VStack(
                         Layout.Builder.Text(line.Code, 15f, text).RowH(22f),
                         Whole(Layout.Builder.Text(priority, 11f, line.PriorityMark is null ? Dim : Held).RowH(18f), priority, 0))
                     : ListTable.Top(Layout.Builder.Text(line.Code, 15f, text)),
-            ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
+            line.StaleSummary is { } staleSummary
+                // The stale summary and the Ask the watchtower button under the title (#736): the row's 22 line and its 20 line, as the legs cell has.
+                ? Layout.Builder.VStack(
+                    Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body).RowH(22f), line.Title, TitleFits),
+                    Layout.Builder.HStack(
+                        [Whole(Layout.Builder.Text(staleSummary, 11f, Held), $"{staleSummary}{(line.StaleRaise is { } raise ? $" ({raise})" : "")}", 0).WStar(),
+                         .. (AskButton(line) is { } ask ? new[] { ask } : [])]).WithGap(6f).RowH(20f))
+                : ListTable.Top(Whole(Layout.Builder.Text(line.Title, 14f, landed ? Dim : Body), line.Title, TitleFits)),
             ListTable.Top(Layout.Builder.Text(line.Where, 13f, dim)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.State, 14f, color).RowH(22f),

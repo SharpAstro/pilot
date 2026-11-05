@@ -9,6 +9,23 @@ namespace Pilot.Node.Tests;
 [Collection(JobsCollection.Name)]
 public sealed class SiblingLockTests : JobTestsBase
 {
+    // PIL763: one session's jobs in one plane keep their order, so each job here comes from its own session and these tests keep to the sibling rules.
+    private int _handed;
+
+    private new string Hand(JobRunner jobs, string command)
+    {
+        var session = $"b{++_handed:0000000}";
+        _state.PutSession(new SessionRow
+        {
+            Id = session, SessionId = session + "-0000-4000-8000-000000000000", Name = "se1-tia1-" + session, Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.Worker, Flight = "TIA1", Leg = session, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle,
+            SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        });
+        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = $"session/{session}", Args = [_root, "0", command], Who = "se1-tia1-parser" }).Made!;
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
+        return id;
+    }
+
     private JobRow Row(string id) => _state.Jobs().Single(j => j.Id == id);
 
     private static string Clone(string name) => Path.Combine(Path.GetTempPath(), "org-fake", name);

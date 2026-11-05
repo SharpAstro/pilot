@@ -274,6 +274,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     public Func<Task<string?>>? OnCleanUp { get; set; }
 
+    /// <summary>How long an open card may ring before its row says its age in words (#736); the node's default for its card bound, 2 h.</summary>
+    public TimeSpan StaleCardAfter { get; set; } = TimeSpan.FromHours(2);
+
+    /// <summary>The moment a card's age is read against; a test sets it.</summary>
+    public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+
+    /// <summary><c>stale 5 h</c> for an open card older than <see cref="StaleCardAfter"/>, else null.</summary>
+    internal string? StaleMark(CardRow card) =>
+        card.State == CardState.Open && card.Bin != CardBin.Handled && Clock() - card.At is var age && age >= StaleCardAfter ? $"stale {Waited.Say(age)}" : null;
+
     /// <summary>The key of the foot's Clean up press, for a test or a dump.</summary>
     internal const string CleanUpKey = "cards:cleanup";
 
@@ -758,9 +768,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
+        var head = Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable().RowH(16f),
+            // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
+            StaleMark(card) is { } staleMark
+                ? Layout.Builder.HStack(head.WAuto(), Layout.Builder.Text($"· {staleMark}", 10f, accent).Selectable().WAuto()).WithGap(4f).RowH(16f)
+                : head.RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
