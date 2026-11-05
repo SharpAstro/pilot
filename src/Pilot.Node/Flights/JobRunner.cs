@@ -615,7 +615,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BehindOwn(i) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -640,13 +640,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             var passed = new List<JobRow>();
             var passedClones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var passedOrders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var at = -1;
             for (var i = 0; i < _queue.Count; i++)
             {
                 var job = _queue[i];
                 var why = WhyWait(job);
                 var shares = passed.Count > 0 && SiblingsFor(job).Any(passedClones.Contains);
-                if (why is null && !shares)
+                var orderHeld = OrderKey(job) is { } key && passedOrders.Contains(key);
+                if (why is null && !shares && !orderHeld)
                 {
                     at = i;
                     break;
@@ -659,6 +661,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
                 passed.Add(job);
                 passedClones.UnionWith(SiblingsFor(job));
+                if (OrderKey(job) is { } passedKey)
+                {
+                    passedOrders.Add(passedKey);
+                }
             }
             if (at < 0)
             {
@@ -678,6 +684,31 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 _ = TellAsync(ended, _stopping);
             }
         }
+    }
+
+    /// <summary>Whose queue order a job keeps: its owner (a check job, which has none, its flight and leg) and the checkout of its Cwd. Null when it has neither.</summary>
+    private static string? OrderKey(JobRow job)
+    {
+        var who = job.Owner ?? (job.Flight is null ? null : $"{job.Flight}/{job.Leg}");
+        return who is null ? null : $"{who}|{SiblingSet.CheckoutOf(job.Cwd)}";
+    }
+
+    /// <summary>The earlier queued job of the same owner in the same checkout that this one must start after. Null when none.</summary>
+    private string? BehindOwn(int at)
+    {
+        var job = _queue[at];
+        if (OrderKey(job) is not { } key)
+        {
+            return null;
+        }
+        for (var i = 0; i < at; i++)
+        {
+            if (string.Equals(OrderKey(_queue[i]), key, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"waits behind job {_queue[i].Id}, queued earlier by this session in this plane";
+            }
+        }
+        return null;
     }
 
     /// <summary>The queued job ahead of this one that is held and shares a sibling clone with it, so this one waits behind it. Null when none.</summary>

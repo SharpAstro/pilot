@@ -130,6 +130,9 @@ public static class SiblingSet
         }
     }
 
+    /// <summary>The checkout (plane or clone) holding a folder: the nearest ancestor with a .git, or the folder itself when none has.</summary>
+    internal static string CheckoutOf(string cwd) => Path.TrimEndingDirectorySeparator(CheckoutRootOf(Path.GetFullPath(cwd)));
+
     private static string MainCloneOf(string full)
     {
         var marker = $"{Path.DirectorySeparatorChar}.claude{Path.DirectorySeparatorChar}worktrees{Path.DirectorySeparatorChar}";
