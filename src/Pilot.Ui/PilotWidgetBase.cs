@@ -26,6 +26,30 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
         return arranged;
     }
 
+    /// <summary>
+    /// The room's height in design units as the last <c>Render</c> had it (null before the first, and in a terminal): a page shorter than
+    /// <see cref="ShortPageHeight"/> is laid out that tall and scrolls (<see cref="WhenShort"/>).
+    /// </summary>
+    internal float? PageHeight { get; set; }
+
+    /// <summary>The least height a page is laid out in: its header (which wraps onto many lines at a narrow width) and a body of some use. A window shorter than this scrolls the page, as it does one too long.</summary>
+    internal const float ShortPageHeight = 480f;
+
+    private readonly ListScrollController _shortScroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>Takes the height of the room <paramref name="bounds"/> the page is rendered in, for <see cref="WhenShort"/>; call it before building the tree.</summary>
+    protected void NoteHeight(RectF32 bounds) => PageHeight = Scale.ToDesignY(bounds.Height);
+
+    /// <summary>
+    /// <paramref name="page"/> as it is, or, where the room is shorter than <see cref="ShortPageHeight"/>, laid out that tall inside a scroll: the
+    /// body the page's own scrolls share would otherwise be left no room and the text of the page lie past its foot, cut (the 500 px
+    /// window of the text-overlap sweep). A taller window gets the page itself, so nothing changes there.
+    /// </summary>
+    protected Layout.Node WhenShort(Layout.Node page) =>
+        PageHeight is { } height && height < ShortPageHeight
+            ? Layout.Builder.VStack(page.HFixed(ShortPageHeight)).WithScroll(_shortScroll).Stretch()
+            : page;
+
     // The text selected on the page (its host has a clipboard to copy it to), made on first use: it measures through the renderer.
     private TextSelection<TSurface>? _selection;
 
