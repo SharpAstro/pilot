@@ -252,6 +252,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var closed = Cards().Single();
         (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "connect TIA2 to TIA1"));
         _workers.Stopped.ShouldBe(["job00001"]);
+        // The fresh planner is launched in the background: wait for its start before asserting on it.
+        await Eventually.Holds(() => _workers.Started.Count >= 2, Ct);
         _workers.Started.Count.ShouldBe(2);
         var fresh = _workers.Started[1];
         fresh.Name.ShouldBe("du1-tia2-plan");
@@ -356,6 +358,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var closed = Cards().Single();
         (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "plan in parallel with TIA1"));
         _workers.Stopped.ShouldBe(["job00001"]);
+        // The fresh planner is launched in the background: wait for its start before asserting on it.
+        await Eventually.Holds(() => _workers.Started.Count >= 2, Ct);
         _workers.Started.Count.ShouldBe(2);
         var fresh = _workers.Started[1];
         fresh.Name.ShouldBe("du1-tia2-plan");
