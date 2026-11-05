@@ -7,7 +7,7 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
-    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)</c>, its step or how it ended after.</summary>
+    /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.</summary>
     internal static string JobLine(JobRow job)
     {
         var state = job.State.ToString().ToLowerInvariant();
@@ -22,7 +22,7 @@ public static partial class PilotCommand
         var end = job.Error is { } error ? $": {error}" : job.State == JobState.Running && job.FailuresSoFar() is { } failing ? $" · {failing}" : "";
         var took = (job.EndedAt ?? DateTimeOffset.UtcNow) - job.StartedAt;
         var told = job.EndedAt is not null && job.Owner is not null && !job.Told ? ", owner not told" : "";
-        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Step is { } step ? $"  · {step}" : "")}";
+        return $"{job.Id}  {state}{end}  {job.Command}  ({job.OwnerName ?? "terminal"}, {(int)took.TotalMinutes}m{told}){(job.Shell is { Length: > 0 } shell ? $"  [{shell}]" : "")}{(job.Step is { } step ? $"  · {step}" : "")}";
     }
 
     /// <summary>A merge queue entry in a line: <c>TIA61  #63  tianwen  1  abc1234  checks  · merging when checks pass</c>: flight, PR, repo, place, head, state, then why.</summary>
@@ -173,6 +173,10 @@ public static partial class PilotCommand
                 if (JobQueue.HolderLine(all, DateTimeOffset.UtcNow) is { } holder)
                 {
                     await output.WriteLineAsync(holder);
+                }
+                if (JobQueue.SlotsLine(all) is { } slots)
+                {
+                    await output.WriteLineAsync(slots);
                 }
                 return 0;
             });

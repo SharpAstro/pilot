@@ -69,15 +69,15 @@ internal sealed partial class FlightsView<TSurface>
     private string? _pinned;
     private bool _selectPinned;
 
-    /// <summary>What the Back pill and Escape do: the chrome's Back, which returns to wherever the page was opened from. Null (a host with no history) closes it.</summary>
-    public Action? OnBack { get; set; }
+    /// <summary>What the "← Flights" pill and Escape do: go up one level to the Flights page, recorded as a move (not through history). Null closes the page.</summary>
+    public Action? OnUp { get; set; }
 
-    /// <summary>Leaves the page the way Back does: through <see cref="OnBack"/>, or by closing it where there is none.</summary>
-    public void GoBack()
+    /// <summary>Goes up to the Flights page: through <see cref="OnUp"/>, or by closing it where there is none.</summary>
+    public void GoUp()
     {
-        if (OnBack is { } back)
+        if (OnUp is { } up)
         {
-            back();
+            up();
         }
         else
         {
@@ -134,7 +134,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = StateColor(line);
         var head = new List<Layout.Node>
         {
-            Pill("← Back", "flight:back", GoBack),
+            Pill("← Flights", "flight:back", GoUp).WithTooltip("Up to the Flights page (Escape)"),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
             WrappedProse.Of(line.Title, 14f, Body, selectable: true).WAuto(),
         };

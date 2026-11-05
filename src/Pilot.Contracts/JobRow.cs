@@ -38,6 +38,12 @@ public sealed record JobRow
     /// <summary>What it is doing now (its last line of output), or what it came to once it ended.</summary>
     public string? Step { get; init; }
 
+    /// <summary>The node's job slots (how many jobs may run at once), as last said on a queued row; null on any other row and from an older node.</summary>
+    public int? Slots { get; init; }
+
+    /// <summary>Whether a queued job waits on a sibling hold, a running job's build of a clone it shares; null elsewhere and from an older node.</summary>
+    public bool? WaitsOnSibling { get; init; }
+
     /// <summary>Why it failed (its exit code, a timeout); null unless it did.</summary>
     public string? Error { get; init; }
 
@@ -58,6 +64,14 @@ public sealed record JobRow
 
     /// <summary>When that process started: a pid alone can be another process's after a reboot, so it only counts while this matches.</summary>
     public DateTimeOffset? ProcessStartedAt { get; init; }
+
+    /// <summary>
+    /// The shell that ran its line, set when it starts: <c>pwsh</c> on Windows, <c>git-bash &lt;path&gt;</c> for a line whose head is
+    /// <c>bash</c> or <c>sh</c> there (never WSL's launcher), the wrapper's shell on Linux (<c>/bin/bash</c>, else <c>/bin/sh</c>). The same
+    /// text is the first line of its log (<c>shell: …</c>). Null while it waits, and on a row from before the node said it; optional, so
+    /// the wire version stays.
+    /// </summary>
+    public string? Shell { get; init; }
 
     /// <summary>The script file the job runs, on Windows (the node deletes it once the job has ended); null on Linux, where the wrapper is a command line.</summary>
     public string? ScriptPath { get; init; }

@@ -296,9 +296,23 @@ internal sealed class PilotChrome<TSurface>
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
-        // The per-view Back pills and Escape are the window's Back: where there is no place to go back to, the view closes itself.
-        sessions.Transcript.OnBack = BackOrClose(sessions.Transcript.Close);
-        Flights.OnBack = BackOrClose(Flights.CloseDetail);
+        // A transcript goes up, not back: to the Sessions page as it was left, with its session selected. A move, so the rail's back returns here.
+        sessions.Transcript.OnUp = () => Navigate(() =>
+        {
+            var line = sessions.Transcript.Line;
+            Switch(PilotPage.Sessions, _show);
+            sessions.Transcript.Close();
+            if (line is not null)
+            {
+                sessions.Pin(line);
+            }
+        });
+        // The flight's page goes up, not back: to the Flights page as it was left, with the flight selected. A move, so the rail's back returns here.
+        Flights.OnUp = () => Navigate(() =>
+        {
+            Switch(PilotPage.Flights, _show);
+            Flights.CloseDetail();
+        });
         Nav = new NavControls<TSurface>(renderer)
         {
             CanGoBack = () => CanGoBack,
@@ -565,14 +579,6 @@ internal sealed class PilotChrome<TSurface>
         return true;
     }
 
-    private Action BackOrClose(Action close) => () =>
-    {
-        if (!Back())
-        {
-            close();
-        }
-    };
-
     /// <summary>
     /// The window's own keys and buttons, ahead of what is painted and of a focused field: Alt+Left and the mouse's back
     /// button go <see cref="Back"/>, Alt+Right and its forward button go <see cref="Forward"/>. The button acts as it goes down;
@@ -594,7 +600,10 @@ internal sealed class PilotChrome<TSurface>
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
         // which the map has only while it is shown), ahead of the router and of the page chords.
+        // A press while the rail's More menu is open belongs to the menu (a left press on empty canvas would pan otherwise).
+        var moreOpen = More.Menu.IsOpen && evt is InputEvent.MouseDown { Button: MouseButton.Left };
         if (Page == PilotPage.Flights
+            && !moreOpen
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
         {
             return true;

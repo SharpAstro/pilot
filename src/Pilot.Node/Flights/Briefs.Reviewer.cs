@@ -103,6 +103,7 @@ public static partial class Briefs
         text.AppendLine("Do not run the whole test suite: CI runs it on the PR, and `gh pr checks` says how it went. Rerun only the legs'");
         text.AppendLine($"checks, each through `{run} run -- <check>` so the node holds the job and wakes you with its end.");
         text.AppendLine("A check run stops at its first failed test (the node ends the job and names that test), so the queue is free for the next job.");
+        text.AppendLine(JobShellRule);
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
         text.AppendLine("anything the issue asked for that is missing. Style alone is no reason for changes.");

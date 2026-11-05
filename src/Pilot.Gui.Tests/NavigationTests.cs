@@ -284,7 +284,7 @@ public sealed class NavigationTests
     }
 
     [Fact]
-    public void EscapeOnAnOpenTranscriptGoesBack()
+    public void EscapeOnAnOpenTranscriptGoesUp()
     {
         using var window = new Window();
         var chrome = window.Chrome;
@@ -296,16 +296,15 @@ public sealed class NavigationTests
 
         chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
 
-        // Back, not a bare close: the place the transcript was opened from, with the move to it still there to come forward to.
+        // Up, recorded as a move: the rail's back returns to the transcript.
         chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
         chrome.Page.ShouldBe(PilotPage.Sessions);
-        chrome.CanGoForward.ShouldBeTrue();
-        chrome.Forward().ShouldBeTrue();
+        chrome.Back().ShouldBeTrue();
         chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
     }
 
     [Fact]
-    public void EscapeOnAnOpenFlightPageGoesBack()
+    public void EscapeOnAnOpenFlightPageGoesUpToFlights()
     {
         using var window = new Window();
         var chrome = window.Chrome;
@@ -318,13 +317,13 @@ public sealed class NavigationTests
 
         chrome.Flights.IsDetailOpen.ShouldBeFalse();
         chrome.Page.ShouldBe(PilotPage.Flights);
-        chrome.CanGoForward.ShouldBeTrue();
-        chrome.Forward().ShouldBeTrue();
+        // A move of its own: the rail's back returns to the flight's page.
+        chrome.Back().ShouldBeTrue();
         chrome.Flights.IsDetailOpen.ShouldBeTrue();
     }
 
     [Fact]
-    public void TheBackPillsOnATranscriptAndAFlightsPageAreTheWindowsBack()
+    public void TheFlightsAndTheTranscriptsPillsGoUp()
     {
         using var window = new Window();
         var chrome = window.Chrome;
@@ -335,10 +334,10 @@ public sealed class NavigationTests
 
         Press(window, chrome.Flights, "flight:back");
 
-        // The window's Back: the flights table the page was opened from, the page still there to come forward to.
+        // Up, recorded as a move: the Flights page, the flight's page one step back.
         chrome.Page.ShouldBe(PilotPage.Flights);
         chrome.Flights.IsDetailOpen.ShouldBeFalse();
-        chrome.CanGoForward.ShouldBeTrue();
+        chrome.CanGoBack.ShouldBeTrue();
 
         chrome.Show(PilotPage.Sessions);
         chrome.Sessions.Transcript.Open(window.Sessions().Lines[0]);
@@ -346,7 +345,146 @@ public sealed class NavigationTests
         Press(window, chrome.Sessions, "transcript:back");
         chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
         chrome.Page.ShouldBe(PilotPage.Sessions);
-        chrome.CanGoForward.ShouldBeTrue();
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+    }
+
+    private static PullRequestRow PrOf(string flight) => new()
+    {
+        Repo = "SharpAstro/pilot",
+        Number = 1,
+        Title = "t",
+        Url = "https://github.com/SharpAstro/pilot/pull/1",
+        Flight = flight, Kind = PullRequestKind.Ready, Label = "Ready",
+    };
+
+    private static void OpenFromPullRequestPage(Window window, string flight)
+    {
+        var chrome = window.Chrome;
+        chrome.LinkPullRequests();
+        chrome.Show(PilotPage.PullRequests);
+        window.Draw();
+        chrome.PullRequests.OnFlight!(PrOf(flight));
+        window.Draw();
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.OpenCode.ShouldBe(flight);
+    }
+
+    [Fact]
+    public void TheFlightsPillGoesUpToTheFlightsPageInItsModeWithTheFlightSelected()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Flights.Mode = FlightsViewMode.Grid;
+        OpenFromPullRequestPage(window, "TIA2");
+
+        Press(window, chrome.Flights, "flight:back");
+
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.IsDetailOpen.ShouldBeFalse();
+        chrome.Flights.Mode.ShouldBe(FlightsViewMode.Grid);
+        chrome.Flights.FocusCode.ShouldBe("TIA2");
+
+        // The rail's back is history: the flight's page again, not the Pull requests page.
+        chrome.Back().ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.OpenCode.ShouldBe("TIA2");
+    }
+
+    [Fact]
+    public void EscapeOnAFlightPageDoesWhatTheFlightsPillDoes()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Flights.Mode = FlightsViewMode.List;
+        OpenFromPullRequestPage(window, "TIA2");
+
+        chrome.Flights.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+        window.Draw();
+
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Flights.IsDetailOpen.ShouldBeFalse();
+        chrome.Flights.Mode.ShouldBe(FlightsViewMode.List);
+        chrome.Flights.FocusCode.ShouldBe("TIA2");
+        chrome.Back().ShouldBeTrue();
+        chrome.Flights.OpenCode.ShouldBe("TIA2");
+    }
+
+    [Fact]
+    public void TheFlightPagesUpPillNamesFlights()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Flights);
+        chrome.Flights.OpenDetail("TIA1");
+        window.Draw();
+
+        var regions = new List<ClickableRegion>();
+        chrome.Flights.CollectPaintedRegions(regions);
+        var pill = regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == "flight:back");
+        pill.Tooltip.ShouldNotBeNull().ShouldContain("Flights");
+    }
+
+    private static CardRow ACard() => new()
+    {
+        Id = "c1", Bin = CardBin.Ring, Kind = "waiting", Subject = "h-work", Title = "t", State = CardState.Open, At = Live.At,
+    };
+
+    [Fact]
+    public void TheSessionsPillGoesUpToTheSessionsPageWithItsSessionSelected()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        var line = window.Sessions().Lines[1];
+        chrome.Show(PilotPage.Home);
+        chrome.Cards.OnTranscript.ShouldNotBeNull().Invoke(ACard(), line);
+        window.Draw();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+
+        Press(window, chrome.Sessions, "transcript:back");
+
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Sessions.SelectedId.ShouldBe(line.Key);
+        // A move of its own: the rail's back returns to the transcript.
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+        chrome.Sessions.Transcript.Key.ShouldBe(line.Key);
+    }
+
+    [Fact]
+    public void EscapeOnATranscriptOpenedFromACardDoesWhatTheSessionsPillDoes()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        var line = window.Sessions().Lines[1];
+        chrome.Show(PilotPage.Home);
+        chrome.Cards.OnTranscript.ShouldNotBeNull().Invoke(ACard(), line);
+        window.Draw();
+
+        chrome.Sessions.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
+        window.Draw();
+
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        chrome.Sessions.SelectedId.ShouldBe(line.Key);
+        chrome.Back().ShouldBeTrue();
+        chrome.Sessions.Transcript.IsOpen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheTranscriptsUpPillNamesSessions()
+    {
+        using var window = new Window();
+        var chrome = window.Chrome;
+        chrome.Show(PilotPage.Sessions);
+        chrome.Sessions.Transcript.Open(window.Sessions().Lines[0]);
+        window.Draw();
+
+        var regions = new List<ClickableRegion>();
+        chrome.Sessions.CollectPaintedRegions(regions);
+        var pill = regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == "transcript:back");
+        pill.Tooltip.ShouldNotBeNull().ShouldContain("Sessions");
     }
 
     [Fact]
@@ -357,7 +495,7 @@ public sealed class NavigationTests
         sessions.Transcript.Load = (_, _, _, _) => Task.FromResult(new TranscriptPage { Total = 0, Entries = [] });
         sessions.Transcript.Open(SessionLine.From(Live.Row("aaaa0000", "h-work", SessionState.Working), Live.At));
 
-        sessions.Transcript.GoBack();
+        sessions.Transcript.GoUp();
 
         sessions.Transcript.IsOpen.ShouldBeFalse();
     }

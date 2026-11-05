@@ -275,8 +275,8 @@ public sealed class TextSelectionTests
         said.ShouldContain("[x]");
         string.Concat(said).ShouldContain("shader");
         string.Concat(said).ShouldContain("flight/tia1611");
-        // The buttons and pills are not: "← Back" is a pill's label.
-        said.ShouldNotContain(t => t.Contains("← Back", StringComparison.Ordinal));
+        // The buttons and pills are not: "← Flights" is a pill's label.
+        said.ShouldNotContain(t => t.Contains("← Flights", StringComparison.Ordinal));
     }
 
     [Theory]

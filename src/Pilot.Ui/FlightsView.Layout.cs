@@ -89,6 +89,25 @@ internal sealed partial class FlightsView<TSurface>
                 ListCursor.Open(ListId, moved, screen.Lines.Count);
             }
         }
+        // A refresh that reorders the flights keeps the selection on the same flight, found by node and code, not on the same index.
+        // (A clicked title's sort above has already moved the cursor by code, against the order it replaced.)
+        if (!(!GridShown && !CanvasShown && Table.Sort is not null) && !_selectPinned && screen.Lines.Count > 0 && Selected >= 0 && Selected < _screen.Lines.Count)
+        {
+            var (keptNode, keptCode) = (_screen.Lines[Selected].Node?.Key ?? "", _screen.Lines[Selected].Code);
+            var at = -1;
+            for (var i = 0; i < screen.Lines.Count; i++)
+            {
+                if (screen.Lines[i].Code == keptCode && (screen.Lines[i].Node?.Key ?? "") == keptNode)
+                {
+                    at = i;
+                    break;
+                }
+            }
+            if (at >= 0 && at != Selected)
+            {
+                ListCursor.Open(ListId, at, screen.Lines.Count);
+            }
+        }
         if (screen.Lines.Count == 0)
         {
             ListCursor.Close();
@@ -150,7 +169,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
-            GoBack();
+            GoUp();
             return true;
         }
         // The wheel over the map pans it (Ctrl+wheel is left to zoom); the layer menu's own list took it first where it was over it.
