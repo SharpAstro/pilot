@@ -1880,7 +1880,7 @@ public sealed class JobTests3 : JobTestsBase
         using var node = await Node.StartAsync(_root);
         node.Jobs.MaxRunning = 2;
         var jobId = node.Run(_root, "sleep 90; " + Echo("still going")).Made!;
-        var job = await node.UntilAsync(jobId, j => j.State == JobState.Running, Ct);
+        var job = await node.UntilAsync(jobId, j => j is { State: JobState.Running, Pid: not null }, Ct);
         var running = node.Jobs.RunCheckAsync("TIA1", "one", Grandchild(marker), _root, TimeSpan.FromMinutes(30), Ct);
         var waiting = node.Jobs.RunCheckAsync("TIA1", "two", Echo("never"), _root, TimeSpan.FromMinutes(30), Ct);
         var child = await GrandchildPid(marker, running);
@@ -1891,6 +1891,10 @@ public sealed class JobTests3 : JobTestsBase
         var runningId = rows.Single(j => j.Leg == "one").Id;
         var queuedId = rows.Single(j => j.Leg == "two").Id;
         var runningRow = await node.UntilAsync(runningId, j => j is { State: JobState.Running, Pid: not null }, Ct);
+        // From here the dispatcher is held still: with no slot at all, nothing the stop frees can start the waiting check, so the
+        // rows read below are what the stop left, not what the live dispatcher did after it.
+        node.Jobs.MaxRunning = 0;
+        node.State.Jobs().Single(j => j.Id == queuedId).State.ShouldBe(JobState.Queued);
         try
         {
             await node.StopAsync();
@@ -2062,26 +2066,40 @@ public sealed class JobTests3 : JobTestsBase
             _state.PutJob(Row("jc3", JobKind.Check, JobState.Running, null));
             _state.PutJob(Row("jo1", JobKind.Run, JobState.Running, jobProcess));
 
+            // The dispatcher is live and acts on its own loop, so it is held still while the queue is read: with no slot at all it
+            // starts nothing it is handed, whatever moment the hand-over reaches it.
+            _jobs.MaxRunning = 0;
             await _jobs.RecoverAsync(Ct);
 
-            // A running check whose process is alive is followed again, not ended.
+            // A running check whose process is alive is followed again, not ended: Running on its own pid, in a slot.
             IsAlive(checkProcess.Id).ShouldBeTrue();
             var ran = _state.Jobs().Single(j => j.Id == "jc1");
-            (ran.State, ran.EndedAt).ShouldBe((JobState.Running, null));
+            (ran.State, ran.Pid, ran.EndedAt).ShouldBe((JobState.Running, checkProcess.Id, null));
             _jobs.IsRunning("jc1").ShouldBeTrue();
             // One with no pid cannot be found again, so it is ended.
             var lost = _state.Jobs().Single(j => j.Id == "jc3");
             (lost.State, lost.EndedAt is not null).ShouldBe((JobState.Failed, true));
             _jobs.IsRunning("jc3").ShouldBeFalse();
-            // The queued check carried over: still queued, behind the ordinary job's slot, not ended.
-            var queued = _state.Jobs().Single(j => j.Id == "jc2");
-            (queued.State, queued.EndedAt).ShouldBe((JobState.Queued, null));
+            // The ordinary job is followed again the same way.
+            var other = _state.Jobs().Single(j => j.Id == "jo1");
+            (other.State, other.Pid, other.EndedAt).ShouldBe((JobState.Running, jobProcess.Id, null));
             _jobs.IsRunning("jo1").ShouldBeTrue();
-            _state.Jobs().Single(j => j.Id == "jo1").State.ShouldBe(JobState.Running);
             IsAlive(jobProcess.Id).ShouldBeTrue();
+            // The queued check carried over: the dispatcher has it (its row says where it waits) and it is still queued, not ended.
+            var queued = await Until("jc2", j => j.Step?.StartsWith("next in line", StringComparison.Ordinal) == true);
+            (queued.State, queued.EndedAt).ShouldBe((JobState.Queued, null));
+
+            // Given its one slot back, the dispatcher still keeps it waiting: the two recovered jobs hold the slot. The row it rewrites
+            // with the new slot count is the dispatch that judged it; a start would leave the row Running instead.
+            _jobs.MaxRunning = 1;
+            _jobs.Pump();
+            var judged = await Until("jc2", j => j.Slots == 1 || j.State != JobState.Queued);
+            (judged.State, judged.EndedAt).ShouldBe((JobState.Queued, null));
         }
         finally
         {
+            // Held still again, so the queued check does not start in the test's folder once the sleepers below are ended.
+            _jobs.MaxRunning = 0;
             try
             {
                 jobProcess.Kill(entireProcessTree: true);
