@@ -72,18 +72,40 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         var now = time.GetUtcNow();
         var reading = Staleness.Read(state.Flights(), state.Legs(), state.Cards(), state.Jobs(), state.PullRequests(), now, Bounds(), time.LocalTimeZone);
 
+        CloseOrphanReminders();
         foreach (var item in reading.Nearing)
         {
             await ActAsync(item, cancellationToken);
         }
-        foreach (var flight in state.Flights().Where(f => f is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null }))
+        foreach (var flight in state.Flights())
         {
+            if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
+            {
+                // A flight that landed, folded or moved is done here: it keeps no stale summary.
+                Attach(flight.Code, null, now);
+                continue;
+            }
             var mine = reading.Stale.Where(i => i.Flight == flight.Code).ToList();
             if (mine.Count > 0)
             {
                 await RaiseAsync(flight, mine, now, cancellationToken);
             }
             Attach(flight.Code, mine.FirstOrDefault(), now);
+        }
+    }
+
+    // A reminder about a card is closed once that card is: its choices would answer a card that is no longer asked.
+    private void CloseOrphanReminders()
+    {
+        var open = state.Cards(openOnly: true);
+        var openIds = open.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var reminder in open.Where(c => c.Kind == ReminderKind))
+        {
+            var target = reminder.Subject.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal) ? reminder.Subject[Verbs.CardTargetPrefix.Length..] : null;
+            if (target is null || !openIds.Contains(target))
+            {
+                state.CloseCard(reminder.Id, $"card {target} is closed", "node");
+            }
         }
     }
 
@@ -151,14 +173,14 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             }
             else if (Raised(read.Level) is not { } next)
             {
-                // Already urgent: nothing to raise, and no record.
-                return;
+                // Already urgent: nothing to raise. The record still keeps this bound from asking the tracker on every tick.
+                note = "already urgent, nothing to raise";
             }
             else
             {
                 await tracker.SetPriorityAsync(flight.RepoPath, flight.Issue, next, cancellationToken);
                 level = next;
-                note = $"raised to {IssuePriorities.Name(next).ToLowerInvariant()}: {item.Cause.Split(',')[0]}";
+                note = $"raised to {IssuePriorities.Name(next).ToLowerInvariant()}: {CauseHead(item.Cause)}";
             }
         }
         catch (FlightException ex)
@@ -174,6 +196,10 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         });
         state.RaiseCard(CardBin.Handled, ActedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: {note}");
     }
+
+    // The cause up to what it waits on, which follows its last ", waiting on".
+    private static string CauseHead(string cause)
+        => cause.LastIndexOf(", waiting on ", StringComparison.Ordinal) is var at and >= 0 ? cause[..at] : cause;
 
     // The summary on the flight is replaced only when what it waits on, or the kind of staleness, changed.
     private void Attach(string code, StaleItem? item, DateTimeOffset now)

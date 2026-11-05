@@ -133,15 +133,18 @@ public static class Staleness
                 Add(new StaleItem
                 {
                     Kind = StaleKind.PullRequest, Subject = $"{flight.Code} PR #{number}", Flight = flight.Code, Age = prAge, AgeText = Say(prAge), WaitsOn = waits, Action = action,
-                    Timeline = Timeline(), Cause = $"PR #{number} has had green CI for an open PR {Say(prAge)}, waiting on {waits}", Bound = Hours(bounds.PrHours),
+                    Timeline = Timeline(), Cause = $"PR #{number} has been open {Say(prAge)} with green CI, waiting on {waits}", Bound = Hours(bounds.PrHours),
                 }, TimeSpan.FromHours(bounds.PrHours));
             }
 
-            // A repeated hold: holding-timeout cards raised for the flight.
-            var timeouts = flightCards.Where(c => c.Kind == LegCommander.HoldingTimeoutKind).OrderBy(c => c.At).ToList();
+            // A repeated hold: holding-timeout cards raised for the flight since its current hold began. A hold that has ended
+            // is no longer stale, however often it timed out before.
+            var timeouts = flight.Holding is { } holding
+                ? flightCards.Where(c => c.Kind == LegCommander.HoldingTimeoutKind && c.At >= holding.Since).OrderBy(c => c.At).ToList()
+                : [];
             if (timeouts.Count > 0 && bounds.Holds > 0)
             {
-                var since = flight.Holding?.Since ?? timeouts[0].At;
+                var since = flight.Holding!.Since;
                 var holdAge = now - since;
                 var half = (bounds.Holds + 1) / 2;
                 var item = new StaleItem

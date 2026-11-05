@@ -18,19 +18,19 @@ public sealed class StaleRowTests
     private const string Refusal = "this node keeps no watchtower (--no-watchtower), so nobody can say";
     private static readonly DateTimeOffset Now = Live.At.AddHours(19);
 
-    private static FlightRow Flight(bool stale = true) => new()
+    private static FlightRow Flight(bool stale = true, FlightState state = FlightState.Flying) => new()
     {
         Code = "TIA1611", Repo = "tianwen", RepoPath = "/r/tianwen", Issue = 1611, Title = "Render the planets from the GPU buffer",
-        Branch = "flight/tia1611", Worktree = "/r/tianwen/.claude/worktrees/tia1611", Base = "origin/main", State = FlightState.Flying, CreatedAt = Live.At,
+        Branch = "flight/tia1611", Worktree = "/r/tianwen/.claude/worktrees/tia1611", Base = "origin/main", State = state, CreatedAt = Live.At,
         StaleSummary = stale ? Summary : null,
         StaleCause = stale ? "flight:job j3178" : null,
         StaleSince = stale ? Live.At.AddHours(12) : null,
         StaleRaises = stale ? [new FlightStaleRaise { Bound = "flight", Level = IssuePriority.High, At = Live.At.AddHours(12), Note = "raised to high: open 19 h" }] : null,
     };
 
-    private static FlightLine Line(bool stale = true) => FlightLine.Build([Flight(stale)], [], Now, []).Single();
+    private static FlightLine Line(bool stale = true, FlightState state = FlightState.Flying) => FlightLine.Build([Flight(stale, state)], [], Now, []).Single();
 
-    private static FlightsScreen Screen(bool stale = true) => new([Line(stale)], "test", Now);
+    private static FlightsScreen Screen(bool stale = true, FlightState state = FlightState.Flying) => new([Line(stale, state)], "test", Now);
 
     private static FlightsView<RgbaImage> NewView(RgbaImageRenderer renderer, out PageButtonFeedbackTests.LateNode node, List<(string Code, string Summary)>? told = null)
     {
@@ -103,6 +103,20 @@ public sealed class StaleRowTests
         var screen = Screen(stale: false);
 
         PageButtonFeedbackTests.Has(view.Tree(screen), FlightsView<RgbaImage>.AskHit("TIA1611")).ShouldBeFalse();
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldNotContain("stale");
+    }
+
+    [Fact]
+    public void ALandedFlightKeepsNoStaleMarkAndNoButtonEvenWithASummaryLeftOnIt()
+    {
+        using var renderer = new RgbaImageRenderer(1600, 900);
+        var view = NewView(renderer, out _);
+        var screen = Screen(stale: true, state: FlightState.Landed);
+
+        PageButtonFeedbackTests.Has(view.Tree(screen), FlightsView<RgbaImage>.AskHit("TIA1611")).ShouldBeFalse();
+        PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldNotContain("stale");
+        view.OpenDetail("TIA1611");
+        view.Render(screen, new RectF32(0, 0, 1600, 900));
         PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldNotContain("stale");
     }
 

@@ -51,8 +51,13 @@ public sealed class StaleWatchTests
 
         public Task<SubTaskItem[]> SubTasksAsync(string repoPath, int id, CancellationToken cancellationToken) => Task.FromResult<SubTaskItem[]>([]);
 
-        public Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken) =>
-            Task.FromResult(HasField ? new PriorityRead(true, Level) : PriorityRead.NoField);
+        public int Reads { get; private set; }
+
+        public Task<PriorityRead> PriorityAsync(string repoPath, int id, CancellationToken cancellationToken)
+        {
+            Reads++;
+            return Task.FromResult(HasField ? new PriorityRead(true, Level) : PriorityRead.NoField);
+        }
 
         public Task SetPriorityAsync(string repoPath, int id, IssuePriority? level, CancellationToken cancellationToken)
         {
@@ -146,15 +151,47 @@ public sealed class StaleWatchTests
     public void TheStepsUp(IssuePriority? from, IssuePriority? to) => StaleWatch.Raised(from).ShouldBe(to);
 
     [Fact]
-    public async Task UrgentStaysUrgentAndIsNotRecorded()
+    public async Task UrgentStaysUrgentAndIsRecordedSoTheTrackerIsNotReadEveryTick()
     {
         _tracker.Level = IssuePriority.Urgent;
         Fly(TimeSpan.FromHours(30));
 
         await _watch.TickAsync(Ct);
+        await _watch.TickAsync(Ct);
 
         _tracker.Sets.ShouldBeEmpty();
-        Row().StaleRaises.ShouldBeNull();
+        _tracker.Reads.ShouldBe(1);
+        var raise = Row().StaleRaises.ShouldNotBeNull().ShouldHaveSingleItem();
+        raise.Level.ShouldBeNull();
+        raise.Note.ShouldBe("already urgent, nothing to raise");
+    }
+
+    [Fact]
+    public async Task ATickAfterLandingClearsTheStaleSummary()
+    {
+        Fly(TimeSpan.FromHours(19));
+        await _watch.TickAsync(Ct);
+        Row().StaleSummary.ShouldNotBeNull();
+
+        _state.UpdateFlight("DIR178", f => f with { State = FlightState.Landed });
+        await _watch.TickAsync(Ct);
+
+        (Row().StaleSummary, Row().StaleCause, Row().StaleSince).ShouldBe((null, null, null));
+    }
+
+    [Fact]
+    public async Task AReminderClosesOnceTheCardItRemindsOfIsAnswered()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var card = _state.RaiseCard(CardBin.Ring, "x", Verbs.FlightTarget("DIR178"), "question");
+        _clock.Now += TimeSpan.FromHours(1.5);
+        await _watch.TickAsync(Ct);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == StaleWatch.ReminderKind);
+
+        _state.CloseCard(card.Id, "answered", "person");
+        await _watch.TickAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StaleWatch.ReminderKind);
     }
 
     [Fact]

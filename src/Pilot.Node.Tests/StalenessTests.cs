@@ -138,6 +138,24 @@ public class StalenessTests
     }
 
     [Fact]
+    public void AHoldThatEndedIsNoLongerStaleHoweverOftenItTimedOut()
+    {
+        var cards = new[]
+        {
+            Card("h1", "flight/DIR178", LegCommander.HoldingTimeoutKind, age: TimeSpan.FromHours(5), state: CardState.Closed),
+            Card("h2", "flight/DIR178", LegCommander.HoldingTimeoutKind, age: TimeSpan.FromHours(4), state: CardState.Closed),
+        };
+        var cleared = Read([Flight(holding: null)], [], cards);
+        cleared.Stale.ShouldNotContain(i => i.Kind == StaleKind.Hold);
+        cleared.Nearing.ShouldNotContain(i => i.Kind == StaleKind.Hold);
+
+        // A new hold counts only the timeouts raised since it began.
+        var again = Read([Flight(holding: new FlightHolding { Reason = "small fixes", Since = Now - TimeSpan.FromHours(1) })], [], cards);
+        again.Stale.ShouldNotContain(i => i.Kind == StaleKind.Hold);
+        again.Nearing.ShouldNotContain(i => i.Kind == StaleKind.Hold);
+    }
+
+    [Fact]
     public void TheBoundsComeFromTheSettings()
     {
         Read([Flight(age: TimeSpan.FromHours(7))], [Leg("DIR178")], bounds: new StaleBounds { FlightHours = 6 }).Stale.ShouldHaveSingleItem();
