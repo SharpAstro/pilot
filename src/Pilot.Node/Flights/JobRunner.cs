@@ -63,6 +63,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The session ledger, to tell a session that ended normally from one that was replaced; null where none is kept (#601).</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 
+    /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
+    public TextWriter Log { get; init; } = TextWriter.Null;
+
+    private void LogTell(JobRow job, string target, SessionRow? targetRow, string outcome)
+    {
+        try
+        {
+            Log.WriteLine($"{time.GetUtcNow():O} job tell {job.Id} owner={job.Owner} target={target} outcome={outcome} state={(targetRow is null ? "no row" : targetRow.State.ToString())}");
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private void MarkTold(JobRow job, string way) =>
+        state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way });
+
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
 
@@ -1508,6 +1525,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var sessions = state.Sessions();
         var ownerRow = OwnerRow(job.Owner, sessions);
         var target = WakeTarget(job.Owner, job.OwnerName);
+        string? replacedTo = null;
         if (ownerRow is not null)
         {
             // A session replaced by a later one of its role (a go-around, a restart) hands its jobs on: the end goes to the
@@ -1518,32 +1536,38 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
             {
                 target = replacement.Id;
+                replacedTo = replacement.Id;
                 text = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; its result is passed on to you.\n{text}";
             }
             else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
             {
                 // The owner ended (finished, crashed or stopped) and nothing took its place: nobody is waiting on this job.
-                state.PutJob(job with { Told = true });
+                LogTell(job, target, ownerRow, "owner ended");
+                MarkTold(job, "owner-ended");
                 return;
             }
         }
         else if (Ledger?.Find([job.Owner]) is { EndedAt: not null })
         {
             // No row for the owner, and the ledger says its session ended: nobody is waiting on this job.
-            state.PutJob(job with { Told = true });
+            LogTell(job, target, null, "owner ended");
+            MarkTold(job, "owner-ended");
             return;
         }
+        var targetRow = sessions.FirstOrDefault(s => s.Id == target) ?? ownerRow;
         bool ok;
         string? error;
+        string? way = null;
         var threw = false;
         try
         {
             var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, cancellationToken);
-            (ok, error) = (said.Ok, said.Error);
+            (ok, error, way) = (said.Ok, said.Error, said.Way);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The node is stopping: the row stays untold for the next node's sweep.
+            LogTell(job, target, targetRow, "node stopping");
             return;
         }
         catch (Exception ex)
@@ -1553,14 +1577,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _tried.TryRemove(job.Id, out _);
             threw = true;
             (ok, error) = (false, $"{ex.GetType().Name}: {ex.Message}");
+            LogTell(job, target, targetRow, $"failed: {error}");
             if (!_rang.TryAdd(job.Id, 0))
             {
                 return;
             }
         }
+        if (!threw)
+        {
+            LogTell(job, target, targetRow, ok ? (replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})") : $"refused: {LegCommander.OneLine(error ?? "no reason given")}");
+        }
         if (ok)
         {
-            state.PutJob(job with { Told = true });
+            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed);
             // A card an earlier try rang ("could not be told") is out of date now it has been told.
             state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
         }
@@ -1568,7 +1597,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // The node has no row for the owner and its session refused the say (it is gone): nobody is waiting on this job.
             // Marked told, quietly, so a session long gone is not rung for again on every node start.
-            state.PutJob(job with { Told = true });
+            MarkTold(job, "gone");
         }
         else
         {

@@ -111,6 +111,12 @@ public sealed record JobRow
 
     /// <summary>Whether its owner was told how it ended: false until the node said it, so a wake that failed shows.</summary>
     public bool Told { get; init; }
+
+    /// <summary>When the node marked it <see cref="Told"/> (said, or given up on); null while untold and on a row from before this. Optional, so the wire version stays.</summary>
+    public DateTimeOffset? ToldAt { get; init; }
+
+    /// <summary>How it was told: <c>relayed</c>, <c>resumed</c>, <c>owner-ended</c>, <c>replaced-to &lt;id&gt;</c> or <c>gone</c>; null while untold and on an older row. Optional, so the wire version stays.</summary>
+    public string? ToldWay { get; init; }
 }
 
 /// <summary>The end of a job's output, as the Background tasks page shows it: the whole is in <see cref="JobRow.LogPath"/>.</summary>

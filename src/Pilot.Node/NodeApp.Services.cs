@@ -432,6 +432,7 @@ public static partial class NodeApp
             return new JobRunner(services.GetRequiredService<NodeState>(), nodeOptions, services.GetRequiredService<TimeProvider>())
             {
                 Say = commands.RunAsync,
+                Log = services.GetRequiredService<LogWriter>(),
                 Ledger = services.GetRequiredService<SessionLedger>(),
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
