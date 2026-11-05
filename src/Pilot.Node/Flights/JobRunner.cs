@@ -1653,7 +1653,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         // Checks still waiting keep their rows Queued for the next node, which puts them back in their place; only their waiters go,
         // with the callers that go with this node (pilot #737).
-        foreach (var waiting in state.Jobs().Where(j => j.Kind == JobKind.Check && j.State == JobState.Queued && _mine.ContainsKey(j.Id)).ToList())
+        foreach (var waiting in state.Jobs().Where(j => j.Kind == JobKind.Check && j.State is JobState.Queued or JobState.Running && _mine.ContainsKey(j.Id)).ToList())
         {
             if (_checkWaiters.TryRemove(waiting.Id, out var waiter))
             {
