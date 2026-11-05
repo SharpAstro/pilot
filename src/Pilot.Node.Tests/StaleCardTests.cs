@@ -172,7 +172,7 @@ public sealed class StaleCardTests
         row.Markdown.ShouldBe("## Needs you\nNothing.\n\n## Where it is\nPIL342 merged.");
         _state.Summaries().ShouldHaveSingleItem().Markdown.ShouldNotContain(card.Id);
         Now(card).State.ShouldBe(CardState.Closed);
-        Handled().Title.ShouldBe("PIL342's #344 PR card: #344 merged on GitHub as 64d4eb3a");
+        Handled().Title.ShouldBe("PIL342's #344 PR card: #344 merged on GitHub as 64d4eb3a1");
         // The prompt it was asked carries the card, so it can name its id.
         _model.Prompts.ShouldHaveSingleItem().ShouldContain($"{card.Id} (ring, pr-ready)");
     }
@@ -246,7 +246,7 @@ public sealed class StaleCardTests
 
         var verdict = await Check(card);
 
-        Dismissed(card, verdict, "#344 merged on GitHub as 64d4eb3a");
+        Dismissed(card, verdict, "#344 merged on GitHub as 64d4eb3a1");
         Handled().Link.ShouldBe(PrUrl);
     }
 
@@ -275,7 +275,7 @@ public sealed class StaleCardTests
         var card = Raise("pr-checks-failed", choices: [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/PIL342", Args = [OldHead] }]);
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
 
-        Dismissed(card, await Check(card), "its checks pass at a newer head (64d4eb3a, was 4f2c9a01)");
+        Dismissed(card, await Check(card), "its checks pass at a newer head (64d4eb3a1, was 4f2c9a01d)");
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public sealed class StaleCardTests
         var card = Raise("pr-checks-failed");
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
 
-        Dismissed(card, await Check(card), "its checks pass at 64d4eb3a");
+        Dismissed(card, await Check(card), "its checks pass at 64d4eb3a1");
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class StaleCardTests
         var failed = Raise(LegCommander.MergeFailed, choices: [new CardChoice { Label = "Re-run", Verb = Verbs.RerunChecks, Target = "flight/PIL342" }]);
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 7, 7);
 
-        Dismissed(failed, await Check(failed), "its checks pass at 64d4eb3a");
+        Dismissed(failed, await Check(failed), "its checks pass at 64d4eb3a1");
     }
 
     [Fact]
@@ -333,8 +333,8 @@ public sealed class StaleCardTests
 
         var verdict = await Check(card);
 
-        Dismissed(card, verdict, "the branch merges cleanly at 64d4eb3a");
-        Handled().Title.ShouldBe("PIL342's #344 conflict: the branch merges cleanly at 64d4eb3a");
+        Dismissed(card, verdict, "the branch merges cleanly at 64d4eb3a1");
+        Handled().Title.ShouldBe("PIL342's #344 conflict: the branch merges cleanly at 64d4eb3a1");
     }
 
     [Theory]

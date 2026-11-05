@@ -119,7 +119,9 @@ public sealed partial class JobPriorityTests : JobTestsBase
         throw new TimeoutException($"job {id} did not end");
     }
 
+    // Starts a node of its own and runs a job at Idle priority, which a busy machine starves: it took 19 to 23 s under load.
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

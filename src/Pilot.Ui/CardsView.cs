@@ -372,6 +372,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 .BgHover(CardHover).Follows(new HitResult.ButtonHit($"{key}:idea:{link.Text}"), _ => OnIdeaLink?.Invoke(link)).Pad(0f, 1f).WAuto())]).WithGap(10f).RowH(18f);
     }
 
+    /// <summary>The commits a card's text names (<see cref="CardRow.Commits"/>) as a row of links, each opening its commit page (Copy URL on the right-click menu); null when it names none.</summary>
+    private Layout.Node? CommitLinkRow(CardRow card, string key)
+    {
+        if (card.Commits.Count == 0)
+        {
+            return null;
+        }
+        return Layout.Builder.HStack([.. card.Commits.Select(commit => _links.OnLink(
+                Layout.Builder.Text(commit.Key + Followable.Away, 11f, Link).BgHover(CardHover)
+                    .Follows(new HitResult.ButtonHit($"{key}:commit:{commit.Key}"), _ => OnOpen?.Invoke(commit.Value)).Pad(0f, 1f).WAuto(), commit.Value))]).WithGap(10f).RowH(18f);
+    }
+
     /// <summary>Whether the Handled list is open under In play; a click on its line flips it.</summary>
     public bool HandledOpen { get; set; }
 
@@ -614,6 +626,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             {
                 var line = Layout.Builder.Text(screen.NodeOf(card) is { } node ? $"{node.Name} · {Titled(card)}" : Titled(card), 12f, Dim).Selectable().RowH(20f);
                 blocks.Add(line);
+                if (CommitLinkRow(card, $"handled:{card.Id}") is { } handledCommits)
+                {
+                    blocks.Add(handledCommits);
+                }
                 if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"handled:{card.Id}") is { } handledLinks)
                 {
                     blocks.Add(handledLinks);
@@ -797,6 +813,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
+        }
+        if (CommitLinkRow(card, $"card:{card.Id}") is { } commitLinks)
+        {
+            lines.Add(commitLinks);
         }
         if (IdeaLinkRow($"{card.Title}\n{card.Detail}", $"card:{card.Id}") is { } ideaLinks)
         {

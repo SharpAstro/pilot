@@ -17,7 +17,7 @@ public static partial class Briefs
         var title = review.Title is { Length: > 0 } t ? $": {t}" : "";
         text.AppendLine($"You fix PR {pr}{title} ({review.Url}).");
         text.AppendLine();
-        var shortHead = review.Head[..Math.Min(8, review.Head.Length)];
+        var shortHead = CommitRefs.Short(review.Head);
         if (review.FixDetached == true)
         {
             text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree detached at the head of the PR's branch `{branch}` (the branch is checked out in another worktree, so it cannot be checked out here).");
