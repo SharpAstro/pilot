@@ -162,6 +162,10 @@ public static class WatchtowerAsks
     public const string CleanUp =
         "Clean up, at the person's request: close or dismiss cards that need nothing now (their session, leg, flight or PR is already gone or done), " +
         "stop sessions past their purpose with `session end` and a reason, and reply with one line per thing you did. Answer no person-only card.";
+
+    /// <summary>The flight's <b>Ask the watchtower</b> (#736): why a stale flight is not moving and what moves it, answered on the flight with a For-you card.</summary>
+    public static string WhyNotMoving(string code, string summary) =>
+        $"Flight {code} has gone stale: {summary} Why is this not moving, and what moves it? Answer on the flight with a For-you card about it.";
 }
 
 /// <summary>The verbs and targets the node knows.</summary>

@@ -27,6 +27,60 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
+    /// <summary>The key of a flight's Ask the watchtower press (apart from the flight's own, so it blocks none of its actions).</summary>
+    internal static string AskKey(string code) => $"{code}:ask";
+
+    /// <summary>The hit id of a flight's Ask the watchtower button.</summary>
+    internal static string AskHit(string code) => $"flight:{code}:ask";
+
+    /// <summary>Whether the flight has an Ask the watchtower button: stale, on this node's own page, commandable, and the host can tell the watchtower.</summary>
+    private bool CanAsk(FlightLine line) =>
+        OnAskWatchtower is not null && CanCommand && line.StaleSummary is not null && line.Stale is null && line.Node is null or { Here: true };
+
+    /// <summary>
+    /// The tower-icon button: tells the watchtower the flight, its summary and why it is not moving. Pressed, it reads "…" and takes no
+    /// second press; then "done" or "refused" for a moment, the refusal in words under the flight (detail) and in the page's bar.
+    /// </summary>
+    private Layout.Node? AskButton(FlightLine line)
+    {
+        if (!CanAsk(line))
+        {
+            return null;
+        }
+        var hit = AskHit(line.Code);
+        var label = Palette.Glyph("🗼 Ask", "Ask");
+        return Presses.Button(AskKey(line.Code), hit,
+                () => CardsView<TSurface>.Pill(label, hit, () => AskWatchtower(line, hit)).WithTooltip("Ask the watchtower: why is this not moving, and what moves it?"),
+                _ => CardsView<TSurface>.Dead("…"))
+            .WAuto();
+    }
+
+    internal Task AskWatchtower(FlightLine line, string hit)
+    {
+        if (OnAskWatchtower is not { } send || line.StaleSummary is not { } summary || Presses.PendingOf(AskKey(line.Code)) is not null)
+        {
+            return Task.CompletedTask;
+        }
+        Say("asking the watchtower…");
+        return PressedAsync();
+
+        async Task PressedAsync()
+        {
+            var refused = await Presses.PressAsync(AskKey(line.Code), hit, _ => send(line.Code, summary), say: why => $"refused: ask the watchtower: {why}");
+            Say(refused ?? "ok: asked the watchtower");
+            Presses.Changed?.Invoke();
+        }
+    }
+
+    /// <summary>What the node said to the last Ask the watchtower of <paramref name="line"/>, when it refused.</summary>
+    private IEnumerable<Layout.Node> AskRefusalOf(FlightLine line)
+    {
+        if (Presses.RefusalLine(AskKey(line.Code), 12f, Held, 3) is { } refusal)
+        {
+            yield return refusal;
+        }
+    }
+
     /// <summary>Asks <paramref name="node"/> for a grant through <see cref="OnConnect"/>: the button reads "asking…" until the grant answers.</summary>
     internal void AskGrant(NodeMark node, string hit)
     {
