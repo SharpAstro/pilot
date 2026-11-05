@@ -11,10 +11,10 @@ internal sealed class PageData
 {
     public static readonly DateTimeOffset Now = new(2026, 10, 28, 3, 0, 0, TimeSpan.Zero);
 
-    private const string LongTitle = "Every page is checked for text drawn over text, in tests and live, at every width and DPI, with a title that runs on and on past any column it is given";
-    private const string LongPath = @"C:\Users\ada\src\example-org\orbit\.claude\worktrees\ORB204\src\Orbit.Lib.Tests\Fixtures\a-very-long-folder-name-that-has-no-break";
-    private const string LongWord = "Pilot.Ui.PageTextOverlapTests.EveryPageIsHeldApartAtEveryWidthAndDpiWithSampleDataThatIsVeryLong";
-    private const string LongReport = "The leg is done and every step ticked. I brought the two commits of fix/chat-rows-wrap onto the branch, added the shared check in Pilot.Ui, and ran the whole Pilot.Gui.Tests suite in Release: 2891 passed, 14 skipped. Two cases fail for DIR.Lib's stack measure (SharpAstro/DIR.Lib#169) and are skipped with their fault line. Nothing was pushed; the controller lands the flight.";
+    internal const string LongTitle = "Every page is checked for text drawn over text, in tests and live, at every width and DPI, with a title that runs on and on past any column it is given";
+    internal const string LongPath = @"C:\Users\ada\src\example-org\orbit\.claude\worktrees\ORB204\src\Orbit.Lib.Tests\Fixtures\a-very-long-folder-name-that-has-no-break";
+    internal const string LongWord = "Pilot.Ui.PageTextOverlapTests.EveryPageIsHeldApartAtEveryWidthAndDpiWithSampleDataThatIsVeryLong";
+    internal const string LongReport = "The leg is done and every step ticked. I brought the two commits of fix/chat-rows-wrap onto the branch, added the shared check in Pilot.Ui, and ran the whole Pilot.Gui.Tests suite in Release: 2891 passed, 14 skipped. Two cases fail for DIR.Lib's stack measure (SharpAstro/DIR.Lib#169) and are skipped with their fault line. Nothing was pushed; the controller lands the flight.";
 
     public required string State { get; init; }
     public required NodeMark[] Nodes { get; init; }
@@ -25,6 +25,9 @@ internal sealed class PageData
     public required ReposScreen Repos { get; init; }
     public required PullRequestsScreen PullRequests { get; init; }
     public required CardsScreen Cards { get; init; }
+
+    /// <summary>The same cards as <see cref="Cards"/>, each with a summary and a long detail folded under it: what the "card detail" page opens.</summary>
+    public required CardsScreen CardsWithDetail { get; init; }
     public required IReadOnlyList<MachineLine>? Machines { get; init; }
     public required TranscriptEntry[] Chat { get; init; }
     public required TranscriptEntry[] Transcript { get; init; }
@@ -81,6 +84,7 @@ internal sealed class PageData
         Repos = new ReposScreen([], "test", Now),
         PullRequests = PullRequestsFor("empty"),
         Cards = CardsScreen.Empty,
+        CardsWithDetail = CardsScreen.Empty,
         Machines = null,
         Chat = [],
         Transcript = [],
@@ -108,6 +112,7 @@ internal sealed class PageData
             Repos = SessionsCapture.ReposScreenFor(snapshot, repos, "sample"),
             PullRequests = PullRequestsFor("sample"),
             Cards = built.Cards,
+            CardsWithDetail = built.CardsWithDetail,
             Machines = null,
             Chat = built.Chat,
             Transcript = built.Transcript,
@@ -272,6 +277,15 @@ internal sealed class PageData
             Why = lengthen ? LongReport : null,
         }).ToList();
         var cardsScreen = cards == 0 ? CardsScreen.Empty : CardsScreen.From(cardRows, sessionRows, asOf);
+        // A card shows its summary as its body and folds the raw detail under a toggle; the detail is long here, whatever the state.
+        var detailRows = cardRows.Select(c => c with
+        {
+            Summary = lengthen ? $"{LongTitle} (summary)" : "Merge PR #390 once the checks are green.",
+            Detail = lengthen ? LongReport + "
+
+" + LongPath : LongReport,
+        }).ToList();
+        var cardsWithDetail = cards == 0 ? CardsScreen.Empty : CardsScreen.From(detailRows, sessionRows, asOf);
 
         var chatEntries = ChatFeed(chat, lengthen);
         var transcriptEntries = ChatFeed(transcript, lengthen);
@@ -291,6 +305,7 @@ internal sealed class PageData
             Repos = reposScreen,
             PullRequests = PullRequestsFor(state, asOf),
             Cards = cardsScreen,
+            CardsWithDetail = cardsWithDetail,
             Machines = null,
             Chat = chatEntries,
             Transcript = transcriptEntries,
