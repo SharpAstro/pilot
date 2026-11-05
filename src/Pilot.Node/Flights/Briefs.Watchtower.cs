@@ -19,10 +19,11 @@ public static partial class Briefs
         {
             text.AppendLine($"## {StaleSection.Heading}");
             text.AppendLine("Oldest first; see each through, or ring the controller with what only they can do:");
+            var from = text.Length;
             foreach (var item in stale)
             {
                 var line = StaleSection.Line(item);
-                if (text.Length + line.Length > MaxWatchtowerBrief / 3)
+                if (text.Length - from + line.Length > MaxWatchtowerBrief / 3)
                 {
                     break;
                 }
