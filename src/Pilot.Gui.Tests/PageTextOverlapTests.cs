@@ -51,7 +51,11 @@ public sealed class PageTextOverlapTests
     /// wide, DPI 1 and 1.5, in the "long" and "many" states only (the others have less to cut): 18 x 2 x 6 = 216 more, 1368 in all (it was
     /// 16 pages x 4 x 13 = 832).
     /// </summary>
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases()
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() =>
+        CaseTuples().Select(c => Row(c.Page, c.State, c.Width, c.Dpi, c.Height));
+
+    /// <summary>The cases as plain tuples: what <see cref="Cases"/> wraps for the theory, and what the allow-list's stale-entry test walks.</summary>
+    internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples()
     {
         foreach (var page in SweptPages)
         {
@@ -61,10 +65,10 @@ public sealed class PageTextOverlapTests
                 {
                     foreach (var dpi in Dpis)
                     {
-                        yield return Row(page, state, width, dpi, Height);
+                        yield return (page, state, width, dpi, Height);
                     }
                 }
-                yield return Row(page, state, BigWidth, BigDpi, BigHeight);
+                yield return (page, state, BigWidth, BigDpi, BigHeight);
                 if (!ShortStates.Contains(state))
                 {
                     continue;
@@ -73,7 +77,7 @@ public sealed class PageTextOverlapTests
                 {
                     foreach (var dpi in ShortDpis)
                     {
-                        yield return Row(page, state, width, dpi, ShortHeight);
+                        yield return (page, state, width, dpi, ShortHeight);
                     }
                 }
             }

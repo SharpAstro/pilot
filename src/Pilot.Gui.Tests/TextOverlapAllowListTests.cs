@@ -23,10 +23,8 @@ public sealed class TextOverlapAllowListTests
         foreach (var entry in TextOverlapAllowList.Entries)
         {
             var found = false;
-            foreach (var row in PageTextOverlapTests.Cases())
+            foreach (var (page, state, width, dpi, height) in PageTextOverlapTests.CaseTuples())
             {
-                var data = row.GetData();
-                var (page, state, width, dpi, height) = ((string)data[0]!, (string)data[1]!, (int)data[2]!, (float)data[3]!, (int)data[4]!);
                 var key = PageTextOverlapTests.Key(page, state, width, dpi, height);
                 if (!entry.CoversCase(key))
                 {
