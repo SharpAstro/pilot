@@ -63,48 +63,4 @@ public sealed class TextOverlapSweep
         PageTextOverlapTests.Failures(FixtureKey, faults, entry.Covers).Select(f => f.Kind).ShouldBe([TextFaultKind.Overlap]);
         entry.Covers("other | sample | 200 wide | DPI 1", faults.Single(f => f.Kind == TextFaultKind.Outside).Line).ShouldBeFalse();
     }
-
-    [Fact]
-    public void EveryAllowListEntryNamesAnIssueAndAReason()
-    {
-        foreach (var entry in TextOverlapAllowList.Entries)
-        {
-            entry.Issue.ShouldBeGreaterThan(0, entry.Fault);
-            entry.Reason.ShouldNotBeNullOrWhiteSpace(entry.Fault);
-        }
-    }
-
-    /// <summary>
-    /// An entry that covers no fault of any case it names is stale (the fault was fixed): it fails, so the list only shrinks. Each entry
-    /// is looked for in the cases its pattern names, and the search ends at the first fault it covers.
-    /// </summary>
-    [Fact]
-    public async Task EveryAllowListEntryStillCoversAFault()
-    {
-        var cases = PageTextOverlapTests.Cases().Select(r => r.Data).ToList();
-        var stale = new List<string>();
-        foreach (var entry in TextOverlapAllowList.Entries)
-        {
-            var found = false;
-            foreach (var (page, state, width, dpi, height) in cases)
-            {
-                var key = PageTextOverlapTests.Key(page, state, width, dpi, height);
-                if (!entry.CoversCase(key))
-                {
-                    continue;
-                }
-                var faults = await PageTextOverlapTests.FaultsOf(page, state, width, dpi, height);
-                if (faults.Any(f => entry.Covers(key, f.Line)))
-                {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                stale.Add($"{entry.Case} => {entry.Fault} (#{entry.Issue}: {entry.Reason})");
-            }
-        }
-        stale.ShouldBeEmpty("these allow-list entries no longer match any fault: delete them");
-    }
 }

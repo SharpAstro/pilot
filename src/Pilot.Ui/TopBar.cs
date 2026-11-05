@@ -86,7 +86,7 @@ internal static class TopBar
     /// <summary>The bar with its source line and no extra lines: what the transcript's overlay starts under.</summary>
     public const float Height = RowHeight + SourceHeight + 2 * PadY;
 
-    /// <summary>A title longer than this (the pages that name their node: "SE1's settings (this machine)") wraps at its spaces where the bar is narrower than it; the short ones are one leaf.</summary>
+    /// <summary>A title longer than this (the pages that name their node: "SE1's settings (this machine)") always wraps at its spaces, one (trimmed) leaf a word, even where the whole title would fit on one line; the short ones are one leaf.</summary>
     internal const int WrappedTitleChars = 20;
 
     // The page's name: one leaf where it is short, words that wrap within the bar where it is long (a title 436 px wide cut at the edge of a 422 px page).

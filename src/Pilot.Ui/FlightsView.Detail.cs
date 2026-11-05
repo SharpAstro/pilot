@@ -9,7 +9,7 @@ namespace Pilot.Ui;
 internal sealed partial class FlightsView<TSurface>
 {
     private readonly ListScrollController _detailScroll = new() { Mode = ScrollBarMode.Interactive };
-    private readonly ListScrollController _headScroll = new() { Mode = ScrollBarMode.Interactive };
+    private readonly ListScrollController _flightHeadScroll = new() { Mode = ScrollBarMode.Interactive };
 
     /// <summary>The least room the open flight's scrolled part (facts, legs) keeps when what stands above it is long.</summary>
     private const float ScrolledMinHeight = 120f;
@@ -276,7 +276,7 @@ internal sealed partial class FlightsView<TSurface>
         // What stays above the scroll (the head, the buttons, the notes) takes what it needs and no more, and scrolls itself where the room
         // is short (a header that wrapped onto many lines, a leg's long name on a button): it had no scroll, so its end lay past the window's
         // foot and the legs' scroll was left none. The legs' scroll keeps a floor of its own.
-        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_headScroll).WStar().HStarUpToContent();
+        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
                 sticky,
                 Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).WStar().HStar(1f, ScrolledMinHeight))
