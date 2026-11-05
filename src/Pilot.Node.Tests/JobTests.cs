@@ -1672,7 +1672,8 @@ public sealed class JobTests3 : JobTestsBase
         var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
         await Running(id);
 
-        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
+        paused.Ok.ShouldBeTrue(paused.Error);
         // Past the deadline it would have had without the pause.
         while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
         {
