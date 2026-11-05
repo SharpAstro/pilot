@@ -667,8 +667,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
     private static CheckRun ResultOf(JobRow ended, string[]? last, double share, string? basis)
     {
-        var tail = last is { Length: > 0 } ? string.Join('
-', last.TakeLast(30)) : "";
+        var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
         return ended.State switch
         {
             JobState.Succeeded => new CheckRun(0, tail),
