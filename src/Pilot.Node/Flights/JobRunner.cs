@@ -583,6 +583,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
+        ReorderQueue();
+
         while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
@@ -605,6 +607,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         CheckIdle();
+    }
+
+    /// <summary>
+    /// Puts the waiting jobs in start order on every dispatch, so a priority set while a job waits, or the wait bound passing,
+    /// takes effect: benchmarks stay ahead in their own order, the rest by <see cref="JobOrder"/> (rank, queued at, id).
+    /// </summary>
+    private void ReorderQueue()
+    {
+        if (_queue.Count < 2)
+        {
+            return;
+        }
+        var benches = _queue.Where(j => j.Kind == JobKind.Bench).ToList();
+        var others = JobOrder.Sort(_queue.Where(j => j.Kind != JobKind.Bench), state.Flights(), state.Admission(), time.GetUtcNow());
+        _queue.Clear();
+        _queue.AddRange(benches);
+        _queue.AddRange(others);
     }
 
     /// <summary>
