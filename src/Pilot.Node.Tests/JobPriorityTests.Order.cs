@@ -203,7 +203,8 @@ public sealed partial class JobPriorityTests
 
         var urgentJob = HandAs(jobs, urgent, clock);
         var lifted = HandAs(jobs, high, clock);
-        clock.Advance(JobOrder.WaitBound);
+        // Just over the bound: it is past it only when it has waited longer than it.
+        clock.Advance(JobOrder.WaitBound + TimeSpan.FromMinutes(1));
         Look(jobs);
 
         // Lifted to Urgent, level with the job ahead: nothing outranks it, so the only reason is the lift.
