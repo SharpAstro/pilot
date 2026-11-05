@@ -1,0 +1,165 @@
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>
+/// A node stopping (an update, a restart) keeps a QUEUED leg check job: same id, same place in the queue, and the next node's
+/// finish of that leg waits on that job instead of queueing a fresh one at the back (pilot #737).
+/// </summary>
+[Collection(JobsCollection.Name)]
+[Trait("Category", "Slow")]
+public sealed class CheckCarryOverTests : JobTestsBase
+{
+    private sealed class Lifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime, IDisposable
+    {
+        private readonly CancellationTokenSource _stopping = new();
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => _stopping.Token;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication() => _stopping.Cancel();
+
+        public void Dispose() => _stopping.Dispose();
+    }
+
+    private const string Flight = "TIA1";
+    private const string LegName = "parser";
+
+    // A first node with an ordinary job running (it holds the only slot) and a check queued behind it, whose caller is cancelled by the
+    // shutdown; then the node is stopped. Returns what the next node starts from.
+    private async Task<(JobRow Busy, JobRow Check, JobRow After)> FirstNodeStoppedAsync(string checkCommand)
+    {
+        using var lifetime = new Lifetime();
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct, lifetime.ApplicationStopping);
+        using var first = await Node.StartAsync(_root, lifetime: lifetime);
+        var busyId = first.Run(_root, Sleep(90)).Made!;
+        var busy = await first.UntilAsync(busyId, j => j.State == JobState.Running, Ct);
+        var run = first.Jobs.RunCheckAsync(Flight, LegName, checkCommand, _root, TimeSpan.FromMinutes(30), caller.Token);
+        var check = first.State.Jobs().Single(j => j.Kind == JobKind.Check);
+        var afterId = first.Run(_root, Echo("after")).Made!;
+        await first.UntilAsync(afterId, j => j.Step is { } step && step.Contains("ahead"), Ct);
+
+        // The shutdown: the host's stopping fires, which cancels the caller, and then the runner stops.
+        lifetime.StopApplication();
+        await Should.ThrowAsync<OperationCanceledException>(run);
+        await first.StopAsync();
+
+        var kept = first.State.Jobs().Single(j => j.Id == check.Id);
+        (kept.State, kept.EndedAt).ShouldBe((JobState.Queued, null));
+        return (busy, check, first.Job(afterId));
+    }
+
+    private static void KillBusy(JobRow busy)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(busy.Pid!.Value);
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            // Already gone.
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task AQueuedCheckSurvivesTheNodeStoppingWithTheSameIdAndPlaceAheadOfALaterJob()
+    {
+        var (busy, check, after) = await FirstNodeStoppedAsync(Echo("carried"));
+        try
+        {
+            using var second = await Node.StartAsync(_root);
+
+            var rows = second.State.Jobs();
+            var carried = rows.Single(j => j.Id == check.Id);
+            (carried.State, carried.QueuedAt, carried.EndedAt).ShouldBe((JobState.Queued, check.QueuedAt, null));
+            var later = await second.UntilAsync(after.Id, j => j.Step is { } step && step.Contains("1 ahead"), Ct);
+            later.State.ShouldBe(JobState.Queued);
+            (await second.UntilAsync(check.Id, j => j.Step is { } step && step.StartsWith("next in line", StringComparison.Ordinal), Ct)).Id.ShouldBe(check.Id);
+            await second.StopAsync();
+        }
+        finally
+        {
+            KillBusy(busy);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task ASecondRunOfTheSameCheckWaitsOnTheCarriedJobAndMakesNoNewRow()
+    {
+        var (busy, check, _) = await FirstNodeStoppedAsync(Echo("carried"));
+        try
+        {
+            using var second = await Node.StartAsync(_root);
+
+            var run = second.Jobs.RunCheckAsync(Flight, LegName, check.Command, _root, TimeSpan.FromMinutes(30), Ct);
+            second.State.Jobs().Count(j => j.Kind == JobKind.Check).ShouldBe(1);
+
+            // The slot frees: the carried check runs, and the finish that attached gets its result.
+            KillBusy(busy);
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
+
+            result.ExitCode.ShouldBe(0);
+            result.Tail.ShouldContain("carried");
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+            await second.StopAsync();
+        }
+        finally
+        {
+            KillBusy(busy);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task ACheckTheCarriedRunEndedBeforeTheFinishCameBackIsAdoptedNotRunAgain()
+    {
+        var (busy, check, _) = await FirstNodeStoppedAsync(Echo("done early"));
+        try
+        {
+            using var second = await Node.StartAsync(_root);
+            KillBusy(busy);
+            await second.UntilAsync(check.Id, j => j.EndedAt is not null, Ct);
+
+            var result = await second.Jobs.RunCheckAsync(Flight, LegName, check.Command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+            result.ExitCode.ShouldBe(0);
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+            await second.StopAsync();
+        }
+        finally
+        {
+            KillBusy(busy);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task ACallerGivingUpWhileTheNodeIsNotStoppingStillCancelsItsQueuedCheck()
+    {
+        using var lifetime = new Lifetime();
+        using var node = await Node.StartAsync(_root, lifetime: lifetime);
+        var busyId = node.Run(_root, Sleep(90)).Made!;
+        var busy = await node.UntilAsync(busyId, j => j.State == JobState.Running, Ct);
+        try
+        {
+            using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            var run = node.Jobs.RunCheckAsync(Flight, LegName, Echo("never"), _root, TimeSpan.FromMinutes(30), caller.Token);
+            var check = node.State.Jobs().Single(j => j.Kind == JobKind.Check);
+
+            await caller.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(run);
+
+            (await node.UntilAsync(check.Id, j => j.EndedAt is not null, Ct)).State.ShouldBe(JobState.Cancelled);
+            await node.StopAsync();
+        }
+        finally
+        {
+            KillBusy(busy);
+        }
+    }
+}

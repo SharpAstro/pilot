@@ -209,13 +209,14 @@ public abstract class JobTestsBase : IDisposable
     {
         private readonly FileJournal _journal;
 
-        private Node(string root, Func<long?> freeMemory)
+        private Node(string root, Func<long?> freeMemory, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime)
         {
             _journal = new FileJournal(Path.Combine(root, "journal"));
             State = new NodeState(_journal, TimeProvider.System);
             Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
             {
                 FreeMemory = freeMemory,
+                Lifetime = lifetime,
                 Say = (command, _) =>
                 {
                     Said.Enqueue(command);
@@ -230,9 +231,9 @@ public abstract class JobTestsBase : IDisposable
 
         public ConcurrentQueue<CommandRequest> Said { get; } = new();
 
-        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null)
+        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime = null)
         {
-            var node = new Node(root, freeMemory ?? (() => null));
+            var node = new Node(root, freeMemory ?? (() => null), lifetime);
             if (node.State.Sessions().Length == 0)
             {
                 node.State.PutSession(new SessionRow
@@ -1800,7 +1801,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 90_000)]
-    public async Task TheNodeStoppingEndsRunningChecksAndDropsWaitingOnesButLeavesAnOrdinaryJobRunning()
+    public async Task TheNodeStoppingEndsRunningChecksAndLeavesWaitingOnesQueuedAndAnOrdinaryJobRunning()
     {
         var marker = Path.Combine(_root, "grandchild-stop.pid");
         using var node = await Node.StartAsync(_root);
@@ -1816,13 +1817,13 @@ public sealed class JobTests3 : JobTestsBase
         await node.StopAsync();
 
         (await running.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
-        (await waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
-        foreach (var row in rows)
-        {
-            var ended = node.State.Jobs().Single(j => j.Id == row.Id);
-            (ended.State, ended.EndedAt is not null, ended.Error).ShouldBe((JobState.Failed, true, ended.Error));
-            ended.Error!.ShouldContain("node stopped");
-        }
+        // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737).
+        await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
+        var endedRunning = node.State.Jobs().Single(j => j.Id == rows[0].Id);
+        (endedRunning.State, endedRunning.EndedAt is not null).ShouldBe((JobState.Failed, true));
+        endedRunning.Error!.ShouldContain("node stopped");
+        var stillQueued = node.State.Jobs().Single(j => j.Id == rows[1].Id);
+        (stillQueued.State, stillQueued.EndedAt).ShouldBe((JobState.Queued, null));
         await GoneWithin(child);
         // The ordinary job is the node's to leave behind.
         node.Job(jobId).State.ShouldBe(JobState.Running);
@@ -1835,7 +1836,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task RecoveryFailsACheckRowItFindsRunningOrQueuedKillingALiveTreeAndStillFollowsAnOrdinaryJob()
+    public async Task RecoveryFailsACheckRowItFindsRunningKillingALiveTreeKeepsAQueuedOneAndStillFollowsAnOrdinaryJob()
     {
         string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];
         System.Diagnostics.Process Spawn()
@@ -1866,12 +1867,12 @@ public sealed class JobTests3 : JobTestsBase
             await _jobs.RecoverAsync(Ct);
 
             await GoneWithin(checkProcess.Id);
-            foreach (var id in new[] { "jc1", "jc2" })
-            {
-                var row = _state.Jobs().Single(j => j.Id == id);
-                (row.State, row.EndedAt is not null).ShouldBe((JobState.Failed, true));
-                _jobs.IsRunning(id).ShouldBeFalse();
-            }
+            var ran = _state.Jobs().Single(j => j.Id == "jc1");
+            (ran.State, ran.EndedAt is not null).ShouldBe((JobState.Failed, true));
+            _jobs.IsRunning("jc1").ShouldBeFalse();
+            // The queued check carried over: still queued, behind the ordinary job's slot, not ended.
+            var queued = _state.Jobs().Single(j => j.Id == "jc2");
+            (queued.State, queued.EndedAt).ShouldBe((JobState.Queued, null));
             _jobs.IsRunning("jo1").ShouldBeTrue();
             _state.Jobs().Single(j => j.Id == "jo1").State.ShouldBe(JobState.Running);
             IsAlive(jobProcess.Id).ShouldBeTrue();

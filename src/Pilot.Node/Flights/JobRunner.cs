@@ -254,8 +254,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
-        // A check is not followed: the node that awaited it is gone, so nothing waits for its result. Its tree is ended and its row says so.
-        foreach (var check in left.Where(j => j.Kind == JobKind.Check).ToList())
+        // A running check is not followed: the node that awaited it is gone, so nothing waits for its result. Its tree is ended and its
+        // row says so. A queued one has not started, so nothing is lost: it stays queued, in its place with the other carried jobs
+        // (below), and the finish that comes back waits on it (RunCheckAsync) instead of queueing a fresh one (pilot #737).
+        foreach (var check in left.Where(j => j.Kind == JobKind.Check && j.State == JobState.Running).ToList())
         {
             left.Remove(check);
             _mine[check.Id] = 0;
@@ -287,12 +289,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             }
         }
         DetachedShell.DeleteScripts(check.ScriptPath);
-        state.PutJob(Unpaused(check, time.GetUtcNow()) with
+        var ended = Unpaused(check, time.GetUtcNow()) with
         {
             State = JobState.Failed,
             Error = "the node restarted and nothing waits for this check any more, so it was ended",
             EndedAt = time.GetUtcNow(),
-        });
+        };
+        state.PutJob(ended);
+        // A finish that attached to the row before this ran is told, not left waiting (nothing is kept for a later one).
+        if (_checkWaiters.TryRemove(ended.Id, out var waiter))
+        {
+            waiter.TrySetResult(ResultOf(ended, null, 0));
+        }
     }
 
     private async Task RecoverRunningAsync(JobRow job, CancellationToken cancellationToken)
@@ -442,7 +450,27 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     public async Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
     {
-        var jobId = state.NextJobId();
+        // A check a previous node left queued (carried over the restart) is waited on, not queued again at the back, and so is the
+        // result of one a carried run ended after this node started when nobody had taken it yet (pilot #737).
+        if (TakeKeptResult(flight, leg, command, cwd) is { } kept)
+        {
+            return kept;
+        }
+        var done = new TaskCompletionSource<CheckRun>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var jobId = state.Jobs().Where(j => j is { Kind: JobKind.Check, EndedAt: null } && j.Flight == flight && j.Leg == leg && j.Command == command && j.Cwd == cwd
+                && (j.State == JobState.Queued || _mine.ContainsKey(j.Id)))
+            .OrderBy(j => j.QueuedAt ?? j.StartedAt).Select(j => j.Id)
+            .FirstOrDefault(id => _checkWaiters.TryAdd(id, done));
+        if (jobId is not null)
+        {
+            // It may have ended between the look and the waiter: no Finish will come for a waiter put after it.
+            if (state.Jobs().FirstOrDefault(j => j.Id == jobId) is { EndedAt: not null } already && _checkWaiters.TryRemove(jobId, out _))
+            {
+                return ResultOf(already, null, 0);
+            }
+            return await WaitForCheckAsync(jobId, done, cancellationToken);
+        }
+        jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
         var logPath = Path.Combine(folder, $"{jobId}.log");
@@ -463,18 +491,70 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             QueuedAt = now,
             MemoryKey = JobKey.Of(command, cwd).ToString(),
         };
-        var done = new TaskCompletionSource<CheckRun>(TaskCreationOptions.RunContinuationsAsynchronously);
         _checkWaiters[jobId] = done;
         _mine[jobId] = 0;
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
-        using (cancellationToken.Register(() => CancelJob(jobId, "the check's caller", force: true)))
+        return await WaitForCheckAsync(jobId, done, cancellationToken);
+    }
+
+    /// <summary>
+    /// Waits for a check job's result. A caller that gives up cancels the job, except when the node is stopping: then the job is left
+    /// as it is for the next node, which carries a queued one over, and only this waiter goes.
+    /// </summary>
+    private async Task<CheckRun> WaitForCheckAsync(string jobId, TaskCompletionSource<CheckRun> done, CancellationToken cancellationToken)
+    {
+        using (cancellationToken.Register(() =>
+        {
+            if (NodeStopping)
+            {
+                _checkWaiters.TryRemove(jobId, out _);
+                done.TrySetCanceled(cancellationToken);
+            }
+            else
+            {
+                CancelJob(jobId, "the check's caller", force: true);
+            }
+        }))
         {
             var run = await done.Task;
             // A caller that gave up is told so, not handed a result it did not ask for.
             cancellationToken.ThrowIfCancellationRequested();
             return run;
         }
+    }
+
+    /// <summary>
+    /// The host's lifetime, so a caller's cancel can be told a shutdown from a give-up. The host raises ApplicationStopping before it
+    /// stops its services, so by the time a caller's token (linked to it) fires, this runner's own stopping token is not yet
+    /// cancelled: the lifetime's is the one already true then. Null in a bare runner, where only <see cref="_stopping"/> and
+    /// <see cref="StopAsync"/> mark a stop.
+    /// </summary>
+    public Microsoft.Extensions.Hosting.IHostApplicationLifetime? Lifetime { get; init; }
+
+    private volatile bool _stoppingNow;
+
+    private bool NodeStopping => _stoppingNow || _stopping.IsCancellationRequested || Lifetime?.ApplicationStopping.IsCancellationRequested == true;
+
+    // Results of check jobs a carried run ended with no waiter (the worker's finish had not come back yet), kept for that finish.
+    private readonly ConcurrentDictionary<string, (JobRow Row, CheckRun Run, DateTimeOffset At)> _keptResults = new(StringComparer.Ordinal);
+    private static readonly TimeSpan KeptFor = TimeSpan.FromMinutes(30);
+
+    private CheckRun? TakeKeptResult(string flight, string leg, string command, string cwd)
+    {
+        var now = time.GetUtcNow();
+        foreach (var (id, kept) in _keptResults.ToList())
+        {
+            if (now - kept.At > KeptFor)
+            {
+                _keptResults.TryRemove(id, out _);
+            }
+            else if (kept.Row.Flight == flight && kept.Row.Leg == leg && kept.Row.Command == command && kept.Row.Cwd == cwd && _keptResults.TryRemove(id, out _))
+            {
+                return kept.Run;
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -521,20 +601,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             bench.TrySetResult(ended);
             return;
         }
-        if (!_checkWaiters.TryRemove(ended.Id, out var waiter))
+        if (ended.Kind != JobKind.Check)
         {
             return;
         }
-        var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
         _saturation.TryRemove(ended.Id, out var share);
-        waiter.TrySetResult(ended.State switch
+        var run = ResultOf(ended, last, share);
+        if (_checkWaiters.TryRemove(ended.Id, out var waiter))
+        {
+            waiter.TrySetResult(run);
+        }
+        else if (ended.State != JobState.Cancelled && !_stoppingNow && !_stopping.IsCancellationRequested)
+        {
+            // Nobody waits: a carried check ended before the worker's finish came back, and that finish takes this result (pilot #737).
+            _keptResults[ended.Id] = (ended, run, time.GetUtcNow());
+        }
+    }
+
+    private static CheckRun ResultOf(JobRow ended, string[]? last, double share)
+    {
+        var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
+        return ended.State switch
         {
             JobState.Succeeded => new CheckRun(0, tail),
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
                 new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped") { StoppedByBudget = true, Saturation = share },
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
-        });
+        };
     }
 
     /// <summary>Whether the job's process is held as running: what a cancel looks for.</summary>
@@ -1543,6 +1637,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         // The jobs are left running, and their rows Running: the next node finds them again. Each watch lets go of its job
         // (the stopping token ends it) and is waited for, so none acts on a row after the node is gone.
+        _stoppingNow = true;
         await base.StopAsync(cancellationToken);
         try
         {
@@ -1551,12 +1646,14 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         catch (OperationCanceledException)
         {
         }
-        // Checks still waiting are dropped: their callers go with the node.
+        // Checks still waiting keep their rows Queued for the next node, which puts them back in their place; only their waiters go,
+        // with the callers that go with this node (pilot #737).
         foreach (var waiting in state.Jobs().Where(j => j.Kind == JobKind.Check && j.State == JobState.Queued && _mine.ContainsKey(j.Id)).ToList())
         {
-            var ended = waiting with { State = JobState.Failed, Error = "the node stopped before the check started", Step = null, EndedAt = time.GetUtcNow() };
-            state.PutJob(ended);
-            Finish(ended, null);
+            if (_checkWaiters.TryRemove(waiting.Id, out var waiter))
+            {
+                waiter.TrySetCanceled();
+            }
         }
     }
 
