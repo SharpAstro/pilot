@@ -438,6 +438,7 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
