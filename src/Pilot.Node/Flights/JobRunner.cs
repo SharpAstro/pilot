@@ -615,7 +615,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BehindOwn(i) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -654,7 +654,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     break;
                 }
                 // Held by a running build, or queued behind a held job it shares clones with: passed over, its clones stay claimed.
-                var siblingOnly = why is null || (SiblingHold(job) is not null && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true) is null);
+                var siblingOnly = why is null || ((SiblingHold(job) is not null || BuildHold(job) is not null) && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true, ignoreBuild: true) is null);
                 if (!siblingOnly)
                 {
                     break;
@@ -836,7 +836,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
     /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
     /// </summary>
-    private string? WhyWait(JobRow job, bool ignoreSibling = false)
+    private string? WhyWait(JobRow job, bool ignoreSibling = false, bool ignoreBuild = false)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -855,6 +855,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (!ignoreSibling && SiblingHold(job) is { } shared)
         {
             return shared;
+        }
+        if (!ignoreBuild && BuildHold(job) is { } building)
+        {
+            return building;
         }
         if (_running.Count >= MaxRunning)
         {
@@ -939,6 +943,42 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 var owner = holder is { } row ? row.OwnerName ?? row.Owner ?? "the node" : "the node";
                 return $"waiting for job {id}'s build of the sibling clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)} ({owner}){RemainingOf(holder)}";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Why a job that only consumes a build (every dotnet test or run in it has <c>--no-build</c>) may not start: a job that builds
+    /// is running in its checkout, or is queued ahead of it there, by any owner. Null for any other job or when no build is pending.
+    /// </summary>
+    private string? BuildHold(JobRow job)
+    {
+        if (job.Kind == JobKind.Bench || !SiblingSet.OnlyConsumesBuild(job.Command, job.Cwd))
+        {
+            return null;
+        }
+        var root = SiblingSet.CheckoutOf(job.Cwd);
+        bool BuildsHere(JobRow j) => j.Id != job.Id
+            && string.Equals(SiblingSet.CheckoutOf(j.Cwd), root, StringComparison.OrdinalIgnoreCase)
+            && SiblingSet.BuildsAny(j.Command, j.Cwd);
+        foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
+        {
+            // A job past its build has let go of it.
+            if (!_released.ContainsKey(id) && state.Jobs().FirstOrDefault(j => j.Id == id) is { } row && BuildsHere(row))
+            {
+                return $"waits for {id}, the build of this plane";
+            }
+        }
+        foreach (var ahead in _queue)
+        {
+            if (ahead.Id == job.Id)
+            {
+                break;
+            }
+            if (BuildsHere(ahead))
+            {
+                return $"waits for {ahead.Id}, the build of this plane";
             }
         }
         return null;

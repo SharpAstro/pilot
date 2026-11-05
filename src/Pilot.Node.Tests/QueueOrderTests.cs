@@ -97,6 +97,83 @@ public sealed class QueueOrderTests : JobTestsBase
         await CancelAll(jobs, held);
     }
 
+    [Theory]
+    [InlineData("dotnet test --no-build", true)]
+    [InlineData("dotnet run --no-build -c Release", true)]
+    [InlineData("dotnet test", false)]
+    [InlineData("dotnet build && dotnet test --no-build", false)]
+    [InlineData("dotnet build", false)]
+    [InlineData("echo hi", false)]
+    public void OnlyConsumesBuildTellsANoBuildCommandFromABuildingOne(string command, bool expected) =>
+        SiblingSet.OnlyConsumesBuild(command, _root).ShouldBe(expected);
+
+    [Fact]
+    public async Task ANoBuildTestWaitsForAnotherOwnersRunningBuildInItsPlane()
+    {
+        var jobs = Runner();
+        var plane = Path.Combine(_root, "planeA");
+        var build = HandIn(jobs, "sleep 20; dotnet build --help", plane, "a1b2c3d4");
+        await Until(build, j => j.State == JobState.Running);
+        var test = HandIn(jobs, "sleep 20; dotnet test --no-build --help", plane, "99998888");
+
+        Row(test).State.ShouldBe(JobState.Queued);
+        Row(test).Step.ShouldNotBeNull().ShouldContain($"waits for {build}, the build of this plane");
+        Row(test).WaitsOnSibling.ShouldNotBe(true);
+        await CancelAll(jobs, build);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(test, j => j.State == JobState.Running);
+        await CancelAll(jobs, test);
+    }
+
+    [Fact]
+    public async Task ABuildQueuedAheadHoldsAnotherOwnersNoBuildTestInTheSamePlane()
+    {
+        var jobs = Runner();
+        var planeA = Path.Combine(_root, "planeA");
+        var holder = HandIn(jobs, "echo 'one'; sleep 20", Path.Combine(_root, "holder"), "ffff0000");
+        await Until(holder, j => j.State == JobState.Running);
+        // A build held on the sibling clone the holder builds ("two" shares pilot with "one").
+        var held = HandIn(jobs, "sleep 20; dotnet build two", planeA, "a1b2c3d4");
+        var test = HandIn(jobs, "sleep 20; dotnet test --no-build --help", planeA, "99998888");
+
+        Row(held).State.ShouldBe(JobState.Queued);
+        Row(test).State.ShouldBe(JobState.Queued);
+        Row(test).Step.ShouldNotBeNull().ShouldContain($"waits for {held}, the build of this plane");
+        await CancelAll(jobs, holder);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        await CancelAll(jobs, held);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(test, j => j.State == JobState.Running);
+        await CancelAll(jobs, test);
+    }
+
+    [Fact]
+    public async Task ANoBuildTestInAnotherCheckoutIsNotHeldByABuild()
+    {
+        var jobs = Runner();
+        var build = HandIn(jobs, "sleep 20; dotnet build --help", Path.Combine(_root, "planeA"), "a1b2c3d4");
+        await Until(build, j => j.State == JobState.Running);
+        var test = HandIn(jobs, "sleep 20; dotnet test --no-build --help", Path.Combine(_root, "planeB"), "99998888");
+
+        await Until(test, j => j.State == JobState.Running);
+        await CancelAll(jobs, build, test);
+    }
+
+    [Fact]
+    public async Task APlainDotnetTestIsNotTreatedAsNoBuild()
+    {
+        var jobs = Runner();
+        var plane = Path.Combine(_root, "planeA");
+        var build = HandIn(jobs, "sleep 20; dotnet build --help", plane, "a1b2c3d4");
+        await Until(build, j => j.State == JobState.Running);
+        var test = HandIn(jobs, "sleep 20; dotnet test --help", plane, "99998888");
+
+        await Until(test, j => j.State == JobState.Running);
+        (Row(test).Step ?? "").ShouldNotContain("the build of this plane");
+        await CancelAll(jobs, build, test);
+    }
+
     [Fact]
     public async Task TheSameOwnersJobInAnotherCheckoutIsNotHeldByTheRule()
     {

@@ -26,6 +26,21 @@ public static class SiblingSet
         return found;
     }
 
+    /// <summary>Whether any segment of <paramref name="command"/> builds (dotnet build, restore, publish, pack, msbuild, or test/run without <c>--no-build</c>).</summary>
+    public static bool BuildsAny(string command, string cwd) =>
+        JobKey.Steps(command, cwd).Any(s => Builds(s.Tool, s.Verb, s.Flags));
+
+    /// <summary>Whether <paramref name="command"/> only consumes a build: some dotnet test or run segment carries <c>--no-build</c> and no segment builds.</summary>
+    public static bool OnlyConsumesBuild(string command, string cwd)
+    {
+        var steps = JobKey.Steps(command, cwd).ToList();
+        return steps.Count > 0
+            && steps.All(s => !Builds(s.Tool, s.Verb, s.Flags))
+            && steps.Any(s => s.Tool == "dotnet"
+                && s.Verb.ToLowerInvariant() is "test" or "run"
+                && s.Flags.Contains("--no-build", StringComparer.OrdinalIgnoreCase));
+    }
+
     /// <summary>
     /// Whether a job running <paramref name="command"/> is past its last building segment, judged from the command lines of the
     /// processes under it: none is a building dotnet or msbuild invocation, and one matches a segment after the last building one.
