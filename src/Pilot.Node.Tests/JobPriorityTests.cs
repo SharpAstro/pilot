@@ -50,6 +50,8 @@ public sealed partial class JobPriorityTests : JobTestsBase
         lines.ShouldContain("child=" + expected, output);
     }
 
+    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
+    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task AJobAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
@@ -65,18 +67,22 @@ public sealed partial class JobPriorityTests : JobTestsBase
     [Fact]
     public void AJobRunnerRunsBelowNormalUnlessToldOtherwise() => _jobs.Priority.ShouldBe(JobPriority.BelowNormal);
 
+    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
+    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task ACheckRunAsAJobAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
     {
         _jobs.Priority = priority;
 
-        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        var run = await new JobCheckRunner(_jobs).RunAsync(Probe, _root, Ct, "TIA1", "parser").WaitAsync(WaitCeiling, Ct);
 
         run.Passed.ShouldBeTrue(run.Tail);
         ShouldRunAt(run.Tail, priority);
     }
 
+    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
+    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task ACheckRunDirectlyAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
@@ -87,6 +93,8 @@ public sealed partial class JobPriorityTests : JobTestsBase
         ShouldRunAt(run.Tail, priority);
     }
 
+    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task ACheckRunDirectlyRunsBelowNormalByDefault()
     {
@@ -107,7 +115,8 @@ public sealed partial class JobPriorityTests : JobTestsBase
             SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
         });
         var id = runner.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [node.Folder, "0", Probe], Who = "se1-tia1-parser" }).Made!;
-        for (var i = 0; i < 600; i++)
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (node.State.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job)
             {
@@ -115,9 +124,11 @@ public sealed partial class JobPriorityTests : JobTestsBase
             }
             await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end");
+        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
+    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {

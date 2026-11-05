@@ -90,10 +90,14 @@ public abstract class JobTestsBase : IDisposable
     private protected CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
+    /// <summary>The longest a test waits on a condition: a ceiling a busy machine does not reach, not a time the code is held to.</summary>
+    private protected static readonly TimeSpan WaitCeiling = TimeSpan.FromMinutes(2);
+
     /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
     private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        for (var i = 0; i < 300; i++)
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
             {
@@ -101,12 +105,13 @@ public abstract class JobTestsBase : IDisposable
             }
             await Task.Delay(20, Ct);
         }
-        throw new TimeoutException($"job {id} never came to the state awaited");
+        throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}");
     }
 
     private protected async Task<JobRow> Ended(string id)
     {
-        for (var i = 0; i < 300; i++)
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (_state.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job && (job.Owner is null || job.Told || _refuse is not null))
             {
@@ -114,7 +119,7 @@ public abstract class JobTestsBase : IDisposable
             }
             await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end");
+        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
     private protected static bool IsAlive(int pid)
