@@ -58,7 +58,7 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
     }
 
     /// <summary>Minutes rounded as the check messages do; whole hours as hours.</summary>
-    private static string Describe(TimeSpan span)
+    internal static string Describe(TimeSpan span)
     {
         var minutes = (int)Math.Round(span.TotalMinutes, MidpointRounding.AwayFromZero);
         return minutes >= 60 && minutes % 60 == 0 ? $"{minutes / 60} h" : $"{minutes} m";

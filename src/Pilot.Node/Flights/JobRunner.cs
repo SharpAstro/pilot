@@ -151,6 +151,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
     // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
     private readonly ConcurrentDictionary<string, double> _saturation = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _checkBasis = new(StringComparer.Ordinal);
     private const string TimeoutPrefix = "stopped after its timeout";
     private CancellationToken _stopping;
     // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
@@ -440,9 +441,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// and last lines; one stopped by its budget, cancelled or never started is -1 with why. Cancelling
     /// <paramref name="cancellationToken"/> withdraws a waiting check or kills a running one's tree.
     /// </summary>
-    public async Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken) =>
+        RunCheckAsync(flight, leg, command, cwd, new CheckLimit(budget, "the budget it was given", 0, null), cancellationToken);
+
+    /// <summary>The limit a check of <paramref name="command"/> in <paramref name="cwd"/> gets, from this node's job rows.</summary>
+    public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), JobKey.Of(command, cwd));
+
+    /// <summary>As above, with the limit and where it came from, so a stop can say both.</summary>
+    public async Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
     {
+        var budget = limit.Limit;
         var jobId = state.NextJobId();
+        _checkBasis[jobId] = limit.Basis;
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
         var logPath = Path.Combine(folder, $"{jobId}.log");
@@ -527,11 +537,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
         _saturation.TryRemove(ended.Id, out var share);
+        _checkBasis.TryRemove(ended.Id, out var basis);
         waiter.TrySetResult(ended.State switch
         {
             JobState.Succeeded => new CheckRun(0, tail),
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
-                new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped") { StoppedByBudget = true, Saturation = share },
+                new CheckRun(-1, $"the check was stopped at {CheckLimit.Describe(ended.Timeout)} of running: {basis ?? "its limit"}") { StoppedByBudget = true, Saturation = share },
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
         });
