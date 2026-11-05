@@ -148,6 +148,17 @@ public sealed record LegRecheck
     public static string RestartedOutcome(string check) =>
         $"The node restarted while it was rerunning your leg's check `{check}`, so the rerun never finished and the leg is still flying. Run `leg finish done` again.";
 
+    /// <summary>The outcome of a rerun whose check job is still queued: it carried over the node's restart and keeps its place (pilot #737).</summary>
+    public static string CarriedOutcome(string check) =>
+        $"The node restarted while it was rerunning your leg's check `{check}`, but the check's job carried over the restart and keeps its place in the queue. Run `leg finish done` again: it waits on that same job rather than starting over.";
+
+    /// <summary>
+    /// The outcome of a rerun whose check job was running when the node restarted: a graceful stop lets it run on, and the next node
+    /// follows it; a crash ended it, and then the next finish runs it afresh (pilot #737).
+    /// </summary>
+    public static string RunningCarriedOutcome(string check) =>
+        $"The node restarted while it was rerunning your leg's check `{check}`. The check's job was running and carries over a graceful restart. Run `leg finish done` again: it waits on that same job, or runs the check afresh if the job did not survive.";
+
     /// <summary>The outcome of a rerun that failed.</summary>
     public static string FailedOutcome(string check, int exitCode, string tail) =>
         $"The rerun of your leg's check `{check}` failed ({exitCode}); the leg is still flying. Last of its output:\n{tail}\nFix what it shows, then run `leg finish done` again.";

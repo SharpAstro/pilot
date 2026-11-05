@@ -174,6 +174,22 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task ARerunWhoseCheckJobCarriedOverTheRestartTellsItsWorkerToFinishAgainWhichWaitsOnThatJob()
+    {
+        Worker(SessionState.Idle);
+        Recheck(LegRecheck.CarriedOutcome("dotnet test"));
+
+        await _watch.LookAsync(Ct);
+
+        var said = _said.ShouldHaveSingleItem().Args[0];
+        said.ShouldContain("carried over the restart");
+        said.ShouldContain("keeps its place");
+        said.ShouldContain("`leg finish done` again");
+        said.ShouldContain("waits on that same job");
+        _state.Legs("TIA1").Single().Recheck.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ARerunOutcomeThatCannotBeSaidRingsIdleAndIsStillClearedSoItIsNotSaidTwice()
     {
         Worker(SessionState.Idle);
