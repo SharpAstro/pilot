@@ -61,6 +61,8 @@ public sealed partial class JobPriorityTests
         await gone(expected);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task AnUrgentFlightsJobQueuedLastStartsBeforeEarlierNormalOnes()
     {
@@ -79,6 +81,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, last, first, second);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task JobsOfOnePriorityKeepFirstComeOrder()
     {
@@ -95,6 +99,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, first, second, third);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task AJobQueuedOverTheBoundAgoIsLiftedPastANewerJobOneLevelAboveIt()
     {
@@ -114,6 +120,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, old, newer);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task AJobWithinTheBoundIsNotLifted()
     {
@@ -160,6 +168,8 @@ public sealed partial class JobPriorityTests
         JobOrder.RankOf(job, [marked], new AdmissionRow(), now).ShouldBe(IssuePriorities.Rank(null));
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task ABenchmarkStillGoesFirstWhateverTheFlightPriorities()
     {
@@ -176,6 +186,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, bench, urgentRun);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task ANormalJobBehindAnUrgentOneSaysUrgentFlightsGoFirst()
     {
@@ -192,6 +204,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, urgentJob, waiting);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task AJobLiftedByTheWaitBoundSaysSo()
     {
@@ -212,6 +226,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, urgentJob, lifted);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task AJobBehindAnEqualOrLowerRankedOneKeepsThePlainStep()
     {
@@ -228,6 +244,8 @@ public sealed partial class JobPriorityTests
         await StartsNext(jobs, gone, blocker, first, second);
     }
 
+    // Slow: the jobs it queues are real pwsh (or sh) starts at below-normal priority, which a busy machine stretches past the guard.
+    [Trait("Category", "Slow")]
     [Fact]
     public async Task APriorityChangedWhileAJobWaitsReRanksIt()
     {
