@@ -125,7 +125,7 @@ public static partial class PilotCommand
                     PrReviewState.Closed => $"{review.Verdict}, closed",
                     _ => $"{review.Verdict}, on card {review.Card}",
                 };
-                text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(8, review.Head.Length)]})");
+                text.AppendLine($"PR {review.Repo}#{review.Number}  {review.Title ?? review.Url}  ({how}, at {review.Head[..Math.Min(9, review.Head.Length)]})");
                 if (review.Fixer is { } fixer)
                 {
                     text.AppendLine($"  fixing, {fixer}, round {review.FixRound ?? 1}");

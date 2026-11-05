@@ -235,7 +235,7 @@ public sealed partial class GhCli
         var (exit, output, error) = await RunAsync(args, repoPath, cancellationToken);
         if (exit != 0)
         {
-            throw new FlightException($"GitHub refused the {PilotMarks.StatusContext} status on {sha[..Math.Min(8, sha.Length)]}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            throw new FlightException($"GitHub refused the {PilotMarks.StatusContext} status on {CommitRefs.Short(sha)}: {(error.Trim().Length > 0 ? error : output).Trim()}");
         }
     }
 

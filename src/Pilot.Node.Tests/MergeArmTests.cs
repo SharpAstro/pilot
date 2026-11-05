@@ -151,7 +151,7 @@ public sealed class MergeArmTests
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
         card.Kind.ShouldBe(LegCommander.MergeFailed);
-        card.Detail.ShouldNotBeNull().ShouldContain("head moved");
+        card.Detail.ShouldNotBeNull().ShouldContain("newer than the review");
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.GoAround, Verbs.Merge]);
         card.Choices.Last().Args[0].ShouldBe(moved);
         node.State.Cards().ShouldHaveSingleItem();
@@ -351,7 +351,7 @@ public sealed class MergeArmTests
         node.GitHub.AutoMergeDisarmed.ShouldBe([63]);
         var card = Card(node, ready);
         card.Kind.ShouldBe(LegCommander.MergeFailed);
-        card.Detail.ShouldNotBeNull().ShouldContain("head moved");
+        card.Detail.ShouldNotBeNull().ShouldContain("newer than the review");
         node.State.Flights().Single().MergeWhenGreen.ShouldBeNull();
     }
 

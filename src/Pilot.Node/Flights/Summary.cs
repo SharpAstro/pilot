@@ -16,7 +16,7 @@ namespace Pilot.Node.Flights;
 public static class SummaryRecords
 {
     /// <summary>How many characters of a commit a record quotes.</summary>
-    public const int HashLength = 8;
+    public const int HashLength = CommitRefs.ShortLength;
 
     /// <summary>The longest a report, a card's detail or a review's findings run in a record before they are cut.</summary>
     public const int MaxReport = 1500;
@@ -109,7 +109,7 @@ public static class SummaryRecords
 
         if (flight.PullRequest is { } pr)
         {
-            text.AppendLine(CultureInfo.InvariantCulture, $"  PR #{pr}{(flight.PullRequestUrl is { } url ? $" {url}" : "")}{(flight.GitHubHead is { } head ? $", head {Short(head)}" : "")}.");
+            text.AppendLine(CultureInfo.InvariantCulture, $"  PR #{pr}{(flight.PullRequestUrl is { } url ? $" {url}" : "")}{(flight.GitHubHead is { } head ? $", head {CommitRefs.Short(head)}" : "")}.");
             if (flight.MergeQueue is { } queue)
             {
                 text.AppendLine(CultureInfo.InvariantCulture, $"  Merge: {queue}.");
@@ -125,7 +125,7 @@ public static class SummaryRecords
         }
         if (flight.Review is { } review)
         {
-            text.AppendLine(CultureInfo.InvariantCulture, $"  Review: {review.State.ToString().ToLowerInvariant()}, started {Stamp(review.StartedAt)}{(review.FinishedAt is { } done ? $", finished {Stamp(done)}" : "")}{(review.ReviewedHead is { } read ? $", read head {Short(read)}" : "")}{(review.Label is { } label ? $", label {label}" : "")}.");
+            text.AppendLine(CultureInfo.InvariantCulture, $"  Review: {review.State.ToString().ToLowerInvariant()}, started {Stamp(review.StartedAt)}{(review.FinishedAt is { } done ? $", finished {Stamp(done)}" : "")}{(review.ReviewedHead is { } read ? $", read head {CommitRefs.Short(read)}" : "")}{(review.Label is { } label ? $", label {label}" : "")}.");
             if (review.Report is { Length: > 0 } report)
             {
                 text.AppendLine(CultureInfo.InvariantCulture, $"  Review report: {Clip(report, MaxReport)}");
@@ -210,7 +210,7 @@ public static class SummaryRecords
 
     private static void PrReview(StringBuilder text, PrReviewRow review)
     {
-        text.AppendLine(CultureInfo.InvariantCulture, $"  {review.Repo}#{review.Number}{(review.Title is { Length: > 0 } title ? $" \"{title}\"" : "")}: {review.State.ToString().ToLowerInvariant()}{(review.Verdict is { } verdict ? $", verdict {verdict}" : "")}, head {Short(review.Head)}, started {Stamp(review.StartedAt)}.");
+        text.AppendLine(CultureInfo.InvariantCulture, $"  {review.Repo}#{review.Number}{(review.Title is { Length: > 0 } title ? $" \"{title}\"" : "")}: {review.State.ToString().ToLowerInvariant()}{(review.Verdict is { } verdict ? $", verdict {verdict}" : "")}, head {CommitRefs.Short(review.Head)}, started {Stamp(review.StartedAt)}.");
         if (review.Report is { Length: > 0 } report)
         {
             text.AppendLine(CultureInfo.InvariantCulture, $"    Report: {Clip(report, MaxReport)}");
@@ -227,8 +227,6 @@ public static class SummaryRecords
         var subject = Verbs.FlightTarget(code);
         return string.Equals(card.Subject, subject, StringComparison.OrdinalIgnoreCase) || card.Subject.StartsWith(subject + "/", StringComparison.OrdinalIgnoreCase);
     }
-
-    private static string Short(string hash) => hash.Length > HashLength ? hash[..HashLength] : hash;
 
     private static string Stamp(DateTimeOffset at) => at.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
 
@@ -299,7 +297,6 @@ public static class SummaryPrompt
           again, its conflict gone, its review given, its flight landed), written as its id alone, such as c12,
           never a card that waits for the person's decision. The node checks each against what it holds before it
           closes anything. If there is none, write the single word: {NoneResolved}
-
 
         """;
 
