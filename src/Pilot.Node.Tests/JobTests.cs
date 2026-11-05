@@ -1706,12 +1706,16 @@ public sealed class JobTests3 : JobTestsBase
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
-        var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
+        // PIL746 (j3539: Pause refused, the job had already run out its 15 s before a loaded machine got to pause it): the time
+        // before the pause counts against the timeout, so it is generous (30 s), and the wait for "past the deadline" is measured
+        // from the pause itself, so a slow start cannot move it.
+        var id = Run(Busy(flag), timeoutSeconds: 30).Made!;
         await Running(id);
 
         _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
-        // Past the deadline it would have had without the pause.
-        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
+        // Paused for longer than the whole timeout: it would have been stopped without the pause.
+        var pausedAt = DateTimeOffset.UtcNow;
+        while (DateTimeOffset.UtcNow - pausedAt < TimeSpan.FromSeconds(31))
         {
             await Task.Delay(100, Ct);
         }
