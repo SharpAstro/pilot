@@ -42,7 +42,7 @@ public static class SummaryRecords
 
         var text = new StringBuilder();
         var stale = StaleSection.Read(state, now, bounds ?? new StaleBounds());
-        foreach (var line in StaleSection.Lines(stale))
+        foreach (var line in StaleSection.Lines(stale, state.Flights()))
         {
             text.AppendLine(line);
         }

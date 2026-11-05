@@ -22,7 +22,7 @@ public static partial class Briefs
             var from = text.Length;
             foreach (var item in stale)
             {
-                var line = StaleSection.Line(item);
+                var line = StaleSection.Line(item, flights);
                 // At most a third of the brief, and always leaving 4000 characters for the flights and cards after it.
                 if (text.Length - from + line.Length > MaxWatchtowerBrief / 3 || text.Length + line.Length > MaxWatchtowerBrief - 4000)
                 {

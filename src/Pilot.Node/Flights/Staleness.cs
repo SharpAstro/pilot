@@ -349,7 +349,7 @@ public static class StaleSection
         Staleness.Read(state.Flights(), state.Legs(), state.Cards(), state.Jobs(), state.PullRequests(), now, bounds, zone).Stale;
 
     /// <summary>One item in a line: its age, what it waits on, the action that moves it and the quoted summary.</summary>
-    public static string Line(StaleItem item)
+    public static string Line(StaleItem item, IReadOnlyList<FlightRow>? flights = null)
     {
         var word = item.Kind switch
         {
@@ -359,11 +359,13 @@ public static class StaleSection
             _ => "open",
         };
         var summary = item.Summary.ReplaceLineEndings(" ").Replace('"', '\'');
-        return $"- {item.Subject}, {word} {item.AgeText}: waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
+        var raise = flights?.FirstOrDefault(f => f.Code == item.Flight)?.StaleRaises?.LastOrDefault(r => r.Bound == StaleWatch.BoundKey(item.Kind));
+        var raised = raise is null ? "" : $" ({raise.Note})";
+        return $"- {item.Subject}, {word} {item.AgeText}{raised}: waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
     }
 
     /// <summary>The heading and a line per item, oldest first, as lines; empty when nothing is stale.</summary>
-    public static IEnumerable<string> Lines(IReadOnlyList<StaleItem> items)
+    public static IEnumerable<string> Lines(IReadOnlyList<StaleItem> items, IReadOnlyList<FlightRow>? flights = null)
     {
         if (items.Count == 0)
         {
@@ -372,7 +374,7 @@ public static class StaleSection
         yield return $"{Heading}:";
         foreach (var item in items)
         {
-            yield return Line(item);
+            yield return Line(item, flights);
         }
     }
 }

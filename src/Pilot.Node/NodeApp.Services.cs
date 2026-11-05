@@ -499,6 +499,15 @@ public static partial class NodeApp
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
+        builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Trackers = () => services.GetRequiredService<FlightCommander>().Trackers,
+            TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
+            Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<StaleWatch>());
     }
 
     /// <summary>Releases of pilot itself.</summary>

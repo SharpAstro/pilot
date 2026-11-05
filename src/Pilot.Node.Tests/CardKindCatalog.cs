@@ -191,6 +191,8 @@ internal static class CardKindCatalog
         new("queued", "Handled", ["Flights/NamedLock.cs"], "LockWaitTests.ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees"),
         new("session-compacted", "Handled", ["Flights/Compactor.cs"], "CompactorTests.AWorkerWaitingOnItsJobIsCompactedWithWhatItWaitsOnAndOneNotWaitingIsNot"),
         new("digest", "ForYou", ["Flights/Digest.cs"], "SignalTests.TheDigestListsWhatLandedWhatWasHandledAndWhatIsParkedAndReplacesTheLastOne"),
+        new("stale-acted", "Handled", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundNudgesAnIdleWorkerOnce"),
+        new("stale-card-reminder", "ForYou", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundReRingsAnUnansweredCardOnce"),
         new("idea-conflict", "ForYou", ["Flights/Ideas.cs"], "IdeaEditTests.AContradictionRaisesACardWithBothVersionsAndTheMergeAsDefaultAndWritesNothingUntilItIsAnswered"),
         new("idea-repo", "ForYou", ["Flights/Ideas.cs"], "IdeaRepoTests.WhenTwoReposFitEquallyACardAsksAndNothingIsCreatedUntilItIsAnswered"),
     ];

@@ -149,6 +149,8 @@ public static partial class CardSummaries
             PrReviews.FixLeftKind =>"A fixer's worktree is still held by a process. The node tries again.",
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
             Digest.Kind => "What landed, what was handled and what is parked since the last digest. Read it and dismiss it.",
+            StaleWatch.ActedKind => $"The node acted on {what} at half a stale bound (told its worker of an ended job, nudged it, or raised its priority). Nothing to do.",
+            StaleWatch.ReminderKind => $"A card about {what} has rung with no answer for over half a stale bound. Answer or dismiss it.",
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",

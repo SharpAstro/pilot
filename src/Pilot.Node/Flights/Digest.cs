@@ -91,7 +91,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         var stale = StaleSection.Read(state, now, Bounds(), time.LocalTimeZone);
         var title = $"Digest: {Count(landed.Count, "landed", "landed")}, {flying} flying, {Count(open.Count, "card open", "cards open")}{(stale.Count > 0 ? $", {stale.Count} gone stale" : "")}";
         var text = new StringBuilder();
-        foreach (var line in StaleSection.Lines(stale))
+        foreach (var line in StaleSection.Lines(stale, flights))
         {
             text.AppendLine(line);
         }
