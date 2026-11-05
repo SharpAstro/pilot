@@ -615,7 +615,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : BuildHold(job) is { } building ? $"queued, {i} ahead of it{place}; {building}" : BehindOwn(i, whys) is { } own ? $"queued, {i} ahead of it{place}; {own}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -674,7 +674,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _queue.RemoveAt(at);
             var step = passed.Count == 0
                 ? null
-                : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone with them";
+                : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone, build or session order with them";
             if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow() }) is { } failed)
             {
                 var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
@@ -694,16 +694,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>The earlier queued job of the same owner in the same checkout that this one must start after. Null when none.</summary>
-    private string? BehindOwn(int at)
+    private string? BehindOwn(int at, List<string?> whys)
     {
         var job = _queue[at];
-        if (OrderKey(job) is not { } key)
+        // Only when the order rule is what holds the job: it would otherwise start, and the earlier job is held on a sibling or a build.
+        if (whys[at] is not null || OrderKey(job) is not { } key)
         {
             return null;
         }
         for (var i = 0; i < at; i++)
         {
-            if (string.Equals(OrderKey(_queue[i]), key, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(OrderKey(_queue[i]), key, StringComparison.OrdinalIgnoreCase)
+                && (SiblingHold(_queue[i]) is not null || BuildHold(_queue[i]) is not null))
             {
                 return $"waits behind job {_queue[i].Id}, queued earlier by this session in this plane";
             }
@@ -951,6 +953,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>
     /// Why a job that only consumes a build (every dotnet test or run in it has <c>--no-build</c>) may not start: a job that builds
     /// is running in its checkout, or is queued ahead of it there, by any owner. Null for any other job or when no build is pending.
+    /// A running build whose job has no sibling set is never marked past its build, so it holds until the whole job ends (the safe side).
     /// </summary>
     private string? BuildHold(JobRow job)
     {
