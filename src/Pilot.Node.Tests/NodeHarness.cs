@@ -109,6 +109,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var summary = new FakeSummaryModel();
         var milestoner = new FakeIdeaMilestoner();
         var splitter = new FakeIssueSplitter();
+        var phase = Stopwatch.StartNew();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
@@ -151,11 +152,15 @@ internal sealed class NodeHarness : IAsyncDisposable
             var prChecks = app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>();
             var prPacing = new TimerTime(DateTimeOffset.UtcNow);
             prChecks.Pacing = prPacing;
+            Took("build", phase);
             await app.StartAsync(cancellationToken);
+            Took("host start", phase);
             // The PR loop's first look happens at start; a test's state is put only after it, so it never lands a half-made flight.
             await app.Services.GetRequiredService<Pilot.Node.Flights.PrChecks>().FirstLook.WaitAsync(cancellationToken);
+            Took("PR loop's first look", phase);
             // So is the flight sweep's: it tells the keeper of the Opus count what this node runs, and would free a slot a test had just taken.
             await app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().FirstSweep.WaitAsync(cancellationToken);
+            Took("flight sweep's first sweep", phase);
             return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner, Splitter = splitter, PrPacing = prPacing };
         }
         catch
@@ -170,8 +175,40 @@ internal sealed class NodeHarness : IAsyncDisposable
     {
         Client.Dispose();
         await StopNodeAsync();
-        await App.DisposeAsync();
+        await DisposeAppAsync();
         _held.Dispose();
+    }
+
+    /// <summary>A phase of the test node's start or stop that took this long or more is written to the test's output.</summary>
+    internal static readonly TimeSpan SlowPhase = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Writes <paramref name="what"/> to the test's output when its phase took <see cref="SlowPhase"/> or more, and restarts the
+    /// watch for the next phase. A failed test's report carries its output, so a test over its time limit says where the node spent
+    /// it: two node tests took 60.8 s each on windows with nothing to say whether the node's start, its stop or the test held them
+    /// (pilot #737's CI run 42060034151). The host's own warning (StopNodeAsync) does not reach the console log.
+    /// </summary>
+    private static void Took(string what, Stopwatch phase)
+    {
+        if (phase.Elapsed >= SlowPhase)
+        {
+            try
+            {
+                TestContext.Current.TestOutputHelper?.WriteLine($"test node: {what} took {phase.Elapsed.TotalSeconds:0.0} s");
+            }
+            catch (InvalidOperationException)
+            {
+                // No test is running to take it (a fixture's own teardown).
+            }
+        }
+        phase.Restart();
+    }
+
+    private async Task DisposeAppAsync()
+    {
+        var phase = Stopwatch.StartNew();
+        await App.DisposeAsync();
+        Took("host dispose", phase);
     }
 
     /// <summary>How long the test node's stop may take before its hosted services are told to give up.</summary>
@@ -183,9 +220,12 @@ internal sealed class NodeHarness : IAsyncDisposable
     private async Task StopNodeAsync()
     {
         // A planner still starting holds its plane's files; let it finish before the node and the test's folders go.
+        var phase = Stopwatch.StartNew();
         await PlannedAsync();
+        Took("planners still starting", phase);
         var took = Stopwatch.StartNew();
         await App.StopAsync();
+        Took("host stop", phase);
         if (took.Elapsed >= StopCap)
         {
             var running = App.Services.GetServices<IHostedService>().OfType<BackgroundService>()
@@ -199,7 +239,7 @@ internal sealed class NodeHarness : IAsyncDisposable
     {
         Client.Dispose();
         await StopNodeAsync();
-        await App.DisposeAsync();
+        await DisposeAppAsync();
         _held.Dispose();
         try
         {

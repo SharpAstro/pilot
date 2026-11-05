@@ -415,6 +415,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         Palette.Use(Night);
         BeginFrame();
         Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
     }
 
@@ -643,11 +644,11 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// menu over it while open.</summary>
     internal Layout.Node Build(SessionsScreen screen)
     {
-        var page = (CanSay
+        var page = WhenShort((CanSay
                 ? Layout.Builder.VStack(Header(screen), Page(screen).HStar(), SayBar())
                 : Layout.Builder.VStack(Header(screen), Page(screen).HStar()))
             .Bg(Ground)
-            .Stretch();
+            .Stretch());
         page = About?.Over(page) ?? page;
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
