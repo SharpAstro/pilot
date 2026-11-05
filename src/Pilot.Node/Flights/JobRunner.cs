@@ -482,7 +482,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly object _checkEndLock = new();
 
     /// <summary>Test hook: runs inside the lock after a check's ended row is put and before its result is given or kept.</summary>
-    internal Action? AfterEndedRow { get; set; }
+    internal Action<JobRow>? AfterEndedRow { get; set; }
 
     private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
     {
@@ -1505,7 +1505,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 {
                     _saturation[job.Id] = (double)hot / looks;
                 }
-                AfterEndedRow?.Invoke();
+                AfterEndedRow?.Invoke(ended);
                 Finish(ended, last);
             }
             // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.

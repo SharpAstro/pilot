@@ -127,8 +127,12 @@ public sealed class CheckCarryOverTests : JobTestsBase
             // result (taking it) rather than see an ended row with nothing kept and queue the check again.
             using var ended = new ManualResetEventSlim();
             using var release = new ManualResetEventSlim();
-            second.Jobs.AfterEndedRow = () =>
+            second.Jobs.AfterEndedRow = row =>
             {
+                if (row.Id != check.Id)
+                {
+                    return;
+                }
                 ended.Set();
                 release.Wait(TimeSpan.FromSeconds(30));
             };

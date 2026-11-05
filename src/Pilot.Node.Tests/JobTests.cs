@@ -1801,6 +1801,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 90_000)]
+    [Trait("Category", "Slow")]
     public async Task TheNodeStoppingLeavesRunningChecksRunningAndWaitingOnesQueuedAndAnOrdinaryJobRunning()
     {
         var marker = Path.Combine(_root, "grandchild-stop.pid");
