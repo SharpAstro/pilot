@@ -6,7 +6,26 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.</summary>
+/// <summary>
+/// A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.
+/// <para>
+/// Where the time goes (#748, measured 2026-11-05 in a Release run, one test at a time, on a DE1 with 4 job slots busy, so
+/// these are not quiet-machine times). Nothing in these tests waits: no poll, retry or real-clock sleep sits on their path
+/// except a 50 ms poll for a background planner start (LegEndOverlapTests, one test) and two deliberate 300 ms "nothing
+/// happened" checks (MergedUnderLegTests, one test). Every test is a run of real <c>git</c> processes: the base creates
+/// a repo (5 starts), each flight a plane (a worktree add, a branch, a few rev-parse and config calls), and each command a
+/// handful more through GitCli. Git processes started per test, and time in that run:
+/// OverlapTests1 1 to 62 (median 14) in 0.2 to 31 s; OverlapTests2 0 to 21 (median 14) in 0.1 to 10 s;
+/// MutualOverlapTests 3 to 22 in 2.8 to 11 s; LegEndOverlapTests 5 to 61 (median 23) in 0.3 to 30 s;
+/// MergedUnderLegTests 5 to 23 (median 10) in 0.3 to 17 s; PrReviewTests1 2 to 27 (median 17) in 0.2 to 12 s.
+/// The same test spans 10x or more between runs (OverlapTests1 FoldRetires... 0.8 s, TheOtherFlightsPrBody... 18 s for
+/// 41 starts): about 0.13 s a process when the machine is quiet and 0.4 s and more when it is not, so a test of 40 to 60
+/// starts is 2 s alone and 25 s or more loaded. That is the 10x of #748 (j3242 ran 19:44 to 20:16 beside a 18 minute
+/// TianWen.Lib build/test job and two pilot test runs; j3262 ran 20:54 to 21:26 beside about six Pilot.Node.Tests runs
+/// and TianWen jobs, all in the node's 4 job slots; the node keeps no CPU percentage per job). A test's own time is the
+/// process count, not a wait, so it is not cut here.
+/// </para>
+/// </summary>
 public abstract class OverlapTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
