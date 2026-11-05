@@ -70,6 +70,29 @@ public sealed record JobKey(string Repo, string ToolVerb, string Target, string 
         return key ?? new JobKey(RepoOf(cwd), "", "", "");
     }
 
+    /// <summary>
+    /// Each work segment of a command (a <c>cd</c> only moves the folder it is run in): its tool, verb, flag words and the folder it
+    /// runs in, so a reader can tell which segments build (PIL724).
+    /// </summary>
+    internal static IEnumerable<(string Tool, string Verb, IReadOnlyList<string> Flags, string Folder)> Steps(string command, string cwd)
+    {
+        var folder = cwd;
+        foreach (var words in Segments(command))
+        {
+            var tool = ToolName(words[0]);
+            if (tool is "cd" or "set-location" or "pushd" or "sl")
+            {
+                if (words.Skip(1).FirstOrDefault(w => !w.StartsWith('-')) is { } to)
+                {
+                    folder = Resolve(folder, to);
+                }
+                continue;
+            }
+            var rest = words.Skip(1).ToList();
+            yield return (tool, rest.FirstOrDefault(w => !w.StartsWith('-')) ?? "", rest.Where(w => w.StartsWith('-')).ToList(), folder);
+        }
+    }
+
     private static JobKey KeyOf(string tool, List<string> words, string folder)
     {
         var rest = words.Skip(1).ToList();

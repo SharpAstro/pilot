@@ -129,6 +129,31 @@ internal sealed class MapViewport
         Clamp();
     }
 
+    /// <summary>
+    /// Pans just far enough to bring a rect of the map (design units) into view, with a small margin; a rect larger than the view
+    /// shows its top-left. Nothing moves when it is already in view. Whether the view moved.
+    /// </summary>
+    public bool EnsureVisible(float x, float y, float width, float height, float margin = 8f)
+    {
+        var (left, top) = (ViewX(x), ViewY(y));
+        var (right, bottom) = (left + width * Scale, top + height * Scale);
+        static float Shift(float lo, float hi, float size, float margin)
+        {
+            if (lo < margin)
+            {
+                return margin - lo;
+            }
+            return hi > size - margin ? MathF.Max(margin - lo, size - margin - hi) : 0f;
+        }
+        var (dx, dy) = (Shift(left, right, _viewWidth, margin), Shift(top, bottom, _viewHeight, margin));
+        if (dx == 0f && dy == 0f)
+        {
+            return false;
+        }
+        PanBy(dx, dy);
+        return true;
+    }
+
     /// <summary>Zooms by <paramref name="factor"/> about a view point, which stays over the same map point. Whether the scale changed.</summary>
     public bool ZoomAt(float factor, float viewX, float viewY)
     {

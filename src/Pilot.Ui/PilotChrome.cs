@@ -600,7 +600,10 @@ internal sealed class PilotChrome<TSurface>
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
         // which the map has only while it is shown), ahead of the router and of the page chords.
+        // A press while the rail's More menu is open belongs to the menu (a left press on empty canvas would pan otherwise).
+        var moreOpen = More.Menu.IsOpen && evt is InputEvent.MouseDown { Button: MouseButton.Left };
         if (Page == PilotPage.Flights
+            && !moreOpen
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
         {
             return true;

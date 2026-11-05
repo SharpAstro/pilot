@@ -200,6 +200,139 @@ public sealed class FlightsCanvasTests
         regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
+    // Flights A and B on the local node, C and D on another: two continents, each of two rows.
+    private static FlightLine[] TwoNodeLines() =>
+    [.. Lines(Flight("A"), Flight("B"), Flight("C"), Flight("D")).Select((l, i) => l with { Node = new NodeMark(i < 2 ? "de1" : "se1", "n", i < 2 ? "DE1" : "SE1", i < 2) })];
+
+    // What a click at a map point lands on: the last painted region holding it that takes a click, as the router would pick it.
+    private static ClickableRegion? TopAtDesign(FlightsView<RgbaImage> view, float designX, float designY)
+    {
+        var body = view.MapBody!.Value;
+        var (x, y) = (body.X + view.Viewport.ViewX(designX), body.Y + view.Viewport.ViewY(designY));
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.LastOrDefault(r => r.OnClick is not null && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height);
+    }
+
+    private static string CodeOf(FlightsView<RgbaImage> view) => view.Shown[view.Selected].Code;
+
+    private static void Press(FlightsView<RgbaImage> view, InputKey key) => view.HandleInput(new InputEvent.KeyDown(key)).ShouldBeTrue();
+
+    [Fact]
+    public void ARowBandIsTheContinentsInnerWidthAndOneRowHighCentredOnTheRoute()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, TwoNodeLines());
+        using var _ = renderer;
+
+        foreach (var route in view.Map.Routes)
+        {
+            var c = view.Map.Continents.Single(c => c.Key == route.Node);
+            var (x, y, w, h) = view.Map.RowBand(route);
+            h.ShouldBe(FlightMap.RowHeight);
+            w.ShouldBe(c.Width - 2f * FlightMap.BandInset);
+            (y + h / 2f).ShouldBe(route.Destination.Y, 0.001f);
+            x.ShouldBeGreaterThanOrEqualTo(c.X);
+            (x + w).ShouldBeLessThanOrEqualTo(c.X + c.Width);
+        }
+    }
+
+    [Fact]
+    public void AClickAnywhereInARowsBandSelectsItsFlight()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, TwoNodeLines());
+        using var _ = renderer;
+        var route = view.Map.Route("C", "se1")!;
+        var c = view.Map.Continents.Single(c => c.Key == "se1");
+        var first = route.Airports[0];
+        var points = new (float X, float Y)[]
+        {
+            (first.X - 20f, route.Destination.Y + FlightMap.CodeTop + 6f),
+            (first.X, first.Y + FlightMap.LabelBandTop + 5f),
+            (c.X + c.Width - 10f, route.Destination.Y),
+        };
+
+        foreach (var (x, y) in points)
+        {
+            Press(view, InputKey.Home);
+            CodeOf(view).ShouldBe("A");
+            var hit = TopAtDesign(view, x, y).ShouldNotBeNull();
+            hit.Result.ShouldBe(new HitResult.ButtonHit("map:C:row"));
+            hit.OnClick!.Invoke(InputModifier.None);
+            CodeOf(view).ShouldBe("C");
+        }
+    }
+
+    [Fact]
+    public void ADoubleClickOnALegCircleStillOpensTheLeg()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, TwoNodeLines());
+        using var _ = renderer;
+        var airport = view.Map.Route("B", "de1")!.Airports[0];
+
+        var hit = TopAtDesign(view, airport.X, airport.Y).ShouldNotBeNull();
+        hit.Result.ShouldBe(new HitResult.ButtonHit("map:B:leg:parser"));
+        hit.OnDoubleClick.ShouldNotBeNull().Invoke(InputModifier.None);
+
+        view.IsDetailOpen.ShouldBeTrue();
+        CodeOf(view).ShouldBe("B");
+    }
+
+    [Fact]
+    public void UpDownHomeAndEndMoveTheSelectionThroughTheRowsAsDrawn()
+    {
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, TwoNodeLines());
+        using var _ = renderer;
+
+        // None picked yet: Up takes the last, Down the first.
+        view.ListCursor.Open(FlightsView<RgbaImage>.ListId, -1, 4);
+        Press(view, InputKey.Up);
+        CodeOf(view).ShouldBe("D");
+        view.ListCursor.Open(FlightsView<RgbaImage>.ListId, -1, 4);
+        Press(view, InputKey.Down);
+        CodeOf(view).ShouldBe("A");
+
+        Press(view, InputKey.End);
+        CodeOf(view).ShouldBe("D");
+        Press(view, InputKey.Down);
+        CodeOf(view).ShouldBe("D");
+        Press(view, InputKey.Home);
+        CodeOf(view).ShouldBe("A");
+        Press(view, InputKey.Up);
+        CodeOf(view).ShouldBe("A");
+
+        // Up from the first row of the second node box lands on the last row of the box above it.
+        TopAtDesign(view, view.Map.Route("C", "se1")!.Destination.X, view.Map.Route("C", "se1")!.Destination.Y)!.Value.OnClick!.Invoke(InputModifier.None);
+        CodeOf(view).ShouldBe("C");
+        Press(view, InputKey.Up);
+        CodeOf(view).ShouldBe("B");
+        Press(view, InputKey.Down);
+        Press(view, InputKey.Down);
+        CodeOf(view).ShouldBe("D");
+    }
+
+    [Fact]
+    public void AMoveToARowOutsideTheViewPansItIn()
+    {
+        var rows = Enumerable.Range(0, 14).Select(i => Flight("R" + i.ToString("00"))).ToArray();
+        var (renderer, view) = Show(FlightsViewMode.Canvas, 1280, Lines(rows));
+        using var _ = renderer;
+        Press(view, InputKey.Home);
+        view.HandleInput(new InputEvent.KeyDown(InputKey.D1, InputModifier.Ctrl)).ShouldBeTrue();
+        var vp = view.Viewport;
+        var last = view.Map.Route("R13")!;
+        var (_, by, _, bh) = view.Map.RowBand(last);
+        // At full size the last row sits below the view.
+        vp.ViewY(by + bh).ShouldBeGreaterThan(vp.ViewHeight);
+
+        Press(view, InputKey.End);
+
+        CodeOf(view).ShouldBe("R13");
+        vp.ViewY(by + bh).ShouldBeLessThanOrEqualTo(vp.ViewHeight);
+        vp.ViewY(by).ShouldBeGreaterThanOrEqualTo(0f);
+        Press(view, InputKey.Home);
+        vp.ViewY(view.Map.RowBand(view.Map.Route("R00")!).Y).ShouldBeGreaterThanOrEqualTo(0f);
+    }
+
     private static ClickableRegion Region(FlightsView<RgbaImage> view, Func<string, bool> tooltip)
     {
         var regions = new List<ClickableRegion>();
