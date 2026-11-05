@@ -47,7 +47,7 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
         var passed = jobs
             .Where(j => j.State == JobState.Succeeded && j.EndedAt is not null)
             .OrderByDescending(j => j.EndedAt)
-            .Select(j => (Key: KeyText(j),Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor, j.Id, j.Command))
+            .Select(j => (Key: KeyText(j), Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor, j.Id, j.Command))
             .ToList();
 
         List<Pass> Passes(CommandKey k) => [.. passed.Where(p => p.Key == k.Text).Take(Window).Select(p => new Pass(p.Id, p.Command, p.Time))];
