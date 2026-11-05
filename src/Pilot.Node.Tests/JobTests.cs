@@ -1027,7 +1027,65 @@ public sealed class JobTests2 : JobTestsBase
         clock.Advance(TimeSpan.FromMinutes(31));
 
         var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
-        (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes of running and was stopped"));
+        (run.ExitCode, run.Tail).ShouldBe((-1, "the check was stopped at 30 m of running: the budget it was given"));
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    private void SeedPasses(string command, params int[] minutes)
+    {
+        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        foreach (var m in minutes)
+        {
+            at = at.AddHours(1);
+            _state.PutJob(new JobRow
+            {
+                Id = _state.NextJobId(), Command = command, Cwd = _root, Kind = JobKind.Check, State = JobState.Succeeded, LogPath = "x.log",
+                Timeout = TimeSpan.FromMinutes(30), StartedAt = at.AddMinutes(-m), EndedAt = at, ExitCode = 0,
+                MemoryKey = JobKey.Of(command, _root).ToString(),
+            });
+        }
+    }
+
+    [Fact]
+    public async Task EarlierSlowPassesOfTheSameCheckRaiseTheNextOnesTimeoutAndAStopNamesTheLimitAndItsBasis()
+    {
+        var (jobs, clock, _, _) = Idle();
+        var command = Sleep(60);
+        SeedPasses(command, 20, 35, 30);
+
+        var check = jobs.RunCheckAsync("TIA1", "parser", command, _root, jobs.CheckLimitFor(command, _root), Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check && j.State == JobState.Queued);
+        row.Timeout.ShouldBe(TimeSpan.FromMinutes(52.5));
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+        clock.Advance(TimeSpan.FromMinutes(54));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        run.StoppedByBudget.ShouldBeTrue();
+        run.Tail.ShouldBe("the check was stopped at 53 m of running: 1.5x the slowest of its last 3 passes, 35 m");
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ACheckQueuedLongerThanItsLimitIsStillGivenItsWholeLimitOnceItRuns()
+    {
+        var (jobs, clock, _, gone) = Idle();
+        var command = Sleep(60);
+        SeedPasses(command, 40);
+        var first = Hand(jobs, Sleep(61));
+
+        var check = jobs.RunCheckAsync("TIA1", "parser", command, _root, jobs.CheckLimitFor(command, _root), Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check && j.State == JobState.Queued);
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+        clock.Advance(TimeSpan.FromMinutes(70));
+        await gone(first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        _state.Jobs().Single(j => j.Id == row.Id).State.ShouldBe(JobState.Running);
+        check.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromMinutes(59));
+        check.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromMinutes(2));
+        (await check.WaitAsync(TimeSpan.FromSeconds(30), Ct)).StoppedByBudget.ShouldBeTrue();
         await jobs.StopAsync(CancellationToken.None);
     }
 
@@ -1793,7 +1851,7 @@ public sealed class JobTests3 : JobTestsBase
         var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
 
         result.ExitCode.ShouldBe(-1);
-        result.Tail.ShouldContain("of running and was stopped");
+        result.Tail.ShouldContain("of running: the budget it was given");
         await GoneWithin(child);
         _state.Jobs().Single(j => j.Kind == JobKind.Check).State.ShouldBe(JobState.Failed);
         await jobs.StopAsync(CancellationToken.None);
