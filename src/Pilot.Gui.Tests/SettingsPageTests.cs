@@ -402,8 +402,8 @@ public sealed class SettingsPageTests
     private static readonly NodeMark Here = new("here", "/sock", "DE1", Here: true);
     private static readonly NodeMark Other = new("se1", "http://se1", "SE1", Here: false);
 
-    // A long title wraps at its spaces (TopBar.WrappedTitleChars), one leaf a word: the title is what the leaves read together.
-    private static string Joined(IEnumerable<string> texts) => string.Concat(texts);
+    // A long title wraps at its spaces (TopBar.WrappedTitleChars), one (trimmed) leaf a word: the title is what the leaves read together.
+    private static string Joined(IEnumerable<string> texts) => string.Join(' ', texts);
 
     [Fact]
     public async Task TheTitleAndTheSetupHintNameWhoseNodeItIsAndNoNodePillIsOffered()
