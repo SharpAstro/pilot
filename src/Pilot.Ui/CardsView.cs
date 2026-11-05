@@ -752,9 +752,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
+        var head = Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
-            Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}{(StaleMark(card) is { } staleMark ? " · " + staleMark : "")}", 10f, accent).Selectable().RowH(16f),
+            // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
+            StaleMark(card) is { } staleMark
+                ? Layout.Builder.HStack(head.WAuto(), Layout.Builder.Text($"· {staleMark}", 10f, accent).Selectable().WAuto()).WithGap(4f).RowH(16f)
+                : head.RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
