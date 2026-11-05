@@ -55,6 +55,7 @@ public static partial class Briefs
         text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine(CiRule);
+        text.AppendLine(WorkerScopeRule);
         text.AppendLine(MachineLoadRule(run));
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (CiShape.Of(flight.Worktree) is { } ci)

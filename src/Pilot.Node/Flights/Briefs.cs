@@ -164,6 +164,15 @@ public static partial class Briefs
     internal const string InvariantRule =
         "A new test that guards the whole repo (a catalog, a size limit, a fixture, a rule over every source file) carries `[Trait(\"Category\", \"Invariant\")]` (`InvariantChecks.Category` or the test project's constant), so checks run it.";
 
+    /// <summary>The line the planner is told: a leg's check fits its change, and the whole suite is CI's on the PR (pilot #752).</summary>
+    internal const string CheckScopeRule =
+        "A leg's check filters `dotnet test` over the test classes of the files the flight touches plus the classes the leg names (`--filter 'FullyQualifiedName~FooTests|FullyQualifiedName~BarTests'`). " +
+        "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no --filter, suggesting one, unless it is given `--whole-suite \"<why>\"`.";
+
+    /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
+    internal const string WorkerScopeRule =
+        "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's.";
+
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
         "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +
