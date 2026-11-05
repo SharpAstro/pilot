@@ -97,6 +97,54 @@ public sealed class BenchSlotTests : JobTestsBase
     }
 
     [Fact]
+    public async Task ABenchWaitingOnOutsideLoadLetsAnOrdinaryJobBehindItStart()
+    {
+        double? outside = 90;
+        _cpu = 95;
+        var (jobs, _, _, gone) = Idle(() => _cpu, () => outside);
+        jobs.MaxRunning = 4;
+        var first = Hand(jobs, Sleep(30));
+        await Until(first, j => j.State == JobState.Running);
+        var bench = HandBench(jobs, Echo("bench"));
+
+        Row(bench).State.ShouldBe(JobState.Queued);
+        Row(bench).Step.ShouldNotBeNull().ShouldContain("waits for a quiet CPU (95% now, 90% outside pilot");
+        Row(bench).Step.ShouldNotBeNull().ShouldContain("other jobs run meanwhile");
+
+        var run = Hand(jobs, Sleep(30));
+        await Until(run, j => j.State == JobState.Running);
+        Row(bench).State.ShouldBe(JobState.Queued);
+
+        await gone(run);
+        await gone(first);
+        await gone(bench);
+    }
+
+    [Fact]
+    public async Task ABenchHoldsNewJobsOnceOutsideLoadDropsAndStartsWhenNothingRunsAndTheCpuIsQuiet()
+    {
+        double? outside = 90;
+        _cpu = 95;
+        var (jobs, _, _, gone) = Idle(() => _cpu, () => outside);
+        jobs.MaxRunning = 4;
+        var first = Hand(jobs, Sleep(30));
+        await Until(first, j => j.State == JobState.Running);
+        var bench = HandBench(jobs, Echo("bench"));
+        Row(bench).State.ShouldBe(JobState.Queued);
+
+        outside = 2;
+        _cpu = 40;
+        var later = Hand(jobs, Echo("later"));
+        Row(later).State.ShouldBe(JobState.Queued);
+        Row(later).Step.ShouldNotBeNull().ShouldContain($"a benchmark ({bench}) holds the node");
+
+        await gone(first);
+        _cpu = 5;
+        Look(jobs);
+        (await Until(bench, j => j.State is JobState.Running or JobState.Succeeded)).Kind.ShouldBe(JobKind.Bench);
+    }
+
+    [Fact]
     public async Task ALegWorkerStartIsHeldWhileABenchIsQueuedOrRunningAndAdmittedAfter()
     {
         var (jobs, _, _, gone) = Idle(() => _cpu);

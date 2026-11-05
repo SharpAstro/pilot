@@ -100,6 +100,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The machine's CPU use now in percent, or null when it is not sampled: a check's saturation is counted from it. A test puts its own.</summary>
     public Func<double?>? MachineCpu { get; init; }
 
+    /// <summary>The share of the machine's CPU (percent) that is not pilot's, or null when it is not read (then a queued benchmark holds the node as before). A test puts its own; by default the node's machine sample says.</summary>
+    public Func<double?>? MachineOutsideCpu { get; init; }
+
     /// <summary>The machine CPU percent a benchmark (<see cref="JobKind.Bench"/>) needs at most to start: above it the machine is not quiet.</summary>
     public double BenchQuietCpu { get; set; } = 15;
 
@@ -652,6 +655,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     break;
                 }
                 // Held by a running build, or queued behind a held job it shares clones with: passed over, its clones stay claimed.
+                if (why is not null && BenchYields(job))
+                {
+                    // A benchmark waiting for outside load to pass holds nothing: the jobs behind it start as usual.
+                    continue;
+                }
                 var siblingOnly = why is null || (SiblingHold(job) is not null && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true) is null);
                 if (!siblingOnly)
                 {
@@ -809,11 +817,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         if (job.Kind == JobKind.Bench)
         {
+            var cpuNow = MachineCpu is { } read ? read() : state.Machine()?.CpuPercent;
+            if (OutsideCpu() is { } outside && outside > BenchQuietCpu)
+            {
+                var names = state.Machine()?.OutsideProcesses.Where(p => p.CpuPercent >= 1).Take(MachineRow.OutsideNamed).Select(p => p.Name).ToArray() ?? [];
+                var now = cpuNow is { } c ? $"{c:0}% now, " : "";
+                var who = names.Length > 0 ? ": " + string.Join(", ", names) : "";
+                return $"a benchmark waits for a quiet CPU ({now}{outside:0}% outside pilot{who}; {BenchQuietCpu:0}% at most); other jobs run meanwhile";
+            }
             if (!_running.IsEmpty)
             {
                 return _running.Count == 1 ? "a benchmark runs alone: another job is running" : $"a benchmark runs alone: {_running.Count} jobs are running";
             }
-            return (MachineCpu is { } read ? read() : state.Machine()?.CpuPercent) is { } cpu && cpu > BenchQuietCpu
+            return cpuNow is { } cpu && cpu > BenchQuietCpu
                 ? $"a benchmark waits for a quiet CPU ({cpu:0}% now, {BenchQuietCpu:0}% at most)"
                 : null;
         }
@@ -986,9 +1002,18 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return null;
         }
         var bench = state.Jobs().FirstOrDefault(j => j.Kind == JobKind.Bench && j.State == JobState.Running && _running.ContainsKey(j.Id))
-            ?? (_queue.Count > 0 && _queue[0].Kind == JobKind.Bench ? _queue[0] : null);
+            ?? (_queue.Count > 0 && _queue[0].Kind == JobKind.Bench && !BenchYields(_queue[0]) ? _queue[0] : null);
         return bench is null ? null : $"a benchmark ({bench.Id}) holds the node";
     }
+
+    /// <summary>The CPU share not pilot's: the test hook, else the node's machine sample; null when not read.</summary>
+    private double? OutsideCpu() => MachineOutsideCpu is { } read ? read() : state.Machine()?.OutsideCpuPercent;
+
+    /// <summary>
+    /// Whether a queued benchmark yields to the jobs behind it: the CPU outside pilot is above <see cref="BenchQuietCpu"/>, so draining
+    /// pilot's own jobs would not quieten it. No reading means no yield (the benchmark holds the node as before).
+    /// </summary>
+    private bool BenchYields(JobRow job) => job.Kind == JobKind.Bench && OutsideCpu() is { } outside && outside > BenchQuietCpu;
 
     private MemoryEstimate EstimateOf(JobRow job) => JobMemory.Estimate(state.Jobs(), JobKey.Parse(job.MemoryKey) ?? JobKey.Of(job.Command, job.Cwd));
 
