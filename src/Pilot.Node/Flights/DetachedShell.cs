@@ -47,11 +47,11 @@ public sealed class DetachedShell : IDisposable
     /// <c>pwsh -Command "...; exit $LASTEXITCODE"</c> is otherwise read twice, and the outer pwsh expands the inner's
     /// <c>$LASTEXITCODE</c> to nothing, so the job ends 0 whatever the line did (TIA1827, 2026-10-25).
     /// </summary>
-    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority = JobPriority.BelowNormal)
+    public static DetachedShell For(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority = JobPriority.BelowNormal, IReadOnlyDictionary<string, string>? extra = null)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new DetachedShell([], UnixShell(), () => StartUnix(jobId, command, cwd, logPath, exitPath, priority));
+            return new DetachedShell([], UnixShell(), () => StartUnix(jobId, command, cwd, logPath, exitPath, priority, extra));
         }
         var inner = Path.ChangeExtension(logPath, ".ps1");
         var outer = WrapperOf(inner);
@@ -59,7 +59,7 @@ public sealed class DetachedShell : IDisposable
         var (line, shell) = ShellScript.Resolved(command);
         // The shell is the first line of the log, written by the script before the line's own output.
         File.WriteAllText(inner, Utf8Output + "\n" + $"Write-Output {Quote(ShellScript.LogHeader(shell))}\n" + ShellScript.Body(line), utf8);
-        File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath), utf8);
+        File.WriteAllText(outer, WindowsWrapper(inner, outer, exitPath, extra), utf8);
         return new DetachedShell([inner, outer], shell, () => StartWindows(JobName(jobId, logPath), outer, cwd, logPath, priority));
     }
 
@@ -82,10 +82,10 @@ public sealed class DetachedShell : IDisposable
     /// The outer script: the line's own script is run by a pwsh of its own (an <c>exit</c> in it ends that pwsh, not this
     /// one), then its exit code is written, to a temporary name and moved, so a reader never sees half a number.
     /// </summary>
-    internal static string WindowsWrapper(string inner, string outer, string exitPath) =>
+    internal static string WindowsWrapper(string inner, string outer, string exitPath, IReadOnlyDictionary<string, string>? extra = null) =>
         $$"""
         {{Utf8Output}}
-        {{EnvironmentLines()}}& pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{Quote(inner)}}
+        {{EnvironmentLines(extra)}}& pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{Quote(inner)}}
         $code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
         [System.IO.File]::WriteAllText({{Quote(exitPath + ".tmp")}}, "$code")
         Move-Item -LiteralPath {{Quote(exitPath + ".tmp")}} -Destination {{Quote(exitPath)}} -Force
@@ -102,17 +102,17 @@ public sealed class DetachedShell : IDisposable
     private const string Utf8Output = "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }";
 
     /// <summary>The build environment (<see cref="BuildEnvironment"/>) as the wrapper sets it, one <c>$env:</c> line each.</summary>
-    private static string EnvironmentLines() =>
-        string.Concat(BuildEnvironment.Variables.Select(v => $"$env:{v.Key} = {Quote(v.Value)}{Environment.NewLine}"));
+    private static string EnvironmentLines(IReadOnlyDictionary<string, string>? extra) =>
+        string.Concat(BuildEnvironment.Variables.Concat(extra ?? new Dictionary<string, string>()).Select(v => $"$env:{v.Key} = {Quote(v.Value)}{Environment.NewLine}"));
 
     private static string Quote(string text) => "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'";
 
     private static string ShQuote(string text) => "'" + text.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
 
-    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority)
+    private static Process StartUnix(string jobId, string command, string cwd, string logPath, string exitPath, JobPriority priority, IReadOnlyDictionary<string, string>? extra)
     {
         File.WriteAllBytes(logPath, []);
-        var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority);
+        var start = UnixStart(command, cwd, logPath, exitPath, jobId, priority, extra);
         // systemd-run --scope execs the command in its own process, so the pid Process.Start returns is the job shell's: the
         // pid the row records stays valid for reattach and for Kill(entireProcessTree) after the scope has been made.
         return Process.Start(start) ?? throw new InvalidOperationException($"`{command}` did not start");
@@ -124,7 +124,7 @@ public sealed class DetachedShell : IDisposable
     internal static string UnixShell() => BashPath() ?? "/bin/sh";
 
     /// <summary>What a Linux job starts: the wrapper under <c>setsid /bin/sh -c</c>, in a scope of its own under systemd, in the build environment.</summary>
-    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal)
+    internal static ProcessStartInfo UnixStart(string command, string cwd, string logPath, string exitPath, string jobId = "job", JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? extra = null)
     {
         // A job keeps only its log and /dev/null: every other fd the node holds without CLOEXEC is closed first. dash
         // takes only single-digit fds in a redirection, so any fd number needs bash; without bash fds 3 to 9 still go.
@@ -146,7 +146,12 @@ public sealed class DetachedShell : IDisposable
         }
         start.WorkingDirectory = cwd;
         start.UseShellExecute = false;
-        return BuildEnvironment.Apply(start);
+        BuildEnvironment.Apply(start);
+        foreach (var (name, value) in extra ?? new Dictionary<string, string>())
+        {
+            start.Environment[name] = value;
+        }
+        return start;
     }
 
     /// <summary>

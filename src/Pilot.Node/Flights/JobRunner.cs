@@ -594,6 +594,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
+        ReorderQueue();
+
         while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
@@ -609,13 +611,45 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         // Each waiting job says where it stands.
+        var flights = state.Flights();
+        var admission = state.Admission();
+        var now = time.GetUtcNow();
+        // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
+        var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with { Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}" };
+            var job = _queue[i];
+            var why = i > 0 && ranks[i] is { } rank
+                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                : null;
+            var place = why is null ? "" : $" ({why})";
+            _queue[i] = job with
+            {
+                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Slots = MaxRunning,
+                WaitsOnSibling = SiblingHold(job) is not null,
+            };
             state.PutJob(_queue[i]);
         }
 
         CheckIdle();
+    }
+
+    /// <summary>
+    /// Puts the waiting jobs in start order on every dispatch, so a priority set while a job waits, or the wait bound passing,
+    /// takes effect: benchmarks stay ahead in their own order, the rest by <see cref="JobOrder"/> (rank, queued at, id).
+    /// </summary>
+    private void ReorderQueue()
+    {
+        if (_queue.Count < 2)
+        {
+            return;
+        }
+        var benches = _queue.Where(j => j.Kind == JobKind.Bench).ToList();
+        var others = JobOrder.Sort(_queue.Where(j => j.Kind != JobKind.Bench), state.Flights(), state.Admission(), time.GetUtcNow());
+        _queue.Clear();
+        _queue.AddRange(benches);
+        _queue.AddRange(others);
     }
 
     /// <summary>
@@ -742,6 +776,28 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
+    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set, live.</summary>
+    public bool PlaneOutput
+    {
+        get => _planeOutput;
+        set
+        {
+            if (_planeOutput == value)
+            {
+                return;
+            }
+            _planeOutput = value;
+            // A queued job's set was worked out under the old value; a running job started with it and keeps it. Forget the
+            // queued ones' sets, or a plane job cached as [] with the setting on would build into the sibling obj unlocked.
+            foreach (var id in _siblings.Keys.Where(id => !_running.ContainsKey(id)).ToList())
+            {
+                _siblings.TryRemove(id, out _);
+            }
+        }
+    }
+
+    private bool _planeOutput;
+
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
     public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
 
@@ -756,7 +812,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         IReadOnlyCollection<string> set;
         try
         {
-            set = SiblingsOf(job);
+            // A plane job that builds into the plane's own artifacts shares nothing to hold (job-plane-output).
+            set = PlaneOutput && Flights.PlaneOutput.PlaneOf(job.Cwd) is not null ? [] : SiblingsOf(job);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -774,15 +831,86 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         foreach (var id in _running.Keys.Order(StringComparer.Ordinal))
         {
-            var theirs = SiblingsFor(state.Jobs().FirstOrDefault(j => j.Id == id) ?? job with { Id = id });
+            // A job past its build has let its clones go (PIL724).
+            if (_released.ContainsKey(id))
+            {
+                continue;
+            }
+            var holder = state.Jobs().FirstOrDefault(j => j.Id == id);
+            var theirs = SiblingsFor(holder ?? job with { Id = id });
             var shared = mine.Where(m => theirs.Contains(m, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileName).ToList();
             if (shared.Count > 0)
             {
-                var owner = state.Jobs().FirstOrDefault(j => j.Id == id) is { } row ? row.OwnerName ?? row.Owner ?? "the node" : "the node";
-                return $"shares the sibling clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)} with job {id} ({owner})";
+                var owner = holder is { } row ? row.OwnerName ?? row.Owner ?? "the node" : "the node";
+                return $"waiting for job {id}'s build of the sibling clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)} ({owner}){RemainingOf(holder)}";
             }
         }
         return null;
+    }
+
+    // Jobs that have let go of their sibling clones, once and for good: their tree moved past the last building segment.
+    private readonly ConcurrentDictionary<string, byte> _released = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether a job's process tree shows it past its last building segment. Settable so a test can say so without real processes.
+    /// The default reads the command lines of the tree's processes below the wrapper.
+    /// </summary>
+    public Func<JobRow, JobTree.Reading, bool> PastBuild { get; set; } = (job, reading) =>
+        SiblingSet.PastBuild(job.Command, job.Cwd, reading.Tree.Where(p => p.Depth > 0).Select(p => ProcessDetails.Read(p.Pid).CommandLine));
+
+    /// <summary>Lets go of a job's clones once its tree is past its build, and wakes the queue. Returns true when it did.</summary>
+    private void ReleaseIfPastBuild(JobRow job, JobTree.Reading reading)
+    {
+        if (_released.ContainsKey(job.Id) || SiblingsFor(job).Count == 0)
+        {
+            return;
+        }
+        bool past;
+        try
+        {
+            past = PastBuild(job, reading);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return;
+        }
+        if (!past || !_released.TryAdd(job.Id, 0))
+        {
+            return;
+        }
+        lock (_rowLock)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is { PausedAt: null, State: JobState.Running } current)
+            {
+                state.PutJob(current with { Step = "build done, sibling clones released" });
+            }
+        }
+        Pump();
+    }
+
+    /// <summary>The step's tag for a running job: it holds the sibling clones, or has released them; empty for a job with no clones.</summary>
+    private string HoldTag(JobRow job) =>
+        SiblingsFor(job).Count == 0 ? "" : _released.ContainsKey(job.Id) ? "[clones released] " : "[holds clones] ";
+
+    /// <summary>What a holder's build has left, from how long the same kind of job took before; empty when there is no history.</summary>
+    private string RemainingOf(JobRow? holder)
+    {
+        if (holder?.MemoryKey is not { } key)
+        {
+            return "";
+        }
+        var took = state.Jobs()
+            .Where(j => j.State == JobState.Succeeded && j.MemoryKey == key && j.EndedAt is not null)
+            .OrderByDescending(j => j.EndedAt)
+            .Take(5)
+            .Select(j => (j.EndedAt!.Value - j.StartedAt - j.PausedFor).Ticks)
+            .ToList();
+        if (took.Count == 0)
+        {
+            return "";
+        }
+        var left = TimeSpan.FromTicks(JobMemory.Median(took)) - (time.GetUtcNow() - holder.StartedAt);
+        return left > TimeSpan.Zero ? $", about {Took(left)} left by past runs" : ", past runs say it is nearly done";
     }
 
     /// <summary>Why a job other than a benchmark may not start: a benchmark runs, or heads the queue waiting for quiet. Null when none does.</summary>
@@ -825,7 +953,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority);
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd));
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);
         }
@@ -1143,7 +1271,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         // The row as it is now (a pause may have marked it), and a paused job's step stays "paused".
                         if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is { PausedAt: null, State: JobState.Running } current)
                         {
-                            state.PutJob(current with { Step = Clip(line) });
+                            state.PutJob(current with { Step = HoldTag(job) + Clip(line) });
                         }
                     }
                 }
@@ -1165,6 +1293,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         nextTree = time.GetUtcNow() + TreeEvery;
                         var reading = Tree.Read(job.Id, process);
+                        ReleaseIfPastBuild(job, reading);
                         // Nothing readable is not a sample of zero.
                         if (HeldBy(reading.Tree) is > 0 and var held)
                         {
@@ -1228,6 +1357,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return;
             }
         }
+        // The exit file is written by the wrapper just before it exits: the job is not ended while the wrapper still lives, or it
+        // holds its cwd and log after the row says ended (a temp folder could not be deleted on Windows, #721).
+        await GoneAsync(process);
         // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
         Follow(final: true);
         // Ended: the scripts it ran are of no use now.
@@ -1236,6 +1368,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
         _running.TryRemove(job.Id, out _);
         _siblings.TryRemove(job.Id, out _);
+        _released.TryRemove(job.Id, out _);
         _watches.TryRemove(job.Id, out _);
         _nudges.TryRemove(job.Id, out _);
         Tree.Forget(job.Id);
