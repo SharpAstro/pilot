@@ -646,6 +646,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private void CheckBenchBusy()
     {
         var head = _queue.Count > 0 && _queue[0].Kind == JobKind.Bench ? _queue[0] : null;
+        foreach (var told in _benchBusyTold.Keys)
+        {
+            if (!_queue.Any(j => j.Id == told))
+            {
+                _benchBusyTold.TryRemove(told, out _);
+            }
+        }
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == BenchBusyKind).ToList())
         {
             if (head is null || card.Subject != Verbs.JobTarget(head.Id))
@@ -660,7 +667,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var subject = Verbs.JobTarget(head.Id);
         var cpuNow = MachineCpu is { } read ? read() : state.Machine()?.CpuPercent;
         var outside = OutsideCpu();
-        var busy = !_running.IsEmpty ? false : (outside is { } o && o > BenchQuietCpu) || (cpuNow is { } c && c > BenchQuietCpu);
+        // Load outside pilot keeps the CPU busy whether or not pilot's jobs run (they start behind a yielding bench); the total
+        // reading only counts while nothing of pilot's runs, since otherwise it is pilot's own jobs the bench waits on.
+        var busy = (outside is { } o && o > BenchQuietCpu) || (_running.IsEmpty && cpuNow is { } c && c > BenchQuietCpu);
         if (!busy)
         {
             state.CloseCardsAbout(subject, "the CPU is quiet again", BenchBusyKind);

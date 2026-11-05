@@ -192,6 +192,51 @@ public sealed class BenchSlotTests : JobTestsBase
     }
 
     [Fact]
+    public async Task ABenchRingStaysOpenWhileJobsRunBehindItAndOutsideLoadStaysHighAndClosesWhenItDrops()
+    {
+        double? outside = 90;
+        _cpu = 95;
+        var (jobs, clock, _, gone) = Idle(() => _cpu, () => outside);
+        jobs.MaxRunning = 4;
+        var said = new List<CommandRequest>();
+        jobs.Say = (request, _) =>
+        {
+            said.Add(request);
+            return Task.FromResult(new CommandResult { Seq = 0, Verb = request.Verb, Target = request.Target, Who = request.Who, Ok = true });
+        };
+        _state.PutMachine(new MachineRow
+        {
+            SampledAt = clock.GetUtcNow(), CpuPercent = 95, Cores = 16, MemoryUsed = 1, MemoryTotal = 2, OwnedCpuPercent = 5,
+            Processes = [new MachineProcess { Pid = 4242, Name = "TianWen.Lib.Tests", CpuPercent = 80, MemoryBytes = 1, WorkingDirectory = @"C:\repos\tianwen\grade-sky-trend" }],
+        });
+        var first = Hand(jobs, Sleep(30));
+        await Until(first, j => j.State == JobState.Running);
+        var bench = HandBench(jobs, Echo("bench"));
+        CardRow[] Busy() => [.. _state.Cards(openOnly: true).Where(c => c.Kind == JobRunner.BenchBusyKind)];
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        Look(jobs);
+        Busy().ShouldHaveSingleItem();
+        said.ShouldHaveSingleItem();
+
+        var run = Hand(jobs, Sleep(30));
+        await Until(run, j => j.State == JobState.Running);
+        Look(jobs);
+        Busy().ShouldHaveSingleItem();
+        said.Count.ShouldBe(1);
+
+        outside = 2;
+        _cpu = 40;
+        Look(jobs);
+        Busy().ShouldBeEmpty();
+        Row(bench).State.ShouldBe(JobState.Queued);
+        said.Count.ShouldBe(1);
+
+        await gone(run);
+        await gone(first);
+    }
+
+    [Fact]
     public async Task ALegWorkerStartIsHeldWhileABenchIsQueuedOrRunningAndAdmittedAfter()
     {
         var (jobs, _, _, gone) = Idle(() => _cpu);
