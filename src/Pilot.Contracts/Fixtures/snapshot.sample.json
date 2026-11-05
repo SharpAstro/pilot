@@ -222,7 +222,11 @@
       "pausedFor": "00:00:00",
       "told": false,
       "toldAt": null,
-      "toldWay": null
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null
     },
     {
       "id": "j15",
@@ -256,7 +260,11 @@
       "pausedFor": "00:00:00",
       "told": false,
       "toldAt": null,
-      "toldWay": null
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null
     },
     {
       "id": "j13",
@@ -290,7 +298,11 @@
       "pausedFor": "00:00:00",
       "told": false,
       "toldAt": null,
-      "toldWay": null
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null
     },
     {
       "id": "j12",
@@ -324,7 +336,11 @@
       "pausedFor": "00:00:00",
       "told": true,
       "toldAt": null,
-      "toldWay": null
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null
     }
   ],
   "merges": [],
