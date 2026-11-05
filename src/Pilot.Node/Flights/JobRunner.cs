@@ -264,16 +264,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _mine[check.Id] = 0;
             EndOrphanedCheck(check);
         }
+        // The running ones first, so every one still alive holds its slot in _running before a queued one reaches the dispatcher:
+        // handed over first, a carried queued check could start beside a carried running build in the same plane while the
+        // dispatcher saw the slot free, which is the MSB3021 case MaxRunning is there to prevent (pilot #737).
+        foreach (var job in left.Where(j => j.State == JobState.Running))
+        {
+            _mine[job.Id] = 0;
+            await RecoverRunningAsync(job, cancellationToken);
+        }
         // Back on the queue through the dispatcher, which owns it, in the order they were handed over.
         foreach (var job in left.Where(j => j.State == JobState.Queued).OrderBy(j => j.QueuedAt ?? j.StartedAt).ThenBy(j => j.Id, StringComparer.Ordinal))
         {
             _mine[job.Id] = 0;
             _signals.Writer.TryWrite(new HandedOver(job));
-        }
-        foreach (var job in left.Where(j => j.State == JobState.Running))
-        {
-            _mine[job.Id] = 0;
-            await RecoverRunningAsync(job, cancellationToken);
         }
     }
 
