@@ -605,7 +605,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             return true;
         }
-        // Enter opens the selected session's transcript; Escape goes back to the table.
+        // Enter opens the selected session's transcript; Escape goes up to the table.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
         {
             Transcript.Open(_lines[Selected]);
@@ -617,7 +617,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
         {
-            Transcript.GoBack();
+            Transcript.GoUp();
             return true;
         }
         // Right lists the selected session's subagents under it, Left puts them away.
