@@ -132,6 +132,121 @@ public sealed class SiblingLockTests : JobTestsBase
         }
     }
 
+    private async Task CancelAll(JobRunner jobs, params string[] ids)
+    {
+        foreach (var id in ids)
+        {
+            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+            await Until(id, j => j.EndedAt is not null);
+        }
+    }
+
+    // "one" builds pilot; "two" builds pilot and DIR.Lib; "six" builds DIR.Lib only; "seven" builds tianwen; "three" and "five" build nothing.
+    private static string[] Sets(string command) =>
+        command.Contains("one") ? [Clone("pilot")]
+        : command.Contains("two") ? [Clone("pilot"), Clone("DIR.Lib")]
+        : command.Contains("six") ? [Clone("DIR.Lib")]
+        : command.Contains("seven") ? [Clone("tianwen")]
+        : [];
+
+    [Fact]
+    public async Task ANoBuildJobBehindASiblingHeldHeadStartsOutOfTurn()
+    {
+        var jobs = Runner(Sets, slots: 3);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        var free = Hand(jobs, "echo 'three'; sleep 20");
+
+        await Until(free, j => j.State == JobState.Running);
+        Row(free).Step.ShouldNotBeNull().ShouldContain($"started ahead of 1 held job ({held})");
+        Row(held).State.ShouldBe(JobState.Queued);
+        Row(held).Step.ShouldNotBeNull().ShouldContain($"next in line: waiting for job {first}'s build");
+        await CancelAll(jobs, first, free);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        await CancelAll(jobs, held);
+    }
+
+    [Fact]
+    public async Task AJobSharingTheHeldHeadsCloneDoesNotJumpItButADisjointOneDoes()
+    {
+        var jobs = Runner(Sets, slots: 4);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        // Free of the running holder (pilot), but shares DIR.Lib with the held head.
+        var same = Hand(jobs, "echo 'six'; sleep 20");
+        var other = Hand(jobs, "echo 'seven'; sleep 20");
+
+        await Until(other, j => j.State == JobState.Running);
+        Row(same).State.ShouldBe(JobState.Queued);
+        Row(same).Step.ShouldNotBeNull().ShouldContain($"waits behind job {held}, which shares its clone DIR.Lib");
+        Row(other).Step.ShouldNotBeNull().ShouldContain("started ahead of 2 held jobs");
+        await CancelAll(jobs, first, other);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        Row(same).State.ShouldBe(JobState.Queued);
+        await CancelAll(jobs, held);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(same, j => j.State == JobState.Running);
+        await CancelAll(jobs, same);
+    }
+
+    [Fact]
+    public async Task AHeadWaitingForMemoryStillBlocksASmallJobBehindIt()
+    {
+        long free = 1L << 40;
+        var clock = new Clock();
+        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
+        {
+            FreeMemory = () => free,
+        };
+        jobs.MaxRunning = 3;
+        jobs.MinFreeMemory = 1L << 30;
+        jobs.SiblingsOf = job => Sets(job.Command);
+        // The head's kind (keyed "sleep 21") has been measured at 8 GB; the small job's ("sleep 20") has not, so it gets the
+        // 1 GB guess and alone would fit in the 2 GB free. Different keys keep the seed off the small job.
+        SeedRun("seed1", "echo 'five'; sleep 21", median: 8L << 30, peak: 9L << 30, ended: 1);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        free = 2L << 30;
+        var head = Hand(jobs, "echo 'five'; sleep 21");
+        var small = Hand(jobs, "echo 'three'; sleep 20");
+
+        Row(head).State.ShouldBe(JobState.Queued);
+        Row(small).State.ShouldBe(JobState.Queued);
+        Row(head).Step.ShouldNotBeNull().ShouldContain("free memory");
+        // The precondition: the small job itself needs 1 GB of the 2 GB free, so only the head's memory wait holds it.
+        var smallStep = Row(small).Step.ShouldNotBeNull();
+        smallStep.ShouldContain("needs 1.0 GB");
+        smallStep.ShouldNotContain("needs 8");
+        await CancelAll(jobs, first);
+    }
+
+    [Fact]
+    public async Task TheHeldHeadTakesTheFreedSlotAheadOfALaterNoBuildJob()
+    {
+        var jobs = Runner(Sets, slots: 2);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        var free = Hand(jobs, "echo 'three'; sleep 20");
+        await Until(free, j => j.State == JobState.Running);
+        // Both slots are taken now, so this one waits for a slot behind the held head.
+        var later = Hand(jobs, "echo 'five'; sleep 20");
+        Row(later).State.ShouldBe(JobState.Queued);
+
+        await CancelAll(jobs, first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        Row(later).State.ShouldBe(JobState.Queued);
+        await CancelAll(jobs, held, free);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(later, j => j.State == JobState.Running);
+        await CancelAll(jobs, later);
+    }
+
     /// <summary>A temp org with a repo "pilot" (its own .git folder) and planes pil1 and pil2, whose props use sibling A, which uses B.</summary>
     private (string Org, string Repo, string Plane1, string Plane2) Org()
     {
