@@ -77,7 +77,7 @@ internal static class PrOrigins
                 Directory.Delete(root, recursive: true);
                 return;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 50)
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 50)
             {
                 Thread.Sleep(100);
             }

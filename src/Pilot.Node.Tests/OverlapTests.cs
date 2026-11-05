@@ -57,7 +57,7 @@ public abstract class OverlapTestsBase : IDisposable
                 }
                 Directory.Delete(_root, recursive: true);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 5)
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 5)
             {
                 Thread.Sleep(200 * attempt);
             }
