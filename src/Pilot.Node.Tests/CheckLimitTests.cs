@@ -71,7 +71,7 @@ public class CheckLimitTests
         var limit = For([Run(120, id: "j120")]);
 
         limit.Limit.ShouldBe(CheckLimit.Ceiling);
-        limit.Basis.ShouldBe("the 2 h ceiling; 1.5x its slowest pass, j120 (" + Test + "), 120 m, would be 3 h");
+        limit.Basis.ShouldBe("the 2 h ceiling; 1.5x its slowest pass, j120 (" + Test + "), 2 h, would be 3 h");
     }
 
     [Fact]
