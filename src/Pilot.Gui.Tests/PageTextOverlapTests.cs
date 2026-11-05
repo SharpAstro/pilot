@@ -152,6 +152,26 @@ public sealed class PageTextOverlapTests
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
     }
 
+    /// <summary>
+    /// The page's setup in <paramref name="state"/> (its chrome, a frame, its tree: <c>prepare</c>) and then its arrange, three times (<c>arrange</c>, the
+    /// warm one last), in milliseconds: what <see cref="PageFrameTimeTests"/> records for the views a fix touched.
+    /// </summary>
+    internal static async Task<(double Prepare, double[] Arrange)> TimedArrange(string page, string state, int width, float dpi, int height)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
+        var prepare = watch.Elapsed.TotalMilliseconds;
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        var arrange = new double[3];
+        for (var i = 0; i < arrange.Length; i++)
+        {
+            watch.Restart();
+            Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
+            arrange[i] = watch.Elapsed.TotalMilliseconds;
+        }
+        return (prepare, arrange);
+    }
+
     internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
         using var prepared = await Prepare(page, state, width, dpi, setup, height);
