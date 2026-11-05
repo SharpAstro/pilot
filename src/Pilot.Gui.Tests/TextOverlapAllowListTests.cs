@@ -13,6 +13,7 @@ public sealed class TextOverlapAllowListTests
         {
             entry.Reason.ShouldNotBeNullOrWhiteSpace(entry.Case);
             entry.Issue.ShouldBeGreaterThan(0, entry.Case);
+            entry.Issue.ShouldNotBe(740, entry.Case + ": 740 is the flight's own number, a placeholder");
         }
     }
 
