@@ -40,6 +40,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 {
     public const string UntoldKind = "job-untold";
 
+    /// <summary>The Ring card for a job whose owner was told twice and still did not act (#756).</summary>
+    public const string UnansweredKind = "job-told-unanswered";
+
+    /// <summary>How long an idle owner may sit without acting on a tell before it is told again, and again before it rings (#756).</summary>
+    public TimeSpan RetellAfter { get; init; } = TimeSpan.FromMinutes(4);
+
+    /// <summary>
+    /// For a tell relayed into a session mid-turn: the first <c>LastResponseAt</c> seen after the tell, which is the end of the busy
+    /// turn that was already running (it cannot have acted on the tell). Only a response later than it counts as acting. In memory:
+    /// a node restart takes the next one seen, which errs towards a retell.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _busyTurnEnd = new(StringComparer.Ordinal);
+
     /// <summary>The For-you card for a running job that has used next to no CPU while others queue behind it.</summary>
     public const string IdleKind = "job-idle";
 
@@ -77,8 +90,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private void MarkTold(JobRow job, string way) =>
-        state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way });
+    private void MarkTold(JobRow job, string way, bool whileWorking = false) =>
+        state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = whileWorking ? true : null });
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
@@ -225,6 +238,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 try
                 {
                     await TellUntoldAsync(null, stopping);
+                    await RetellSilentAsync(stopping);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -259,6 +273,95 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             told |= state.Jobs().FirstOrDefault(j => j.Id == row.Id) is { Told: true };
         }
         return told;
+    }
+
+    /// <summary>
+    /// A told, non-check row whose owner (or its replacement) sits idle and has not acted on the tell for <see cref="RetellAfter"/> is
+    /// told once more, with a lead saying it is a repeat; a further <see cref="RetellAfter"/> of silence rings once. "Acted" is a turn
+    /// after the tell: <see cref="SessionRow.LastResponseAt"/> later than <see cref="JobRow.ToldAt"/>. A tell relayed into a session that
+    /// was mid-turn is only acted on by a turn after that busy turn, whose end is the first response seen after the tell (the node holds
+    /// no per-line transcript here). Owners that ended for good are not retold. Returns whether any row was retold (#756).
+    /// </summary>
+    internal async Task<bool> RetellSilentAsync(CancellationToken cancellationToken)
+    {
+        if (Say is null)
+        {
+            return false;
+        }
+        var retold = false;
+        var now = time.GetUtcNow();
+        foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList())
+        {
+            if (row.ToldWay is "owner-ended" or "gone")
+            {
+                continue;
+            }
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(row.Owner!, sessions);
+            if (ownerRow is null)
+            {
+                continue;
+            }
+            var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
+            var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
+            if (replacement is null && (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true))
+            {
+                continue;
+            }
+            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
+            if (target.State != SessionState.Idle)
+            {
+                continue;
+            }
+            var lastTold = row.RetoldAt ?? row.ToldAt!.Value;
+            var silentSince = lastTold;
+            if (row.RetoldAt is null && row.ToldWhileWorking == true)
+            {
+                if (target.LastResponseAt is not { } responded || responded <= lastTold)
+                {
+                    continue;
+                }
+                silentSince = _busyTurnEnd.GetOrAdd(row.Id, responded);
+            }
+            if (target.LastResponseAt is { } last && last > silentSince)
+            {
+                continue;
+            }
+            if (now - silentSince < RetellAfter)
+            {
+                continue;
+            }
+            if (row.RetoldAt is not null)
+            {
+                state.PutJob(row with { RetellRung = true });
+                state.RaiseCard(CardBin.Ring, UnansweredKind, Verbs.JobTarget(row.Id),
+                    $"{row.Id} ended and {row.OwnerName ?? row.Owner} was told twice but has not acted",
+                    $"told {row.ToldAt:HH:mm:ss} ({row.ToldWay}) and again {row.RetoldAt:HH:mm:ss} ({row.RetoldWay}); its session ({target.Id}) is idle and has not answered either");
+                continue;
+            }
+            var took = row.EndedAt!.Value - row.StartedAt;
+            var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
+            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
+            string way;
+            try
+            {
+                var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target.Id), Args = [text], Who = LegWatch.Who }, cancellationToken);
+                way = said.Ok ? said.Way ?? SayWays.Relayed : $"refused: {LegCommander.OneLine(said.Error ?? "no reason given")}";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return retold;
+            }
+            catch (Exception ex)
+            {
+                way = $"failed: {ex.GetType().Name}: {ex.Message}";
+            }
+            LogTell(row, target.Id, target, $"retell {way}");
+            // Marked either way, once per row: a refused retell does not go round again, and its silence still rings above.
+            state.PutJob(row with { RetoldAt = now, RetoldWay = way });
+            retold = true;
+        }
+        return retold;
     }
 
     /// <summary>One owner set's untold ended jobs, told now (for an idle check); whether any was told.</summary>
@@ -1589,7 +1692,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         if (ok)
         {
-            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed);
+            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working);
             // A card an earlier try rang ("could not be told") is out of date now it has been told.
             state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
         }
