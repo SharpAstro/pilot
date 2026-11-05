@@ -117,7 +117,7 @@ public sealed class BenchSlotTests : JobTestsBase
 
         await gone(run);
         await gone(first);
-        await gone(bench);
+        Row(bench).State.ShouldBe(JobState.Queued);
     }
 
     [Fact]
