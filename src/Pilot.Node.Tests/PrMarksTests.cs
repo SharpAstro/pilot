@@ -221,8 +221,8 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
 
         _github.Posted.Count.ShouldBe(2);
         _github.Posted.Select(p => System.Text.Json.JsonDocument.Parse(p.Payload).RootElement.GetProperty("event").GetString()).ShouldAllBe(e => e == "COMMENT");
-        _github.Posted[0].Payload.ShouldContain("first round");
-        _github.Posted[1].Payload.ShouldContain("second round");
+        _github.Posted.ToArray()[0].Payload.ShouldContain("first round");
+        _github.Posted.ToArray()[1].Payload.ShouldContain("second round");
         F(flight.Code).Review!.ReviewUrl.ShouldNotBeNull().ShouldEndWith("pullrequestreview-9002");
     }
 }

@@ -892,7 +892,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
     {
         var time = new ManualClock(DateTimeOffset.Parse("2026-10-31T12:00:00Z"));
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.AddRange(WatchRead());
+        github.PutPullRequests(WatchRead());
         // The watch reads only the repos pilot works in: this clone says it does with a PILOT.md.
         File.WriteAllText(Path.Combine(WidgetClone, RepoCatalog.MarkerFile), "rules");
         var catalogOptions = new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1", RepoRootsGiven: [Roots]);

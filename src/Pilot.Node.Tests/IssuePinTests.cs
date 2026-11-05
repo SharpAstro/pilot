@@ -17,7 +17,7 @@ public sealed class IssuePinTests : IssueBoardFixture
 
         result.Ok.ShouldBeTrue(result.Error);
         GitHub.IssueLabels[2].ShouldContain(PilotMarks.Pinned);
-        GitHub.LabelsCreated.ShouldContain(PilotMarks.Pinned);
+        GitHub.LabelsCreated.Keys.ShouldContain(PilotMarks.Pinned);
         PilotMarks.Pinned.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
     }
 
@@ -53,7 +53,7 @@ public sealed class IssuePinTests : IssueBoardFixture
 
         (await Run(Verbs.PinIssue, Issue(2))).Ok.ShouldBeTrue();
 
-        GitHub.LabelsCreated.ShouldBeEmpty();
+        GitHub.LabelsCreated.Keys.ShouldBeEmpty();
     }
 
     [Fact]

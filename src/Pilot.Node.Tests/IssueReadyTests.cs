@@ -111,7 +111,7 @@ public abstract class IssueBoardFixture : IDisposable
     internal Task<CommandResult> Run(string verb, string target, params string[] args) =>
         Commander.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
-    internal string? MilestoneOf(int number) => GitHub.MilestoneIssuesOf[Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo))].Single(i => i.Number == number).Milestone;
+    internal string? MilestoneOf(int number) => GitHub.MilestoneIssuesOf[Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo))].Values.Single(i => i.Number == number).Milestone;
 }
 
 /// <summary>check-ready: Claude's judgement of an issue or idea, kept on its row with the reasons and the time, through a fake checker.</summary>

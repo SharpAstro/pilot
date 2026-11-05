@@ -79,7 +79,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
         await FlightWithTwoLegs();
         (await Leg(Verbs.PlanLeg, "flight/TIA1", "name=docs", "goal=Write the docs\nand the changelog", "done-when=The docs exist")).Ok.ShouldBeTrue();
 
-        _github.SubIssuesCreated[^1].Title.ShouldBe("TIA1/docs: Write the docs and the changelog");
+        _github.SubIssuesCreated.ToArray()[^1].Title.ShouldBe("TIA1/docs: Write the docs and the changelog");
     }
 
     [Fact]
@@ -107,8 +107,8 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
         await FinishDone("parser");
 
         _github.ClosedIssues.Select(c => c.Number).ShouldBe([int.Parse(parser.Id)]);
-        _github.SubIssues[1].Single(i => i.Id == parser.Id).Done.ShouldBeTrue();
-        _github.SubIssues[1].Single(i => i.Id == L("render").SubTask!.Id).Done.ShouldBeFalse();
+        _github.SubIssues[1].Values.Single(i => i.Id == parser.Id).Done.ShouldBeTrue();
+        _github.SubIssues[1].Values.Single(i => i.Id == L("render").SubTask!.Id).Done.ShouldBeFalse();
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
     public async Task ASubIssueAPersonAddedIsListedOnTheFlightRowAndChangesNoLeg()
     {
         OptIn("tianwen");
-        _github.SubIssues[1] = [new SubTaskItem("90", "Check the almanac too", false, "https://github.com/owner/repo/issues/90")];
+        _github.SetSubIssues(1, new SubTaskItem("90", "Check the almanac too", false, "https://github.com/owner/repo/issues/90"));
         await FlightWithTwoLegs();
 
         var others = _state.Flights().Single().OtherSubTasks.ShouldNotBeNull();
@@ -192,7 +192,7 @@ public sealed class SubTaskSyncTests : LegCommanderTestsBase
         _state.Legs("TIA1").Select(l => l.Name).ShouldBe(["parser", "render"]);
 
         // Refreshed at each sync: the person closes theirs, and it is read as done.
-        _github.SubIssues[1][0] = _github.SubIssues[1][0] with { Done = true };
+        _github.SubIssues[1]["90"] = _github.SubIssues[1]["90"] with { Done = true };
         await FinishDone("parser");
 
         _state.Flights().Single().OtherSubTasks.ShouldNotBeNull().Select(i => (i.Id, i.Done)).ShouldBe([("90", true)]);

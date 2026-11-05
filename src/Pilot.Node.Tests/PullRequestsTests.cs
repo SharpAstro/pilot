@@ -509,7 +509,7 @@ public sealed class PullRequestsTests : IDisposable
             Base = "origin/main", State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
         });
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("WebAssembly/wabt", 2622, PullRequestKind.Conflicts)]);
+        github.PutPullRequests([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("WebAssembly/wabt", 2622, PullRequestKind.Conflicts)]);
 
         var row = (await Watch(state, github, flown: false).RefreshAsync(Ct))!;
 
@@ -532,7 +532,7 @@ public sealed class PullRequestsTests : IDisposable
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         });
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1" }, Row("SharpAstro/tianwen", 8, PullRequestKind.Draft) with { Head = "flight/pil1" }, Row("sebgod/mercury", 9, PullRequestKind.Behind)]);
+        github.PutPullRequests([Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1" }, Row("SharpAstro/tianwen", 8, PullRequestKind.Draft) with { Head = "flight/pil1" }, Row("sebgod/mercury", 9, PullRequestKind.Behind)]);
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
@@ -553,7 +553,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub { Login = null };
-        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Author = "sebgod" });
+        github.PutPullRequest(Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Author = "sebgod" });
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
@@ -599,8 +599,8 @@ public sealed class PullRequestsTests : IDisposable
         var github = new FakeGitHub();
         for (var i = 0; i < 6; i++)
         {
-            github.PullRequestsOnGitHub.Add(Row(long1[i], i + 1, PullRequestKind.Ready));
-            github.PullRequestsOnGitHub.Add(Row(long2[i], i + 101, PullRequestKind.Ready));
+            github.PutPullRequest(Row(long1[i], i + 1, PullRequestKind.Ready));
+            github.PutPullRequest(Row(long2[i], i + 101, PullRequestKind.Ready));
         }
         var watch = Watch(state, github);
         await watch.RefreshAsync(Ct);
@@ -608,12 +608,12 @@ public sealed class PullRequestsTests : IDisposable
         var first = github.Searches.Count;
 
         // One repo of the batch the first of the sorted repos is in fails it; every other batch is read again.
-        var failing = github.Searches[0][0];
+        var failing = github.Searches.ToArray()[0][0];
         github.SearchFail.Add(failing);
-        github.PullRequestsOnGitHub.RemoveAll(p => p.Number is 2);
+        foreach (var key in github.PullRequestsOnGitHub.Keys.Where(k => k.Number is 2)) { github.RemovePullRequest(key.Repo, key.Number); }
         var row = (await watch.RefreshAsync(Ct))!;
 
-        var batch = github.Searches[first];
+        var batch = github.Searches.ToArray()[first];
         var failedOrgs = batch.Select(r => r.Split('/')[0]).Distinct().Order().ToArray();
         row.Errors.Select(e => e.Org).Order().ToArray().ShouldBe(failedOrgs);
         row.Errors.ShouldAllBe(e => e.Message == $"gh could not search the PRs of {batch.Length} repos: offline");
@@ -640,7 +640,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
         var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
         watch.Interval.ShouldBe(TimeSpan.FromSeconds(60));
@@ -655,14 +655,14 @@ public sealed class PullRequestsTests : IDisposable
             await Task.Delay(50, Ct);
             github.Searches.Count.ShouldBe(1);
 
-            github.PullRequestsOnGitHub.Clear(); github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Behind));
+            github.PullRequestsOnGitHub.Clear(); github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Behind));
             time.Advance(TimeSpan.FromSeconds(1));
             await Until(() => github.Searches.Count == 2 && time.Waiting == 1);
             state.PullRequests()!.PullRequests.Single().Kind.ShouldBe(PullRequestKind.Behind);
             state.PullRequests()!.ReadAt.ShouldBe(Noon.AddSeconds(60));
 
             // Refresh: now, with no time passed.
-            github.PullRequestsOnGitHub.Clear(); github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("SharpAstro/pilot", 2, PullRequestKind.Draft)]);
+            github.PullRequestsOnGitHub.Clear(); github.PutPullRequests([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("SharpAstro/pilot", 2, PullRequestKind.Draft)]);
             var row = (await watch.RefreshAsync(Ct))!;
             github.Searches.Count.ShouldBe(3);
             row.PullRequests.Length.ShouldBe(2);
@@ -701,7 +701,7 @@ public sealed class PullRequestsTests : IDisposable
             Code = "PIL1", Repo = "pilot", RepoPath = pilot, Issue = 1, Branch = "flight/pil1", Worktree = Path.Combine(pilot, ".claude", "worktrees", "pil1"),
             Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         });
-        node.GitHub.PullRequestsOnGitHub.AddRange(
+        node.GitHub.PutPullRequests(
         [
             Row("SharpAstro/pilot", 7, PullRequestKind.Ready) with { Head = "flight/pil1", Author = "sebgod", Review = PullRequestReview.Passed },
             Row("SharpAstro/pilot", 8, PullRequestKind.Draft),
@@ -741,7 +741,7 @@ public sealed class PullRequestsTests : IDisposable
         state.PutPrReview(Review("acme/widget", 7));
         var github = new FakeGitHub();
         // GitHub holds PRs of other repos of the same orgs, which an org-wide search would have read.
-        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("acme/widget", 7, PullRequestKind.Ready), Row("SharpAstro/never-cloned", 2, PullRequestKind.Ready), Row("acme/other", 3, PullRequestKind.Ready)]);
+        github.PutPullRequests([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("acme/widget", 7, PullRequestKind.Ready), Row("SharpAstro/never-cloned", 2, PullRequestKind.Ready), Row("acme/other", 3, PullRequestKind.Ready)]);
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
@@ -807,7 +807,7 @@ public sealed class PullRequestsTests : IDisposable
         }
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.AddRange(repos.Select((r, i) => Row(r, i + 1, PullRequestKind.Ready)));
+        github.PutPullRequests(repos.Select((r, i) => Row(r, i + 1, PullRequestKind.Ready)));
 
         var row = (await Watch(state, github).RefreshAsync(Ct))!;
 
@@ -824,7 +824,7 @@ public sealed class PullRequestsTests : IDisposable
         var mercury = Clone("sebgod", "mercury");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.AddRange([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("sebgod/mercury", 2, PullRequestKind.Ready)]);
+        github.PutPullRequests([Row("SharpAstro/pilot", 1, PullRequestKind.Ready), Row("sebgod/mercury", 2, PullRequestKind.Ready)]);
         var watch = Watch(state, github);
         (await watch.RefreshAsync(Ct))!.PullRequests.Length.ShouldBe(2);
 
@@ -839,7 +839,7 @@ public sealed class PullRequestsTests : IDisposable
         row.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);
         row.Orgs.ShouldBe(["SharpAstro"]);
         // Nor are its held PRs kept when what is left cannot be read: only the tracked repo's stand.
-        github.PullRequestsOnGitHub.Add(Row("sebgod/mercury", 2, PullRequestKind.Ready));
+        github.PutPullRequest(Row("sebgod/mercury", 2, PullRequestKind.Ready));
         github.SearchFail.Add("SharpAstro/pilot");
         var failed = (await watch.RefreshAsync(Ct))!;
         failed.PullRequests.Select(p => p.Repo).ShouldBe(["SharpAstro/pilot"]);
@@ -853,7 +853,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("sebgod", "mercury");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub { SearchCost = 4, SearchRemaining = 4321 };
-        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
         var log = new StringWriter();
         var watch = Watch(state, github);
         watch.Error = log;
@@ -883,7 +883,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
         var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
         (await watch.RefreshAsync(Ct))!.Note.ShouldBeNull();
@@ -926,7 +926,7 @@ public sealed class PullRequestsTests : IDisposable
         Clone("SharpAstro", "pilot");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.Add(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
+        github.PutPullRequest(Row("SharpAstro/pilot", 1, PullRequestKind.Ready));
         var time = new TimerTime(Noon);
         var watch = Watch(state, github, time);
 

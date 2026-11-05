@@ -298,7 +298,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "failed", "ran out of road")).Ok.ShouldBeTrue();
 
         L("parser").State.ShouldBe(LegState.Done);
-        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+        _github.SubIssues[1].Values.Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
     }
 
     [Fact]
@@ -313,7 +313,7 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         (await Verify("du1-watchtower")).Ok.ShouldBeTrue();
 
         L("parser").State.ShouldBe(LegState.Done);
-        _github.SubIssues[1].Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
+        _github.SubIssues[1].Values.Single(i => i.Id == sub.Id).Done.ShouldBeTrue();
     }
 
     [Fact]

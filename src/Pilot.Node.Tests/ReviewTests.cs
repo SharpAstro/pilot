@@ -957,7 +957,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         var pr = _github.Pr.ShouldNotBeNull();
         // Armed natively on the reviewed head, then main moves on.
         _state.PutFlight(F("TIA16") with { MergeWhenGreen = [pr.Head, "rebase", LegCommander.ArmedByGitHub] });
-        _github.AutoMergeArmed.Add((pr.Number, pr.Head, "rebase"));
+        _github.AutoMergeArmed.Enqueue((pr.Number, pr.Head, "rebase"));
         File.WriteAllText(Path.Combine(Repo, "later16.txt"), "later\n");
         Git(Repo, "add", ".");
         Git(Repo, "commit", "-q", "-m", "later on main");

@@ -242,7 +242,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var other = await OtherFlight();
         // A merge armed on the node and on GitHub, which plan-leg takes back.
         _state.PutFlight(F(flight.Code) with { MergeWhenGreen = [_github.Pr!.Head, "squash"] });
-        _github.AutoMergeArmed.Add((_github.Pr!.Number, _github.Pr!.Head, "squash"));
+        _github.AutoMergeArmed.Enqueue((_github.Pr!.Number, _github.Pr!.Head, "squash"));
         var gate = new Gate();
         _github.OnCall = call => call == nameof(IGitHub.PullRequestAsync) ? gate.PassAsync() : Task.CompletedTask;
         string[] plan = ["name=render", "goal=Draw the planets", "done-when=The capture shows them", "item=Draw them"];

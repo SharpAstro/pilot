@@ -64,7 +64,7 @@ public sealed class PullRequestWatchPaceTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "pilot", ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/pilot.git\n");
         var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
         var github = new FakeGitHub();
-        github.PullRequestsOnGitHub.Add(PullRequestSearch.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "PullRequests", "ready.json"))).PullRequests.Single() with { Repo = "SharpAstro/pilot" });
+        github.PutPullRequest(PullRequestSearch.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "PullRequests", "ready.json"))).PullRequests.Single() with { Repo = "SharpAstro/pilot" });
         var time = new PaceTime(Noon);
         var views = new PageViews();
         var log = new StringWriter();

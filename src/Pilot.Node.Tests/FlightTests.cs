@@ -163,7 +163,7 @@ public sealed class FlightCommanderTests : IDisposable
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "sc-12", "a", "story")).Ok.ShouldBeTrue();
 
         github.IssueLabels[11].ShouldBe(["pilot node: DE1"]);
-        github.LabelsCreated.ShouldBe(["pilot node: DE1"]);
+        github.LabelsCreated.Keys.ShouldBe(["pilot node: DE1"]);
         shortcut.Labels[12].ShouldBe(["pilot node: DE1"]);
         PilotMarks.NodeLabelPrefix.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal).ShouldBeFalse();
     }

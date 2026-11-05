@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
@@ -109,7 +110,20 @@ internal sealed class FakeGitHub : IGitHub
     private Task Called(string call) => OnCall?.Invoke(call) ?? Task.CompletedTask;
 
     /// <summary>The open issues, by number, with their titles.</summary>
-    public Dictionary<int, string> Issues { get; } = [];
+    public ConcurrentDictionary<int, string> Issues { get; } = [];
+
+    /// <summary>Takes the next free issue number for <paramref name="title"/>; TryAdd keeps two calls at once from taking the same one.</summary>
+    private int NewIssue(string title)
+    {
+        while (true)
+        {
+            var number = Issues.IsEmpty ? 1 : Issues.Keys.Max() + 1;
+            if (Issues.TryAdd(number, title))
+            {
+                return number;
+            }
+        }
+    }
 
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
         Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
@@ -150,13 +164,27 @@ internal sealed class FakeGitHub : IGitHub
             : Task.FromResult(PrFiles.TryGetValue(number, out var files) ? files : []);
 
     /// <summary>Every open PR GitHub holds, as the search reads them: a search answers those of the repos it names.</summary>
-    public List<PullRequestRow> PullRequestsOnGitHub { get; } = [];
+    public ConcurrentDictionary<(string Repo, int Number), PullRequestRow> PullRequestsOnGitHub { get; } = [];
+
+    /// <summary>Puts rows on GitHub, each under its (repo, number): a row put again replaces its earlier one.</summary>
+    public void PutPullRequests(IEnumerable<PullRequestRow> rows)
+    {
+        foreach (var row in rows)
+        {
+            PullRequestsOnGitHub[(row.Repo, row.Number)] = row;
+        }
+    }
+
+    public void PutPullRequest(PullRequestRow row) => PutPullRequests([row]);
+
+    /// <summary>Takes a PR off GitHub, as a merge or a close does.</summary>
+    public void RemovePullRequest(string repo, int number) => PullRequestsOnGitHub.TryRemove((repo, number), out _);
 
     /// <summary>Repos whose search fails, as a gh that could not reach GitHub: the whole batch that names one fails.</summary>
     public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The repos of each search, in order.</summary>
-    public Recorded<string[]> Searches { get; } = [];
+    public ConcurrentQueue<string[]> Searches { get; } = [];
 
     /// <summary>The GraphQL points each search costs, as <c>rateLimit { cost }</c> says.</summary>
     public int SearchCost { get; set; } = 3;
@@ -174,7 +202,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
-        Searches.Add(repos);
+        Searches.Enqueue(repos);
         if (_searchHold is { } hold)
         {
             await hold.Task.WaitAsync(cancellationToken);
@@ -187,16 +215,12 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException($"gh could not search the PRs of {repos.Length} repos: offline");
         }
-        PullRequestRow[] found;
-        lock (PullRequestsOnGitHub)
-        {
-            found = [.. PullRequestsOnGitHub.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase))];
-        }
+        PullRequestRow[] found = [.. PullRequestsOnGitHub.Values.Where(p => repos.Contains(p.Repo, StringComparer.OrdinalIgnoreCase)).OrderBy(p => p.Repo, StringComparer.Ordinal).ThenBy(p => p.Number)];
         return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null);
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
-    public Recorded<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
+    public ConcurrentQueue<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
@@ -214,14 +238,13 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        IssuesCreated.Add((repoPath, title, body));
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
+        IssuesCreated.Enqueue((repoPath, title, body));
+        var number = NewIssue(title);
         return new IssueInfo { Number = number, Title = title };
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>
-    public Recorded<(int Number, string Comment)> ClosedIssues { get; } = [];
+    public ConcurrentQueue<(int Number, string Comment)> ClosedIssues { get; } = [];
 
     /// <summary>When set, CloseIssueAsync fails with it.</summary>
     public string? CloseIssueFails { get; set; }
@@ -232,7 +255,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        ClosedIssues.Add((number, comment));
+        ClosedIssues.Enqueue((number, comment));
         Closed(number);
         return Task.CompletedTask;
     }
@@ -243,95 +266,95 @@ internal sealed class FakeGitHub : IGitHub
     private static string RepoKey(string repoPath) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
 
     /// <summary>Each repo's open milestones, by its folder path.</summary>
-    public Dictionary<string, List<Milestone>> MilestonesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, ConcurrentDictionary<int, Milestone>> MilestonesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included.</summary>
-    public Dictionary<string, List<MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each repo's issues that are in a milestone, by its folder path: every milestone's, closed ones included; each repo's by issue number.</summary>
+    public ConcurrentDictionary<string, ConcurrentDictionary<int, MilestoneIssue>> MilestoneIssuesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The time the next issue made by CreateIssueInMilestoneAsync carries; a minute on for each.</summary>
     public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
 
     /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
-    public Recorded<(string Repo, string Title)> MilestonesMade { get; } = [];
+    public ConcurrentQueue<(string Repo, string Title)> MilestonesMade { get; } = [];
 
     /// <summary>Every issue moved to a milestone, in order.</summary>
-    public Recorded<(int Number, string Milestone)> Moves { get; } = [];
+    public ConcurrentQueue<(int Number, string Milestone)> Moves { get; } = [];
 
     /// <summary>Every issue closed as not planned, with its comment, in order.</summary>
-    public Recorded<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
+    public ConcurrentQueue<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
     public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0, int closedIssues = 0)
     {
-        var list = MilestonesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestonesOf[RepoKey(repoPath)] = [];
-        var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues, closedIssues);
-        list.Add(milestone);
-        return milestone;
+        var list = MilestonesOf.GetOrAdd(RepoKey(repoPath), _ => []);
+        while (true)
+        {
+            var milestone = new Milestone(list.Count + 1, title, dueOn, description, openIssues, closedIssues);
+            if (list.TryAdd(milestone.Number, milestone))
+            {
+                return milestone;
+            }
+        }
     }
 
     /// <summary>Adds an issue (a number the fake has not given) to the repo, in <paramref name="milestone"/> or none.</summary>
     public MilestoneIssue AddIssue(string repoPath, string title, string? milestone, bool open = true, string body = "", string author = "sebgod")
     {
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
+        var number = NewIssue(title);
         var at = IdeaClock;
         IdeaClock = at.AddMinutes(1);
         var issue = new MilestoneIssue(number, title, body, open, milestone, at, at, author, $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}");
-        (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var held) ? held : MilestoneIssuesOf[RepoKey(repoPath)] = []).Add(issue);
+        MilestoneIssuesOf.GetOrAdd(RepoKey(repoPath), _ => [])[issue.Number] = issue;
         return issue;
     }
 
-    private void Replace(string repoPath, MilestoneIssue issue)
-    {
-        var list = MilestoneIssuesOf[RepoKey(repoPath)];
-        list[list.FindIndex(i => i.Number == issue.Number)] = issue;
-    }
+    private void Replace(string repoPath, MilestoneIssue issue) => MilestoneIssuesOf[RepoKey(repoPath)][issue.Number] = issue;
 
     public Task<Milestone[]> MilestonesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list] : []);
+        Task.FromResult<Milestone[]>(MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Values.OrderBy(m => m.Number)] : []);
 
     public Task<Milestone> CreateMilestoneAsync(string repoPath, string title, string description, CancellationToken cancellationToken)
     {
-        MilestonesMade.Add((RepoKey(repoPath), title));
+        MilestonesMade.Enqueue((RepoKey(repoPath), title));
         var made = AddMilestone(repoPath, title);
-        var list = MilestonesOf[RepoKey(repoPath)];
-        list[list.IndexOf(made)] = made = made with { Description = description };
+        made = made with { Description = description };
+        MilestonesOf[RepoKey(repoPath)][made.Number] = made;
         return Task.FromResult(made);
     }
 
     public Task<Milestone> IdeasMilestoneAsync(string repoPath, CancellationToken cancellationToken)
     {
-        if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)
+        if (MilestonesOf.TryGetValue(RepoKey(repoPath), out var list) && list.Values.OrderBy(m => m.Number).FirstOrDefault(m => m.Title == IdeaIds.Milestone) is { } found)
         {
             return Task.FromResult(found);
         }
-        MilestonesMade.Add((RepoKey(repoPath), IdeaIds.Milestone));
+        MilestonesMade.Enqueue((RepoKey(repoPath), IdeaIds.Milestone));
         return Task.FromResult(AddMilestone(repoPath, IdeaIds.Milestone));
     }
 
     /// <summary>When set, an issue made by CreateIssueInMilestoneAsync is left out of MilestoneIssuesAsync, as gh's list can lag a fresh issue.</summary>
     public bool HideCreatedFromLists { get; set; }
 
-    private readonly HashSet<int> _hidden = [];
+    private readonly ConcurrentDictionary<int, byte> _hidden = [];
 
     public Task<MilestoneIssue[]> MilestoneIssuesAsync(string repoPath, string milestone, CancellationToken cancellationToken) =>
         Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
-            ? [.. list.Where(i => i.Milestone == milestone && !_hidden.Contains(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
+            ? [.. list.Values.Where(i => i.Milestone == milestone && !_hidden.ContainsKey(i.Number)).OrderByDescending(i => i.Number).Select(Labelled)]
             : []);
 
     public Task<MilestoneIssue> CreateIssueInMilestoneAsync(string repoPath, string title, string? body, string milestone, CancellationToken cancellationToken)
     {
-        IssuesCreated.Add((repoPath, title, body));
+        IssuesCreated.Enqueue((repoPath, title, body));
         var made = AddIssue(repoPath, title, milestone, body: body ?? "");
         if (HideCreatedFromLists)
         {
-            _hidden.Add(made.Number);
+            _hidden[made.Number] = 0;
         }
         return Task.FromResult(made);
     }
 
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? list.Where(i => i.Number == number).Select(Labelled).FirstOrDefault() : null);
+        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
     private MilestoneIssue Labelled(MilestoneIssue issue)
@@ -347,14 +370,14 @@ internal sealed class FakeGitHub : IGitHub
     public Action? BeforeNextWrite { get; set; }
 
     /// <summary>Every issue saved by EditIssueAsync, as (number, title, body), in order.</summary>
-    public Recorded<(int Number, string Title, string Body)> Edits { get; } = [];
+    public ConcurrentQueue<(int Number, string Title, string Body)> Edits { get; } = [];
 
     /// <summary>Changes an issue as someone on GitHub would: its updated_at moves on.</summary>
     public MilestoneIssue ChangeElsewhere(string repoPath, int number, Func<MilestoneIssue, MilestoneIssue> change)
     {
         var at = IdeaClock;
         IdeaClock = at.AddMinutes(1);
-        var changed = change(MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number)) with { UpdatedAt = at };
+        var changed = change(MilestoneIssuesOf[RepoKey(repoPath)][number]) with { UpdatedAt = at };
         Replace(repoPath, changed);
         return changed;
     }
@@ -365,11 +388,11 @@ internal sealed class FakeGitHub : IGitHub
         var before = BeforeNextWrite;
         BeforeNextWrite = null;
         before?.Invoke();
-        return MilestoneIssuesOf[RepoKey(repoPath)].Single(i => i.Number == number).UpdatedAt == ifUpdatedAt;
+        return MilestoneIssuesOf[RepoKey(repoPath)][number].UpdatedAt == ifUpdatedAt;
     }
 
     public Task<MilestoneIssue[]> OpenMilestoneIssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
+        Task.FromResult<MilestoneIssue[]>(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) ? [.. list.Values.Where(i => i.Open).OrderByDescending(i => i.Number).Select(Labelled)] : []);
 
     public Task<bool> SetIssueMilestoneAsync(string repoPath, int number, string? milestone, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
     {
@@ -381,7 +404,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Moves.Add((number, ""));
+        Moves.Enqueue((number, ""));
         ChangeElsewhere(repoPath, number, i => i with { Milestone = null });
         return Task.FromResult(true);
     }
@@ -392,13 +415,13 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Moves.Add((number, milestone));
+        Moves.Enqueue((number, milestone));
         ChangeElsewhere(repoPath, number, i => i with { Milestone = milestone });
         return Task.FromResult(true);
     }
 
     /// <summary>Every issue transferred, as (number, repo it went to as owner/name, the number it has there), in order.</summary>
-    public Recorded<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
+    public ConcurrentQueue<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
 
     /// <summary>The fake keeps every repo of a test as a sibling folder, so a repo as owner/name is the folder of that name beside this one.</summary>
     public Task<MilestoneIssue?> TransferIssueAsync(string repoPath, int number, string toRepo, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
@@ -408,11 +431,11 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromResult<MilestoneIssue?>(null);
         }
         var from = MilestoneIssuesOf[RepoKey(repoPath)];
-        var issue = from.Single(i => i.Number == number);
-        from.Remove(issue);
+        from.TryRemove(number, out var issue);
+        ArgumentNullException.ThrowIfNull(issue);
         var there = RepoKey(Path.Combine(Path.GetDirectoryName(RepoKey(repoPath))!, toRepo[(toRepo.IndexOf('/') + 1)..]));
         var moved = AddIssue(there, issue.Title, null, issue.Open, issue.Body, issue.Author);
-        Transfers.Add((number, toRepo, moved.Number));
+        Transfers.Enqueue((number, toRepo, moved.Number));
         return Task.FromResult<MilestoneIssue?>(moved);
     }
 
@@ -422,7 +445,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        ClosedNotPlanned.Add((number, comment));
+        ClosedNotPlanned.Enqueue((number, comment));
         ChangeElsewhere(repoPath, number, i => i with { Open = false });
         return Task.FromResult(true);
     }
@@ -433,30 +456,30 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromResult(false);
         }
-        Edits.Add((number, title, body));
+        Edits.Enqueue((number, title, body));
         ChangeElsewhere(repoPath, number, i => i with { Title = title, Body = body });
         return Task.FromResult(true);
     }
 
     /// <summary>Every idea image committed by UploadIdeaImageAsync, as (repo folder path, id, ext, bytes), in order.</summary>
-    public Recorded<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
+    public ConcurrentQueue<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
 
     /// <summary>Every idea image read back by IdeaImageAsync, as (id, ext), in order.</summary>
-    public Recorded<(string Id, string Ext)> ImageReads { get; } = [];
+    public ConcurrentQueue<(string Id, string Ext)> ImageReads { get; } = [];
 
     public Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
     {
-        ImageUploads.Add((RepoKey(repoPath), id, ext, bytes));
+        ImageUploads.Enqueue((RepoKey(repoPath), id, ext, bytes));
         return Task.FromResult($"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/blob/{IdeaImages.Branch}/ideas/{id}.{ext}?raw=true");
     }
 
     public Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken)
     {
-        ImageReads.Add((id, ext));
+        ImageReads.Enqueue((id, ext));
         return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
-    public Recorded<(int Number, string Head, string Method)> Merged { get; } = [];
+    public ConcurrentQueue<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }
@@ -518,7 +541,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException("the merge queue takes no PR whose required checks have not passed");
         }
-        Merged.Add((number, head, method));
+        Merged.Enqueue((number, head, method));
         return Queues;
     }
 
@@ -547,10 +570,10 @@ internal sealed class FakeGitHub : IGitHub
     public string? DisarmFails { get; set; }
 
     /// <summary>Every auto-merge armed, as (PR number, head, method).</summary>
-    public Recorded<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
+    public ConcurrentQueue<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
 
     /// <summary>Every auto-merge disarmed, by PR number.</summary>
-    public Recorded<int> AutoMergeDisarmed { get; } = [];
+    public ConcurrentQueue<int> AutoMergeDisarmed { get; } = [];
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
@@ -558,7 +581,7 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<string> ProtectedBranches { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
-    public Recorded<string> ProtectionAsked { get; } = [];
+    public ConcurrentQueue<string> ProtectionAsked { get; } = [];
 
     /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
     public string? MergeQueueMethod { get; set; }
@@ -567,10 +590,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        lock (ProtectionAsked)
-        {
-            ProtectionAsked.Add(branch);
-        }
+        ProtectionAsked.Enqueue(branch);
         return Task.FromResult(!ProtectedBranches.Contains(branch));
     }
 
@@ -591,7 +611,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException($"GitHub will not arm auto-merge on #{number}: it is in {MergeStateStatus.ToLowerInvariant()} status, so it has no required check to wait for"));
         }
-        AutoMergeArmed.Add((number, head, method));
+        AutoMergeArmed.Enqueue((number, head, method));
         return Task.CompletedTask;
     }
 
@@ -604,17 +624,17 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        AutoMergeDisarmed.Add(number);
+        AutoMergeDisarmed.Enqueue(number);
         return Task.CompletedTask;
     }
 
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
-    public Recorded<int> Reruns { get; } = [];
+    public ConcurrentQueue<int> Reruns { get; } = [];
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         await Called(nameof(RerunFailedChecksAsync));
-        Reruns.Add(number);
+        Reruns.Enqueue(number);
         return 1;
     }
 
@@ -673,7 +693,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every dequeue the node asked for, by PR number.</summary>
-    public Recorded<int> Dequeued { get; } = [];
+    public ConcurrentQueue<int> Dequeued { get; } = [];
 
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
@@ -684,7 +704,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        Dequeued.Add(number);
+        Dequeued.Enqueue(number);
         // The queue lets it go: the PR is not queued any more, and GitHub says it was removed by hand.
         if (Queue is { Queued: true } queued)
         {
@@ -694,7 +714,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
-    public Recorded<(int Number, bool Draft)> DraftCalls { get; } = [];
+    public ConcurrentQueue<(int Number, bool Draft)> DraftCalls { get; } = [];
 
     /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
     public string? DraftFails { get; set; }
@@ -706,7 +726,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        DraftCalls.Add((number, draft));
+        DraftCalls.Enqueue((number, draft));
         if (Pr is { } held && held.Number == number)
         {
             Pr = held with { Draft = draft };
@@ -720,43 +740,39 @@ internal sealed class FakeGitHub : IGitHub
         }
     }
 
-    public List<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
+    public ConcurrentQueue<(string Branch, string Base, string Title, string Body)> Created { get; } = [];
 
     public async Task<PullRequest> CreateAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
         await Called(nameof(CreateAsync));
-        Created.Add((branch, baseBranch, title, body));
+        Created.Enqueue((branch, baseBranch, title, body));
         Pr = new PullRequest(70 + Created.Count, "OPEN", "cafe0000cafe0000", $"https://github.com/x/tianwen/pull/{70 + Created.Count}");
         return Pr;
     }
 
     /// <summary>Every draft PR opened (a merge batch's), as (number, branch, base, title); numbered from 901, apart from <see cref="Pr"/>.</summary>
-    public List<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
+    public ConcurrentQueue<(int Number, string Branch, string Base, string Title)> Drafts { get; } = [];
 
     public Task<int> OpenDraftAsync(string repoPath, string branch, string baseBranch, string title, string body, CancellationToken cancellationToken)
     {
-        lock (Drafts)
-        {
-            var number = 901 + Drafts.Count;
-            Drafts.Add((number, branch, baseBranch, title));
-            return Task.FromResult(number);
-        }
+        var number = 901 + Interlocked.Increment(ref _drafts) - 1;
+        Drafts.Enqueue((number, branch, baseBranch, title));
+        return Task.FromResult(number);
     }
 
+    private int _drafts;
+
     /// <summary>Every PR closed unmerged, by number.</summary>
-    public List<int> ClosedPrs { get; } = [];
+    public ConcurrentQueue<int> ClosedPrs { get; } = [];
 
     public Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
     {
-        lock (ClosedPrs)
-        {
-            ClosedPrs.Add(number);
-        }
+        ClosedPrs.Enqueue(number);
         return Task.CompletedTask;
     }
 
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
-    public Dictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken) =>
         Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
@@ -765,7 +781,7 @@ internal sealed class FakeGitHub : IGitHub
     public Dictionary<string, string> Origins { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Every clone made, by repo and path.</summary>
-    public List<(string Repo, string Path)> Cloned { get; } = [];
+    public ConcurrentQueue<(string Repo, string Path)> Cloned { get; } = [];
 
     public async Task CloneAsync(string repo, string path, CancellationToken cancellationToken)
     {
@@ -779,11 +795,11 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException($"gh could not clone {repo}: {run.Why}");
         }
-        Cloned.Add((repo, path));
+        Cloned.Enqueue((repo, path));
     }
 
     /// <summary>Every <c>pilot/review</c> status set, in order: the commit, its state, its description and the page it links to.</summary>
-    public List<(string Sha, string State, string Description, string? Url)> Statuses { get; } = [];
+    public ConcurrentQueue<(string Sha, string State, string Description, string? Url)> Statuses { get; } = [];
 
     /// <summary>When set, a status write fails with it, as GitHub refusing it.</summary>
     public string? StatusFails { get; set; }
@@ -794,15 +810,15 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        Statuses.Add((sha, state, description, targetUrl));
+        Statuses.Enqueue((sha, state, description, targetUrl));
         return Task.CompletedTask;
     }
 
     /// <summary>The labels each PR carries, by number: a pilot: label replaces any other, as the real call does; others are left.</summary>
-    public Dictionary<int, HashSet<string>> Labels { get; } = [];
+    public ConcurrentDictionary<int, HashSet<string>> Labels { get; } = [];
 
     /// <summary>Every pilot: label asked for, by PR number, in order.</summary>
-    public List<(int Number, string Label)> LabelCalls { get; } = [];
+    public ConcurrentQueue<(int Number, string Label)> LabelCalls { get; } = [];
 
     /// <summary>When set, a label write fails with it, as GitHub refusing it.</summary>
     public string? LabelFails { get; set; }
@@ -813,7 +829,7 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        LabelCalls.Add((number, label));
+        LabelCalls.Enqueue((number, label));
         var labels = Labels.TryGetValue(number, out var existing) ? existing : Labels[number] = [];
         labels.RemoveWhere(l => l.StartsWith(PilotMarks.LabelPrefix, StringComparison.Ordinal));
         labels.Add(label);
@@ -821,11 +837,11 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every label asked to come off, by PR number, in order.</summary>
-    public List<(int Number, string Label)> RemoveCalls { get; } = [];
+    public ConcurrentQueue<(int Number, string Label)> RemoveCalls { get; } = [];
 
     public Task RemoveLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
-        RemoveCalls.Add((number, label));
+        RemoveCalls.Enqueue((number, label));
         if (Labels.TryGetValue(number, out var set))
         {
             set.Remove(label);
@@ -834,13 +850,13 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>The labels each issue carries, by number.</summary>
-    public Dictionary<int, HashSet<string>> IssueLabels { get; } = [];
+    public ConcurrentDictionary<int, HashSet<string>> IssueLabels { get; } = [];
 
     /// <summary>The labels made in the repo, in order.</summary>
-    public List<string> LabelsCreated { get; } = [];
+    public ConcurrentDictionary<string, byte> LabelsCreated { get; } = [];
 
     /// <summary>Every comment made on an issue, by number.</summary>
-    public List<(int Number, string Body)> IssueComments { get; } = [];
+    public ConcurrentQueue<(int Number, string Body)> IssueComments { get; } = [];
 
     public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult(IssueLabels.TryGetValue(number, out var labels) ? labels.ToArray() : []);
@@ -854,31 +870,28 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        if (!LabelsCreated.Contains(label))
-        {
-            LabelsCreated.Add(label);
-        }
+        LabelsCreated.TryAdd(label, 0);
         (IssueLabels.TryGetValue(number, out var labels) ? labels : IssueLabels[number] = []).Add(label);
         return Task.CompletedTask;
     }
 
     /// <summary>Every label asked to be made in a repo with no item, by repo path, in order.</summary>
-    public List<(string Repo, string Label)> LabelsEnsured { get; } = [];
+    public ConcurrentQueue<(string Repo, string Label)> LabelsEnsured { get; } = [];
 
     /// <summary>When set, making a label in the repo fails with it, as GitHub refusing it.</summary>
     public string? EnsureFails { get; set; }
 
     /// <summary>The labels the repo has, as setup lists them; a label made by <see cref="EnsureLabelAsync"/> joins it.</summary>
-    public HashSet<string> RepoLabels { get; } = [];
+    public ConcurrentDictionary<string, byte> RepoLabels { get; } = [];
 
     public Task EnsureLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
-        LabelsEnsured.Add((repoPath, label));
+        LabelsEnsured.Enqueue((repoPath, label));
         if (EnsureFails is { } why)
         {
             return Task.FromException(new FlightException(why));
         }
-        RepoLabels.Add(label);
+        RepoLabels[label] = 0;
         return Task.CompletedTask;
     }
 
@@ -903,15 +916,15 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(true);
     }
 
-    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.ToArray());
+    public Task<string[]> RepoLabelsAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(RepoLabels.Keys.ToArray());
 
     /// <summary>Every repo label deleted, in order.</summary>
-    public List<string> LabelsDeleted { get; } = [];
+    public ConcurrentQueue<string> LabelsDeleted { get; } = [];
 
     public Task DeleteRepoLabelAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
-        LabelsDeleted.Add(label);
-        RepoLabels.Remove(label);
+        LabelsDeleted.Enqueue(label);
+        RepoLabels.TryRemove(label, out _);
         return Task.CompletedTask;
     }
 
@@ -935,10 +948,10 @@ internal sealed class FakeGitHub : IGitHub
     public bool HasPriorityField { get; set; }
 
     /// <summary>The Priority field's value of each issue, by number; one not listed is unset.</summary>
-    public Dictionary<int, IssuePriority> IssuePriorities { get; } = [];
+    public ConcurrentDictionary<int, IssuePriority> IssuePriorities { get; } = [];
 
     /// <summary>Every write of the Priority field, as (number, level), in order.</summary>
-    public List<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
+    public ConcurrentQueue<(int Number, IssuePriority? Level)> PrioritySets { get; } = [];
 
     /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
     public string? PrioritySetFails { get; set; }
@@ -952,14 +965,14 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        PrioritySets.Add((number, level));
+        PrioritySets.Enqueue((number, level));
         if (level is { } set)
         {
             IssuePriorities[number] = set;
         }
         else
         {
-            IssuePriorities.Remove(number);
+            IssuePriorities.TryRemove(number, out _);
         }
         return Task.CompletedTask;
     }
@@ -973,22 +986,25 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        IssueComments.Add((number, body));
-        PrConversation.Add((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
+        IssueComments.Enqueue((number, body));
+        PrConversation.Enqueue((number, new PrComment(Login ?? "", body, DateTimeOffset.UtcNow)));
         return Task.CompletedTask;
     }
 
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
-    public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+    public ConcurrentQueue<(int Number, PrComment Comment)> PrConversation { get; } = [];
 
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
 
     /// <summary>Each issue's sub-issues, by the parent's number: what GitHub says the sub_issues list holds.</summary>
-    public Dictionary<int, List<SubTaskItem>> SubIssues { get; } = [];
+    public ConcurrentDictionary<int, ConcurrentDictionary<string, SubTaskItem>> SubIssues { get; } = [];
+
+    /// <summary>Seeds the sub-issues of a parent, each under its id, replacing any it had.</summary>
+    public void SetSubIssues(int parent, params SubTaskItem[] items) => SubIssues[parent] = new(items.Select(i => KeyValuePair.Create(i.Id, i)));
 
     /// <summary>Every sub-issue made, as (parent, title, body), in order.</summary>
-    public List<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
+    public ConcurrentQueue<(int Parent, string Title, string? Body)> SubIssuesCreated { get; } = [];
 
     /// <summary>When set, the sub-issue calls fail with it, as a GitHub that refused them.</summary>
     public string? SubIssueFails { get; set; }
@@ -999,11 +1015,10 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException<SubTask>(new FlightException(why));
         }
-        SubIssuesCreated.Add((parent, title, body));
-        var number = Issues.Count == 0 ? 1 : Issues.Keys.Max() + 1;
-        Issues[number] = title;
+        SubIssuesCreated.Enqueue((parent, title, body));
+        var number = NewIssue(title);
         var url = $"https://github.com/owner/repo/issues/{number}";
-        (SubIssues.TryGetValue(parent, out var list) ? list : SubIssues[parent] = []).Add(new SubTaskItem(number.ToString(), title, false, url));
+        SubIssues.GetOrAdd(parent, _ => [])[number.ToString()] = new SubTaskItem(number.ToString(), title, false, url);
         return Task.FromResult(new SubTask { Id = number.ToString(), Url = url });
     }
 
@@ -1011,10 +1026,9 @@ internal sealed class FakeGitHub : IGitHub
     {
         foreach (var list in SubIssues.Values)
         {
-            var at = list.FindIndex(i => i.Id == number.ToString());
-            if (at >= 0)
+            if (list.TryGetValue(number.ToString(), out var item))
             {
-                list[at] = list[at] with { Done = true };
+                list[item.Id] = item with { Done = true };
             }
         }
     }
@@ -1025,13 +1039,15 @@ internal sealed class FakeGitHub : IGitHub
         {
             return Task.FromException(new FlightException(why));
         }
-        ClosedNotPlanned.Add((number, comment));
+        ClosedNotPlanned.Enqueue((number, comment));
         Closed(number);
         return Task.CompletedTask;
     }
 
     public Task<SubTaskItem[]> SubIssuesAsync(string repoPath, int parent, CancellationToken cancellationToken) =>
-        Task.FromResult(SubIssues.TryGetValue(parent, out var list) ? list.ToArray() : []);
+        Task.FromResult(SubIssues.TryGetValue(parent, out var list)
+            ? list.Values.OrderBy(i => int.TryParse(i.Id, out var n) ? n : int.MaxValue).ThenBy(i => i.Id, StringComparer.Ordinal).ToArray()
+            : Array.Empty<SubTaskItem>());
 
     /// <summary>The login gh says it is signed in as.</summary>
     public string? Login { get; set; } = "controller";
@@ -1039,10 +1055,12 @@ internal sealed class FakeGitHub : IGitHub
     public Task<string?> LoginAsync(CancellationToken cancellationToken) => Task.FromResult(Login);
 
     /// <summary>Every review posted: the repo, the PR, the payload's path, and the payload as it was read when it went.</summary>
-    public List<(string Repo, int Number, string Path, string Payload)> Posted { get; } = [];
+    public ConcurrentQueue<(string Repo, int Number, string Path, string Payload)> Posted { get; } = [];
 
     /// <summary>When set, a post fails with it: a FlightException as GitHub refusing it, anything else as a post that never said back.</summary>
     public Exception? PostFails { get; set; }
+
+    private int _posted;
 
     public Task<PostedReview> PostReviewAsync(string repo, int number, string payload, CancellationToken cancellationToken)
     {
@@ -1051,8 +1069,8 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException<PostedReview>(fails);
         }
         var text = File.ReadAllText(payload);
-        Posted.Add((repo, number, payload, text));
-        var id = 9000 + Posted.Count;
+        Posted.Enqueue((repo, number, payload, text));
+        var id = 9000 + Interlocked.Increment(ref _posted);
         using var doc = System.Text.Json.JsonDocument.Parse(text);
         var state = doc.RootElement.GetProperty("event").GetString() switch { "APPROVE" => "APPROVED", "REQUEST_CHANGES" => "CHANGES_REQUESTED", _ => "COMMENTED" };
         return Task.FromResult(new PostedReview(id, state, $"https://github.com/{repo}/pull/{number}#pullrequestreview-{id}"));

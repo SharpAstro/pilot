@@ -292,7 +292,7 @@ public sealed class IdeaImageTests : IDisposable
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
         });
         var at = new DateTimeOffset(2026, 10, 30, 9, 0, 0, TimeSpan.Zero);
-        node.GitHub.ImageUploads.Add(("/r/tianwen", "0011aabb22cc", "png", Png));
+        node.GitHub.ImageUploads.Enqueue(("/r/tianwen", "0011aabb22cc", "png", Png));
         node.State.PutIdeas("tianwen", IdeaRows.Of("tianwen", [new MilestoneIssue(5, "Look", $"![s]({Url("0011aabb22cc")})", true, IdeaIds.Milestone, at, at, "sebgod", "https://github.com/SharpAstro/tianwen/issues/5")], [], at));
 
         var first = await node.Client.GetAttachmentAsync("0011aabb22cc", Ct);

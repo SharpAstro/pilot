@@ -17,7 +17,7 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     private const string Question = "README.md:1 design: should this be a service at all?";
 
     private void Comment(string author, string body, TimeSpan from) =>
-        _github.PrConversation.Add((7, new PrComment(author, body, DateTimeOffset.UtcNow + from)));
+        _github.PrConversation.Enqueue((7, new PrComment(author, body, DateTimeOffset.UtcNow + from)));
 
     [Fact]
     public async Task AnAnswerCommentAfterTheReviewStartsAFixerWhoseBriefHoldsTheQuestionAndTheAnswer()
@@ -219,7 +219,7 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
     public async Task AnAnswerCommentAfterTheReviewSendsTheLastLegRound()
     {
         var flight = await AskedDesign();
-        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         (await RunPr(Verbs.FixPr, "controller")).Error.ShouldBeNull();
 
@@ -233,7 +233,7 @@ public sealed class FlightDesignAnswerTests : FlightDesignTestsBase
     public async Task AnAnswerCommentSeenByTheSweepSendsTheLastLegRoundOnce()
     {
         var flight = await AskedDesign();
-        _github.PrConversation.Add((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        _github.PrConversation.Enqueue((71, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
 
         await _reviews.SweepAsync(Ct);
         var started = _workers.Started.Count;
