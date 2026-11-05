@@ -111,6 +111,15 @@ public static partial class Briefs
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        if (flight.HumanVerification)
+        {
+            text.AppendLine();
+            text.AppendLine("This flight's issue carries the `pilot: human verification` label. A check only a person can make (it cannot be settled by a");
+            text.AppendLine("test or a CPU-rendered capture: hardware, a live window, how it feels) goes under a third heading, `## Human verification`,");
+            text.AppendLine("one list item each. The item's first line is a short title; under it, a `Do:` line (exactly what to do) and a `Done when:`");
+            text.AppendLine("line (what to look for). Carry over such checks the legs' reports name. The node files each item as an issue for the");
+            text.AppendLine("controller. They never block: do not put them under `## Blocking`, and they do not change your verdict.");
+        }
         text.AppendLine(AttachmentRule(run));
         text.AppendLine(ReportRule(run));
         text.AppendLine();

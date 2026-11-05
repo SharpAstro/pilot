@@ -95,6 +95,15 @@ public static partial class Briefs
             }
         }
 
+        if (flight.HumanVerification)
+        {
+            text.AppendLine();
+            text.AppendLine("## Human verification");
+            text.AppendLine("This flight's issue carries the `pilot: human verification` label. A check only a person can make (it cannot be settled by a");
+            text.AppendLine("test or a CPU-rendered capture: hardware, a live window, how it feels) is named in your report, under a `## Human verification`");
+            text.AppendLine("heading, one list item each: a short title, then a `Do:` line (exactly what to do) and a `Done when:` line (what to look");
+            text.AppendLine("for). The reviewer carries them over and the node files each as an issue for the controller. They never fail a leg.");
+        }
         text.AppendLine();
         // A view that only passed its tests shipped wrong to the eye (pilot's tooltips, 2026-10-25): where the org keeps a UI
         // checklist beside its clones, a leg is told to work by it and to show a capture.

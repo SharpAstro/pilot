@@ -1,11 +1,12 @@
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// A reviewer's report read for its two headings: <c>Blocking</c> (what must change before the merge) and <c>Not blocking</c>
-/// (nits and suggestions, noted and left to the watchtower's small fixes). A report with neither heading is the older, plain
+/// A reviewer's report read for its headings: <c>Blocking</c> (what must change before the merge), <c>Not blocking</c>
+/// (nits and suggestions, noted and left to the watchtower's small fixes) and <c>Human verification</c> (checks only a person can
+/// make, each item kept whole with its detail lines; they never block). A report with none of these headings is the older, plain
 /// kind, and every finding in it is taken as blocking.
 /// </summary>
-public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Blocking, IReadOnlyList<string> NotBlocking)
+public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Blocking, IReadOnlyList<string> NotBlocking, IReadOnlyList<string> HumanVerification)
 {
     /// <summary>Whether a <c>changes</c> report names a finding that blocks: a plain report does, a structured one only if its Blocking part has one.</summary>
     public bool HasBlocking => !Structured || Blocking.Count > 0;
@@ -14,6 +15,7 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
     {
         var blocking = new List<string>();
         var notBlocking = new List<string>();
+        var human = new List<string>();
         List<string>? into = null;
         var structured = false;
         foreach (var raw in report.Split('\n'))
@@ -25,6 +27,11 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
                 if (lower.StartsWith("not blocking", StringComparison.Ordinal) || lower.StartsWith("non-blocking", StringComparison.Ordinal) || lower.StartsWith("non blocking", StringComparison.Ordinal))
                 {
                     into = notBlocking;
+                    structured = true;
+                }
+                else if (lower.StartsWith("human verification", StringComparison.Ordinal))
+                {
+                    into = human;
                     structured = true;
                 }
                 else if (lower.StartsWith("blocking", StringComparison.Ordinal))
@@ -42,8 +49,13 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
             {
                 into.Add(line.Trim());
             }
+            else if (ReferenceEquals(into, human) && human.Count > 0 && line.Length > 0 && char.IsWhiteSpace(line[0]) && line.Trim().Length > 0)
+            {
+                // A human check is filed whole: its indented Do: and Done when: lines stay with it.
+                human[^1] += "\n" + line.Trim();
+            }
         }
-        return new ReviewFindings(structured, blocking, notBlocking);
+        return new ReviewFindings(structured, blocking, notBlocking, human);
     }
 
     // "## Blocking", "**Not blocking**" or "Not blocking:" on a line of its own.
@@ -59,7 +71,7 @@ public sealed record ReviewFindings(bool Structured, IReadOnlyList<string> Block
             return text.Trim('*', ':', ' ');
         }
         var bare = text.TrimEnd(':').Trim();
-        return bare.Equals("blocking", StringComparison.OrdinalIgnoreCase) || bare.Equals("not blocking", StringComparison.OrdinalIgnoreCase) ? bare : null;
+        return bare.Equals("blocking", StringComparison.OrdinalIgnoreCase) || bare.Equals("not blocking", StringComparison.OrdinalIgnoreCase) || bare.Equals("human verification", StringComparison.OrdinalIgnoreCase) ? bare : null;
     }
 
     private static bool IsItem(string line)
