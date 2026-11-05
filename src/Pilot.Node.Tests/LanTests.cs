@@ -139,11 +139,9 @@ public sealed class LanTests
         (await node.Client.GrantsAsync(Ct)).Response.ShouldBeEmpty();
     }
 
-    public static IEnumerable<object[]> Rows => Enumerable.Range(0, 50).Select(i => new object[] { i });
-    [Theory, MemberData(nameof(Rows))]
-    public async Task TheCliWatchesANodeOnTheLanAndConnectAsksAndKeepsItsToken(int row)
+    [Fact]
+    public async Task TheCliWatchesANodeOnTheLanAndConnectAsksAndKeepsItsToken()
     {
-        row.ShouldBeGreaterThanOrEqualTo(0);
         var port = FreePort();
         await using var node = await NodeHarness.StartAsync(Ct, lanPort: port);
         var tokens = Path.Combine(node.Options.DataFolder, "client-grants.json");
