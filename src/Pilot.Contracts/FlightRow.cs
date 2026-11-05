@@ -462,6 +462,13 @@ public sealed record PeerConnection
     /// <summary>The waited-for flight's issue number, when its node last said it had one (#753).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Issue { get; init; }
+
+    /// <summary>
+    /// When the node of the waited-for flight was first found unreachable, kept on later failing looks and cleared when it answers (#753);
+    /// null while it answers.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? UnreachableSince { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>

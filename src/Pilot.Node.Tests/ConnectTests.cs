@@ -144,7 +144,34 @@ public sealed class ConnectTests : OverlapTestsBase
 
         var held = F("TIA2");
         held.State.ShouldBe(FlightState.Held);
-        held.PeerConnections.ShouldHaveSingleItem().Note.ShouldNotBeNull().ShouldContain("DE1 could not be asked");
+        var wait = held.PeerConnections.ShouldHaveSingleItem();
+        // #753: the hold says so in words: the node, the local time it was first unreachable, and the PR as GitHub read it in the same look.
+        var since = wait.UnreachableSince.ShouldNotBeNull();
+        wait.Note.ShouldBe($"DE1 is not on the LAN since {since.ToLocalTime():HH:mm}; its PR #77 is open");
+        FlightWaiting.For(held).ShouldBe($"PIL294 on DE1 (DE1 is not on the LAN since {since.ToLocalTime():HH:mm}; its PR #77 is open)");
+
+        // The since-time is kept over later failing looks.
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        F("TIA2").PeerConnections.ShouldHaveSingleItem().UnreachableSince.ShouldBe(since);
+
+        // And cleared once the node answers.
+        peer.Unreachable = false;
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        var answered = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        answered.UnreachableSince.ShouldBeNull();
+        answered.Note.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task UnreachableNodeWithNoPrYetSaysSo_753()
+    {
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294), null);
+        peer.Unreachable = true;
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+
+        F("TIA2").PeerConnections.ShouldHaveSingleItem().Note.ShouldNotBeNull().ShouldEndWith("; no PR yet");
     }
 
     [Fact]
@@ -174,9 +201,10 @@ public sealed class ConnectTests : OverlapTestsBase
         var held = F("TIA2");
         held.State.ShouldBe(FlightState.Held);
         var note = held.PeerConnections.ShouldHaveSingleItem().Note.ShouldNotBeNull();
-        note.ShouldContain("DE1 could not be asked");
-        note.ShouldContain("connection refused");
-        FlightWaiting.For(held).ShouldStartWith("PIL294 on DE1 (DE1 could not be asked");
+        // #753: in words; the technical reason (connection refused) is in the node's log, not the short line.
+        note.ShouldStartWith("DE1 is not on the LAN since ");
+        note.ShouldNotContain("connection refused");
+        FlightWaiting.For(held).ShouldStartWith("PIL294 on DE1 (DE1 is not on the LAN since ");
 
         // It answers again, still flying: the reason goes. Landed: the flight flies.
         peer.Unreachable = false;
