@@ -1013,7 +1013,9 @@ public sealed class JobTests2 : JobTestsBase
         run.Tail.ShouldContain("all green");
         var ended = _state.Jobs().Single(j => j.Id == row.Id);
         (ended.State, ended.ExitCode, ended.StartedAt).ShouldBe((JobState.Succeeded, 0, clock.GetUtcNow()));
-        _said.ShouldBeEmpty();
+        // A check says nothing to a session. (The fixture's own runner shares the state and may tell the cancelled first job's end
+        // on its tick, so only what is said about the check counts.)
+        _said.Where(c => c.Args.Any(a => a.Contains(row.Id, StringComparison.Ordinal))).ShouldBeEmpty();
         await jobs.StopAsync(CancellationToken.None);
     }
 
