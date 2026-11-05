@@ -44,12 +44,17 @@ public sealed record QueuedFlight(string Code, string? Title, string Why, bool P
             .Select(x =>
             {
                 var priority = admission?.Priority.Contains(x.Flight.Code) == true;
-                // Without the field the label is the only mark, and it ranks as High.
-                var level = x.Flight.HasPriorityField ? x.Flight.IssuePriority : priority ? IssuePriority.High : (IssuePriority?)null;
-                return new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, priority, x.Flight.CreatedAt, level, x.Flight.HasPriorityField);
+                return new QueuedFlight(x.Flight.Code, x.Flight.Title, x.Why!, priority, x.Flight.CreatedAt, LevelOf(x.Flight, admission), x.Flight.HasPriorityField);
             })
             .OrderBy(q => IssuePriorities.Rank(q.Level)).ThenBy(q => q.Since)];
     }
+
+    /// <summary>
+    /// A flight's level: the Priority field's value where its repo has the field; without it, a flight in the admission's Priority
+    /// list (marked <c>pilot: priority</c>) ranks as High, and any other as unset (null). Shared by the admission queue and the job queue.
+    /// </summary>
+    public static IssuePriority? LevelOf(FlightRow flight, AdmissionRow? admission) =>
+        flight.HasPriorityField ? flight.IssuePriority : admission?.Priority.Contains(flight.Code) == true ? IssuePriority.High : null;
 }
 
 /// <summary>The admission changed: a new count, cap, priority set or note.</summary>

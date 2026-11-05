@@ -151,6 +151,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     private readonly ConcurrentDictionary<string, KillOnCloseJob> _holds = new(StringComparer.Ordinal);
     // The share of looks at a running check at which the machine's CPU was above 90%, kept until its row ends.
     private readonly ConcurrentDictionary<string, double> _saturation = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _checkBasis = new(StringComparer.Ordinal);
     private const string TimeoutPrefix = "stopped after its timeout";
     private CancellationToken _stopping;
     // Completes once the startup recovery has run. ExecuteAsync runs in the background, so without it a caller sharing the
@@ -299,7 +300,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // A finish that attached to the row before this ran is told, not left waiting (nothing is kept for a later one).
         if (_checkWaiters.TryRemove(ended.Id, out var waiter))
         {
-            waiter.TrySetResult(ResultOf(ended, null, 0));
+            waiter.TrySetResult(ResultOf(ended, null, 0, null));
         }
     }
 
@@ -470,12 +471,19 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// and last lines; one stopped by its budget, cancelled or never started is -1 with why. Cancelling
     /// <paramref name="cancellationToken"/> withdraws a waiting check or kills a running one's tree.
     /// </summary>
-    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken) =>
+        RunCheckAsync(flight, leg, command, cwd, new CheckLimit(budget, "the budget it was given", 0, null), cancellationToken);
+
+    /// <summary>The limit a check of <paramref name="command"/> in <paramref name="cwd"/> gets, from this node's job rows.</summary>
+    public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), JobKey.Of(command, cwd));
+
+    /// <summary>As above, with the limit and where it came from, so a stop can say both.</summary>
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
     {
         // The look for a carried check and the attach to it (or the queueing of a new one) are one step against a watch ending a check.
         lock (_checkEndLock)
         {
-            return RunCheckLockedAsync(flight, leg, command, cwd, budget, cancellationToken);
+            return RunCheckLockedAsync(flight, leg, command, cwd, limit, cancellationToken);
         }
     }
 
@@ -484,8 +492,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>Test hook: runs inside the lock after a check's ended row is put and before its result is given or kept.</summary>
     internal Action<JobRow>? AfterEndedRow { get; set; }
 
-    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
     {
+        var budget = limit.Limit;
         // A check a previous node left queued (carried over the restart) is waited on, not queued again at the back, and so is the
         // result of one a carried run ended after this node started when nobody had taken it yet (pilot #737).
         if (TakeKeptResult(flight, leg, command, cwd) is { } kept)
@@ -502,11 +511,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             // It may have ended between the look and the waiter: no Finish will come for a waiter put after it.
             if (state.Jobs().FirstOrDefault(j => j.Id == jobId) is { EndedAt: not null } already && _checkWaiters.TryRemove(jobId, out _))
             {
-                return ResultOf(already, null, 0);
+                return ResultOf(already, null, 0, null);
             }
             return await WaitForCheckAsync(jobId, done, cancellationToken);
         }
         jobId = state.NextJobId();
+        _checkBasis[jobId] = limit.Basis;
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
         var logPath = Path.Combine(folder, $"{jobId}.log");
@@ -642,7 +652,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return;
         }
         _saturation.TryRemove(ended.Id, out var share);
-        var run = ResultOf(ended, last, share);
+        _checkBasis.TryRemove(ended.Id, out var basis);
+        var run = ResultOf(ended, last, share, basis);
         if (_checkWaiters.TryRemove(ended.Id, out var waiter))
         {
             waiter.TrySetResult(run);
@@ -654,14 +665,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private static CheckRun ResultOf(JobRow ended, string[]? last, double share)
+    private static CheckRun ResultOf(JobRow ended, string[]? last, double share, string? basis)
     {
-        var tail = last is { Length: > 0 } ? string.Join('\n', last.TakeLast(30)) : "";
+        var tail = last is { Length: > 0 } ? string.Join('
+', last.TakeLast(30)) : "";
         return ended.State switch
         {
             JobState.Succeeded => new CheckRun(0, tail),
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
-                new CheckRun(-1, $"the check ran past {ended.Timeout.TotalMinutes:0} minutes of running and was stopped") { StoppedByBudget = true, Saturation = share },
+                new CheckRun(-1, $"the check was stopped at {CheckLimit.Describe(ended.Timeout)} of running: {basis ?? "its limit"}") { StoppedByBudget = true, Saturation = share },
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
         };
@@ -713,6 +725,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
+        ReorderQueue();
+
         while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
@@ -728,18 +742,45 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         // Each waiting job says where it stands.
+        var flights = state.Flights();
+        var admission = state.Admission();
+        var now = time.GetUtcNow();
+        // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
+        var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with
+            var job = _queue[i];
+            var why = i > 0 && ranks[i] is { } rank
+                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                : null;
+            var place = why is null ? "" : $" ({why})";
+            _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}",
+                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
-                WaitsOnSibling = SiblingHold(_queue[i]) is not null,
+                WaitsOnSibling = SiblingHold(job) is not null,
             };
             state.PutJob(_queue[i]);
         }
 
         CheckIdle();
+    }
+
+    /// <summary>
+    /// Puts the waiting jobs in start order on every dispatch, so a priority set while a job waits, or the wait bound passing,
+    /// takes effect: benchmarks stay ahead in their own order, the rest by <see cref="JobOrder"/> (rank, queued at, id).
+    /// </summary>
+    private void ReorderQueue()
+    {
+        if (_queue.Count < 2)
+        {
+            return;
+        }
+        var benches = _queue.Where(j => j.Kind == JobKind.Bench).ToList();
+        var others = JobOrder.Sort(_queue.Where(j => j.Kind != JobKind.Bench), state.Flights(), state.Admission(), time.GetUtcNow());
+        _queue.Clear();
+        _queue.AddRange(benches);
+        _queue.AddRange(others);
     }
 
     /// <summary>
@@ -1451,6 +1492,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return;
             }
         }
+        // The exit file is written by the wrapper just before it exits: the job is not ended while the wrapper still lives, or it
+        // holds its cwd and log after the row says ended (a temp folder could not be deleted on Windows, #721).
+        await GoneAsync(process);
         // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
         Follow(final: true);
         // Ended: the scripts it ran are of no use now.
