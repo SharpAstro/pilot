@@ -348,10 +348,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             EndedAt = EndOf(job, exitPath),
         };
         _tried[job.Id] = 0;
-        state.PutJob(ended);
-        DetachedShell.DeleteScripts(job.ScriptPath);
         // A check ended while the node was down: the finish that comes back takes this result (nothing waits yet, so it is kept).
-        Finish(ended, last);
+        lock (_checkEndLock)
+        {
+            state.PutJob(ended);
+            Finish(ended, last);
+        }
+        DetachedShell.DeleteScripts(job.ScriptPath);
         await TellAsync(ended, cancellationToken, last);
     }
 
@@ -467,7 +470,21 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// and last lines; one stopped by its budget, cancelled or never started is -1 with why. Cancelling
     /// <paramref name="cancellationToken"/> withdraws a waiting check or kills a running one's tree.
     /// </summary>
-    public async Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
+    {
+        // The look for a carried check and the attach to it (or the queueing of a new one) are one step against a watch ending a check.
+        lock (_checkEndLock)
+        {
+            return RunCheckLockedAsync(flight, leg, command, cwd, budget, cancellationToken);
+        }
+    }
+
+    private readonly object _checkEndLock = new();
+
+    /// <summary>Test hook: runs inside the lock after a check's ended row is put and before its result is given or kept.</summary>
+    internal Action? AfterEndedRow { get; set; }
+
+    private async Task<CheckRun> RunCheckLockedAsync(string flight, string leg, string command, string cwd, TimeSpan budget, CancellationToken cancellationToken)
     {
         // A check a previous node left queued (carried over the restart) is waited on, not queued again at the back, and so is the
         // result of one a carried run ended after this node started when nobody had taken it yet (pilot #737).
@@ -1477,14 +1494,20 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         // This watch tells it, so the sweep leaves it alone (marked before the row shows it ended).
         _tried[job.Id] = 0;
-        state.PutJob(ended);
-        if (looks > 0)
-        {
-            _saturation[job.Id] = (double)hot / looks;
-        }
         try
         {
-            Finish(ended, last);
+            // The row that shows a check ended and its result (given to its waiter, or kept for the finish that comes back) are one step
+            // to RunCheckAsync's look for a carried check: it must not see the row ended with no result yet and queue the check again.
+            lock (_checkEndLock)
+            {
+                state.PutJob(ended);
+                if (looks > 0)
+                {
+                    _saturation[job.Id] = (double)hot / looks;
+                }
+                AfterEndedRow?.Invoke();
+                Finish(ended, last);
+            }
             // Looked at again now this run is in the history: the look its slot gave may have been before it, with the older estimate.
             Pump();
         }

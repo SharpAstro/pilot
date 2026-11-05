@@ -123,12 +123,25 @@ public sealed class CheckCarryOverTests : JobTestsBase
         try
         {
             using var second = await Node.StartAsync(_root);
+            // Gated: the finish comes back exactly between the carried check's ended row and its kept result. It must wait for the
+            // result (taking it) rather than see an ended row with nothing kept and queue the check again.
+            using var ended = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            second.Jobs.AfterEndedRow = () =>
+            {
+                ended.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+            };
             KillBusy(busy);
-            await second.UntilAsync(check.Id, j => j.EndedAt is not null, Ct);
-            // The runner keeps the result just after it puts the ended row; give that a moment so a loaded machine does not race it.
-            await Task.Delay(1000, Ct);
+            await Task.Run(() => ended.Wait(TimeSpan.FromSeconds(40)), Ct);
+            ended.IsSet.ShouldBeTrue();
+            second.State.Jobs().Single(j => j.Id == check.Id).EndedAt.ShouldNotBeNull();
+            var attach = Task.Run(() => second.Jobs.RunCheckAsync(Flight, LegName, check.Command, _root, TimeSpan.FromMinutes(30), Ct), Ct);
+            await Task.Delay(300, Ct);
+            attach.IsCompleted.ShouldBeFalse();
+            release.Set();
 
-            var result = await second.Jobs.RunCheckAsync(Flight, LegName, check.Command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            var result = await attach.WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
             result.ExitCode.ShouldBe(0);
             second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
