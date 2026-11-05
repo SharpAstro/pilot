@@ -60,6 +60,34 @@ public sealed class SignalTests
     }
 
     [Fact]
+    public void TheDigestOpensWithGoneStaleAndCountsItInTheTitle()
+    {
+        _state.PutFlight(Flight("TIA3", FlightState.Flying));
+        _state.PutLeg(new LegRow { Flight = "TIA3", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+
+        var (title, detail) = new Digest(_state, _time).Compose(Start.AddHours(-12), Start);
+
+        title.ShouldContain("1 gone stale");
+        var lines = detail.Split(Environment.NewLine);
+        lines[0].ShouldBe("Gone stale:");
+        lines[1].ShouldStartWith("- TIA3, open 1 d 7 h: waiting on leg parser flying. Next: ");
+        lines[1].ShouldContain("\"flight created");
+        lines[2].ShouldBe("Landed: none.");
+    }
+
+    [Fact]
+    public void TheDigestHasNoGoneStaleSectionWhenEverythingIsFresh()
+    {
+        _state.PutFlight(Flight("TIA3", FlightState.Flying) with { CreatedAt = Start.AddHours(-1) });
+
+        var (title, detail) = new Digest(_state, _time).Compose(Start.AddHours(-12), Start);
+
+        title.ShouldNotContain("stale");
+        detail.ShouldNotContain("Gone stale");
+        detail.ShouldStartWith("Landed:");
+    }
+
+    [Fact]
     public void TheDigestListsWhatLandedWhatWasHandledAndWhatIsParkedAndReplacesTheLastOne()
     {
         _state.PutFlight(Flight("TIA1", FlightState.Landed, landedAt: Start.AddHours(-1)));
@@ -68,7 +96,7 @@ public sealed class SignalTests
         _state.PutLeg(new LegRow { Flight = "TIA3", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Failed, Report = "the API is down\nmore" });
         _state.RaiseCard(CardBin.Handled, "worker-nudged", "flight/TIA3/parser", "TIA3/parser's worker went idle; nudged (1 of 2)");
         _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA3/parser", "TIA3/parser failed");
-        var digest = new Digest(_state, _time);
+        var digest = new Digest(_state, _time) { Bounds = () => new StaleBounds { FlightHours = 9999, CardHours = 9999 } };
 
         var first = digest.Raise(_time.GetUtcNow());
 

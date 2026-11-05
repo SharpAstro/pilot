@@ -885,7 +885,7 @@ public sealed class Watchtower(
             {
                 alreadyTold = [.. Tells().Keys];
             }
-            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold);
+            var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale));
             fingerprint = BriefFingerprint();
             _job = await launcher.StartAsync(new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower), RemoteControl: true,
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.

@@ -338,3 +338,41 @@ public static class Staleness
         _ => $"{n}th",
     };
 }
+
+/// <summary>The 'Gone stale' section of the digest, the watchtower brief and the summary's records (#736 point 1).</summary>
+public static class StaleSection
+{
+    public const string Heading = "Gone stale";
+
+    /// <summary>What the node holds, read against <paramref name="bounds"/>.</summary>
+    public static IReadOnlyList<StaleItem> Read(NodeState state, DateTimeOffset now, StaleBounds bounds, TimeZoneInfo? zone = null) =>
+        Staleness.Read(state.Flights(), state.Legs(), state.Cards(), state.Jobs(), state.PullRequests(), now, bounds, zone).Stale;
+
+    /// <summary>One item in a line: its age, what it waits on, the action that moves it and the quoted summary.</summary>
+    public static string Line(StaleItem item)
+    {
+        var word = item.Kind switch
+        {
+            StaleKind.Leg => "rechecking",
+            StaleKind.Card => "ringing",
+            StaleKind.Hold => "holding",
+            _ => "open",
+        };
+        var summary = item.Summary.ReplaceLineEndings(" ").Replace('"', '\'');
+        return $"- {item.Subject}, {word} {item.AgeText}: waiting on {item.WaitsOn}. Next: {item.Action}. \"{summary}\"";
+    }
+
+    /// <summary>The heading and a line per item, oldest first, as lines; empty when nothing is stale.</summary>
+    public static IEnumerable<string> Lines(IReadOnlyList<StaleItem> items)
+    {
+        if (items.Count == 0)
+        {
+            yield break;
+        }
+        yield return $"{Heading}:";
+        foreach (var item in items)
+        {
+            yield return Line(item);
+        }
+    }
+}

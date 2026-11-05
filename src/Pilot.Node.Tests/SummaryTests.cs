@@ -115,6 +115,28 @@ public sealed class SummaryTests
     }
 
     [Fact]
+    public void TheFleetRecordsOpenWithGoneStaleAndThePromptPutsStaleFirstUnderNeedsYou()
+    {
+        Fill();
+        _state.PutFlight(Flight("OLD1", issue: 5) with { CreatedAt = Start - TimeSpan.FromHours(30) });
+
+        var records = SummaryRecords.Fleet(_state, Start).ShouldNotBeNull();
+
+        records.ShouldStartWith("Gone stale:");
+        records.ShouldContain("- OLD1, open 1 d 6 h: waiting on ");
+        records.IndexOf("Records of the node", StringComparison.Ordinal).ShouldBeGreaterThan(records.IndexOf("- OLD1", StringComparison.Ordinal));
+        SummaryPrompt.Fleet(3, records).ShouldContain("\"Gone stale\", list those first");
+    }
+
+    [Fact]
+    public void TheFleetRecordsHaveNoGoneStaleSectionWhenEverythingIsFresh()
+    {
+        Fill();
+
+        SummaryRecords.Fleet(_state, Start).ShouldNotBeNull().ShouldStartWith("Records of the node");
+    }
+
+    [Fact]
     public void TheFleetRecordsHoldEachFlightInPlayWithItsLegsPrReviewCardsAndSessions()
     {
         Fill();

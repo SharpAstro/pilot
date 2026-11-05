@@ -28,7 +28,7 @@ public static class SummaryRecords
     /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; null
     /// when there is nothing of that to say, which a summary does not spend a call on.
     /// </summary>
-    public static string? Fleet(NodeState state, DateTimeOffset now)
+    public static string? Fleet(NodeState state, DateTimeOffset now, StaleBounds? bounds = null)
     {
         var held = state.Snapshot();
         var inPlay = held.Flights.Where(f => f.State != FlightState.Landed).OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal).ToList();
@@ -41,6 +41,15 @@ public static class SummaryRecords
         }
 
         var text = new StringBuilder();
+        var stale = StaleSection.Read(state, now, bounds ?? new StaleBounds());
+        foreach (var line in StaleSection.Lines(stale))
+        {
+            text.AppendLine(line);
+        }
+        if (stale.Count > 0)
+        {
+            text.AppendLine();
+        }
         text.AppendLine(CultureInfo.InvariantCulture, $"Records of the node as of {Stamp(now)}: {Count(inPlay.Count, "flight")} in play.");
         foreach (var flight in inPlay)
         {
@@ -272,7 +281,8 @@ public static class SummaryPrompt
         {{Needs}}
         - One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
           permission prompt, a card in the ring, a PR waiting for their merge, a leg that failed, a worker
-          that stopped or waits. If there is nothing, write the single word: Nothing.
+          that stopped or waits. If there is nothing, write the single word: Nothing. When the records open
+          with "Gone stale", list those first, oldest first, each with its age and what moves it.
 
         {{Where}}
         At most {{words.ToString(CultureInfo.InvariantCulture)}} words of plain prose: what has been done, what is happening now, what is left. Quote
@@ -405,6 +415,9 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
     /// <summary>The nodes this one holds a grant for, whose records <see cref="SummaryRow.FleetArgument"/> gathers; none when unset.</summary>
     public IFleet? Fleet { get; set; }
 
+    /// <summary>The bounds past which work is stale (#736); the defaults unless the node wires its settings.</summary>
+    public Func<StaleBounds> Bounds { get; set; } = () => new StaleBounds();
+
     /// <summary>This node's name in a fleet's records: its machine prefix.</summary>
     public string Machine { get; set; } = "this node";
 
@@ -454,7 +467,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         var now = time.GetUtcNow();
         if (command.Target == Verbs.NodeTarget)
         {
-            return state.Complete(command, null, made: SummaryRecords.Fleet(state, now));
+            return state.Complete(command, null, made: SummaryRecords.Fleet(state, now, Bounds()));
         }
         if (command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) && command.Target[Verbs.FlightTargetPrefix.Length..] is { Length: > 0 } code && !code.Contains('/'))
         {
@@ -477,7 +490,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         var text = new StringBuilder();
         var nodes = 0;
         var missed = false;
-        if (SummaryRecords.Fleet(state, now) is { } own)
+        if (SummaryRecords.Fleet(state, now, Bounds()) is { } own)
         {
             nodes++;
             text.AppendLine(CultureInfo.InvariantCulture, $"=== Node {Machine} (this node) ===").AppendLine(own).AppendLine();
@@ -536,7 +549,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             string prompt;
             if (scope == SummaryRow.FleetScope)
             {
-                var records = SummaryRecords.Fleet(state, now);
+                var records = SummaryRecords.Fleet(state, now, Bounds());
                 if (records is null)
                 {
                     return (Keep(scope, EmptyFleet, tokens: 0, cost: null), null);

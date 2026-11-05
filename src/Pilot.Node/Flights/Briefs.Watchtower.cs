@@ -12,9 +12,24 @@ public static partial class Briefs
     /// conversation, so a fresh one picks up where the last left off (#36).
     /// </summary>
     /// <param name="model">The model the watchtower runs on, when the node chose one (#114): said, so a lighter model rings for a judgement rather than makes it.</param>
-    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null)
+    public static string Watchtower(string name, IReadOnlyList<FlightRow> flights, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, string pilot, string? model = null, string? machine = null, IReadOnlySet<string>? alreadyTold = null, IReadOnlyList<StaleItem>? stale = null)
     {
         var text = new StringBuilder(WatchtowerTemplate(name, pilot, model, machine));
+        if (stale is { Count: > 0 })
+        {
+            text.AppendLine($"## {StaleSection.Heading}");
+            text.AppendLine("Oldest first; see each through, or ring the controller with what only they can do:");
+            foreach (var item in stale)
+            {
+                var line = StaleSection.Line(item);
+                if (text.Length + line.Length > MaxWatchtowerBrief / 3)
+                {
+                    break;
+                }
+                text.AppendLine(line);
+            }
+            text.AppendLine();
+        }
         text.AppendLine("## Where things stand");
         var flying = flights.Where(f => f.State != FlightState.Landed).ToList();
         if (flying.Count == 0)
