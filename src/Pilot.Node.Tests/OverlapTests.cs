@@ -150,6 +150,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AskingAboutAPairAnsweredParallelOnTheOthersCardGetsTheKnownAnswerAndNoCard()
     {
         await TwoFlights();
