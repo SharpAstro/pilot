@@ -389,7 +389,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
-        return $"started {fixer} at {Short(read.Head)}";
+        return $"started {fixer} at {CommitRefs.Short(read.Head)}";
     }
 
     // Another worktree of the clone (not the fix plane's own folder) that has the branch checked out, or null.
@@ -462,7 +462,7 @@ public sealed partial class PrReviews
             var tip = await git.RunAsync(["rev-parse", $"refs/remotes/origin/{branch}"], clone, cancellationToken);
             if (!tip.Ok || !string.Equals(tip.Output.Trim(), read.Head, StringComparison.OrdinalIgnoreCase))
             {
-                return (false, $"{branch} is not at the head read from GitHub ({Short(read.Head)}), so it is left alone");
+                return (false, $"{branch} is not at the head read from GitHub ({CommitRefs.Short(read.Head)}), so it is left alone");
             }
             worktree = await planes.PinAsync(clone, worktree, read.Head, cancellationToken);
             var merge = await git.RunAsync(["merge", "--no-edit", $"origin/{read.Base}"], worktree, cancellationToken);

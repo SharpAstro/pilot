@@ -65,23 +65,8 @@ internal static class PrOrigins
             return;
         }
         // A review the node posted is ended by a task of its own after the reviewer's grace, which may still hold a folder of the
-        // test as it ends: tried again for a few seconds before it counts as a failure.
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(root, recursive: true);
-                return;
-            }
-            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 50)
-            {
-                Thread.Sleep(100);
-            }
-        }
+        // test as it ends: the shared teardown is patient with that.
+        TestDirs.DeleteTree(root);
     }
 }
 
@@ -203,14 +188,7 @@ public abstract class PrReviewTestsBase : IDisposable
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
     private protected string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
 
-    private protected static async Task WaitFor(Func<bool> condition, int tries = 200)
-    {
-        for (var i = 0; i < tries && !condition(); i++)
-        {
-            await Task.Delay(10, Ct);
-        }
-        condition().ShouldBeTrue();
-    }
+    private protected static Task WaitFor(Func<bool> condition) => Eventually.Holds(condition, Ct);
 }
 
 /// <summary>
@@ -251,7 +229,7 @@ public sealed class PrReviewTests4 : PrReviewTestsBase
 
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
 
-        Lines.ShouldBe([$"review-pr pr/acme/widget#7, asked by controller: started du1-review-widget-7 at {_widgetHead[..8]}"]);
+        Lines.ShouldBe([$"review-pr pr/acme/widget#7, asked by controller: started du1-review-widget-7 at {_widgetHead[..9]}"]);
     }
 
     [Fact]
@@ -476,7 +454,7 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
         _workers.Stopped.ShouldNotContain(started.ReviewerJob!);
 
         // After the grace both are gone.
-        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed, 1000);
+        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed);
         sinceAnswer.Elapsed.ShouldBeGreaterThanOrEqualTo(grace - TimeSpan.FromMilliseconds(250));
         Directory.Exists(started.Worktree).ShouldBeFalse();
         _workers.Stopped.ShouldBe([started.ReviewerJob!]);
@@ -552,7 +530,7 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Id, card.Bin, card.Kind, card.Subject).ShouldBe((row.Card, CardBin.ForYou, PrReviews.ReadyKind, "pr/acme/widget#7"));
         card.Title.ShouldBe("acme/widget#7: review ready, changes (PR 7 of acme/widget)");
-        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..8]}.\nVerdict changes; posts as REQUEST_CHANGES under controller, 0 inline comments.\n"
+        card.Detail.ShouldBe($"By ada, reviewed at {_widgetHead[..9]}.\nVerdict changes; posts as REQUEST_CHANGES under controller, 0 inline comments.\n"
             + $"The draft: {_reviews.DraftOf(new PrRef("acme", "widget", 7))}\nOne defect.\nREADME.md:1 says hello to no one");
         var post = card.Choices.ShouldHaveSingleItem();
         (post.Label, post.Verb, post.Target).ShouldBe(("Post", Verbs.PostReview, "pr/acme/widget#7"));
@@ -643,7 +621,7 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
         _github.Summary = new ChecksSummary(ChoiceStatus.Passing, 1, 1);
         await _reviews.SweepAsync(Ct);
         _github.Merged.ShouldBeEmpty();
-        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("head moved");
+        Row("acme/widget", 7).QueueNote.ShouldNotBeNull().ShouldContain("newer than the review");
     }
 
     [Fact]
@@ -875,7 +853,7 @@ public sealed class PrReviewTests3 : PrReviewTestsBase
         Row("acme/gadget", 9).State.ShouldBe(PrReviewState.Reviewed);
         // The status went through, so the refusal it left is over.
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
-        _github.Statuses.ShouldHaveSingleItem().ShouldBe((_gadgetHead, "success", $"approved at {_gadgetHead[..8]}", "https://github.com/acme/gadget/pull/9"));
+        _github.Statuses.ShouldHaveSingleItem().ShouldBe((_gadgetHead, "success", $"approved at {_gadgetHead[..9]}", "https://github.com/acme/gadget/pull/9"));
     }
 
     [Theory]
@@ -1073,7 +1051,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         var review = _node.State.PrReviews().ShouldHaveSingleItem();
         review.ClonePath.ShouldBe(Path.Combine(_node.Options.DataFolder, "clones", "acme", "gadget"));
         PrOrigins.Git(review.Worktree, "rev-parse", "HEAD").ShouldBe(_head);
-        (await Pilot(_root, "status")).Output.ShouldContain($"PR acme/gadget#9  Gadgets  (reviewing, {review.Reviewer}, at {_head[..8]})");
+        (await Pilot(_root, "status")).Output.ShouldContain($"PR acme/gadget#9  Gadgets  (reviewing, {review.Reviewer}, at {_head[..9]})");
 
         // The reviewer, from its worktree: the folder says which PR, and the verdict goes as the reviewer's.
         var folder = Path.Combine(review.Worktree, "sub");
@@ -1085,7 +1063,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         Directory.Exists(review.Worktree).ShouldBeTrue();
 
         // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
-        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted.ToArray()[0].Payload);
+        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
         number.ShouldBe(9);
         payload.ShouldContain("README.md:1");
         _node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);

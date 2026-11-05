@@ -240,7 +240,7 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             if (runs.FirstOrDefault(r => r.Event == "push" && (wait.Workflow is null || string.Equals(r.Name, wait.Workflow, StringComparison.Ordinal))) is not { } publish)
             {
                 // A push starts its run within seconds; none by now means it never ran.
-                return waited < NoRunGrace ? null : Card(subject, verb, wait, versions, $"no {(wait.Workflow is null ? "workflow run" : $"{wait.Workflow} run")} on {Short(commit)} was started by its push, so {wait.Producer}'s publish never ran");
+                return waited < NoRunGrace ? null : Card(subject, verb, wait, versions, $"no {(wait.Workflow is null ? "workflow run" : $"{wait.Workflow} run")} on {CommitRefs.Short(commit)} was started by its push, so {wait.Producer}'s publish never ran");
             }
             run = $"{wait.Producer}'s publish run {publish.Name} #{publish.Id.ToString(inv)} ({publish.Url})";
             if (publish.Status != "completed")
@@ -270,8 +270,6 @@ public sealed class PackageWatch(NodeState state, FlightCommander flights, INuGe
             $"{subject} {verb} {wait.Id} {wait.Wanted ?? wait.Line}, which is not on nuget.org",
             $"{why}; expected {expected} on nuget.org, latest published: {latest}. {subject} stays held until it appears");
     }
-
-    private static string Short(string commit) => commit[..Math.Min(8, commit.Length)];
 
     private static string Span(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{span.TotalHours:0.#} h" : $"{Math.Max(1, (int)span.TotalMinutes)} min";

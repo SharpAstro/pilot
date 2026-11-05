@@ -251,6 +251,40 @@ public sealed record FlightRow
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FlightHolding? Holding { get; init; }
+
+    /// <summary>
+    /// What the node says went stale about the flight (#736): the timeline since it last moved and the one-line cause, kept
+    /// until it moves or its cause changes. Null while nothing is stale. Optional, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StaleSummary { get; init; }
+
+    /// <summary>What the stale summary was made for (the kind and what it waited on), so it is refreshed only when this changes.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StaleCause { get; init; }
+
+    /// <summary>When the flight was first read as stale for the cause in <see cref="StaleCause"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? StaleSince { get; init; }
+
+    /// <summary>The priority raises the node made (or could not make) for stale bounds, oldest first; one per bound. Null before the first.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FlightStaleRaise[]? StaleRaises { get; init; }
+}
+
+/// <summary>One priority raise for a stale bound (<see cref="FlightRow.StaleRaises"/>).</summary>
+public sealed record FlightStaleRaise
+{
+    /// <summary>The bound it was for: <c>flight</c>, <c>pullrequest</c>, <c>leg</c>, <c>card</c> or <c>hold</c>.</summary>
+    public required string Bound { get; init; }
+
+    /// <summary>The level it was raised to; null when the raise could not be made.</summary>
+    public IssuePriority? Level { get; init; }
+
+    public required DateTimeOffset At { get; init; }
+
+    /// <summary>What it says: <c>raised to high: open 19 h</c>, or why it could not be raised.</summary>
+    public required string Note { get; init; }
 }
 
 /// <summary>A flight's holding pattern (<see cref="FlightRow.Holding"/>): why the merge is held, since when, and who put it there.</summary>

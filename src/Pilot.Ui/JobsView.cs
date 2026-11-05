@@ -362,6 +362,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         Palette.Use(Night);
         BeginFrame();
         Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         RenderLayout(Tree(screen), bounds);
     }
 
@@ -550,7 +551,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             parts.Add(Details(selected));
         }
-        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         page = WithSelection(page);
         page = About?.Over(page) ?? page;
         return _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;

@@ -712,6 +712,13 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: {action.Label}: {refused ?? "done"}");
         return refused;
     }, "a Flights action");
+    // A stale flight's Ask the watchtower (#736): the flight, its stale summary and why it is not moving, told as the person's request.
+    chrome.Flights.OnAskWatchtower = async (code, summary) =>
+    {
+        var refused = await ChatCommands.TellAsync(client, WatchtowerAsks.WhyNotMoving(code, summary), GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell watchtower (why is {code} not moving): {refused ?? "told"}");
+        return refused;
+    };
     chrome.Flights.OnOpen = location => OpenAway(location, () => chrome.Flights.Say($"could not open {location}"));
     // The Summary cards on Home and on a flight's page: Summarise is a verb on the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.

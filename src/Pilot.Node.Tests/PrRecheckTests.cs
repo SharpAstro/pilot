@@ -191,7 +191,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         return _state.Flights().Single();
     }
 
-    private protected static string Short(string sha) => sha[..8];
+    private protected static string Short(string sha) => sha[..9];
 
     /// <summary>Main moves on after the flight was cut, as it does while a PR waits.</summary>
     private protected void MainMoves(string file = "later.txt", string text = "later\n")
@@ -727,7 +727,7 @@ public sealed class PrRecheckTests3 : PrRecheckTestsBase
         _workers.Started.Count.ShouldBe(started + 1);
         var review = _state.Flights().Single().Review.ShouldNotBeNull();
         review.State.ShouldBe(ReviewState.Reviewing);
-        Handled().ShouldBe([$"recheck of widget#7: head ab12cd34 was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
+        Handled().ShouldBe([$"recheck of widget#7: head ab12cd34a was not the one reviewed, review restarted at {Short(review.ReviewedHead!)}"]);
         _github.Labels[7].ShouldBe([PilotMarks.Reviewing]);
     }
 

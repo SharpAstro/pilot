@@ -6,6 +6,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>Two flights of this node that each hold an overlap card on the other are planned in parallel by the node itself (PIL664).</summary>
+// Slow like most of OverlapTests1 and 2 (#748): each test creates two flights, so about 3 to 25 git processes, and on a busy machine that passed 15 s (24 s and 30 s seen).
+[Trait("Category", "Slow")]
 public sealed class MutualOverlapTests : OverlapTestsBase
 {
     private void Pending(string holder, string about)

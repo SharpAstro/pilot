@@ -107,7 +107,7 @@ public sealed class BenchRunTests : JobTestsBase
         card.Kind.ShouldBe("bench-result");
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.RepoTarget(_repo));
-        card.Detail.ShouldNotBeNull().ShouldContain($"## ref `{_first}` at `{_first[..7]}`");
+        card.Detail.ShouldNotBeNull().ShouldContain($"## ref `{_first}` at `{_first[..9]}`");
         card.Detail.ShouldContain("| Mean | hello |");
         card.Detail.ShouldNotContain("v2");
     }
@@ -134,8 +134,8 @@ public sealed class BenchRunTests : JobTestsBase
         order.ShouldAllBe(i => i >= 0);
         order.ShouldBe([.. order.Order()]);
         var detail = card.Detail.ShouldNotBeNull();
-        detail.ShouldContain($"## baseline `{_first}` at `{_first[..7]}`");
-        detail.ShouldContain($"## candidate `{_second}` at `{_second[..7]}`");
+        detail.ShouldContain($"## baseline `{_first}` at `{_first[..9]}`");
+        detail.ShouldContain($"## candidate `{_second}` at `{_second[..9]}`");
         detail.IndexOf("| Mean | hello |", StringComparison.Ordinal).ShouldBeLessThan(detail.IndexOf("| Mean | v2 |", StringComparison.Ordinal));
         detail.ShouldContain("succeeded (exit 0)");
     }

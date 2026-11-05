@@ -79,7 +79,7 @@ public sealed class ReviewCostTests : IDisposable
 
         text.ShouldContain("2 flights, 3 reviewer sessions");
         text.ShouldContain("PIL1  pilot #11");
-        text.ShouldContain("round 1  claude-opus-5-5  head aaaa1111  in 31  cache-write 102  cache-read 3,003  out 19  weighted 553");
+        text.ShouldContain("round 1  claude-opus-5-5  head aaaa1111c  in 31  cache-write 102  cache-read 3,003  out 19  weighted 553");
         text.ShouldContain("round 2  claude-sonnet-5-5  head bbbb2222");
         text.ShouldContain("total  in 37  cache-write 103  cache-read 3,104  out 70  weighted 825");
         text.ShouldContain("average per reviewed flight (2)  in 18  cache-write 51  cache-read 1,552  out 35  weighted 412  1.5 sessions");

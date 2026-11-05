@@ -6,7 +6,25 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.</summary>
+/// <summary>
+/// A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.
+/// <para>
+/// Where the time goes (#748). Measured 2026-11-06 in one Release run of these classes (j3439, 120 tests, 8 m 26 s) on a
+/// machine that was NOT quiet: a TianWen.Lib.Tests run outside pilot held the CPU near 100% for the whole run, and
+/// <c>pilot run --alone</c> never got its quiet CPU (j3437 queued 17 minutes and was cancelled). So every time here is a
+/// loaded time; no quiet-machine time was measured, and the earlier "2 s alone" was an extrapolation, not a result.
+/// Slowest test and median per class, in seconds: OverlapTests1 max 64 (median 6); OverlapTests2 max 15 (6);
+/// MutualOverlapTests max 6.5 (1.9); LegEndOverlapTests max 105 (14); MergedUnderLegTests max 54 (8);
+/// PrReviewTests1 max 16 (5), 2 max 79 (13), 3 max 70 (4), 4 max 23 (7). The slowest, 105 s, is LegEndOverlapTests
+/// ABaseMergePushRunsTheCheck. Every test is a run of real <c>git</c> processes (the base makes a repo, each flight a
+/// plane, each command a handful more through GitCli), about 10 to 60 starts a test, so wall clock scales with whatever else
+/// holds the CPU. What this leg removed: real-clock polls and caps that failed passing work (<c>Eventually.Holds</c> waits
+/// on the condition with a 5 minute safety cap), the 300 ms "nothing happened" sleeps, and three separate teardown loops
+/// (now <c>TestDirs.DeleteTree</c>). What is NOT explained: why one test took 152 s in #748 against 105 s here; the
+/// process counts per test are from an earlier run and the CPU share of the git children was not measured.
+/// The time guard no longer fails these locally for that (see TestTimeLimitAttribute).
+/// </para>
+/// </summary>
 public abstract class OverlapTestsBase : IDisposable
 {
     private protected static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -47,21 +65,7 @@ public abstract class OverlapTestsBase : IDisposable
         {
         }
         // A plane's git may still be letting go of a folder while it is walked (seen as DirectoryNotFound mid-delete): tried again.
-        for (var attempt = 1; Directory.Exists(_root); attempt++)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(_root, recursive: true);
-            }
-            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 5)
-            {
-                Thread.Sleep(200 * attempt);
-            }
-        }
+        TestDirs.DeleteTree(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)
@@ -131,6 +135,7 @@ public sealed class OverlapTests1 : OverlapTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task AskingAboutAPairAnsweredParallelOnTheOthersCardGetsTheKnownAnswerAndNoCard()
     {
         await TwoFlights();
@@ -246,6 +251,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var closed = Cards().Single();
         (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "connect TIA2 to TIA1"));
         _workers.Stopped.ShouldBe(["job00001"]);
+        // The fresh planner is launched in the background: wait for its start before asserting on it.
+        await Eventually.Holds(() => _workers.Started.Count >= 2, Ct);
         _workers.Started.Count.ShouldBe(2);
         var fresh = _workers.Started[1];
         fresh.Name.ShouldBe("du1-tia2-plan");
@@ -350,6 +357,8 @@ public sealed class OverlapTests1 : OverlapTestsBase
         var closed = Cards().Single();
         (closed.State, closed.Outcome).ShouldBe((CardState.Closed, "plan in parallel with TIA1"));
         _workers.Stopped.ShouldBe(["job00001"]);
+        // The fresh planner is launched in the background: wait for its start before asserting on it.
+        await Eventually.Holds(() => _workers.Started.Count >= 2, Ct);
         _workers.Started.Count.ShouldBe(2);
         var fresh = _workers.Started[1];
         fresh.Name.ShouldBe("du1-tia2-plan");

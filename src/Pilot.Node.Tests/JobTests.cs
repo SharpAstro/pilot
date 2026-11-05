@@ -153,7 +153,7 @@ public abstract class JobTestsBase : IDisposable
     }
 
     // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null)
+    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null, Func<double?>? outsideCpu = null)
     {
         var clock = new Clock();
         var cpu = new Dictionary<string, TimeSpan>();
@@ -164,6 +164,7 @@ public abstract class JobTestsBase : IDisposable
             IdleCpu = TimeSpan.FromSeconds(5),
             JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
             MachineCpu = machineCpu,
+            MachineOutsideCpu = outsideCpu,
         };
         return (jobs, clock, cpu, async id =>
         {
@@ -209,13 +210,14 @@ public abstract class JobTestsBase : IDisposable
     {
         private readonly FileJournal _journal;
 
-        private Node(string root, Func<long?> freeMemory)
+        private Node(string root, Func<long?> freeMemory, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime)
         {
             _journal = new FileJournal(Path.Combine(root, "journal"));
             State = new NodeState(_journal, TimeProvider.System);
             Jobs = new JobRunner(State, new NodeOptions(Path.Combine(root, "n.sock"), Path.Combine(root, "data")), TimeProvider.System)
             {
                 FreeMemory = freeMemory,
+                Lifetime = lifetime,
                 Say = (command, _) =>
                 {
                     Said.Enqueue(command);
@@ -230,9 +232,9 @@ public abstract class JobTestsBase : IDisposable
 
         public ConcurrentQueue<CommandRequest> Said { get; } = new();
 
-        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null)
+        public static async Task<Node> StartAsync(string root, Func<long?>? freeMemory = null, Microsoft.Extensions.Hosting.IHostApplicationLifetime? lifetime = null)
         {
-            var node = new Node(root, freeMemory ?? (() => null));
+            var node = new Node(root, freeMemory ?? (() => null), lifetime);
             if (node.State.Sessions().Length == 0)
             {
                 node.State.PutSession(new SessionRow
@@ -1012,7 +1014,9 @@ public sealed class JobTests2 : JobTestsBase
         run.Tail.ShouldContain("all green");
         var ended = _state.Jobs().Single(j => j.Id == row.Id);
         (ended.State, ended.ExitCode, ended.StartedAt).ShouldBe((JobState.Succeeded, 0, clock.GetUtcNow()));
-        _said.ShouldBeEmpty();
+        // A check says nothing to a session. (The fixture's own runner shares the state and may tell the cancelled first job's end
+        // on its tick, so only what is said about the check counts.)
+        _said.Where(c => c.Args.Any(a => a.Contains(row.Id, StringComparison.Ordinal))).ShouldBeEmpty();
         await jobs.StopAsync(CancellationToken.None);
     }
 
@@ -1027,7 +1031,66 @@ public sealed class JobTests2 : JobTestsBase
         clock.Advance(TimeSpan.FromMinutes(31));
 
         var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
-        (run.ExitCode, run.Tail).ShouldBe((-1, "the check ran past 30 minutes of running and was stopped"));
+        (run.ExitCode, run.Tail).ShouldBe((-1, "the check was stopped at 30 m of running: the budget it was given"));
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    private void SeedPasses(string command, params int[] minutes)
+    {
+        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        foreach (var m in minutes)
+        {
+            at = at.AddHours(1);
+            _state.PutJob(new JobRow
+            {
+                Id = _state.NextJobId(), Command = command, Cwd = _root, Kind = JobKind.Check, State = JobState.Succeeded, LogPath = "x.log",
+                Timeout = TimeSpan.FromMinutes(30), StartedAt = at.AddMinutes(-m), EndedAt = at, ExitCode = 0,
+                MemoryKey = JobKey.Of(command, _root).ToString(),
+            });
+        }
+    }
+
+    [Fact]
+    public async Task EarlierSlowPassesOfTheSameCheckRaiseTheNextOnesTimeoutAndAStopNamesTheLimitAndItsBasis()
+    {
+        var (jobs, clock, _, _) = Idle();
+        var command = Sleep(60);
+        SeedPasses(command, 20, 35, 30);
+
+        var check = jobs.RunCheckAsync("TIA1", "parser", command, _root, jobs.CheckLimitFor(command, _root), Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check && j.State == JobState.Queued);
+        row.Timeout.ShouldBe(TimeSpan.FromMinutes(52.5));
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+        clock.Advance(TimeSpan.FromMinutes(54));
+
+        var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        run.StoppedByBudget.ShouldBeTrue();
+        var slowest = _state.Jobs().Single(j => j.Kind == JobKind.Check && j.State == JobState.Succeeded && j.EndedAt - j.StartedAt == TimeSpan.FromMinutes(35));
+        run.Tail.ShouldBe($"the check was stopped at 53 m of running: 1.5x the slowest of its last 3 passes, {slowest.Id} ({command}), 35 m");
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ACheckQueuedLongerThanItsLimitIsStillGivenItsWholeLimitOnceItRuns()
+    {
+        var (jobs, clock, _, gone) = Idle();
+        var command = Sleep(60);
+        SeedPasses(command, 40);
+        var first = Hand(jobs, Sleep(61));
+
+        var check = jobs.RunCheckAsync("TIA1", "parser", command, _root, jobs.CheckLimitFor(command, _root), Ct);
+        var row = _state.Jobs().Single(j => j.Kind == JobKind.Check && j.State == JobState.Queued);
+        jobs.Dispatch(new JobRunner.HandedOver(row));
+        clock.Advance(TimeSpan.FromMinutes(70));
+        await gone(first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        _state.Jobs().Single(j => j.Id == row.Id).State.ShouldBe(JobState.Running);
+        check.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromMinutes(59));
+        check.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromMinutes(2));
+        (await check.WaitAsync(TimeSpan.FromSeconds(30), Ct)).StoppedByBudget.ShouldBeTrue();
         await jobs.StopAsync(CancellationToken.None);
     }
 
@@ -1502,7 +1565,8 @@ public sealed class JobTests3 : JobTestsBase
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Error.ShouldBe($"job {id} is already paused");
         second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        await Task.Delay(1000, Ct);
+        // The tree runs below normal priority: on a busy machine it may need longer than a second to get 100 ms of CPU.
+        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100));
         CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
 
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
@@ -1617,6 +1681,15 @@ public sealed class JobTests3 : JobTestsBase
         return $"sh '{sh}' '{flag}'";
     }
 
+    /// <summary>Waits (up to 15 s) until the work a resumed tree should show has shown, polling; the caller then asserts it.</summary>
+    private async Task WorkedAsync(Func<bool> worked)
+    {
+        for (var i = 0; i < 150 && !worked(); i++)
+        {
+            await Task.Delay(100, Ct);
+        }
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
@@ -1641,7 +1714,8 @@ public sealed class JobTests3 : JobTestsBase
         _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         var resumed = _state.Jobs().Single(j => j.Id == id);
         (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        await Task.Delay(1000, Ct);
+        // The tree runs below normal priority: on a busy machine it may need longer than a second to work and write.
+        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100) && LogLength(log) > length);
         CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
         LogLength(log).ShouldBeGreaterThan(length);
 
@@ -1658,7 +1732,8 @@ public sealed class JobTests3 : JobTestsBase
         var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
         await Running(id);
 
-        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
+        paused.Ok.ShouldBeTrue(paused.Error);
         // Past the deadline it would have had without the pause.
         while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
         {
@@ -1793,49 +1868,182 @@ public sealed class JobTests3 : JobTestsBase
         var result = await run.WaitAsync(TimeSpan.FromSeconds(40), Ct);
 
         result.ExitCode.ShouldBe(-1);
-        result.Tail.ShouldContain("of running and was stopped");
+        result.Tail.ShouldContain("of running: the budget it was given");
         await GoneWithin(child);
         _state.Jobs().Single(j => j.Kind == JobKind.Check).State.ShouldBe(JobState.Failed);
         await jobs.StopAsync(CancellationToken.None);
     }
 
     [Fact(Timeout = 90_000)]
-    public async Task TheNodeStoppingEndsRunningChecksAndDropsWaitingOnesButLeavesAnOrdinaryJobRunning()
+    [Trait("Category", "Slow")]
+    public async Task TheNodeStoppingLeavesRunningChecksRunningAndWaitingOnesQueuedAndAnOrdinaryJobRunning()
     {
         var marker = Path.Combine(_root, "grandchild-stop.pid");
         using var node = await Node.StartAsync(_root);
         node.Jobs.MaxRunning = 2;
         var jobId = node.Run(_root, "sleep 90; " + Echo("still going")).Made!;
-        var job = await node.UntilAsync(jobId, j => j.State == JobState.Running, Ct);
+        var job = await node.UntilAsync(jobId, j => j is { State: JobState.Running, Pid: not null }, Ct);
         var running = node.Jobs.RunCheckAsync("TIA1", "one", Grandchild(marker), _root, TimeSpan.FromMinutes(30), Ct);
         var waiting = node.Jobs.RunCheckAsync("TIA1", "two", Echo("never"), _root, TimeSpan.FromMinutes(30), Ct);
         var child = await GrandchildPid(marker, running);
         var rows = node.State.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
         rows.Count.ShouldBe(2);
-
-        await node.StopAsync();
-
-        (await running.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
-        (await waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
-        foreach (var row in rows)
+        // Picked by leg, not by the order the rows come back in. The grandchild's marker proves the process started, not that the
+        // dispatcher has put the row Running with its pid yet, so the stop waits for the row itself.
+        var runningId = rows.Single(j => j.Leg == "one").Id;
+        var queuedId = rows.Single(j => j.Leg == "two").Id;
+        var runningRow = await node.UntilAsync(runningId, j => j is { State: JobState.Running, Pid: not null }, Ct);
+        // From here the dispatcher is held still: with no slot at all, nothing the stop frees can start the waiting check, so the
+        // rows read below are what the stop left, not what the live dispatcher did after it.
+        node.Jobs.MaxRunning = 0;
+        node.State.Jobs().Single(j => j.Id == queuedId).State.ShouldBe(JobState.Queued);
+        try
         {
-            var ended = node.State.Jobs().Single(j => j.Id == row.Id);
-            (ended.State, ended.EndedAt is not null, ended.Error).ShouldBe((JobState.Failed, true, ended.Error));
-            ended.Error!.ShouldContain("node stopped");
+            var stop = System.Diagnostics.Stopwatch.StartNew();
+            await node.StopAsync();
+
+            // The stop lets go of the running check rather than waiting on it: its watch ends at its next look (a quarter second),
+            // where the check itself sleeps for two minutes.
+            stop.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+            // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737); the running one's
+            // row stays running with its tree alive, as an ordinary job's does.
+            await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
+            var stillRunning = node.State.Jobs().Single(j => j.Id == runningId);
+            (stillRunning.State, stillRunning.EndedAt).ShouldBe((JobState.Running, null));
+            var stillQueued = node.State.Jobs().Single(j => j.Id == queuedId);
+            (stillQueued.State, stillQueued.EndedAt).ShouldBe((JobState.Queued, null));
+            IsAlive(child).ShouldBeTrue();
+            node.Job(jobId).State.ShouldBe(JobState.Running);
+            IsAlive(job.Pid!.Value).ShouldBeTrue();
         }
-        await GoneWithin(child);
-        // The ordinary job is the node's to leave behind.
-        node.Job(jobId).State.ShouldBe(JobState.Running);
-        IsAlive(job.Pid!.Value).ShouldBeTrue();
-        // Left behind on purpose by the node; this test ends it so nothing outlives the run.
-        using (var left = System.Diagnostics.Process.GetProcessById(job.Pid!.Value))
+        finally
         {
-            left.Kill(entireProcessTree: true);
+            // Left behind on purpose by the node; this test ends them so nothing outlives the run.
+            JobKiller.Kill(runningRow);
+            JobKiller.Kill(job);
+            try
+            {
+                using var left = System.Diagnostics.Process.GetProcessById(child);
+                left.Kill(entireProcessTree: true);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+    }
+
+    [Fact(Timeout = 90_000)]
+    [Trait("Category", "Slow")]
+    public async Task ARunningCheckOutlivesTheNodeStoppingAndTheNextNodesFinishReattachesToItByIdForItsExitCode()
+    {
+        var marker = Path.Combine(_root, "grandchild-carry.pid");
+        // The check ends when the test says so: it sleeps, then exits 7 once the flag exists.
+        var flag = Path.Combine(_root, "carry.flag");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; while (-not (Test-Path '{flag}')) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
+            : $"sleep 120 & echo $! > '{marker}'; while [ ! -e '{flag}' ]; do sleep 0.2; done; exit 7";
+        int child = 0;
+        JobRow? check = null;
+        JobRow? kept = null;
+        try
+        {
+            using (var first = await Node.StartAsync(_root))
+            {
+                var run = first.Jobs.RunCheckAsync("TIA1", "one", command, _root, TimeSpan.FromMinutes(30), Ct);
+                child = await GrandchildPid(marker, run);
+                check = await first.UntilAsync(first.State.Jobs().Single(j => j.Kind == JobKind.Check).Id, j => j.State == JobState.Running, Ct);
+                await first.StopAsync();
+                await Should.ThrowAsync<OperationCanceledException>(run.WaitAsync(TimeSpan.FromSeconds(30), Ct));
+                kept = first.State.Jobs().Single(j => j.Id == check.Id);
+            }
+
+            IsAlive(child).ShouldBeTrue();
+            IsAlive(check.Pid!.Value).ShouldBeTrue();
+            (kept.State, kept.EndedAt).ShouldBe((JobState.Running, null));
+
+            using var second = await Node.StartAsync(_root);
+            second.Jobs.IsRunning(check.Id).ShouldBeTrue();
+            var again = second.Jobs.RunCheckAsync("TIA1", "one", command, _root, TimeSpan.FromMinutes(30), Ct);
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+
+            File.WriteAllText(flag, "");
+            var result = await again.WaitAsync(TimeSpan.FromSeconds(40), Ct);
+
+            result.ExitCode.ShouldBe(7);
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+            await second.StopAsync();
+        }
+        finally
+        {
+            if (check is not null)
+            {
+                JobKiller.Kill(check);
+            }
+            if (child != 0)
+            {
+                try
+                {
+                    using var left = System.Diagnostics.Process.GetProcessById(child);
+                    left.Kill(entireProcessTree: true);
+                }
+                catch (ArgumentException)
+                {
+                }
+            }
+        }
+    }
+
+    private static System.Diagnostics.Process SpawnSleeper()
+    {
+        var start = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo("pwsh") { ArgumentList = { "-NoProfile", "-Command", "Start-Sleep 60" } }
+            : new System.Diagnostics.ProcessStartInfo("sleep") { ArgumentList = { "60" } };
+        start.UseShellExecute = false;
+        start.CreateNoWindow = true;
+        return System.Diagnostics.Process.Start(start)!;
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task ADisposedKillOnCloseHoldWithoutTheReleaseStillEndsTheProcess()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
+        using var process = SpawnSleeper();
+        try
+        {
+            var hold = KillOnCloseJob.Hold(process).ShouldNotBeNull();
+            hold.Dispose();
+            await process.WaitForExitAsync(Ct).WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task AReleasedKillOnCloseHoldLetsTheProcessOutliveItsDisposal()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
+        using var process = SpawnSleeper();
+        try
+        {
+            var hold = KillOnCloseJob.Hold(process).ShouldNotBeNull();
+            hold.Release();
+            hold.Dispose();
+            await Task.Delay(1500, Ct);
+            process.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            process.Kill(entireProcessTree: true);
         }
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task RecoveryFailsACheckRowItFindsRunningOrQueuedKillingALiveTreeAndStillFollowsAnOrdinaryJob()
+    public async Task RecoveryFollowsACheckRowItFindsRunningLikeAJobEndsOneWithNoProcessKeepsAQueuedOneAndFollowsAnOrdinaryJob()
     {
         string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];
         System.Diagnostics.Process Spawn()
@@ -1861,23 +2069,43 @@ public sealed class JobTests3 : JobTestsBase
             };
             _state.PutJob(Row("jc1", JobKind.Check, JobState.Running, checkProcess));
             _state.PutJob(Row("jc2", JobKind.Check, JobState.Queued, null));
+            _state.PutJob(Row("jc3", JobKind.Check, JobState.Running, null));
             _state.PutJob(Row("jo1", JobKind.Run, JobState.Running, jobProcess));
 
+            // The dispatcher is live and acts on its own loop, so it is held still while the queue is read: with no slot at all it
+            // starts nothing it is handed, whatever moment the hand-over reaches it.
+            _jobs.MaxRunning = 0;
             await _jobs.RecoverAsync(Ct);
 
-            await GoneWithin(checkProcess.Id);
-            foreach (var id in new[] { "jc1", "jc2" })
-            {
-                var row = _state.Jobs().Single(j => j.Id == id);
-                (row.State, row.EndedAt is not null).ShouldBe((JobState.Failed, true));
-                _jobs.IsRunning(id).ShouldBeFalse();
-            }
+            // A running check whose process is alive is followed again, not ended: Running on its own pid, in a slot.
+            IsAlive(checkProcess.Id).ShouldBeTrue();
+            var ran = _state.Jobs().Single(j => j.Id == "jc1");
+            (ran.State, ran.Pid, ran.EndedAt).ShouldBe((JobState.Running, checkProcess.Id, null));
+            _jobs.IsRunning("jc1").ShouldBeTrue();
+            // One with no pid cannot be found again, so it is ended.
+            var lost = _state.Jobs().Single(j => j.Id == "jc3");
+            (lost.State, lost.EndedAt is not null).ShouldBe((JobState.Failed, true));
+            _jobs.IsRunning("jc3").ShouldBeFalse();
+            // The ordinary job is followed again the same way.
+            var other = _state.Jobs().Single(j => j.Id == "jo1");
+            (other.State, other.Pid, other.EndedAt).ShouldBe((JobState.Running, jobProcess.Id, null));
             _jobs.IsRunning("jo1").ShouldBeTrue();
-            _state.Jobs().Single(j => j.Id == "jo1").State.ShouldBe(JobState.Running);
             IsAlive(jobProcess.Id).ShouldBeTrue();
+            // The queued check carried over: the dispatcher has it (its row says where it waits) and it is still queued, not ended.
+            var queued = await Until("jc2", j => j.Step?.StartsWith("next in line", StringComparison.Ordinal) == true);
+            (queued.State, queued.EndedAt).ShouldBe((JobState.Queued, null));
+
+            // Given its one slot back, the dispatcher still keeps it waiting: the two recovered jobs hold the slot. The row it rewrites
+            // with the new slot count is the dispatch that judged it; a start would leave the row Running instead.
+            _jobs.MaxRunning = 1;
+            _jobs.Pump();
+            var judged = await Until("jc2", j => j.Slots == 1 || j.State != JobState.Queued);
+            (judged.State, judged.EndedAt).ShouldBe((JobState.Queued, null));
         }
         finally
         {
+            // Held still again, so the queued check does not start in the test's folder once the sleepers below are ended.
+            _jobs.MaxRunning = 0;
             try
             {
                 jobProcess.Kill(entireProcessTree: true);
