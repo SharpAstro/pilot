@@ -102,6 +102,12 @@ public sealed partial class LegCommander
             }
         }
 
+        // The repo's invariant tests ride along any filtered dotnet test, so the stored check is the one that runs everywhere.
+        if (check is not null)
+        {
+            check = InvariantChecks.With(check);
+        }
+
         var legs = state.Legs(flight.Code);
         var known = legs.FirstOrDefault(l => l.Name == name);
         if (known is not null && known.State != LegState.Planned)

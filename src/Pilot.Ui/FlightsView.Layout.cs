@@ -169,7 +169,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && IsDetailOpen)
         {
-            GoBack();
+            GoUp();
             return true;
         }
         // The wheel over the map pans it (Ctrl+wheel is left to zoom); the layer menu's own list took it first where it was over it.

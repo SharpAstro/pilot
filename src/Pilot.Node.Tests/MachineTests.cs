@@ -392,6 +392,21 @@ public sealed class MachineTests
     }
 
     [Fact]
+    public void MachineDiskGaugeAppearsLastOnlyWhenTheDriveIsSet()
+    {
+        var row = Row(34, 21L << 30) with { DiskFree = 120L << 30, DiskTotal = 480L << 30, DiskName = "C:" };
+
+        row.Line().ShouldBe("cpu 34% · mem 21/32 GB · disk 120/480 GB free on C:");
+        var disk = row.Gauges().Last();
+        disk.Label.ShouldBe("disk");
+        disk.Fraction.ShouldBe(0.75, 1e-9);
+        // An older node's row, or a drive not read: no disk part.
+        Row(34, 21L << 30).Gauges().ShouldNotContain(g => g.Label == "disk");
+        (row with { DiskTotal = null }).Line().ShouldBe("cpu 34% · mem 21/32 GB");
+        (row with { DiskName = null }).Line().ShouldBe("cpu 34% · mem 21/32 GB · disk 120/480 GB free");
+    }
+
+    [Fact]
     public void MachineNetJitterIsNotAChangeButARealMoveIs()
     {
         var held = Row(20, at: Now) with { NetInBytesPerSecond = 1_000_000, NetOutBytesPerSecond = 100_000 };

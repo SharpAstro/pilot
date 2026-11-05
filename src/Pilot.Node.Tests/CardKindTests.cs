@@ -13,6 +13,7 @@ namespace Pilot.Node.Tests;
 /// calls under Pilot.Node and fails on a kind the catalog does not know, a catalogued kind nothing raises, a title or a button
 /// whose words are generic, and a kind the summary table (<see cref="CardSummaries"/>) leaves to its generic fallback.
 /// </summary>
+[Trait("Category", InvariantTraitTests.Invariant)]
 public sealed class CardKindTests
 {
     private static readonly Lazy<string> Src = new(FindSrc);
