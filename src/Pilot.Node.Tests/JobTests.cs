@@ -1821,6 +1821,8 @@ public sealed class JobTests3 : JobTestsBase
         }
     }
 
+    // Slow: Grandchild starts pwsh inside pwsh on Windows, and that cold start alone has taken 11 to 40 s on a busy machine.
+    [Trait("Category", "Slow")]
     [Fact(Timeout = 60_000)]
     public async Task ACancelledCheckJobEndsTheProcessesItStarted()
     {
@@ -1837,6 +1839,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 60_000)]
+    // Slow: Grandchild starts pwsh inside pwsh on Windows, and that cold start alone has taken 11 to 40 s on a busy machine.
     [Trait("Category", "Slow")]
     public async Task ACheckJobOverItsBudgetEndsTheProcessesItStartedAndSaysSo()
     {
@@ -1857,6 +1860,8 @@ public sealed class JobTests3 : JobTestsBase
         await jobs.StopAsync(CancellationToken.None);
     }
 
+    // Slow: Grandchild starts pwsh inside pwsh on Windows, and that cold start alone has taken 11 to 40 s on a busy machine.
+    [Trait("Category", "Slow")]
     [Fact(Timeout = 90_000)]
     public async Task TheNodeStoppingEndsRunningChecksAndDropsWaitingOnesButLeavesAnOrdinaryJobRunning()
     {
