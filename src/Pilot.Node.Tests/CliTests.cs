@@ -54,11 +54,7 @@ public sealed class CliTests : IAsyncLifetime
         catch (InvalidOperationException)
         {
         }
-        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_root, recursive: true);
+        PrOrigins.Delete(_root);
     }
 
     private static string Git(string cwd, params string[] args)
