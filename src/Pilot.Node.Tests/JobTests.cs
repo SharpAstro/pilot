@@ -1505,7 +1505,8 @@ public sealed class JobTests3 : JobTestsBase
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Error.ShouldBe($"job {id} is already paused");
         second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        await Task.Delay(1000, Ct);
+        // The tree runs below normal priority: on a busy machine it may need longer than a second to get 100 ms of CPU.
+        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100));
         CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
 
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
@@ -1620,6 +1621,15 @@ public sealed class JobTests3 : JobTestsBase
         return $"sh '{sh}' '{flag}'";
     }
 
+    /// <summary>Waits (up to 15 s) until the work a resumed tree should show has shown, polling; the caller then asserts it.</summary>
+    private async Task WorkedAsync(Func<bool> worked)
+    {
+        for (var i = 0; i < 150 && !worked(); i++)
+        {
+            await Task.Delay(100, Ct);
+        }
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
@@ -1644,7 +1654,8 @@ public sealed class JobTests3 : JobTestsBase
         _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         var resumed = _state.Jobs().Single(j => j.Id == id);
         (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        await Task.Delay(1000, Ct);
+        // The tree runs below normal priority: on a busy machine it may need longer than a second to work and write.
+        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100) && LogLength(log) > length);
         CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
         LogLength(log).ShouldBeGreaterThan(length);
 
