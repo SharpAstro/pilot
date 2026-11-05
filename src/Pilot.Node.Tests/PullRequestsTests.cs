@@ -476,9 +476,16 @@ public sealed class PullRequestsTests : IDisposable
                 if (!state.Flights().Any(f => string.Equals(f.RepoPath, clone, StringComparison.OrdinalIgnoreCase)))
                 {
                     var name = Path.GetFileName(clone);
+                    // A code no flight has yet. A code from the name's hash collided now and then (string hashes are
+                    // randomised per process), and the second clone's flight then replaced the first's, untracking it.
+                    var n = 1;
+                    while (state.Flights().Any(f => f.Code == $"OLD{n}"))
+                    {
+                        n++;
+                    }
                     state.PutFlight(new FlightRow
                     {
-                        Code = $"OLD{Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(name)) % 100000}", Repo = name, RepoPath = clone, Issue = 1,
+                        Code = $"OLD{n}", Repo = name, RepoPath = clone, Issue = 1,
                         Branch = $"flight/old-{name}", Worktree = Path.Combine(clone, ".claude", "worktrees", "old"), Base = "origin/main",
                         State = FlightState.Landed, CreatedAt = DateTimeOffset.UnixEpoch,
                     });
