@@ -148,15 +148,19 @@ public sealed class LanTests
         Environment.SetEnvironmentVariable("PILOT_CLIENT_GRANTS", tokens);
         try
         {
-            async Task<(int Exit, string Output)> Pilot(params string[] args)
+            // stdout and stderr kept apart, so a failed exit assertion says what the CLI said.
+            async Task<(int Exit, string Output, string Error)> Pilot(params string[] args)
             {
                 var output = new StringWriter();
-                var exit = await PilotCommand.RunAsync(["--node", $"127.0.0.1:{port}", .. args], Path.GetTempPath(), output, output, Ct);
-                return (exit, output.ToString());
+                var error = new StringWriter();
+                var exit = await PilotCommand.RunAsync(["--node", $"127.0.0.1:{port}", .. args], Path.GetTempPath(), output, error, Ct);
+                return (exit, output.ToString(), error.ToString());
             }
 
-            (await Pilot("status")).Exit.ShouldBe(0);
-            (await Pilot("note", "hi")).Output.ShouldContain("needs a grant");
+            var status = await Pilot("status");
+            status.Exit.ShouldBe(0, $"stderr: {status.Error}stdout: {status.Output}");
+            var refused = await Pilot("note", "hi");
+            (refused.Output + refused.Error).ShouldContain("needs a grant");
 
             // connect waits for the Allow: answered here, as this machine's person would on the card.
             var connecting = Task.Run(() => PilotCommand.RunAsync(["connect", $"127.0.0.1:{port}", "--as", "se2-cli"], Path.GetTempPath(), TextWriter.Null, TextWriter.Null, Ct));
@@ -168,10 +172,11 @@ public sealed class LanTests
             }
             card.ShouldNotBeNull().Title.ShouldStartWith("se2-cli asks");
             await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [card.Choices[0].Label], Who = "controller" }, Ct);
-            (await connecting).ShouldBe(0);
+            (await connecting).ShouldBe(0, "pilot connect exited non-zero");
             NodeTargets.TokenFor($"127.0.0.1:{port}", tokens).ShouldNotBeNullOrEmpty();
 
-            (await Pilot("note", "hi")).Exit.ShouldBe(0);
+            var noted = await Pilot("note", "hi");
+            noted.Exit.ShouldBe(0, $"stderr: {noted.Error}stdout: {noted.Output}");
             node.State.Snapshot().Notes.Single().Who.ShouldStartWith("se2-cli/");
         }
         finally

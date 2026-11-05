@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>#629: a job and a check run below normal by default, and so does a process they start; Idle gives idle; Normal changes nothing.</summary>
 [Collection(JobsCollection.Name)]
-public sealed class JobPriorityTests : JobTestsBase
+public sealed partial class JobPriorityTests : JobTestsBase
 {
     // The line prints its own priority and that of a child it starts, as parent=<x> and child=<x>.
     private static string Probe => OperatingSystem.IsWindows()
