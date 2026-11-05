@@ -177,6 +177,57 @@ public sealed partial class JobPriorityTests
     }
 
     [Fact]
+    public async Task ANormalJobBehindAnUrgentOneSaysUrgentFlightsGoFirst()
+    {
+        var (jobs, clock, _, gone) = Idle(() => _cpu);
+        var normal = Flight("NORMA", null);
+        var urgent = Flight("URGNT", IssuePriority.Urgent);
+        var blocker = HandAs(jobs, normal, clock, Eight);
+        await Until(blocker, j => j.State == JobState.Running);
+
+        var waiting = HandAs(jobs, normal, clock);
+        var urgentJob = HandAs(jobs, urgent, clock);
+
+        Row(waiting).Step.ShouldNotBeNull().ShouldStartWith("queued, 1 ahead of it (urgent flights first); ");
+        await StartsNext(jobs, gone, blocker, urgentJob, waiting);
+    }
+
+    [Fact]
+    public async Task AJobLiftedByTheWaitBoundSaysSo()
+    {
+        var (jobs, clock, _, gone) = Idle(() => _cpu);
+        var high = Flight("HIGHF", IssuePriority.High);
+        var urgent = Flight("URGNT", IssuePriority.Urgent);
+        var blocker = HandAs(jobs, urgent, clock, Eight);
+        await Until(blocker, j => j.State == JobState.Running);
+
+        var urgentJob = HandAs(jobs, urgent, clock);
+        var lifted = HandAs(jobs, high, clock);
+        clock.Advance(JobOrder.WaitBound);
+        Look(jobs);
+
+        // Lifted to Urgent, level with the job ahead: nothing outranks it, so the only reason is the lift.
+        Row(lifted).Step.ShouldNotBeNull().ShouldStartWith("queued, 1 ahead of it (lifted, waited over 2 h); ");
+        await StartsNext(jobs, gone, blocker, urgentJob, lifted);
+    }
+
+    [Fact]
+    public async Task AJobBehindAnEqualOrLowerRankedOneKeepsThePlainStep()
+    {
+        var (jobs, clock, _, gone) = Idle(() => _cpu);
+        var normalA = Flight("NORMA", null);
+        var normalB = Flight("NORMB", null);
+        var blocker = HandAs(jobs, normalA, clock, Eight);
+        await Until(blocker, j => j.State == JobState.Running);
+
+        var first = HandAs(jobs, normalA, clock);
+        var second = HandAs(jobs, normalB, clock);
+
+        Row(second).Step.ShouldNotBeNull().ShouldStartWith("queued, 1 ahead of it; ");
+        await StartsNext(jobs, gone, blocker, first, second);
+    }
+
+    [Fact]
     public async Task APriorityChangedWhileAJobWaitsReRanksIt()
     {
         var (jobs, clock, _, gone) = Idle(() => _cpu);
