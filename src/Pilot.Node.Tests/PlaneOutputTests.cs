@@ -139,6 +139,30 @@ public sealed class PlaneOutputTests : JobTestsBase
     }
 
     [Fact]
+    public async Task TurningTheSettingOffMakesAQueuedPlaneJobWaitOnTheSiblingHoldAgain()
+    {
+        var jobs = Runner(planeOutput: true);
+        jobs.MaxRunning = 1;
+        var first = Hand(jobs, "echo 'one'; sleep 20", _root);
+        await Until(first, j => j.State == JobState.Running);
+        // Queued for the slot while the setting is on, so its sibling set may already be worked out as none.
+        var second = Hand(jobs, "echo 'two'; sleep 20", PlaneIn("pil2"));
+        Row(second).State.ShouldBe(JobState.Queued);
+
+        jobs.PlaneOutput = false;
+        jobs.MaxRunning = 2;
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+
+        // It now builds into the sibling's own obj, so it waits for the main clone's build instead of starting unlocked.
+        Row(second).State.ShouldBe(JobState.Queued);
+        Row(second).WaitsOnSibling.ShouldBe(true);
+        await CancelAll(jobs, first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(second, j => j.State == JobState.Running);
+        await CancelAll(jobs, second);
+    }
+
+    [Fact]
     public void TheSlotsLineIsSilentWithNothingQueued()
     {
         JobQueue.SlotsLine([]).ShouldBeNull();

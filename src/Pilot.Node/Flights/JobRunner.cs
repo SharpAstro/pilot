@@ -737,7 +737,26 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set, live.</summary>
-    public bool PlaneOutput { get; set; }
+    public bool PlaneOutput
+    {
+        get => _planeOutput;
+        set
+        {
+            if (_planeOutput == value)
+            {
+                return;
+            }
+            _planeOutput = value;
+            // A queued job's set was worked out under the old value; a running job started with it and keeps it. Forget the
+            // queued ones' sets, or a plane job cached as [] with the setting on would build into the sibling obj unlocked.
+            foreach (var id in _siblings.Keys.Where(id => !_running.ContainsKey(id)).ToList())
+            {
+                _siblings.TryRemove(id, out _);
+            }
+        }
+    }
+
+    private bool _planeOutput;
 
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
     public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);

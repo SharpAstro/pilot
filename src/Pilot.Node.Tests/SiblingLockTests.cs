@@ -87,6 +87,15 @@ public sealed class SiblingLockTests : JobTestsBase
         SiblingSet.PastBuild(command, cwd, [.. building, "dotnet test Y --no-build"]).ShouldBeFalse();
         SiblingSet.PastBuild(command, cwd, nodeReuse).ShouldBeFalse();
         SiblingSet.PastBuild(command, cwd, [.. nodeReuse, "dotnet.exe test Y --no-build"]).ShouldBeTrue();
+        // The real Windows shape: pwsh starts dotnet by its quoted path, which holds a space.
+        const string dotnet = "\"C:\\Program Files\\dotnet\\dotnet.exe\"";
+        const string msbuild = "\"C:\\Program Files\\dotnet\\sdk\\10.0.302\\MSBuild.dll\"";
+        string[] realBuilding = [$"{dotnet} build X.slnx -c Release", $"{dotnet} {msbuild} -maxcpucount -verbosity:m"];
+        string[] realNodeReuse = [$"{dotnet} {msbuild} -nodemode:1 /nodeReuse:true", "VBCSCompiler.exe"];
+        SiblingSet.PastBuild(command, cwd, realBuilding).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, [.. realBuilding, $"{dotnet} test Y --no-build"]).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, realNodeReuse).ShouldBeFalse();
+        SiblingSet.PastBuild(command, cwd, [.. realNodeReuse, $"{dotnet} test Y --no-build"]).ShouldBeTrue();
         // A last segment that builds holds to its end.
         SiblingSet.PastBuild("dotnet test Y --no-build && dotnet build X", cwd, ["dotnet build X"]).ShouldBeFalse();
         // No building segment at all: nothing to release.
@@ -174,7 +183,7 @@ public sealed class SiblingLockTests : JobTestsBase
         var (_, _, plane1, plane2) = Org();
         var (jobs, _, _, _) = Idle();
         jobs.MaxRunning = 2;
-        jobs.SiblingsOf = job => SiblingSet.Of(job.Command.Replace("sleep 20", "dotnet test X --no-build"), plane1);
+        jobs.SiblingsOf = job => SiblingSet.Of("dotnet test X --no-build", job.Command.Contains("one") ? plane1 : plane2);
         var first = Hand(jobs, "echo 'one'; sleep 20");
         var second = Hand(jobs, "echo 'two'; sleep 20");
         await Until(first, j => j.State == JobState.Running);
@@ -184,7 +193,6 @@ public sealed class SiblingLockTests : JobTestsBase
             jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
             await Until(id, j => j.EndedAt is not null);
         }
-        _ = plane2;
     }
 
     [Fact]

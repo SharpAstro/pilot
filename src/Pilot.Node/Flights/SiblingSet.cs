@@ -48,9 +48,12 @@ public static class SiblingSet
         return steps.Skip(last + 1).Any(later => lines.Any(w => Matches(w, later.Tool, later.Verb)));
     }
 
-    /// <summary>The words of a command line, quotes dropped; the program is the first, without its folder or extension.</summary>
-    private static string[] Words(string line) =>
-        [.. line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries).Select(w => w.Trim('"', '\''))];
+    /// <summary>
+    /// The words of a command line, quotes grouping a word and then dropped; the program is the first, without its folder or
+    /// extension. Quote-aware because Windows starts dotnet as <c>"C:\Program Files\dotnet\dotnet.exe" ...</c>, whose path a
+    /// plain split on spaces breaks into <c>C:\Program</c> and <c>Files\dotnet\dotnet.exe</c>.
+    /// </summary>
+    private static string[] Words(string line) => [.. JobKey.Segments(line).SelectMany(s => s)];
 
     private static string Program(string[] words) => words.Length == 0 ? "" : Path.GetFileNameWithoutExtension(words[0].Replace('\\', '/').Split('/')[^1]);
 
