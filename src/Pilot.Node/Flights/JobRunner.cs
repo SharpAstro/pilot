@@ -603,6 +603,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var admission = state.Admission();
         var now = time.GetUtcNow();
         // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
+        // Each wait is worked out once per dispatch and shared by the steps and BehindHeld.
+        var whys = _queue.Select(j => WhyWait(j)).ToList();
         var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
@@ -613,7 +615,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"next in line: {whys[0]}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i, whys) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -629,7 +631,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// and share no clone with a held job passed over, so a job that builds nothing is not stuck behind a held head, and no
     /// job jumps a held one it shares clones with. The walk stops at the first job that waits for anything but a sibling hold
     /// (memory, a slot, a benchmark): a head waiting for memory must not be starved by smaller jobs slipping past it forever.
-    /// A start fills a slot and changes memory, so the walk begins again after each one.
+    /// A start fills a slot and changes memory, so the walk begins again after each one. A job started out of turn can still be
+    /// running when the holder releases, so the head may then wait for a slot; once it no longer waits on a sibling hold it blocks the walk.
     /// </summary>
     private void StartWhatCan()
     {
@@ -678,7 +681,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     }
 
     /// <summary>The queued job ahead of this one that is held and shares a sibling clone with it, so this one waits behind it. Null when none.</summary>
-    private string? BehindHeld(int at)
+    private string? BehindHeld(int at, List<string?> whys)
     {
         var job = _queue[at];
         if (SiblingsFor(job) is not { Count: > 0 } mine)
@@ -689,7 +692,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             var ahead = _queue[i];
             var shared = SiblingsFor(ahead).Where(c => mine.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileName).ToList();
-            if (shared.Count > 0 && WhyWait(ahead) is not null)
+            if (shared.Count > 0 && whys[i] is not null)
             {
                 return $"waits behind job {ahead.Id}, which shares its clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)}";
             }
