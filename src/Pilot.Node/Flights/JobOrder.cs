@@ -4,7 +4,7 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The order the job queue starts waiting jobs in: by the rank of the job's flight (<see cref="IssuePriorities.Rank"/>), then
-/// first come. A job that has waited past <see cref="WaitBound"/> ranks one level higher, so a low priority job is never starved.
+/// first come. A job that has waited past <see cref="WaitBound"/> ranks one level higher (once), so a low priority job does not wait behind newer, higher ones for ever at its own level.
 /// </summary>
 internal static class JobOrder
 {
