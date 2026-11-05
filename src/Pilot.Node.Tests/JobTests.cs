@@ -1801,7 +1801,7 @@ public sealed class JobTests3 : JobTestsBase
     }
 
     [Fact(Timeout = 90_000)]
-    public async Task TheNodeStoppingEndsRunningChecksAndLeavesWaitingOnesQueuedAndAnOrdinaryJobRunning()
+    public async Task TheNodeStoppingLeavesRunningChecksRunningAndWaitingOnesQueuedAndAnOrdinaryJobRunning()
     {
         var marker = Path.Combine(_root, "grandchild-stop.pid");
         using var node = await Node.StartAsync(_root);
@@ -1813,30 +1813,149 @@ public sealed class JobTests3 : JobTestsBase
         var child = await GrandchildPid(marker, running);
         var rows = node.State.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
         rows.Count.ShouldBe(2);
-
-        await node.StopAsync();
-
-        (await running.WaitAsync(TimeSpan.FromSeconds(30), Ct)).ExitCode.ShouldBe(-1);
-        // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737).
-        await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
-        var endedRunning = node.State.Jobs().Single(j => j.Id == rows[0].Id);
-        (endedRunning.State, endedRunning.EndedAt is not null).ShouldBe((JobState.Failed, true));
-        endedRunning.Error!.ShouldContain("node stopped");
-        var stillQueued = node.State.Jobs().Single(j => j.Id == rows[1].Id);
-        (stillQueued.State, stillQueued.EndedAt).ShouldBe((JobState.Queued, null));
-        await GoneWithin(child);
-        // The ordinary job is the node's to leave behind.
-        node.Job(jobId).State.ShouldBe(JobState.Running);
-        IsAlive(job.Pid!.Value).ShouldBeTrue();
-        // Left behind on purpose by the node; this test ends it so nothing outlives the run.
-        using (var left = System.Diagnostics.Process.GetProcessById(job.Pid!.Value))
+        var runningRow = node.State.Jobs().Single(j => j.Id == rows[0].Id);
+        try
         {
-            left.Kill(entireProcessTree: true);
+            await node.StopAsync();
+
+            // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737); the running one's
+            // row stays running with its tree alive, as an ordinary job's does.
+            await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
+            var stillRunning = node.State.Jobs().Single(j => j.Id == rows[0].Id);
+            (stillRunning.State, stillRunning.EndedAt).ShouldBe((JobState.Running, null));
+            var stillQueued = node.State.Jobs().Single(j => j.Id == rows[1].Id);
+            (stillQueued.State, stillQueued.EndedAt).ShouldBe((JobState.Queued, null));
+            IsAlive(child).ShouldBeTrue();
+            node.Job(jobId).State.ShouldBe(JobState.Running);
+            IsAlive(job.Pid!.Value).ShouldBeTrue();
+        }
+        finally
+        {
+            // Left behind on purpose by the node; this test ends them so nothing outlives the run.
+            JobKiller.Kill(runningRow);
+            JobKiller.Kill(job);
+            try
+            {
+                using var left = System.Diagnostics.Process.GetProcessById(child);
+                left.Kill(entireProcessTree: true);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+    }
+
+    [Fact(Timeout = 90_000)]
+    public async Task ARunningCheckOutlivesTheNodeStoppingAndTheNextNodesFinishReattachesToItByIdForItsExitCode()
+    {
+        var marker = Path.Combine(_root, "grandchild-carry.pid");
+        // The check ends when the test says so: it sleeps, then exits 7 once the flag exists.
+        var flag = Path.Combine(_root, "carry.flag");
+        var command = OperatingSystem.IsWindows()
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}' -Value $p.Id; while (-not (Test-Path '{flag}')) {{ Start-Sleep -Milliseconds 200 }}; exit 7"
+            : $"sleep 120 & echo $! > '{marker}'; while [ ! -e '{flag}' ]; do sleep 0.2; done; exit 7";
+        int child = 0;
+        JobRow? check = null;
+        JobRow? kept = null;
+        try
+        {
+            using (var first = await Node.StartAsync(_root))
+            {
+                var run = first.Jobs.RunCheckAsync("TIA1", "one", command, _root, TimeSpan.FromMinutes(30), Ct);
+                child = await GrandchildPid(marker, run);
+                check = await first.UntilAsync(first.State.Jobs().Single(j => j.Kind == JobKind.Check).Id, j => j.State == JobState.Running, Ct);
+                await first.StopAsync();
+                await Should.ThrowAsync<OperationCanceledException>(run.WaitAsync(TimeSpan.FromSeconds(30), Ct));
+                kept = first.State.Jobs().Single(j => j.Id == check.Id);
+            }
+
+            IsAlive(child).ShouldBeTrue();
+            IsAlive(check.Pid!.Value).ShouldBeTrue();
+            (kept.State, kept.EndedAt).ShouldBe((JobState.Running, null));
+
+            using var second = await Node.StartAsync(_root);
+            second.Jobs.IsRunning(check.Id).ShouldBeTrue();
+            var again = second.Jobs.RunCheckAsync("TIA1", "one", command, _root, TimeSpan.FromMinutes(30), Ct);
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+
+            File.WriteAllText(flag, "");
+            var result = await again.WaitAsync(TimeSpan.FromSeconds(40), Ct);
+
+            result.ExitCode.ShouldBe(7);
+            second.State.Jobs().Where(j => j.Kind == JobKind.Check).ShouldHaveSingleItem().Id.ShouldBe(check.Id);
+            await second.StopAsync();
+        }
+        finally
+        {
+            if (check is not null)
+            {
+                JobKiller.Kill(check);
+            }
+            if (child != 0)
+            {
+                try
+                {
+                    using var left = System.Diagnostics.Process.GetProcessById(child);
+                    left.Kill(entireProcessTree: true);
+                }
+                catch (ArgumentException)
+                {
+                }
+            }
+        }
+    }
+
+    private static System.Diagnostics.Process SpawnSleeper()
+    {
+        var start = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo("pwsh") { ArgumentList = { "-NoProfile", "-Command", "Start-Sleep 60" } }
+            : new System.Diagnostics.ProcessStartInfo("sleep") { ArgumentList = { "60" } };
+        start.UseShellExecute = false;
+        start.CreateNoWindow = true;
+        return System.Diagnostics.Process.Start(start)!;
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task ADisposedKillOnCloseHoldWithoutTheReleaseStillEndsTheProcess()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
+        using var process = SpawnSleeper();
+        try
+        {
+            var hold = KillOnCloseJob.Hold(process).ShouldNotBeNull();
+            hold.Dispose();
+            await process.WaitForExitAsync(Ct).WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task AReleasedKillOnCloseHoldLetsTheProcessOutliveItsDisposal()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "kill-on-close is a Windows job object");
+        using var process = SpawnSleeper();
+        try
+        {
+            var hold = KillOnCloseJob.Hold(process).ShouldNotBeNull();
+            hold.Release();
+            hold.Dispose();
+            await Task.Delay(1500, Ct);
+            process.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            process.Kill(entireProcessTree: true);
         }
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task RecoveryFailsACheckRowItFindsRunningKillingALiveTreeKeepsAQueuedOneAndStillFollowsAnOrdinaryJob()
+    public async Task RecoveryFollowsACheckRowItFindsRunningLikeAJobEndsOneWithNoProcessKeepsAQueuedOneAndFollowsAnOrdinaryJob()
     {
         string[] program = OperatingSystem.IsWindows() ? ["pwsh", "-NoProfile", "-Command", "Start-Sleep 30"] : ["sleep", "30"];
         System.Diagnostics.Process Spawn()
@@ -1862,14 +1981,20 @@ public sealed class JobTests3 : JobTestsBase
             };
             _state.PutJob(Row("jc1", JobKind.Check, JobState.Running, checkProcess));
             _state.PutJob(Row("jc2", JobKind.Check, JobState.Queued, null));
+            _state.PutJob(Row("jc3", JobKind.Check, JobState.Running, null));
             _state.PutJob(Row("jo1", JobKind.Run, JobState.Running, jobProcess));
 
             await _jobs.RecoverAsync(Ct);
 
-            await GoneWithin(checkProcess.Id);
+            // A running check whose process is alive is followed again, not ended.
+            IsAlive(checkProcess.Id).ShouldBeTrue();
             var ran = _state.Jobs().Single(j => j.Id == "jc1");
-            (ran.State, ran.EndedAt is not null).ShouldBe((JobState.Failed, true));
-            _jobs.IsRunning("jc1").ShouldBeFalse();
+            (ran.State, ran.EndedAt).ShouldBe((JobState.Running, null));
+            _jobs.IsRunning("jc1").ShouldBeTrue();
+            // One with no pid cannot be found again, so it is ended.
+            var lost = _state.Jobs().Single(j => j.Id == "jc3");
+            (lost.State, lost.EndedAt is not null).ShouldBe((JobState.Failed, true));
+            _jobs.IsRunning("jc3").ShouldBeFalse();
             // The queued check carried over: still queued, behind the ordinary job's slot, not ended.
             var queued = _state.Jobs().Single(j => j.Id == "jc2");
             (queued.State, queued.EndedAt).ShouldBe((JobState.Queued, null));

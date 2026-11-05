@@ -254,10 +254,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         var left = state.Jobs().Where(j => j.State is JobState.Running or JobState.Queued && !_mine.ContainsKey(j.Id)).ToList();
-        // A running check is not followed: the node that awaited it is gone, so nothing waits for its result. Its tree is ended and its
-        // row says so. A queued one has not started, so nothing is lost: it stays queued, in its place with the other carried jobs
-        // (below), and the finish that comes back waits on it (RunCheckAsync) instead of queueing a fresh one (pilot #737).
-        foreach (var check in left.Where(j => j.Kind == JobKind.Check && j.State == JobState.Running).ToList())
+        // A running check is followed like a running job: the stop let go of its kill-on-close hold, so it outlived the node, and the
+        // finish that comes back waits on it by id (RunCheckAsync). One with no pid or start time cannot be found again, so it is ended.
+        // A queued one has not started, so it stays queued, in its place with the other carried jobs (below) (pilot #737).
+        foreach (var check in left.Where(j => j.Kind == JobKind.Check && j.State == JobState.Running && j is not { Pid: not null, ProcessStartedAt: not null }).ToList())
         {
             left.Remove(check);
             _mine[check.Id] = 0;
@@ -311,6 +311,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         if (process is not null && process.IsAlive())
         {
             _running[job.Id] = process;
+            if (job.Kind == JobKind.Check)
+            {
+                // A crash of this node must end it again, as for a check it started: held where the process can still be assigned
+                // (it sits in the wrapper's own job, and nesting is allowed from Windows 8); else it is only followed.
+                try
+                {
+                    var found = System.Diagnostics.Process.GetProcessById(job.Pid!.Value);
+                    if (KillOnCloseJob.Hold(found, Priority) is { } hold)
+                    {
+                        _holds[job.Id] = hold;
+                    }
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    // Gone since the look: the watch finds it so.
+                }
+            }
             _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: true), CancellationToken.None);
             return;
         }
@@ -333,6 +350,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         _tried[job.Id] = 0;
         state.PutJob(ended);
         DetachedShell.DeleteScripts(job.ScriptPath);
+        // A check ended while the node was down: the finish that comes back takes this result (nothing waits yet, so it is kept).
+        Finish(ended, last);
         await TellAsync(ended, cancellationToken, last);
     }
 
@@ -1402,9 +1421,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             {
                 if (job.Kind == JobKind.Check)
                 {
-                    // A check is given up with the node: nobody will await it, and its tests must not hold the plane's files.
-                    EndCheckForStop(job, process);
-                    return;
+                    // A check outlives a graceful stop as a job does: its hold lets go of kill-on-close (a crash still kills), and the next
+                    // node follows it and the leg's finish waits on it by id (pilot #737).
+                    if (_holds.TryRemove(job.Id, out var held))
+                    {
+                        held.Release();
+                        held.Dispose();
+                    }
                 }
                 // The node is stopping: the job is not, and its row stays as it is for the next node.
                 process.Child?.Dispose();
@@ -1479,24 +1502,6 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             hold.Dispose();
         }
-    }
-
-    /// <summary>The node is stopping: a running check's whole tree is killed and its row ended, saying why.</summary>
-    private void EndCheckForStop(JobRow job, JobProcess process)
-    {
-        Kill(job.Id, process);
-        Tree.KillAll(job.Id, process);
-        DetachedShell.DeleteScripts(job.ScriptPath);
-        ReleaseHold(job.Id);
-        _running.TryRemove(job.Id, out _);
-        _watches.TryRemove(job.Id, out _);
-        _nudges.TryRemove(job.Id, out _);
-        Tree.Forget(job.Id);
-        var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
-        var ended = latest with { State = JobState.Failed, Error = "the node stopped, so the check was ended", EndedAt = time.GetUtcNow() };
-        state.PutJob(ended);
-        Finish(ended, null);
-        process.Child?.Dispose();
     }
 
     /// <summary>The memory the processes of a job's tree hold in all, in bytes; null when none of it could be read.</summary>
