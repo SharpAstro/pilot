@@ -45,7 +45,7 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
 
         var slowest = passes.Max();
         var scaled = slowest * Margin;
-        var count = passes.Count == 1 ? "pass" : $"{passes.Count} passes";
+        var of = passes.Count == 1 ? "its last pass" : $"the slowest of its last {passes.Count} passes";
         if (scaled < Floor)
         {
             return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its slowest pass, {Describe(slowest)}, is under it", passes.Count, slowest);
@@ -54,7 +54,7 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
         {
             return new CheckLimit(Ceiling, $"the {Describe(Ceiling)} ceiling; {Margin:0.#}x its slowest pass would be {Describe(scaled)}", passes.Count, slowest);
         }
-        return new CheckLimit(scaled, $"{Margin:0.#}x the slowest of its last {count}, {Describe(scaled)}", passes.Count, slowest);
+        return new CheckLimit(scaled, $"{Margin:0.#}x {of}, {Describe(slowest)}", passes.Count, slowest);
     }
 
     /// <summary>Minutes rounded as the check messages do; whole hours as hours.</summary>

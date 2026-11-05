@@ -1061,7 +1061,7 @@ public sealed class JobTests2 : JobTestsBase
 
         var run = await check.WaitAsync(TimeSpan.FromSeconds(30), Ct);
         run.StoppedByBudget.ShouldBeTrue();
-        run.Tail.ShouldBe("the check was stopped at 53 m of running: 1.5x the slowest of its last 3 passes, 53 m");
+        run.Tail.ShouldBe("the check was stopped at 53 m of running: 1.5x the slowest of its last 3 passes, 35 m");
         await jobs.StopAsync(CancellationToken.None);
     }
 

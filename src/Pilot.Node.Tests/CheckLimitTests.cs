@@ -50,7 +50,7 @@ public class CheckLimitTests
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(60));
         limit.Runs.ShouldBe(3);
         limit.Slowest.ShouldBe(TimeSpan.FromMinutes(40));
-        limit.Basis.ShouldBe("1.5x the slowest of its last 3 passes, 1 h");
+        limit.Basis.ShouldBe("1.5x the slowest of its last 3 passes, 40 m");
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class CheckLimitTests
         var limit = CheckLimit.For([Run(23)], Key);
 
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(34.5));
-        limit.Basis.ShouldBe("1.5x the slowest of its last pass, 35 m");
+        limit.Basis.ShouldBe("1.5x its last pass, 23 m");
     }
 
     [Fact]
