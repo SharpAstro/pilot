@@ -132,6 +132,95 @@ public sealed class SiblingLockTests : JobTestsBase
         }
     }
 
+    private async Task CancelAll(JobRunner jobs, params string[] ids)
+    {
+        foreach (var id in ids)
+        {
+            jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+            await Until(id, j => j.EndedAt is not null);
+        }
+    }
+
+    // "one" builds pilot; "two" and "four" build pilot too; "three" builds nothing.
+    private static string[] Sets(string command) =>
+        command.Contains("three") || command.Contains("five") ? [] : [Clone("pilot")];
+
+    [Fact]
+    public async Task ANoBuildJobBehindASiblingHeldHeadStartsOutOfTurn()
+    {
+        var jobs = Runner(Sets, slots: 3);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        var free = Hand(jobs, "echo 'three'; sleep 20");
+
+        await Until(free, j => j.State == JobState.Running);
+        Row(free).Step.ShouldNotBeNull().ShouldContain("started ahead of 1 held job");
+        Row(held).State.ShouldBe(JobState.Queued);
+        Row(held).Step.ShouldNotBeNull().ShouldContain($"next in line: waiting for job {first}'s build");
+        await CancelAll(jobs, first, free);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        await CancelAll(jobs, held);
+    }
+
+    [Fact]
+    public async Task AJobSharingTheHeldHeadsClonesDoesNotJumpIt()
+    {
+        var jobs = Runner(Sets, slots: 3);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        var same = Hand(jobs, "echo 'four'; sleep 20");
+
+        Row(same).State.ShouldBe(JobState.Queued);
+        Row(same).Step.ShouldNotBeNull().ShouldContain($"waits behind job {held}, which shares its clone pilot");
+        await CancelAll(jobs, first);
+    }
+
+    [Fact]
+    public async Task AHeadWaitingForMemoryStillBlocksASmallJobBehindIt()
+    {
+        long free = 1L << 40;
+        var clock = new Clock();
+        var jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), clock)
+        {
+            FreeMemory = () => free,
+        };
+        jobs.MaxRunning = 3;
+        jobs.MinFreeMemory = 1L << 30;
+        jobs.SiblingsOf = job => Sets(job.Command);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        free = 0;
+        var head = Hand(jobs, "echo 'five'; sleep 20");
+        var small = Hand(jobs, "echo 'three'; sleep 20");
+
+        Row(head).State.ShouldBe(JobState.Queued);
+        Row(small).State.ShouldBe(JobState.Queued);
+        Row(head).Step.ShouldNotBeNull().ShouldContain("free memory");
+        await CancelAll(jobs, first);
+    }
+
+    [Fact]
+    public async Task TheHeldHeadStartsWhenTheHolderEndsAheadOfALaterSameCloneJob()
+    {
+        var jobs = Runner(Sets, slots: 3);
+        var first = Hand(jobs, "echo 'one'; sleep 20");
+        await Until(first, j => j.State == JobState.Running);
+        var held = Hand(jobs, "echo 'two'; sleep 20");
+        var same = Hand(jobs, "echo 'four'; sleep 20");
+
+        await CancelAll(jobs, first);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(held, j => j.State == JobState.Running);
+        Row(same).State.ShouldBe(JobState.Queued);
+        await CancelAll(jobs, held);
+        jobs.Dispatch(JobRunner.LookAgain.Instance);
+        await Until(same, j => j.State == JobState.Running);
+        await CancelAll(jobs, same);
+    }
+
     /// <summary>A temp org with a repo "pilot" (its own .git folder) and planes pil1 and pil2, whose props use sibling A, which uses B.</summary>
     private (string Org, string Repo, string Plane1, string Plane2) Org()
     {

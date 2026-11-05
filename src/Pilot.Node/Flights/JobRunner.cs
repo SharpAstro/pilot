@@ -596,19 +596,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
 
         ReorderQueue();
 
-        while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
-        {
-            var next = _queue[0];
-            _queue.RemoveAt(0);
-            if (Start(next with { State = JobState.Running, Step = null, StartedAt = time.GetUtcNow() }) is { } failed)
-            {
-                var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
-                _tried[next.Id] = 0;
-                state.PutJob(ended);
-                Finish(ended, null);
-                _ = TellAsync(ended, _stopping);
-            }
-        }
+        StartWhatCan();
 
         // Each waiting job says where it stands.
         var flights = state.Flights();
@@ -625,7 +613,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
+                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : BehindHeld(i) is { } behind ? $"queued, {i} ahead of it{place}; {behind}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
                 WaitsOnSibling = SiblingHold(job) is not null,
             };
@@ -633,6 +621,80 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         CheckIdle();
+    }
+
+    /// <summary>
+    /// Starts every waiting job the machine has room for. From the head while a job may start, as ever; when the job at the front
+    /// waits only on a sibling-clone hold, the walk goes on down the queue and starts the first later jobs that can start now
+    /// and share no clone with a held job passed over, so a job that builds nothing is not stuck behind a held head, and no
+    /// job jumps a held one it shares clones with. The walk stops at the first job that waits for anything but a sibling hold
+    /// (memory, a slot, a benchmark): a head waiting for memory must not be starved by smaller jobs slipping past it forever.
+    /// A start fills a slot and changes memory, so the walk begins again after each one.
+    /// </summary>
+    private void StartWhatCan()
+    {
+        while (_queue.Count > 0)
+        {
+            var passed = new List<JobRow>();
+            var passedClones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var at = -1;
+            for (var i = 0; i < _queue.Count; i++)
+            {
+                var job = _queue[i];
+                var why = WhyWait(job);
+                var shares = passed.Count > 0 && SiblingsFor(job).Any(passedClones.Contains);
+                if (why is null && !shares)
+                {
+                    at = i;
+                    break;
+                }
+                // Held by a running build, or queued behind a held job it shares clones with: passed over, its clones stay claimed.
+                var siblingOnly = why is null || (SiblingHold(job) is not null && BenchHold(job) is null && job.Kind != JobKind.Bench && WhyWait(job, ignoreSibling: true) is null);
+                if (!siblingOnly)
+                {
+                    break;
+                }
+                passed.Add(job);
+                passedClones.UnionWith(SiblingsFor(job));
+            }
+            if (at < 0)
+            {
+                return;
+            }
+            var next = _queue[at];
+            _queue.RemoveAt(at);
+            var step = passed.Count == 0
+                ? null
+                : $"started ahead of {passed.Count} held job{(passed.Count == 1 ? "" : "s")} ({string.Join(", ", passed.Select(j => j.Id))}) because it shares no sibling clone with them";
+            if (Start(next with { State = JobState.Running, Step = step, StartedAt = time.GetUtcNow() }) is { } failed)
+            {
+                var ended = next with { State = JobState.Failed, Error = $"it did not start: {failed}", EndedAt = time.GetUtcNow() };
+                _tried[next.Id] = 0;
+                state.PutJob(ended);
+                Finish(ended, null);
+                _ = TellAsync(ended, _stopping);
+            }
+        }
+    }
+
+    /// <summary>The queued job ahead of this one that is held and shares a sibling clone with it, so this one waits behind it. Null when none.</summary>
+    private string? BehindHeld(int at)
+    {
+        var job = _queue[at];
+        if (SiblingsFor(job) is not { Count: > 0 } mine)
+        {
+            return null;
+        }
+        for (var i = 0; i < at; i++)
+        {
+            var ahead = _queue[i];
+            var shared = SiblingsFor(ahead).Where(c => mine.Contains(c, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileName).ToList();
+            if (shared.Count > 0 && WhyWait(ahead) is not null)
+            {
+                return $"waits behind job {ahead.Id}, which shares its clone{(shared.Count == 1 ? "" : "s")} {string.Join(", ", shared)}";
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -740,7 +802,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// the only memory it could wait for is what its own queue's jobs hold, and a head that waits for memory nothing will
     /// free is a queue that never moves. Otherwise it starts when the machine has free what its kind of command needs.
     /// </summary>
-    private string? WhyWait(JobRow job)
+    private string? WhyWait(JobRow job, bool ignoreSibling = false)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -756,7 +818,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             return holds;
         }
-        if (SiblingHold(job) is { } shared)
+        if (!ignoreSibling && SiblingHold(job) is { } shared)
         {
             return shared;
         }
