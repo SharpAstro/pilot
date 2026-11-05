@@ -89,7 +89,8 @@ public sealed class TopBarTests
             var chatPage = page == "chat";
             // The Settings page names whose node it is, and offers no node pills: its settings are this machine's only.
             var settingsPage = page == "settings";
-            var name = Text(arranged, chatPage ? chrome.Chat.Title : settingsPage ? $"{chrome.Settings.Owner}'s settings (this machine)" : page);
+            // The Settings title is long enough to wrap at its spaces (TopBar.WrappedTitleChars): its first word stands for it.
+            var name = Text(arranged, chatPage ? chrome.Chat.Title : settingsPage ? $"{chrome.Settings.Owner}'s " : page);
             (name.Y + name.Height).ShouldBe(pilot.Y + pilot.Height, page);
             brand ??= pilot;
             (pilot.X, pilot.Y, pilot.Width, pilot.Height).ShouldBe((brand.Value.X, brand.Value.Y, brand.Value.Width, brand.Value.Height), page);

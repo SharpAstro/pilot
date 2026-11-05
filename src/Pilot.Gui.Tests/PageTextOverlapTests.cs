@@ -15,9 +15,15 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class PageTextOverlapTests
 {
-    private static readonly int[] Widths = [700, 900, 1300, 1900];
+    private static readonly int[] Widths = [500, 700, 900, 1300, 1900];
     private static readonly float[] Dpis = [1f, 1.25f, 1.5f];
     private const int Height = 900;
+
+    /// <summary>The short window of the issue: a height that cuts the page's rows, at the widths and DPIs a small laptop screen has.</summary>
+    private const int ShortHeight = 500;
+    private static readonly int[] ShortWidths = [500, 700, 1400];
+    private static readonly float[] ShortDpis = [1f, 1.5f];
+    private static readonly string[] ShortStates = ["long", "many"];
 
     internal static readonly string[] Pages =
     [
@@ -25,8 +31,14 @@ public sealed class PageTextOverlapTests
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
-    /// <summary>The Ideas board is walked by the selectable-content check only; the overlap theory keeps its own page list.</summary>
+    /// <summary>The Ideas board is not in <see cref="Pages"/> (the selectable-content check walks it by its own name); this sweep adds it.</summary>
     internal const string IdeasPage = "ideas";
+
+    /// <summary>The cards panel with every card's detail fold opened (a click on each card's painted toggle), the detail long.</summary>
+    internal const string CardDetailPage = "card detail";
+
+    /// <summary>Every page the sweep walks: <see cref="Pages"/> and the two the issue adds.</summary>
+    internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage];
 
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
@@ -34,9 +46,18 @@ public sealed class PageTextOverlapTests
     private const int BigWidth = 2880, BigHeight = 1814;
     private const float BigDpi = 1.5f;
 
-    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases()
+    /// <summary>
+    /// 18 pages x 4 states x (5 widths x 3 DPIs + the big window) = 1152 cases at a normal height, and the short height (500) at 500, 700 and 1400
+    /// wide, DPI 1 and 1.5, in the "long" and "many" states only (the others have less to cut): 18 x 2 x 6 = 216 more, 1368 in all (it was
+    /// 16 pages x 4 x 13 = 832).
+    /// </summary>
+    public static IEnumerable<TheoryDataRow<string, string, int, float, int>> Cases() =>
+        CaseTuples().Select(c => Row(c.Page, c.State, c.Width, c.Dpi, c.Height));
+
+    /// <summary>The cases as plain tuples: what <see cref="Cases"/> wraps for the theory, and what the allow-list's stale-entry test walks.</summary>
+    internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples()
     {
-        foreach (var page in Pages)
+        foreach (var page in SweptPages)
         {
             foreach (var state in States)
             {
@@ -44,10 +65,21 @@ public sealed class PageTextOverlapTests
                 {
                     foreach (var dpi in Dpis)
                     {
-                        yield return Row(page, state, width, dpi, Height);
+                        yield return (page, state, width, dpi, Height);
                     }
                 }
-                yield return Row(page, state, BigWidth, BigDpi, BigHeight);
+                yield return (page, state, BigWidth, BigDpi, BigHeight);
+                if (!ShortStates.Contains(state))
+                {
+                    continue;
+                }
+                foreach (var width in ShortWidths)
+                {
+                    foreach (var dpi in ShortDpis)
+                    {
+                        yield return (page, state, width, dpi, ShortHeight);
+                    }
+                }
             }
         }
     }
@@ -62,6 +94,7 @@ public sealed class PageTextOverlapTests
     [MemberData(nameof(Cases))]
     public async Task NoTextIsDrawnOverOtherTextOrPastItsClip(string page, string state, int width, float dpi, int height)
     {
+        var key = Key(page, state, width, dpi, height);
         var faults = await FaultsOf(page, state, width, dpi, height);
         var dump = Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_DUMP");
         if (dump is { Length: > 0 })
@@ -72,7 +105,41 @@ public sealed class PageTextOverlapTests
                 File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi, height)}\t{f.Line}"));
             }
         }
-        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi, height)} [{faults.Count} faults]");
+
+        // With PILOT_TEXT_OVERLAP_CAPTURE set to a folder, every case with a fault (the allowed ones too) is written there as a PNG: what to look at to fix an allow-list entry.
+        if (faults.Count > 0 && Environment.GetEnvironmentVariable("PILOT_TEXT_OVERLAP_CAPTURE") is { Length: > 0 } captureFolder)
+        {
+            await CaptureOf(page, state, width, dpi, height, key, captureFolder);
+        }
+
+        var failing = Failures(key, faults, TextOverlapAllowList.Covers);
+        if (failing.Count == 0)
+        {
+            return;
+        }
+        // A picture to start the fix from: the page as the chrome paints it, beside the test's output.
+        var capture = await CaptureOf(page, state, width, dpi, height, key, Path.Combine(AppContext.BaseDirectory, "text-overlap"));
+        Assert.Fail(Message(key, failing, capture));
+    }
+
+    /// <summary>The faults of <paramref name="key"/>'s case that the allow-list (<paramref name="allowed"/>) does not cover: what fails the case.</summary>
+    internal static IReadOnlyList<TextFault> Failures(string key, IReadOnlyList<TextFault> faults, Func<string, string, bool> allowed) =>
+        [.. faults.Where(f => !allowed(key, f.Line))];
+
+    /// <summary>One line a fault: the case (page, state, size), the two texts and their bounds (the fault's own line), and where the capture is.</summary>
+    internal static string Message(string key, IReadOnlyList<TextFault> failing, string? capture) =>
+        $"{key} [{failing.Count} faults]" + string.Concat(failing.Select(f => $"{Environment.NewLine}  {key}: {f.Line}" + (capture is null ? "" : $" (capture: {capture})")));
+
+    /// <summary>Writes the page of a failing case as a PNG, as the chrome paints it, to <c>text-overlap/&lt;case&gt;.png</c> beside the test's output; the path.</summary>
+    private static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key, string folder)
+    {
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".png");
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
+        var data = prepared.Data;
+        prepared.Chrome.Render(data.Sessions, data.Flights, CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        File.WriteAllBytes(path, PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, height));
+        return path;
     }
 
     private static readonly Lock DumpLock = new();
@@ -83,6 +150,26 @@ public sealed class PageTextOverlapTests
         using var prepared = await Prepare(page, state, width, dpi, null, height);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
         return TextOverlap.Faults(Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx));
+    }
+
+    /// <summary>
+    /// The page's setup in <paramref name="state"/> (its chrome, a frame, its tree: <c>prepare</c>) and then its arrange, three times (<c>arrange</c>, the
+    /// warm one last), in milliseconds: what <see cref="PageFrameTimeTests"/> records for the views a fix touched.
+    /// </summary>
+    internal static async Task<(double Prepare, double[] Arrange)> TimedArrange(string page, string state, int width, float dpi, int height)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
+        var prepare = watch.Elapsed.TotalMilliseconds;
+        var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, dpi);
+        var arrange = new double[3];
+        for (var i = 0; i < arrange.Length; i++)
+        {
+            watch.Restart();
+            Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx);
+            arrange[i] = watch.Elapsed.TotalMilliseconds;
+        }
+        return (prepare, arrange);
     }
 
     internal static async Task<System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>>> ArrangedOf(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
@@ -124,6 +211,28 @@ public sealed class PageTextOverlapTests
         [Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box"), Idea(380, "Rail count", ""), Idea(370, "Old plan", "", IdeaState.Planned)],
         [], ["pilot", "tianwen"], "live from the node", PageData.Now);
 
+    /// <summary>The Ideas board in a state: the sample's three ideas, ideas with titles and bodies far past a column ("long"), sixty of every state ("many"), or none.</summary>
+    private static IdeasScreen IdeasFor(string state)
+    {
+        var states = Enum.GetValues<IdeaState>();
+        return state switch
+        {
+            "sample" => IdeasSample(),
+            "long" => new IdeasScreen(
+                [.. Enumerable.Range(0, 6).Select(i => Idea(381 - i, $"{PageData.LongTitle} {i}",
+                    $"{PageData.LongReport}\n\n- **Path:** {PageData.LongPath}\n- **Word:** {PageData.LongWord}\n- {PageData.LongTitle}", states[i % states.Length]))],
+                [], ["pilot", PageData.LongWord], "live from the node on " + PageData.LongPath, PageData.Now),
+            "many" => new IdeasScreen(
+                [.. Enumerable.Range(0, 60).Select(i => Idea(500 - i, $"Idea {i}: an idea with a title of some length", i % 3 == 0 ? "" : "Show **ideas** in a pane.\n\n- a list\n- a box", states[i % states.Length]))],
+                [], ["pilot", "tianwen"], "live from the node", PageData.Now),
+            "empty" => new IdeasScreen([], [], ["pilot"], "live from the node", PageData.Now),
+            _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
+        };
+    }
+
+    /// <summary>The cards the page is drawn from: those with a long detail folded under a summary for "card detail", the plain ones otherwise.</summary>
+    private static CardsScreen CardsOf(PageData data, string page) => page == CardDetailPage ? data.CardsWithDetail : data.Cards;
+
     private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {
         var renderer = new RgbaImageRenderer((uint)width, (uint)height);
@@ -142,10 +251,11 @@ public sealed class PageTextOverlapTests
 
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
-        var cards = data.Cards;
+        var cards = CardsOf(data, page);
+        var panelPage = page is "cards panel" or CardDetailPage;
         void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
         Frame();
-        if (page == "cards panel" && chrome.CardsDropped)
+        if (panelPage && chrome.CardsDropped)
         {
             // A window too narrow for the panel beside the page shows it through the rail's cue, in the page's place.
             chrome.ToggleCards();
@@ -153,7 +263,12 @@ public sealed class PageTextOverlapTests
         }
         // Where the chrome draws no panel (none waiting, so nothing for the rail to cue either) there is nothing to check.
         var panelDrawn = chrome.CardsBounds is not null;
-        var shown = page == "cards panel"
+        if (page == CardDetailPage && panelDrawn)
+        {
+            OpenEveryDetail(chrome.Cards);
+            Frame();
+        }
+        var shown = panelPage
             ? chrome.CardsBounds ?? chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}")
             : chrome.PageBounds ?? throw new InvalidOperationException($"the chrome draws no page at {width} wide, DPI {dpi}");
         var pageWidth = shown.Width;
@@ -208,9 +323,10 @@ public sealed class PageTextOverlapTests
                 tree = await OpenChat(chrome, data);
                 break;
             case "ideas":
-                tree = chrome.Ideas.Tree(IdeasSample());
+                tree = chrome.Ideas.Tree(IdeasFor(state));
                 break;
             case "cards panel":
+            case CardDetailPage:
                 // As the chrome drew it: beside the page, or in the page's place where the rail's cue opened it.
                 tree = panelDrawn ? chrome.Cards.Tree(cards) : Layout.Builder.Spacer();
                 break;
@@ -228,6 +344,33 @@ public sealed class PageTextOverlapTests
         }
 
         return new Prepared(renderer, chrome, data, tree, rect);
+    }
+
+    /// <summary>
+    /// Opens the detail fold of every card by a click on its painted toggle (<c>card:&lt;id&gt;:detail</c>), as a person does, so no change to the view
+    /// is needed. A painted region is where the card is drawn, so a card scrolled out of the panel has none to click: the walk goes on while a click opens one.
+    /// </summary>
+    private static void OpenEveryDetail(CardsView<RgbaImage> view)
+    {
+        for (var round = 0; round < 100; round++)
+        {
+            var regions = new List<ClickableRegion>();
+            view.CollectPaintedRegions(regions);
+            var opened = false;
+            foreach (var region in regions)
+            {
+                if (region.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:", StringComparison.Ordinal) && action.EndsWith(":detail", StringComparison.Ordinal)
+                    && !view.DetailOpenOn(action["card:".Length..^":detail".Length]))
+                {
+                    region.OnClick!.Invoke(InputModifier.None);
+                    opened = true;
+                }
+            }
+            if (!opened)
+            {
+                return;
+            }
+        }
     }
 
     /// <summary>

@@ -402,6 +402,9 @@ public sealed class SettingsPageTests
     private static readonly NodeMark Here = new("here", "/sock", "DE1", Here: true);
     private static readonly NodeMark Other = new("se1", "http://se1", "SE1", Here: false);
 
+    // A long title wraps at its spaces (TopBar.WrappedTitleChars), one (trimmed) leaf a word: the title is what the leaves read together.
+    private static string Joined(IEnumerable<string> texts) => string.Join(' ', texts);
+
     [Fact]
     public async Task TheTitleAndTheSetupHintNameWhoseNodeItIsAndNoNodePillIsOffered()
     {
@@ -410,7 +413,7 @@ public sealed class SettingsPageTests
 
         var (texts, buttons) = Look(chrome, renderer, DateTimeOffset.UtcNow);
 
-        texts.ShouldContain("DE1's settings (this machine)");
+        Joined(texts).ShouldContain("DE1's settings (this machine)");
         texts.ShouldContain("what it takes for DE1 to be part of the fleet");
         buttons.ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
     }
@@ -425,7 +428,7 @@ public sealed class SettingsPageTests
         chrome.Settings.Nodes = new NodeFilter { Choices = [Here] };
         var (texts, buttons) = Look(chrome, renderer, DateTimeOffset.UtcNow);
         texts.ShouldNotContain(SettingsView<RgbaImage>.OtherNodesLine);
-        texts.ShouldContain("DE1's settings (this machine)");
+        Joined(texts).ShouldContain("DE1's settings (this machine)");
         buttons.ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
     }
 
@@ -435,7 +438,7 @@ public sealed class SettingsPageTests
         var (chrome, renderer) = await WithNodesAsync();
         using var _ = renderer;
 
-        Look(chrome, renderer, DateTimeOffset.UtcNow).Texts.ShouldContain($"{Environment.MachineName}'s settings (this machine)");
+        Joined(Look(chrome, renderer, DateTimeOffset.UtcNow).Texts).ShouldContain($"{Environment.MachineName}'s settings (this machine)");
     }
 
     /// <summary>The page drawn with the clock the chrome gives it, as the rows are drawn: the words each shows and the buttons it offers.</summary>
