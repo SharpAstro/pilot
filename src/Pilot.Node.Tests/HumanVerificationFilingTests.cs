@@ -19,7 +19,12 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         var flight = await NewFlight(issue, "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        // The flag is read from the issue's labels at a start; these tests build the commander without a tracker, so it is set on the row.
+        // The flag is read from the issue's labels at every start (a start-review re-reads it), so the label is on the fake issue as GitHub
+        // holds it, and on the row too for the verdict that follows this open-pr without a start.
+        if (flagged)
+        {
+            (_github.IssueLabels.TryGetValue(int.Parse(issue), out var labels) ? labels : _github.IssueLabels[int.Parse(issue)] = []).Add(PilotMarks.HumanVerification);
+        }
         _state.UpdateFlight(flight.Code, f => f with { HumanVerification = flagged });
         return F(flight.Code);
     }
