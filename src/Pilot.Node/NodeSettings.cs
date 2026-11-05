@@ -46,6 +46,11 @@ public sealed record NodeSettings
     /// <summary>How many go-arounds a leg may have, whatever their reasons, before the watchtower and the node send it round no more.</summary>
     public const string MaxGoAroundsKey = "max-go-arounds";
     public const int DefaultMaxGoArounds = 5;
+    /// <summary>How many days a job's scratch folder may sit before the disk sweep deletes it, whatever its session did.</summary>
+    public const string ScratchDaysKey = "scratch-days";
+    public const int DefaultScratchDays = 2;
+    public const string DiskAlertGbKey = "disk-alert-gb";
+    public const int DefaultDiskAlertGb = 20;
 
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
@@ -63,7 +68,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -112,6 +117,12 @@ public sealed record NodeSettings
 
     /// <summary>The cap on a leg's go-arounds (<see cref="MaxGoAroundsKey"/>); <see cref="DefaultMaxGoArounds"/> unless set.</summary>
     public int? MaxGoArounds { get; init; }
+
+    /// <summary>Days before a job's scratch is swept (<see cref="ScratchDaysKey"/>); <see cref="DefaultScratchDays"/> unless set.</summary>
+    public int? ScratchDays { get; init; }
+
+    /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
+    public int? DiskAlertGb { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
     public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
@@ -287,6 +298,8 @@ public sealed record NodeSettings
                     LanPortKey => JsonValue.Create(LanPort),
                     MaxJobsKey => JsonValue.Create(MaxJobs),
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
+                    ScratchDaysKey => JsonValue.Create(ScratchDays),
+                    DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
@@ -333,6 +346,8 @@ public sealed record NodeSettings
         UpdateChannelKey => UpdateChannel is { } channel ? [channel.Name()] : null,
         MaxJobsKey => MaxJobs is { } jobs ? [jobs.ToString(CultureInfo.InvariantCulture)] : null,
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
+        ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
+        DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
@@ -499,6 +514,22 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var goArounds) && goArounds is >= 1 and <= 50
                     ? (settings with { MaxGoArounds = goArounds }, null)
                     : (null, "max-go-arounds takes a number, 1 to 50");
+            case ScratchDaysKey:
+                if (clear)
+                {
+                    return (settings with { ScratchDays = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var scratchDays) && scratchDays is >= 1 and <= 365
+                    ? (settings with { ScratchDays = scratchDays }, null)
+                    : (null, "scratch-days takes a number, 1 to 365");
+            case DiskAlertGbKey:
+                if (clear)
+                {
+                    return (settings with { DiskAlertGb = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var diskAlertGb) && diskAlertGb is >= 1 and <= 10000
+                    ? (settings with { DiskAlertGb = diskAlertGb }, null)
+                    : (null, "disk-alert-gb takes a number, 1 to 10000");
             case JobPriorityKey:
                 if (clear)
                 {

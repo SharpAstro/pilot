@@ -98,15 +98,15 @@ internal sealed class TranscriptPane
     /// <summary>Called as a transcript is about to open, before what the window shows changes: the chrome records the place being left.</summary>
     public Action? Opening { get; set; }
 
-    /// <summary>What the Back pill and Escape do: the chrome's Back, which returns to wherever the transcript was opened from. Null (a host with no history) closes it.</summary>
-    public Action? OnBack { get; set; }
+    /// <summary>What the "← Sessions" pill and Escape do: go up one level to the Sessions page, recorded as a move (not through history). Null closes the transcript.</summary>
+    public Action? OnUp { get; set; }
 
-    /// <summary>Leaves the transcript the way Back does: through <see cref="OnBack"/>, or by closing it where there is none.</summary>
-    public void GoBack()
+    /// <summary>Goes up to the Sessions page: through <see cref="OnUp"/>, or by closing the transcript where there is none.</summary>
+    public void GoUp()
     {
-        if (OnBack is { } back)
+        if (OnUp is { } up)
         {
-            back();
+            up();
         }
         else
         {
@@ -269,8 +269,8 @@ internal sealed class TranscriptPane
         var shown = entries.Count < total ? $"{(from >= 0 ? "from the moment" : "its last")} {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
         var head = new List<Layout.Node>
         {
-            Layout.Builder.Text("← Back", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                .Follows(new HitResult.ButtonHit("transcript:back"), _ => GoBack()),
+            Layout.Builder.Text("← Sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
+                .Follows(new HitResult.ButtonHit("transcript:back"), _ => GoUp()).WithTooltip("Up to the Sessions page (Escape)"),
             // At most two lines, the whole title on hover: a long session name took the page's height from its entries.
             WrappedProse.Of(Title ?? "", 16f, Bright, TitleLines).WAuto().WithTooltip(Title ?? ""),
             Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),
