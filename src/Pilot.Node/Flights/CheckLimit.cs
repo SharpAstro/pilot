@@ -37,10 +37,10 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
         var passed = jobs
             .Where(j => j.State == JobState.Succeeded && j.EndedAt is not null)
             .OrderByDescending(j => j.EndedAt)
-            .Select(j => (Key: CommandKey.Of(j.Command, j.Cwd).Text, Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor))
+            .Select(j => (Key: CommandKey.Of(j.Command, j.Cwd).Text, Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor, j.Id, j.Command))
             .ToList();
 
-        List<TimeSpan> Passes(CommandKey k) => [.. passed.Where(p => p.Key == k.Text).Take(Window).Select(p => p.Time)];
+        List<Pass> Passes(CommandKey k) => [.. passed.Where(p => p.Key == k.Text).Take(Window).Select(p => new Pass(p.Id, p.Command, p.Time))];
 
         var passes = Passes(key);
         if (passes.Count == 0 && key.Steps.Count > 1)
@@ -49,13 +49,15 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
             var parts = Enumerable.Range(0, key.Steps.Count).Select(i => Passes(key.Step(i))).ToList();
             if (parts.All(p => p.Count > 0))
             {
-                var sum = parts.Aggregate(TimeSpan.Zero, (total, p) => total + p.Max());
+                var slowestParts = parts.Select(p => p.MaxBy(x => x.Time)!).ToList();
+                var sum = slowestParts.Aggregate(TimeSpan.Zero, (total, p) => total + p.Time);
+                var from = string.Join("; ", slowestParts.Select(p => p.Ref));
                 var runs = parts.Sum(p => p.Count);
                 var scaledSum = sum * Margin;
-                var basis = $"{Margin:0.#}x the sum of its {parts.Count} steps' slowest passes, {Describe(sum)}";
+                var basis = $"{Margin:0.#}x the sum of its {parts.Count} steps' slowest passes, {Describe(sum)}: {from}";
                 if (scaledSum < Floor)
                 {
-                    return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its steps' slowest passes add up to {Describe(sum)}, under it", runs, sum);
+                    return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its steps' slowest passes add up to {Describe(sum)}, under it: {from}", runs, sum);
                 }
                 return scaledSum > Ceiling
                     ? new CheckLimit(Ceiling, $"the {Describe(Ceiling)} ceiling; {basis} would be {Describe(scaledSum)}", runs, sum)
@@ -66,21 +68,43 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
 
         if (passes.Count == 0)
         {
-            return new CheckLimit(Floor, $"the {Describe(Floor)} floor; no passes yet", 0, null);
+            return new CheckLimit(Floor, $"the {Describe(Floor)} floor; no passes of this command yet", 0, null);
         }
 
-        var slowest = passes.Max();
+        var slowestPass = passes.MaxBy(p => p.Time)!;
+        var slowest = slowestPass.Time;
         var scaled = slowest * Margin;
         var of = passes.Count == 1 ? "its last pass" : $"the slowest of its last {passes.Count} passes";
         if (scaled < Floor)
         {
-            return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its slowest pass, {Describe(slowest)}, is under it", passes.Count, slowest);
+            return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its slowest pass is under it, {slowestPass.Ref}", passes.Count, slowest);
         }
         if (scaled > Ceiling)
         {
-            return new CheckLimit(Ceiling, $"the {Describe(Ceiling)} ceiling; {Margin:0.#}x its slowest pass would be {Describe(scaled)}", passes.Count, slowest);
+            return new CheckLimit(Ceiling, $"the {Describe(Ceiling)} ceiling; {Margin:0.#}x its slowest pass, {slowestPass.Ref}, would be {Describe(scaled)}", passes.Count, slowest);
         }
-        return new CheckLimit(scaled, $"{Margin:0.#}x {of}, {Describe(slowest)}", passes.Count, slowest);
+        return new CheckLimit(scaled, $"{Margin:0.#}x {of}, {slowestPass.Ref}", passes.Count, slowest);
+    }
+
+    /// <summary>One pass a limit rests on: the job, its command and how long it ran.</summary>
+    private sealed record Pass(string Id, string Command, TimeSpan Time)
+    {
+        /// <summary>Job id, shortened command and running time, e.g. <c>j3467 (dotnet build ...), 41 m</c>.</summary>
+        public string Ref => $"{Id} ({Shorten(Command)}), {Describe(Time)}";
+    }
+
+    private const int MaxCommand = 70;
+
+    /// <summary>A command on one line, cut in the middle when long so both its start and its last step show.</summary>
+    internal static string Shorten(string command)
+    {
+        var one = string.Join(' ', command.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (one.Length <= MaxCommand)
+        {
+            return one;
+        }
+        var half = (MaxCommand - 3) / 2;
+        return $"{one[..half]}...{one[^half..]}";
     }
 
     /// <summary>Minutes rounded as the check messages do; whole hours as hours.</summary>

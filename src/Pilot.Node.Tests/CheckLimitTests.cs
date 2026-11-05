@@ -13,12 +13,12 @@ public class CheckLimitTests
     private static readonly string Repo = Path.Combine(Path.GetTempPath(), "checklimit-repo");
     private static readonly DateTimeOffset Now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
 
-    private static JobRow Run(int minutes, int endedHoursAgo = 1, JobState state = JobState.Succeeded, string command = Test, int pausedMinutes = 0, string? cwd = null)
+    private static JobRow Run(int minutes, int endedHoursAgo = 1, JobState state = JobState.Succeeded, string command = Test, int pausedMinutes = 0, string? cwd = null, string? id = null)
     {
         var ended = Now.AddHours(-endedHoursAgo);
         return new()
         {
-            Id = Guid.NewGuid().ToString("N"), Command = command, Cwd = cwd ?? Repo, State = state, LogPath = "x.log", Timeout = JobRunner.DefaultTimeout,
+            Id = id ?? Guid.NewGuid().ToString("N"), Command = command, Cwd = cwd ?? Repo, State = state, LogPath = "x.log", Timeout = JobRunner.DefaultTimeout,
             StartedAt = ended.AddMinutes(-minutes - pausedMinutes), EndedAt = ended, PausedFor = TimeSpan.FromMinutes(pausedMinutes),
         };
     }
@@ -33,45 +33,45 @@ public class CheckLimitTests
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(30));
         limit.Runs.ShouldBe(0);
         limit.Slowest.ShouldBeNull();
-        limit.Basis.ShouldBe("the 30 m floor; no passes yet");
+        limit.Basis.ShouldBe("the 30 m floor; no passes of this command yet");
     }
 
     [Fact]
     public void FastHistoryStaysAtTheFloor()
     {
-        var limit = For([Run(12)]);
+        var limit = For([Run(12, id: "j12")]);
 
         limit.Limit.ShouldBe(CheckLimit.Floor);
-        limit.Basis.ShouldBe("the 30 m floor; its slowest pass, 12 m, is under it");
+        limit.Basis.ShouldBe("the 30 m floor; its slowest pass is under it, j12 (" + Test + "), 12 m");
     }
 
     [Fact]
     public void ASlowButPassingHistoryRaisesTheLimitOverTheFloor()
     {
-        var limit = For([Run(20, 3), Run(40, 2), Run(25, 1)]);
+        var limit = For([Run(20, 3, id: "j1"), Run(40, 2, id: "j2"), Run(25, 1, id: "j3")]);
 
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(60));
         limit.Runs.ShouldBe(3);
         limit.Slowest.ShouldBe(TimeSpan.FromMinutes(40));
-        limit.Basis.ShouldBe("1.5x the slowest of its last 3 passes, 40 m");
+        limit.Basis.ShouldBe("1.5x the slowest of its last 3 passes, j2 (" + Test + "), 40 m");
     }
 
     [Fact]
     public void TheBasisNamesTheMinutesRoundedAsTheCheckMessagesDo()
     {
-        var limit = For([Run(23)]);
+        var limit = For([Run(23, id: "j23")]);
 
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(34.5));
-        limit.Basis.ShouldBe("1.5x its last pass, 23 m");
+        limit.Basis.ShouldBe("1.5x its last pass, j23 (" + Test + "), 23 m");
     }
 
     [Fact]
     public void AHistoryPastTheCeilingGivesTheCeiling()
     {
-        var limit = For([Run(120)]);
+        var limit = For([Run(120, id: "j120")]);
 
         limit.Limit.ShouldBe(CheckLimit.Ceiling);
-        limit.Basis.ShouldBe("the 2 h ceiling; 1.5x its slowest pass would be 3 h");
+        limit.Basis.ShouldBe("the 2 h ceiling; 1.5x its slowest pass, j120 (" + Test + "), 120 m, would be 3 h");
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public class CheckLimitTests
         var limit = For([Run(90, 1, command: OtherTest)]);
 
         limit.Runs.ShouldBe(0);
-        limit.Basis.ShouldBe("the 30 m floor; no passes yet");
+        limit.Basis.ShouldBe("the 30 m floor; no passes of this command yet");
     }
 
     [Fact]
@@ -156,16 +156,19 @@ public class CheckLimitTests
     {
         List<JobRow> jobs =
         [
-            Run(4, 9, command: "cd src && dotnet build Pilot.slnx"), Run(10, 8, command: "cd src && dotnet build Pilot.slnx"),
-            Run(12, 7, command: "cd src && dotnet test Pilot.Node.Tests"), Run(20, 6, command: "cd src && dotnet test Pilot.Node.Tests"),
-            Run(3, 5, command: "cd src && dotnet test Pilot.Gui.Tests"),
+            Run(4, 9, command: "cd src && dotnet build Pilot.slnx", id: "s1"), Run(10, 8, command: "cd src && dotnet build Pilot.slnx", id: "s2"),
+            Run(12, 7, command: "cd src && dotnet test Pilot.Node.Tests", id: "t1"), Run(20, 6, command: "cd src && dotnet test Pilot.Node.Tests", id: "t2"),
+            Run(3, 5, command: "cd src && dotnet test Pilot.Gui.Tests", id: "g1"),
         ];
 
         var limit = For(jobs, Chain);
 
         limit.Slowest.ShouldBe(TimeSpan.FromMinutes(33));
         limit.Limit.ShouldBe(TimeSpan.FromMinutes(49.5));
-        limit.Basis.ShouldBe("1.5x the sum of its 3 steps' slowest passes, 33 m");
+        limit.Basis.ShouldStartWith("1.5x the sum of its 3 steps' slowest passes, 33 m: ");
+        limit.Basis.ShouldContain("s2 (cd src && dotnet build Pilot.slnx), 10 m");
+        limit.Basis.ShouldContain("t2 (cd src && dotnet test Pilot.Node.Tests), 20 m");
+        limit.Basis.ShouldContain("g1 (cd src && dotnet test Pilot.Gui.Tests), 3 m");
     }
 
     [Fact]
@@ -183,5 +186,18 @@ public class CheckLimitTests
         limit.Limit.ShouldBe(CheckLimit.Floor);
         limit.Runs.ShouldBe(0);
         limit.Basis.ShouldStartWith("the 30 m floor");
+    }
+
+    [Fact]
+    public void ALongCommandIsShortenedButKeepsItsJobId()
+    {
+        var longCommand = "dotnet test Pilot.Node.Tests -c Release --no-build --filter FullyQualifiedName~SomethingWithAVeryLongNameIndeed";
+
+        var limit = For([Run(40, command: longCommand, id: "j3467")], longCommand);
+
+        limit.Basis.ShouldContain("j3467 (");
+        limit.Basis.ShouldContain("...");
+        limit.Basis.ShouldContain("40 m");
+        limit.Basis.ShouldNotContain(longCommand);
     }
 }
