@@ -185,6 +185,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             facts.Add(Layout.Builder.Text($"priority {quiet}: queues after the urgent and high flights", 12f, Dim).WAuto().Selectable());
         }
+        if (AskButton(line) is { } ask)
+        {
+            buttons.Add(ask);
+        }
         var marks = FlightMarks.From(flight);
         if (marks.Line is { } markLine)
         {
@@ -231,7 +235,17 @@ internal sealed partial class FlightsView<TSurface>
         }
         // What the node said to the last of them, when it refused, and a why asked for, sit under the buttons they were asked by.
         page.AddRange(RefusalOf(line));
+        page.AddRange(AskRefusalOf(line));
         page.AddRange(WhyRow(line));
+        if (line.StaleSummary is { } staleSummary)
+        {
+            // What went stale (the timeline and the one-line cause) and the priority raise the node made for it (#736): wrapped, never cut.
+            page.Add(Prose($"stale: {staleSummary}", 12f, Held));
+            if (line.StaleRaise is { } raise)
+            {
+                page.Add(Prose(raise, 12f, Held));
+            }
+        }
         if (line.StaleMark is { } stale)
         {
             // Wrapped, never cut: it says why the buttons above are dead.

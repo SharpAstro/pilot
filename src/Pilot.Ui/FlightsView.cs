@@ -95,6 +95,12 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     /// </summary>
     public Func<FlightAction, Task<string?>>? OnAction { get; set; }
 
+    /// <summary>
+    /// Tells the watchtower to look at a stale flight (code, stale summary), the <b>Ask the watchtower</b> button's press (#736). Answers
+    /// null once the node took it, else its refusal in words.
+    /// </summary>
+    public Func<string, string, Task<string?>>? OnAskWatchtower { get; set; }
+
     /// <summary>What a press of a flight's button is doing, by the flight's code (and a node's, for a Connect); Home's Retry move shares it.</summary>
     internal Presses Presses { get; } = new();
 

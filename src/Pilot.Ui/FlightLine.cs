@@ -67,6 +67,16 @@ internal sealed record FlightLine
     /// </summary>
     public string? Stale { get; init; }
 
+    /// <summary>What the node says went stale about the flight (#736), the timeline and cause in a line; null while nothing is stale.</summary>
+    public string? StaleSummary => Row.StaleSummary is { Length: > 0 } summary ? summary : null;
+
+    /// <summary>The node's last priority raise for a stale bound (<c>raised to high: open 19 h</c>), or why it could not be made; null before the first.</summary>
+    public string? StaleRaise => Row.StaleRaises is { Length: > 0 } raises ? raises[^1].Note : null;
+
+    /// <summary>The short mark under a stale flight's code: <c>stale · raised to high</c>.</summary>
+    public string? StaleWorkMark => StaleSummary is null ? null
+        : Row.StaleRaises?.LastOrDefault(r => r.Level is not null) is { Level: { } level } ? $"stale · raised to {IssuePriorities.Name(level).ToLowerInvariant()}" : "stale";
+
     /// <summary>What says the row is a stale copy, <c>stale (DE1 unreachable)</c>, in words so colour never carries it alone; null while not stale.</summary>
     public string? StaleMark => Stale is { } node ? $"stale ({node} unreachable)" : null;
 
