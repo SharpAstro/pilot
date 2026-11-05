@@ -252,7 +252,7 @@ public sealed class CheckPathsTests : IDisposable
     {
         WriteSrcLayout();
 
-        (await PlanLeg("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build")).Ok.ShouldBeTrue();
+        (await PlanLeg("cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release --no-build --filter A")).Ok.ShouldBeTrue();
         _state.Legs("PIL1").Single().Check.ShouldNotBeNull().ShouldStartWith("cd src && ");
     }
 
