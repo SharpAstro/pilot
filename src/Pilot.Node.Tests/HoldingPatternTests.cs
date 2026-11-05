@@ -208,8 +208,11 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task OnAutopilotAPassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
     {
         AutopilotOn();
+        var err = new StringWriter();
+        _legs.Error = err;
         var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
 
+        err.ToString().ShouldBe("");
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         var before = _state.Legs(flight.Code).Single(l => l.Name == "parser");
         leg.Goal.ShouldBe("make the review's not-blocking notes");
