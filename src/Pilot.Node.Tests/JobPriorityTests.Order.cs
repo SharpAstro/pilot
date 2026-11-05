@@ -139,7 +139,7 @@ public sealed partial class JobPriorityTests
         FlightRow[] flights = [urgent, high];
         JobRow Job(string? flight, TimeSpan waited) => new()
         {
-            Id = "j1", Command = "x", Cwd = _root, State = JobState.Queued, LogPath = "x.log", Flight = flight, QueuedAt = now - waited, StartedAt = now - waited,
+            Id = "j1", Command = "x", Cwd = _root, State = JobState.Queued, LogPath = "x.log", Timeout = JobRunner.DefaultTimeout, Flight = flight, QueuedAt = now - waited, StartedAt = now - waited,
         };
 
         JobOrder.RankOf(Job("URGNT", TimeSpan.FromHours(9)), flights, null, now).ShouldBe(IssuePriorities.Rank(IssuePriority.Urgent));
@@ -154,7 +154,7 @@ public sealed partial class JobPriorityTests
     {
         var now = new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero);
         var marked = FlightRowOf("MARKD", null) with { HasPriorityField = false };
-        var job = new JobRow { Id = "j1", Command = "x", Cwd = _root, State = JobState.Queued, LogPath = "x.log", Flight = "MARKD", QueuedAt = now, StartedAt = now };
+        var job = new JobRow { Id = "j1", Command = "x", Cwd = _root, State = JobState.Queued, LogPath = "x.log", Timeout = JobRunner.DefaultTimeout, Flight = "MARKD", QueuedAt = now, StartedAt = now };
 
         JobOrder.RankOf(job, [marked], new AdmissionRow { Priority = ["MARKD"] }, now).ShouldBe(IssuePriorities.Rank(IssuePriority.High));
         JobOrder.RankOf(job, [marked], new AdmissionRow(), now).ShouldBe(IssuePriorities.Rank(null));
