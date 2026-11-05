@@ -583,6 +583,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 break;
         }
 
+        ReorderQueue();
+
         while (_queue.Count > 0 && WhyWait(_queue[0]) is null)
         {
             var next = _queue[0];
@@ -598,18 +600,45 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         // Each waiting job says where it stands.
+        var flights = state.Flights();
+        var admission = state.Admission();
+        var now = time.GetUtcNow();
+        // Benchmarks go by their own rule, so only the other jobs ahead count towards a priority reason.
+        var ranks = _queue.Select(j => j.Kind == JobKind.Bench ? (int?)null : JobOrder.RankOf(j, flights, admission, now)).ToList();
         for (var i = 0; i < _queue.Count; i++)
         {
-            _queue[i] = _queue[i] with
+            var job = _queue[i];
+            var why = i > 0 && ranks[i] is { } rank
+                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                : null;
+            var place = why is null ? "" : $" ({why})";
+            _queue[i] = job with
             {
-                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(_queue[i]) is { } held ? $"queued, {i} ahead of it; {held}" : $"queued, {i} ahead of it; {Needs(_queue[i])}",
+                Step = i == 0 ? $"next in line: {WhyWait(_queue[0])}" : BenchHold(job) is { } held ? $"queued, {i} ahead of it{place}; {held}" : $"queued, {i} ahead of it{place}; {Needs(job)}",
                 Slots = MaxRunning,
-                WaitsOnSibling = SiblingHold(_queue[i]) is not null,
+                WaitsOnSibling = SiblingHold(job) is not null,
             };
             state.PutJob(_queue[i]);
         }
 
         CheckIdle();
+    }
+
+    /// <summary>
+    /// Puts the waiting jobs in start order on every dispatch, so a priority set while a job waits, or the wait bound passing,
+    /// takes effect: benchmarks stay ahead in their own order, the rest by <see cref="JobOrder"/> (rank, queued at, id).
+    /// </summary>
+    private void ReorderQueue()
+    {
+        if (_queue.Count < 2)
+        {
+            return;
+        }
+        var benches = _queue.Where(j => j.Kind == JobKind.Bench).ToList();
+        var others = JobOrder.Sort(_queue.Where(j => j.Kind != JobKind.Bench), state.Flights(), state.Admission(), time.GetUtcNow());
+        _queue.Clear();
+        _queue.AddRange(benches);
+        _queue.AddRange(others);
     }
 
     /// <summary>
