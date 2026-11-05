@@ -311,6 +311,15 @@ public sealed partial class LegCommander
         // On the PR now the verdict is kept: a mark GitHub refuses is a card, never a verdict lost.
         await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
         flight = FlightOf(command.Target);
+        // A flagged flight's human checks are filed as issues for the controller, with the lock let go as the marks are: a refusal
+        // is a Handled card, never a verdict lost or delayed. Only the reviewer's own report names them.
+        if (fromReviewer && flight.HumanVerification && findings.HumanVerification.Count > 0)
+        {
+            var human = findings.HumanVerification;
+            var seen = flight;
+            await OffLockAsync(null, () => FileHumanChecksAsync(seen, human, cancellationToken));
+            flight = FlightOf(command.Target);
+        }
         if (verdict == "pass")
         {
             state.CloseCardsAboutBy(fromReviewer ? "node" : command.Who, Verbs.FlightTarget(flight.Code),

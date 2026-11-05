@@ -122,6 +122,13 @@ public sealed record FlightRow
     /// </summary>
     public string? GitHubLabel { get; init; }
 
+    /// <summary>
+    /// The human checks the node has filed as issues for this flight, oldest first: a reviewer that restates one in a later round files nothing
+    /// again. Optional and additive, so the wire version does not move; null before the first is filed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HumanCheck[]? HumanChecks { get; init; }
+
     /// <summary>The issue's GitHub Priority field as of the node's last start of the flight; null when unset or not read.</summary>
     public IssuePriority? IssuePriority { get; init; }
 
