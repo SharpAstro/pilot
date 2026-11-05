@@ -329,7 +329,8 @@ public sealed partial class LegCommander
             }
             if (notes is not null)
             {
-                RaiseReviewNotes(flight, notes);
+                var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -519,14 +520,65 @@ public sealed partial class LegCommander
     /// A pass with notes: the not blocking findings go to the watchtower as a card, to make the small ones in the plane and
     /// commit them. No leg goes round, and the merge card stays as it is.
     /// </summary>
-    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes)
+    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes, string? fixerLeg = null)
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
+        var action = fixerLeg is not null
+            ? $"The node planned {flight.Code}/{fixerLeg} to make them (autopilot); it starts as any planned leg and the review runs again on its result. Nothing to do but watch it."
+            : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start), or pilot flight clear {flight.Code} <why> when they are not worth a round, within a few minutes, and say which here. "
+                + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}.";
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
-            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} "
-                + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
             link: flight.PullRequestUrl,
-            summary: CardSummaries.ReviewNotes(flight.Code, notes));
+            summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg));
+    }
+
+    /// <summary>The name a review-notes leg is planned under: <c>review-notes</c>, then <c>review-notes-2</c> and on for a later round.</summary>
+    public const string ReviewNotesLeg = "review-notes";
+
+    /// <summary>
+    /// On autopilot, a pass with notes plans a review-notes leg by the same path as leg plan: one checklist item per note and a
+    /// commit step, the check of the flight's last leg so the rerun covers the same build. The sweep starts it as any planned leg.
+    /// Planned while the review is Passed and a PR is open: plan-leg has no guard against either (more work on a flight whose merge
+    /// is armed takes the merge back), so nothing is bypassed. No second leg is planned while one is planned or flying.
+    /// Returns the leg's name, or null when none was planned (autopilot off, or one is already on its way).
+    /// </summary>
+    private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
+    {
+        if (!Models.Advances)
+        {
+            return null;
+        }
+        var legs = state.Legs(flight.Code);
+        if (legs.FirstOrDefault(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State is LegState.Planned or LegState.Flying) is { } onWay)
+        {
+            return onWay.Name;
+        }
+        var taken = legs.Count(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal));
+        var name = taken == 0 ? ReviewNotesLeg : $"{ReviewNotesLeg}-{taken + 1}";
+        var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
+        var args = new List<string>
+        {
+            $"name={name}",
+            "goal=make the review's not-blocking notes",
+            $"done-when=Each of the review's not-blocking notes is made or answered in a commit: {string.Join("; ", clean)}. The check passes.",
+        };
+        if (legs.OrderBy(l => l.Order).LastOrDefault(l => l.Check is not null)?.Check is { } check)
+        {
+            args.Add($"check={check}");
+        }
+        args.AddRange(clean.Select(n => $"item={n}"));
+        args.Add("item=Commit the changes with a message that names the notes");
+        try
+        {
+            await PlanAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = Verbs.FlightTarget(flight.Code), Who = "node", Args = [.. args] }, cancellationToken);
+            return name;
+        }
+        catch (FlightException ex)
+        {
+            await Error.WriteLineAsync($"review: {flight.Code}'s review-notes leg was not planned, the watchtower is told instead: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>The Handled card kind that says a flight was cleared to land.</summary>

@@ -198,7 +198,57 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         text.ShouldContain($"PR #{pr}");
         text.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
         text.ShouldContain("rename `x` to `count`");
-        text.ShouldContain($"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}");
+        text.ShouldContain("pilot leg plan, then pilot leg start");
+        text.ShouldContain($"pilot flight clear {flight.Code} <why>");
+        text.ShouldContain($"only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnAutopilotAPassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
+    {
+        AutopilotOn();
+        var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
+
+        var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+        var before = _state.Legs(flight.Code).Single(l => l.Name == "parser");
+        leg.Goal.ShouldBe("make the review's not-blocking notes");
+        leg.Checklist.Select(i => i.Text).ShouldContain(t => t.Contains("rename `x` to `count`"));
+        leg.Checklist.Select(i => i.Text).ShouldContain(t => t.Contains("a comment is stale"));
+        leg.Checklist.Last().Text.ShouldContain("Commit");
+        leg.DoneWhen.ShouldContain("a comment is stale");
+        leg.Check.ShouldBe(before.Check);
+        leg.State.ShouldBeOneOf(LegState.Planned, LegState.Flying);
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        card.Summary.ShouldNotBeNull().ShouldContain("fixer leg review-notes");
+        card.Detail.ShouldNotBeNull().ShouldContain($"{flight.Code}/review-notes");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task WithAutopilotOffNoLegIsPlannedAndTheCardIsTheWatchtowers()
+    {
+        var flight = await Reviewed("11", Notes);
+
+        _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
+        var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        card.Detail.ShouldNotBeNull().ShouldContain("Delegate");
+        card.Summary.ShouldNotBeNull().ShouldContain("delegates");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ASecondPassWithNotesWhileAReviewNotesLegIsOnItsWayPlansNoSecondLeg()
+    {
+        AutopilotOn();
+        var flight = await Reviewed("12", Notes);
+        _state.Legs(flight.Code).Count(l => l.Name.StartsWith("review-notes")).ShouldBe(1);
+
+        // Another pass with notes (the controller's ready anyway turns Changes to Passed; here the reviewer is given a new verdict).
+        _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { State = ReviewState.Reviewing } });
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
+
+        _state.Legs(flight.Code).Count(l => l.Name.StartsWith("review-notes")).ShouldBe(1);
     }
 
     [Fact]

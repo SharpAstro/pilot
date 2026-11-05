@@ -136,7 +136,7 @@ public static partial class CardSummaries
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while the watchtower fixes the small ones in the plane; nothing for you to do.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a fixer leg makes them or the watchtower clears the flight; nothing for you to do.",
             LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
             LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
@@ -194,13 +194,16 @@ public static partial class CardSummaries
     /// The sentence of a review that passed with notes that do not block: what they are (how many, and the first in its own words)
     /// and that nothing is asked of the person. No word of how the node sends a leg round.
     /// </summary>
-    public static string ReviewNotes(string code, IReadOnlyList<string> notes)
+    public static string ReviewNotes(string code, IReadOnlyList<string> notes, string? fixerLeg = null)
     {
         var first = notes.Select(n => n.Trim().TrimStart('-', '*', ' ')).FirstOrDefault(n => n.Length > 0) ?? "";
         first = first.ReplaceLineEndings(" ");
         first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
-        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits while the watchtower fixes them in the plane; nothing for you to do.";
+        var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
+        return fixerLeg is not null
+            ? $"{head} The fixer leg {fixerLeg} took them and the review runs again on its result; nothing for you to do."
+            : $"{head} The merge waits while the watchtower delegates them to a fixer leg or clears the flight; nothing for you to do.";
     }
 
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)

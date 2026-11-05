@@ -14,6 +14,21 @@ public class WatchtowerBriefTests
         new() { Id = id, Bin = bin, Kind = "k", Subject = "flight/X", Title = title, At = DateTimeOffset.UnixEpoch, State = Pilot.Contracts.CardState.Open };
 
     [Fact]
+    public void TheHoldRuleDelegatesToAFixerLegOrClearsAndAllowsOnlyAOneLineFixOfItsOwn()
+    {
+        var brief = Brief();
+        brief.ShouldContain("go to a fixer worker by default");
+        brief.ShouldContain("within a few minutes of the hold");
+        brief.ShouldContain("plan and start a review-notes leg carrying the notes (`pilot leg plan`, then `pilot leg start`");
+        brief.ShouldContain("or clear the flight with `pilot flight clear <code> <why>` when the notes are not worth a round");
+        brief.ShouldContain("Say which you did on the review-notes card");
+        brief.ShouldContain("A fix of your own only for a one-line change");
+        brief.ShouldContain("then `pilot flight pr <code>`");
+        brief.ShouldContain("the node has planned the review-notes leg itself");
+        brief.ShouldNotContain("make the small ones yourself");
+    }
+
+    [Fact]
     public void CardsAlreadyToldAreOneSummaryBlockApartFromTheNewOnes()
     {
         var cards = new[] { Card("c1", Pilot.Contracts.CardBin.ForYou), Card("c2", Pilot.Contracts.CardBin.Ring), Card("c3", Pilot.Contracts.CardBin.Ring) };
