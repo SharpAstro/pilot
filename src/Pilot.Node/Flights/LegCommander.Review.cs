@@ -329,6 +329,8 @@ public sealed partial class LegCommander
             }
             if (notes is not null)
             {
+                // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
+                call.Dispose();
                 var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
                 RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }

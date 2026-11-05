@@ -198,12 +198,12 @@ public static partial class CardSummaries
     {
         var first = notes.Select(n => n.Trim().TrimStart('-', '*', ' ')).FirstOrDefault(n => n.Length > 0) ?? "";
         first = first.ReplaceLineEndings(" ");
-        first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
+        first = first.Length > 40 ? first[..37].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
         var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
         return fixerLeg is not null
-            ? $"{head} The fixer leg {fixerLeg} took them and the review runs again on its result; nothing for you to do."
-            : $"{head} The merge waits while the watchtower delegates them to a fixer leg or clears the flight; nothing for you to do.";
+            ? $"{head} The fixer leg {fixerLeg} took them; nothing for you to do."
+            : $"{head} The watchtower delegates them to a fixer leg or clears the flight; nothing for you to do.";
     }
 
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)

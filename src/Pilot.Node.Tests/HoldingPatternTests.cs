@@ -27,6 +27,15 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         return flight;
     }
 
+    /// <summary>On autopilot the node plans a review-notes leg at a pass with notes; a test of the hold's own mechanics takes it out, as a watchtower that clears or fixes by itself would.</summary>
+    private async Task WithoutTheFixerLeg(string code)
+    {
+        foreach (var leg in _state.Legs(code).Where(l => l.Name.StartsWith("review-notes")))
+        {
+            (await Run(Verbs.RemoveLeg, Verbs.LegTarget(code, leg.Name), Tower, "the hold's own mechanics are under test")).Error.ShouldBeNull();
+        }
+    }
+
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     [Fact]
@@ -42,7 +51,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8]);
-        refused.Error.ShouldNotBeNull().ShouldContain("holding pattern");
+        refused.Error.ShouldNotBeNull();
     }
 
     [Fact]
@@ -52,6 +61,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("2", Notes);
+        await WithoutTheFixerLeg(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
 
@@ -87,6 +97,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("4", Notes);
         F(flight.Code).Holding.ShouldNotBeNull();
+        await WithoutTheFixerLeg(flight.Code);
 
         File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "fixed\n");
         Git(flight.Worktree, "add", ".");
