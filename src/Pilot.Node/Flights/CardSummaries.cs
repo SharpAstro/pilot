@@ -161,6 +161,7 @@ public static partial class CardSummaries
             RemovalQueueStart.Kind => "Folders of landed flights or closed reviews are still held open by Windows. The node removes them once they are let go; close whatever holds them.",
             JobRunner.IdleKind => "A job holds the machine's slot but uses almost no CPU. Cancel it if it is only waiting; its owner can wait with pilot leg wait.",
             BenchRun.CardKind => "A benchmark ended and its tables are on the card, per ref. Read them, then dismiss it; nothing is waiting on you.",
+            JobRunner.BenchBusyKind => "A queued benchmark has waited over half an hour for a quiet CPU. The card names what holds it; cancel the job or let it keep waiting.",
             JobRunner.UntoldKind => "A job ended but its owner's session refused to be told. Tell the owner yourself.",
             LockWait.QueuedKind => "A command that waited for a lock has run or was refused. Nothing to do; the title says which.",
             PackageWatch.LateKind => "A package a leg waits for is late on nuget.org. The card's choice says what to do about it.",

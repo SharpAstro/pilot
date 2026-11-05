@@ -153,7 +153,7 @@ public abstract class JobTestsBase : IDisposable
     }
 
     // The runner is not started: the test is the dispatcher, so nothing else touches its queue, and the clock and the CPU are the test's.
-    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null)
+    private protected (JobRunner Jobs, Clock Clock, Dictionary<string, TimeSpan> Cpu, Func<string, Task> Gone) Idle(Func<double?>? machineCpu = null, Func<double?>? outsideCpu = null)
     {
         var clock = new Clock();
         var cpu = new Dictionary<string, TimeSpan>();
@@ -164,6 +164,7 @@ public abstract class JobTestsBase : IDisposable
             IdleCpu = TimeSpan.FromSeconds(5),
             JobCpu = id => cpu.TryGetValue(id, out var used) ? used : null,
             MachineCpu = machineCpu,
+            MachineOutsideCpu = outsideCpu,
         };
         return (jobs, clock, cpu, async id =>
         {
