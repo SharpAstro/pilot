@@ -1897,8 +1897,12 @@ public sealed class JobTests3 : JobTestsBase
         node.State.Jobs().Single(j => j.Id == queuedId).State.ShouldBe(JobState.Queued);
         try
         {
+            var stop = System.Diagnostics.Stopwatch.StartNew();
             await node.StopAsync();
 
+            // The stop lets go of the running check rather than waiting on it: its watch ends at its next look (a quarter second),
+            // where the check itself sleeps for two minutes.
+            stop.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
             // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737); the running one's
             // row stays running with its tree alive, as an ordinary job's does.
             await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
