@@ -141,12 +141,19 @@ public sealed class HumanVerificationTests : LegCommanderTestsBase
         _state.PutFlight(Row(false) with { Repo = "tianwen", RepoPath = Repo });
         _github.IssueLabels[1] = [PilotMarks.HumanVerification];
 
+        // The base class's commander has no tracker; this one reads the fake GitHub, as the node does.
+        var git = new GitCli();
+        var flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
+        var legs = new LegCommander(_state, _workers, _checks, _github, git, new Planes(git), flights,
+            new NodeOptions(Path.Combine(_root, "node2.sock"), Path.Combine(_root, "data2"), MachinePrefix: "DU1"), TimeProvider.System);
+        var start = new CommandRequest { Verb = Verbs.StartReview, Target = "flight/TIA1", Who = "tests" };
+
         // The start itself is refused (the flight has no PR); what counts is that the labels were read first.
-        await Leg(Verbs.StartReview, "flight/TIA1");
+        await legs.RunAsync(start, Ct);
         _state.Flights().Single().HumanVerification.ShouldBeTrue();
 
         _github.IssueLabels[1].Remove(PilotMarks.HumanVerification);
-        await Leg(Verbs.StartReview, "flight/TIA1");
+        await legs.RunAsync(start, Ct);
         _state.Flights().Single().HumanVerification.ShouldBeFalse();
     }
 }
