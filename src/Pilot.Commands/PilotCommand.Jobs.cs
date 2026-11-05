@@ -173,6 +173,10 @@ public static partial class PilotCommand
                 {
                     await output.WriteLineAsync(holder);
                 }
+                if (JobQueue.SlotsLine(all) is { } slots)
+                {
+                    await output.WriteLineAsync(slots);
+                }
                 return 0;
             });
             var mergesCommand = Action(new Command("merges", "The node's merge queue: a row per flight waiting to merge, per repo in order"), async (_, client, ct) =>
