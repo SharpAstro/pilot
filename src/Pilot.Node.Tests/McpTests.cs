@@ -493,7 +493,7 @@ public sealed class McpTests : IAsyncLifetime
     public async Task ASwapWhoseNewChildDoesNotAnswerInitializeKeepsTheCurrentChildServingAndSaysWhyOnce()
     {
         var children = new TrackedChildren(_node.Folder, _node.SocketPath);
-        var version = "91.0.0";
+        var version = McpServer.Running;
         var deadStarts = 0;
         var dead = new List<bool[]>();
         var log = new StringWriter();
@@ -518,12 +518,15 @@ public sealed class McpTests : IAsyncLifetime
         var running = server.RunAsync(input, output, Ct);
 
         input.Feed(Initialize);
-        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
-        (await output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/tools/list_changed");
+        Property(await output.NextAsync(), "id").GetInt32().ShouldBe(1);
+        // A version newer than Running at start lets the 20 ms quiet tick hand over before initialize is
+        // read, which puts list_changed ahead of the id-1 reply (#749); so it only changes after the reply.
+        Volatile.Write(ref version, "91.0.0");
+        Property(await output.NextAsync(), "method").GetString().ShouldBe("notifications/tools/list_changed");
         Volatile.Write(ref version, "92.0.0");
         await Task.Delay(200, Ct);
         input.Feed("""{"jsonrpc":"2.0","id":2,"method":"ping"}""");
-        (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(2);
+        Property(await output.NextAsync(), "id").GetInt32().ShouldBe(2);
 
         deadStarts.ShouldBe(1);
         dead[0][0].ShouldBeTrue();
@@ -687,6 +690,12 @@ public sealed class McpTests : IAsyncLifetime
 
         protected override void Dispose(bool disposing) => _lines.Writer.TryComplete();
     }
+
+    /// <summary>Reads a property of a line, failing with the whole raw line when it is missing.</summary>
+    private static JsonElement Property(JsonElement line, string name) =>
+        line.ValueKind == JsonValueKind.Object && line.TryGetProperty(name, out var value)
+            ? value
+            : throw new Shouldly.ShouldAssertException($"expected property '{name}' in line: {line.GetRawText()}");
 
     /// <summary>A writer that hands each line written to whoever waits for the next.</summary>
     private sealed class LineWriter : StringWriter

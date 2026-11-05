@@ -213,7 +213,7 @@ public sealed partial class LegCommander
         // The kept round moves to the new head too, so the next re-review ranges past the base that came in, not over it.
         var rounds = now.ReviewRounds is [.. var earlier, { Verdict: ReviewState.Passed } keptRound] ? [.. earlier, keptRound with { Head = head }] : now.ReviewRounds;
         state.PutFlight(now with { Review = now.Review with { ReviewedHead = head, StatusState = null, MarksWhy = null }, ReviewRounds = rounds });
-        var short8 = (string s) => s[..Math.Min(8, s.Length)];
+        var short8 = (string s) => CommitRefs.Short(s);
         state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
         await _marks.ApplyAsync(flight.Code, cancellationToken);
@@ -378,14 +378,14 @@ public sealed partial class LegCommander
             var current = await OffLockAsync(flight, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken));
             if (current is not { State: "OPEN" } || !string.Equals(current.Head, head, StringComparison.OrdinalIgnoreCase))
             {
-                return $"{code}'s PR is not open at {head[..Math.Min(8, head.Length)]}";
+                return $"{code}'s PR is not open at {CommitRefs.Short(head)}";
             }
             flight = FlightOf(Verbs.FlightTarget(code));
             if (flight.PullRequest is { } number)
             {
                 await OffLockAsync(flight, () => github.SetDraftAsync(flight.RepoPath, number, draft: false, cancellationToken));
             }
-            var kept = $"{report} (approved by a PR review at {head[..Math.Min(8, head.Length)]})";
+            var kept = $"{report} (approved by a PR review at {CommitRefs.Short(head)})";
             Record(code, f => f with { Review = f.Review is { } held ? held with { State = ReviewState.Passed, Report = kept, FinishedAt = time.GetUtcNow(), ReviewedHead = head } : null });
             await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
             flight = FlightOf(Verbs.FlightTarget(code));
@@ -454,7 +454,7 @@ public sealed partial class LegCommander
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {HoldingReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}."
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
                 + (holding ? " The merge is held until the watchtower clears it or pushes its fixes." : ""),
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
@@ -523,7 +523,7 @@ public sealed partial class LegCommander
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
-            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} "
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} "
                 + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
             link: flight.PullRequestUrl,
             summary: CardSummaries.ReviewNotes(flight.Code, notes));
@@ -638,7 +638,7 @@ public sealed partial class LegCommander
         var detail = new System.Text.StringBuilder();
         foreach (var round in rounds)
         {
-            detail.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}{(round.Head is { Length: > 0 } head ? $", head {head[..Math.Min(8, head.Length)]}" : "")}):");
+            detail.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}{(round.Head is { Length: > 0 } head ? $", head {CommitRefs.Short(head)}" : "")}):");
             detail.AppendLine(round.Findings);
         }
         var target = Verbs.FlightTarget(flight.Code);

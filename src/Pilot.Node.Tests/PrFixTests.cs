@@ -431,7 +431,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         (row.State, row.Fixer).ShouldBe((PrReviewState.Reviewing, null));
         _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(1);
         Fixers.ShouldBeEmpty();
-        log.ToString().ShouldContain($"fix-pr pr/acme/widget#7, asked by controller: no review of acme/widget#7 here, so a review was started first (started {row.Reviewer} at {row.Head[..8]})");
+        log.ToString().ShouldContain($"fix-pr pr/acme/widget#7, asked by controller: no review of acme/widget#7 here, so a review was started first (started {row.Reviewer} at {row.Head[..9]})");
 
         // Its verdict then goes the usual way: an approve leaves nothing to fix, and a fix-pr on it is refused.
         (await Run(Verbs.PrVerdict, "acme/widget#7", row.Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
@@ -467,7 +467,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
 
         var lines = log.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         lines.Length.ShouldBe(2);
-        lines[0].ShouldBe($"fix-pr pr/acme/widget#7, asked by controller: started du1-fix-widget-7 at {Row.Head[..8]}");
+        lines[0].ShouldBe($"fix-pr pr/acme/widget#7, asked by controller: started du1-fix-widget-7 at {Row.Head[..9]}");
         lines[1].ShouldStartWith("fix-pr pr/acme/widget#7, asked by controller: refused: ");
         lines[1].ShouldContain("fixing it already");
     }

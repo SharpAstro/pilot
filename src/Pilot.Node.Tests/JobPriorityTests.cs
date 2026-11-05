@@ -10,6 +10,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>#629: a job and a check run below normal by default, and so does a process they start; Idle gives idle; Normal changes nothing.</summary>
 [Collection(JobsCollection.Name)]
+[Trait("Category", "Slow")] // each case starts pwsh twice at below-normal priority: over the limit whenever other flights load the machine
 public sealed partial class JobPriorityTests : JobTestsBase
 {
     // The line prints its own priority and that of a child it starts, as parent=<x> and child=<x>.
@@ -118,7 +119,9 @@ public sealed partial class JobPriorityTests : JobTestsBase
         throw new TimeoutException($"job {id} did not end");
     }
 
+    // Starts a node of its own and runs a job at Idle priority, which a busy machine starves: it took 19 to 23 s under load.
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

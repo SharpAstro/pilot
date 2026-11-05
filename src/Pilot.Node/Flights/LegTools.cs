@@ -202,11 +202,10 @@ public interface IGitHub
     Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
-    /// The merge methods the repo at <paramref name="repoPath"/> allows (<c>allow_squash_merge</c>, <c>allow_merge_commit</c>,
-    /// <c>allow_rebase_merge</c>), as <c>squash</c>, <c>merge</c> and <c>rebase</c>, in that order. Empty when GitHub would not say.
-    /// Kept for a while per repo.
+    /// The merge methods the repo at <paramref name="repoPath"/> allows (<c>allow_squash_merge</c>, <c>allow_rebase_merge</c>,
+    /// <c>allow_merge_commit</c>); null when GitHub would not say. Kept for a while per repo.
     /// </summary>
-    Task<IReadOnlyList<string>> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken);
+    Task<AllowedMergeMethods?> AllowedMergeMethodsAsync(string repoPath, CancellationToken cancellationToken);
 
     /// <summary>
     /// Whether <paramref name="branch"/> of the repo at <paramref name="repoPath"/> is open to a plain push: no branch protection
