@@ -535,7 +535,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         RunCheckAsync(flight, leg, command, cwd, new CheckLimit(budget, "the budget it was given", 0, null), cancellationToken);
 
     /// <summary>The limit a check of <paramref name="command"/> in <paramref name="cwd"/> gets, from this node's job rows.</summary>
-    public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), JobKey.Of(command, cwd));
+    public CheckLimit CheckLimitFor(string command, string cwd) => CheckLimit.For(state.Jobs(), command, cwd);
 
     /// <summary>As above, with the limit and where it came from, so a stop can say both.</summary>
     public Task<CheckRun> RunCheckAsync(string flight, string leg, string command, string cwd, CheckLimit limit, CancellationToken cancellationToken)
