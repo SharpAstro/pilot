@@ -96,6 +96,12 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
+        if (key == NodeSettings.JobPlaneOutputKey)
+        {
+            jobs.PlaneOutput = updated.JobPlaneOutput ?? false;
+            jobs.Pump();
+            return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; the next job starts with it");
+        }
         if (key == NodeSettings.JobPriorityKey)
         {
             jobs.Priority = updated.JobPriority ?? options.JobPriority;
@@ -240,6 +246,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.UpdateChannelKey => options.UpdateChannel.Name(),
         NodeSettings.MaxJobsKey => jobs.MaxRunning.ToString(CultureInfo.InvariantCulture),
         NodeSettings.JobPriorityKey => Pilot.Node.Flights.JobPriorities.Name(jobs.Priority),
+        NodeSettings.JobPlaneOutputKey => jobs.PlaneOutput ? "on" : "off",
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(roles.PrWatchIdle),
@@ -267,7 +274,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsRoleKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey;
+            or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey;
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -293,6 +300,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxJobsKey => "1",
         NodeSettings.JobMemoryKey => "0",
         NodeSettings.JobPriorityKey => "below-normal",
+        NodeSettings.JobPlaneOutputKey => "off",
         NodeSettings.MergeMethodKey => "rebase",
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
@@ -333,6 +341,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxJobsKey => ("Jobs at once", "How many background tasks run at once; the rest wait their turn", ["1", "2", "3", "4"]),
         NodeSettings.JobMemoryKey => ("Job memory", "The least free memory, in GB, a second job waits for: a floor under the measured need of its kind of command, never a cap; 0 for the measured need alone", ["0", "2", "4", "8"]),
         NodeSettings.JobPriorityKey => ("Job priority", "How much CPU the builds and tests the node starts yield to other work on the machine: below-normal (default) and idle give way, normal is the old behaviour. Claude sessions stay normal", [.. Pilot.Node.Flights.JobPriorities.Names]),
+        NodeSettings.JobPlaneOutputKey => ("Job plane output", "While on, a job the node runs in a plane builds every project, sibling clones included, into <plane>/artifacts (MSBuild artifacts output: UseArtifactsOutput and ArtifactsPath in the job's environment), so two planes never write the same sibling obj and such a job takes no sibling lock. A worker's own build outside the node lands in the normal obj, so a later 'test --no-build' through the node must follow a node build. A repo whose .gitignore lacks artifacts/ shows the folder as untracked in its planes. Off by default", ["on", "off"]),
         NodeSettings.PriorityReposKey => ("Priority repos", "Repos whose flights keep going past the start limit, up to the priority limit", []),
         NodeSettings.RepoTrackersKey => ("Repo trackers", "The tracker a bare number means when a flight is made in the repo; a repo not listed means GitHub issues", []),
         NodeSettings.NoAutoMergeReposKey => ("No auto-merge repos", "Repos whose PRs the node never merges by itself, autopilot or not; only your own merge lands them", []),
