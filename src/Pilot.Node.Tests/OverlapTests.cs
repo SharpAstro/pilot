@@ -9,21 +9,20 @@ namespace Pilot.Node.Tests;
 /// <summary>
 /// A planner finds its flight looks like part of another: one card asks, the answer is kept per pair, and the flight's leg planning waits.
 /// <para>
-/// Where the time goes (#748, measured 2026-11-05 in a Release run, one test at a time, on a DE1 with 4 job slots busy, so
-/// these are not quiet-machine times). Nothing in these tests waits: no poll, retry or real-clock sleep sits on their path
-/// except a 50 ms poll for a background planner start (LegEndOverlapTests, one test) and two deliberate 300 ms "nothing
-/// happened" checks (MergedUnderLegTests, one test). Every test is a run of real <c>git</c> processes: the base creates
-/// a repo (5 starts), each flight a plane (a worktree add, a branch, a few rev-parse and config calls), and each command a
-/// handful more through GitCli. Git processes started per test, and time in that run:
-/// OverlapTests1 1 to 62 (median 14) in 0.2 to 31 s; OverlapTests2 0 to 21 (median 14) in 0.1 to 10 s;
-/// MutualOverlapTests 3 to 22 in 2.8 to 11 s; LegEndOverlapTests 5 to 61 (median 23) in 0.3 to 30 s;
-/// MergedUnderLegTests 5 to 23 (median 10) in 0.3 to 17 s; PrReviewTests1 2 to 27 (median 17) in 0.2 to 12 s.
-/// The same test spans 10x or more between runs (OverlapTests1 FoldRetires... 0.8 s, TheOtherFlightsPrBody... 18 s for
-/// 41 starts): about 0.13 s a process when the machine is quiet and 0.4 s and more when it is not, so a test of 40 to 60
-/// starts is 2 s alone and 25 s or more loaded. That is the 10x of #748 (j3242 ran 19:44 to 20:16 beside a 18 minute
-/// TianWen.Lib build/test job and two pilot test runs; j3262 ran 20:54 to 21:26 beside about six Pilot.Node.Tests runs
-/// and TianWen jobs, all in the node's 4 job slots; the node keeps no CPU percentage per job). A test's own time is the
-/// process count, not a wait, so it is not cut here.
+/// Where the time goes (#748). Measured 2026-11-06 in one Release run of these classes (j3439, 120 tests, 8 m 26 s) on a
+/// machine that was NOT quiet: a TianWen.Lib.Tests run outside pilot held the CPU near 100% for the whole run, and
+/// <c>pilot run --alone</c> never got its quiet CPU (j3437 queued 17 minutes and was cancelled). So every time here is a
+/// loaded time; no quiet-machine time was measured, and the earlier "2 s alone" was an extrapolation, not a result.
+/// Slowest test and median per class, in seconds: OverlapTests1 max 64 (median 6); OverlapTests2 max 15 (6);
+/// MutualOverlapTests max 6.5 (1.9); LegEndOverlapTests max 105 (14); MergedUnderLegTests max 54 (8);
+/// PrReviewTests1 max 16 (5), 2 max 79 (13), 3 max 70 (4), 4 max 23 (7). The slowest, 105 s, is LegEndOverlapTests
+/// ABaseMergePushRunsTheCheck. Every test is a run of real <c>git</c> processes (the base makes a repo, each flight a
+/// plane, each command a handful more through GitCli), about 10 to 60 starts a test, so wall clock scales with whatever else
+/// holds the CPU. What this leg removed: real-clock polls and caps that failed passing work (<c>Eventually.Holds</c> waits
+/// on the condition with a 5 minute safety cap), the 300 ms "nothing happened" sleeps, and three separate teardown loops
+/// (now <c>TestDirs.DeleteTree</c>). What is NOT explained: why one test took 152 s in #748 against 105 s here; the
+/// process counts per test are from an earlier run and the CPU share of the git children was not measured.
+/// The time guard no longer fails these locally for that (see TestTimeLimitAttribute).
 /// </para>
 /// </summary>
 public abstract class OverlapTestsBase : IDisposable

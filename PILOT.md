@@ -62,7 +62,7 @@ dotnet test Pilot.Node.Tests -c Release --no-build
 dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
-- A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true, or PILOT_TEST_TIME_STRICT=1), naming itself, unless it is tagged `[Trait("Category", "Slow")]`; locally it passes and a `slow-test:` line on stderr names it and its time, since wall clock on a loaded machine is not the test's own time. CI runs the slow ones in their own step.
+- A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with
