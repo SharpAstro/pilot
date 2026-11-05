@@ -641,6 +641,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     {
         Palette.Use(Night);
         BeginFrame();
+        NoteHeight(bounds);
         RenderLayout(Tree(), bounds);
     }
 
@@ -785,7 +786,7 @@ internal sealed class ChatView<TSurface>(Renderer<TSurface> renderer) : PilotWid
                 // card and the box stay at the page's foot.
                 : Layout.Builder.VStack(list.HStarUpToContent(FeedWeight), Layout.Builder.Spacer().HStar(), asked, Foot());
         var body = page.WithGap(8f).Pad(Gutter, 8f).Stretch();
-        var whole = Layout.Builder.VStack(top, body.HStar()).Bg(PageBg).Stretch();
+        var whole = Layout.Builder.VStack(ScrollingHead(top), body.HStar(1f, BodyFloor)).Bg(PageBg).Stretch();
         whole = WithSelection(whole);
         return About?.Over(whole) ?? whole;
     }
