@@ -172,6 +172,9 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
+    /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
+    Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
     /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
     /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones

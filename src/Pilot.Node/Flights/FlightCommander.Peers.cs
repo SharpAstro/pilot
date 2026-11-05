@@ -100,11 +100,11 @@ public sealed partial class FlightCommander
             {
                 throw new FlightException($"{flight.Code} cannot wait for {peer.Flight.Code} on {peer.Node}: it already waits for {flight.Code} on {Machine}, so neither would leave");
             }
-            wait = new PeerConnection { Code = peer.Flight.Code, Node = peer.Node, Since = time.GetUtcNow() };
+            wait = new PeerConnection { Code = peer.Flight.Code, Node = peer.Node, Since = time.GetUtcNow(), Branch = peer.Flight.Branch, PullRequest = peer.Flight.PullRequest, Issue = peer.Flight.Issue };
         }
         else if (knownNode is not null && why.Count > 0)
         {
-            wait = new PeerConnection { Code = code, Node = knownNode, Since = time.GetUtcNow(), Note = $"{knownNode} could not be asked: {string.Join("; ", why)}" };
+            wait = new PeerConnection { Code = code, Node = knownNode, Since = time.GetUtcNow(), Branch = Planes.BranchOf(code), Note = $"{knownNode} could not be asked: {string.Join("; ", why)}" };
         }
         else
         {
@@ -200,6 +200,11 @@ public sealed partial class FlightCommander
         if (read is null)
         {
             var why = reads.Where(r => r.Why is not null).Select(r => r.Why).ToList();
+            // GitHub is the record both nodes share: a merged PR or a closed issue ends the wait whether or not the node answers (#753).
+            if (await EndedOnGitHubAsync(flight, wait, cancellationToken))
+            {
+                return (null, true);
+            }
             var note = why.Count > 0 ? $"{wait.Node} could not be asked: {string.Join("; ", why)}" : $"{wait.Node} is not a node this one holds a grant for";
             return (wait with { Note = note }, false);
         }
@@ -207,8 +212,14 @@ public sealed partial class FlightCommander
         var row = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, wait.Code, StringComparison.OrdinalIgnoreCase));
         if (row is null)
         {
+            if (await EndedOnGitHubAsync(flight, wait, cancellationToken))
+            {
+                return (null, true);
+            }
             return (wait with { Note = $"{wait.Node} lists no flight {wait.Code}" }, false);
         }
+        // What the node last said of the flight is kept on the wait, for the look that cannot ask it.
+        wait = wait with { Branch = row.Branch, PullRequest = row.PullRequest ?? wait.PullRequest, Issue = row.Issue };
         if (row.State == FlightState.Landed)
         {
             // Moved to another node: landed there, not landed at all, so the wait follows it (to this node too, made a wait of its own then).
@@ -226,6 +237,28 @@ public sealed partial class FlightCommander
             return (null, true);
         }
         return (wait with { Note = null }, false);
+    }
+
+    /// <summary>Whether GitHub says the waited-for flight is done: its PR merged, or its recorded issue closed. False on doubt, an error or no github.</summary>
+    private async Task<bool> EndedOnGitHubAsync(FlightRow flight, PeerConnection wait, CancellationToken cancellationToken)
+    {
+        if (github is null)
+        {
+            return false;
+        }
+        try
+        {
+            var branch = wait.Branch ?? Planes.BranchOf(wait.Code);
+            if (await github.PullRequestAsync(flight.RepoPath, branch, cancellationToken) is { State: "MERGED" } pr && (wait.PullRequest is null || pr.Number == wait.PullRequest))
+            {
+                return true;
+            }
+            return wait.Issue is > 0 and var issue && await github.IssueClosedAsync(flight.RepoPath, issue, cancellationToken) == true;
+        }
+        catch (FlightException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Whether the peer flight's PR merged, as GitHub says now (its branch is looked up in this node's clone of the repo); false when it cannot say.</summary>

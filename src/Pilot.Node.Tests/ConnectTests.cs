@@ -95,6 +95,71 @@ public sealed class ConnectTests : OverlapTestsBase
         F("TIA2").PeerConnections.ShouldBeEmpty();
     }
 
+    private async Task<(FlightCommander Flights, FakeGitHub GitHub, FakePeer Peer)> WaitingOnPeerWithGitHub(FlightRow theirs, PullRequest? pr)
+    {
+        await TwoFlights();
+        var github = new FakeGitHub { Pr = pr };
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, github) { Machine = "DU1", Fleet = _fleet };
+        var peer = Peer("DE1", theirs);
+        (await flights.RunAsync(new CommandRequest { Verb = Verbs.Connect, Target = "flight/TIA2", Args = [theirs.Code], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        return (flights, github, peer);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task UnreachableNodeWithTheWaitedForPrMergedOnGitHubReleasesTheFlight_753()
+    {
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77"));
+        peer.Unreachable = true;
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task UnreachableNodeWithTheWaitedForIssueClosedOnGitHubReleasesTheFlight_753()
+    {
+        var (flights, github, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294), null);
+        peer.Unreachable = true;
+        github.IssuesClosedOnGitHub.Add(294);
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task UnreachableNodeWithTheWaitedForPrStillOpenKeepsTheFlightHeld_753()
+    {
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "OPEN", "head", "https://github.com/x/tianwen/pull/77"));
+        peer.Unreachable = true;
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+
+        var held = F("TIA2");
+        held.State.ShouldBe(FlightState.Held);
+        held.PeerConnections.ShouldHaveSingleItem().Note.ShouldNotBeNull().ShouldContain("DE1 could not be asked");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task NodeThatListsNoSuchFlightWithItsPrMergedOnGitHubReleasesTheFlight_753()
+    {
+        var (flights, _, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, new PullRequest(77, "MERGED", "head", "https://github.com/x/tianwen/pull/77"));
+        peer.Flights = [];
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AnUnreachablePeerKeepsTheFlightHeldAndTheWaitSaysWhyUntilItAnswers()

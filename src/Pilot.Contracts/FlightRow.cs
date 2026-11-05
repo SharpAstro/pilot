@@ -416,6 +416,18 @@ public sealed record PeerConnection
     /// PIL294</c>); null while its answer is that the flight has not landed.
     /// </summary>
     public string? Note { get; init; }
+
+    /// <summary>The waited-for flight's branch, so GitHub can be asked when its node cannot be (#753); null in a wait recorded before it was known.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Branch { get; init; }
+
+    /// <summary>The waited-for flight's PR number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PullRequest { get; init; }
+
+    /// <summary>The waited-for flight's issue number, when its node last said it had one (#753).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Issue { get; init; }
 }
 
 /// <summary>An issue folded into a flight, and the flight it came from.</summary>
