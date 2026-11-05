@@ -1886,7 +1886,11 @@ public sealed class JobTests3 : JobTestsBase
         var child = await GrandchildPid(marker, running);
         var rows = node.State.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
         rows.Count.ShouldBe(2);
-        var runningRow = node.State.Jobs().Single(j => j.Id == rows[0].Id);
+        // Picked by leg, not by the order the rows come back in. The grandchild's marker proves the process started, not that the
+        // dispatcher has put the row Running with its pid yet, so the stop waits for the row itself.
+        var runningId = rows.Single(j => j.Leg == "one").Id;
+        var queuedId = rows.Single(j => j.Leg == "two").Id;
+        var runningRow = await node.UntilAsync(runningId, j => j is { State: JobState.Running, Pid: not null }, Ct);
         try
         {
             await node.StopAsync();
@@ -1894,9 +1898,9 @@ public sealed class JobTests3 : JobTestsBase
             // The waiting check's caller goes with the node, but its row stays queued for the next node (pilot #737); the running one's
             // row stays running with its tree alive, as an ordinary job's does.
             await Should.ThrowAsync<OperationCanceledException>(waiting.WaitAsync(TimeSpan.FromSeconds(30), Ct));
-            var stillRunning = node.State.Jobs().Single(j => j.Id == rows[0].Id);
+            var stillRunning = node.State.Jobs().Single(j => j.Id == runningId);
             (stillRunning.State, stillRunning.EndedAt).ShouldBe((JobState.Running, null));
-            var stillQueued = node.State.Jobs().Single(j => j.Id == rows[1].Id);
+            var stillQueued = node.State.Jobs().Single(j => j.Id == queuedId);
             (stillQueued.State, stillQueued.EndedAt).ShouldBe((JobState.Queued, null));
             IsAlive(child).ShouldBeTrue();
             node.Job(jobId).State.ShouldBe(JobState.Running);
