@@ -205,17 +205,22 @@ public sealed class SiblingLockTests : JobTestsBase
         jobs.MaxRunning = 3;
         jobs.MinFreeMemory = 1L << 30;
         jobs.SiblingsOf = job => Sets(job.Command);
-        // The head's kind has been measured at 8 GB; the small job's has not, so it alone would fit in 2 GB.
-        SeedRun("seed1", "echo 'five'; sleep 20", median: 8L << 30, peak: 9L << 30, ended: 1);
+        // The head's kind (keyed "sleep 21") has been measured at 8 GB; the small job's ("sleep 20") has not, so it gets the
+        // 1 GB guess and alone would fit in the 2 GB free. Different keys keep the seed off the small job.
+        SeedRun("seed1", "echo 'five'; sleep 21", median: 8L << 30, peak: 9L << 30, ended: 1);
         var first = Hand(jobs, "echo 'one'; sleep 20");
         await Until(first, j => j.State == JobState.Running);
         free = 2L << 30;
-        var head = Hand(jobs, "echo 'five'; sleep 20");
+        var head = Hand(jobs, "echo 'five'; sleep 21");
         var small = Hand(jobs, "echo 'three'; sleep 20");
 
         Row(head).State.ShouldBe(JobState.Queued);
         Row(small).State.ShouldBe(JobState.Queued);
         Row(head).Step.ShouldNotBeNull().ShouldContain("free memory");
+        // The precondition: the small job itself needs 1 GB of the 2 GB free, so only the head's memory wait holds it.
+        var smallStep = Row(small).Step.ShouldNotBeNull();
+        smallStep.ShouldContain("needs 1.0 GB");
+        smallStep.ShouldNotContain("needs 8");
         await CancelAll(jobs, first);
     }
 
