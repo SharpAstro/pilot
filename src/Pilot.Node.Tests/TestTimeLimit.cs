@@ -64,7 +64,7 @@ public sealed class TestTimeLimitAttribute : BeforeAfterTestAttribute
         // Report mode judges against the plain limit (nothing fails there); an enforced run gets the load allowance.
         var limit = RunMode == TestTimeMode.Enforce ? Effective(Limit, Strict) : Limit;
         Check(methodUnderTest.DeclaringType?.FullName ?? "?", methodUnderTest.Name, IsSlow(test.Traits),
-            Stopwatch.GetElapsedTime(start), limit, RunMode, Console.Error.WriteLine);
+            Stopwatch.GetElapsedTime(start), limit, RunMode, System.Console.Error.WriteLine);
     }
 
     public static bool IsSlow(IReadOnlyDictionary<string, IReadOnlyCollection<string>> traits)
