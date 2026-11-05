@@ -25,18 +25,44 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
     public static TimeSpan Ceiling => JobRunner.DefaultTimeout;
 
     /// <summary>
-    /// The limit for a check whose key is <paramref name="key"/>, from <paramref name="jobs"/>. Only succeeded jobs that ended and
-    /// whose key is the same count (a failed, cancelled or timed-out run says nothing of how long a pass takes); a run's time is
+    /// The limit for a check running <paramref name="command"/> in <paramref name="cwd"/>, from <paramref name="jobs"/>. Only succeeded
+    /// jobs that ended and ran the same whole command (<see cref="CommandKey"/>) count; with none, a command of several steps gets
+    /// 1.5 times the sum of its steps' own slowest passes when every step has some, else the floor (never a shorter command's
+    /// history). Only passes count (a failed, cancelled or timed-out run says nothing of how long a pass takes); a run's time is
     /// the time it ran, so the time it was paused is left out.
     /// </summary>
-    public static CheckLimit For(IEnumerable<JobRow> jobs, JobKey key)
+    public static CheckLimit For(IEnumerable<JobRow> jobs, string command, string cwd)
     {
-        var passes = jobs
-            .Where(j => j.State == JobState.Succeeded && j.EndedAt is not null && JobKey.Parse(j.MemoryKey) == key)
+        var key = CommandKey.Of(command, cwd);
+        var passed = jobs
+            .Where(j => j.State == JobState.Succeeded && j.EndedAt is not null)
             .OrderByDescending(j => j.EndedAt)
-            .Take(Window)
-            .Select(j => j.EndedAt!.Value - j.StartedAt - j.PausedFor)
+            .Select(j => (Key: CommandKey.Of(j.Command, j.Cwd).Text, Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor))
             .ToList();
+
+        List<TimeSpan> Passes(CommandKey k) => [.. passed.Where(p => p.Key == k.Text).Take(Window).Select(p => p.Time)];
+
+        var passes = Passes(key);
+        if (passes.Count == 0 && key.Steps.Count > 1)
+        {
+            // Never a shorter command's history: each step's own passes, or nothing.
+            var parts = Enumerable.Range(0, key.Steps.Count).Select(i => Passes(key.Step(i))).ToList();
+            if (parts.All(p => p.Count > 0))
+            {
+                var sum = parts.Aggregate(TimeSpan.Zero, (total, p) => total + p.Max());
+                var runs = parts.Sum(p => p.Count);
+                var scaledSum = sum * Margin;
+                var basis = $"{Margin:0.#}x the sum of its {parts.Count} steps' slowest passes, {Describe(sum)}";
+                if (scaledSum < Floor)
+                {
+                    return new CheckLimit(Floor, $"the {Describe(Floor)} floor; its steps' slowest passes add up to {Describe(sum)}, under it", runs, sum);
+                }
+                return scaledSum > Ceiling
+                    ? new CheckLimit(Ceiling, $"the {Describe(Ceiling)} ceiling; {basis} would be {Describe(scaledSum)}", runs, sum)
+                    : new CheckLimit(scaledSum, basis, runs, sum);
+            }
+            return new CheckLimit(Floor, $"the {Describe(Floor)} floor; no passes of the whole command, and none of {parts.Count(p => p.Count == 0)} of its {parts.Count} steps", 0, null);
+        }
 
         if (passes.Count == 0)
         {
