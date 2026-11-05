@@ -53,7 +53,7 @@ public sealed class MergedUnderLegTests : IDisposable
         {
             start.ArgumentList.Add(arg);
         }
-        Pil748Measure.Helper(); using var process = Process.Start(start)!;
+        using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
