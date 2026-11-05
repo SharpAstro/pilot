@@ -247,11 +247,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
         _state.Flights().Single(f => f.Code == "TIA1").Overlaps.Single().Answer.ShouldBe(OverlapAnswer.Separate);
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
         _state.Cards().ShouldContain(c => c.Kind == LegCommander.OverlapParallelKind);
-        // The planner is launched in the background: give the start a moment to be recorded.
-        for (var i = 0; i < 100 && !_workers.Started.Any(w => w.Name == "du1-tia2-plan"); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
+        // The planner is launched in the background: wait for its start to be recorded.
+        await Eventually.Holds(() => _workers.Started.Any(w => w.Name == "du1-tia2-plan"), Ct);
         _workers.Started.Select(w => w.Name).ShouldContain(n => n.Contains("tia2") && n.Contains("plan"));
     }
 
@@ -501,7 +498,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // The leg is done and the check is parked on GitHub: the sweep must not start the next leg's validator.
         L("parser").State.ShouldBe(LegState.Done);
@@ -540,10 +537,10 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await checking.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await checking.Task.WaitAsync(Eventually.Cap, Ct);
         _clock.Advance(LegCommander.LegEndMarkLife + TimeSpan.FromMinutes(1));
         checkDone.SetResult();
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // Recorded done after the mark's life had passed since the finish began: the sweep still starts nothing.
         L("parser").State.ShouldBe(LegState.Done);
@@ -574,7 +571,7 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
             await release.Task;
         };
         var finishing = Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await reached.Task.WaitAsync(Eventually.Cap, Ct);
 
         // A second finish of the done leg is refused; it must not take away the first one's hold.
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "again")).Ok.ShouldBeFalse();
