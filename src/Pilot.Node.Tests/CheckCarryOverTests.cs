@@ -158,6 +158,31 @@ public sealed class CheckCarryOverTests : JobTestsBase
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task ACheckACrashEndedWithNoExitRecordedIsNotTheVerdictAndTheNextFinishRunsItAfresh()
+    {
+        // What a crash leaves: the check's row still Running, its process gone (the kill-on-close hold ended the tree, wrapper
+        // included), and no exit file.
+        var command = Echo("fresh");
+        _state.PutJob(new JobRow
+        {
+            Id = "jc1", Command = command, Cwd = _root, Kind = JobKind.Check, Flight = Flight, Leg = LegName, State = JobState.Running,
+            LogPath = Path.Combine(_root, "jc1.log"), Pid = int.MaxValue - 7, ProcessStartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Timeout = TimeSpan.FromMinutes(30), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5), QueuedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        });
+
+        await _jobs.RecoverAsync(Ct);
+        var crashed = _state.Jobs().Single(j => j.Id == "jc1");
+        (crashed.State, crashed.EndedAt is not null).ShouldBe((JobState.Failed, true));
+
+        var result = await _jobs.RunCheckAsync(Flight, LegName, command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(20), Ct);
+
+        (result.ExitCode, result.Tail.Contains("fresh", StringComparison.Ordinal)).ShouldBe((0, true));
+        var checks = _state.Jobs().Where(j => j.Kind == JobKind.Check).ToList();
+        checks.Count.ShouldBe(2);
+        checks.Single(j => j.Id != "jc1").State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task ACallerGivingUpWhileTheNodeIsNotStoppingStillCancelsItsQueuedCheck()
     {
         using var lifetime = new Lifetime();

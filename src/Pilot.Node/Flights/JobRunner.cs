@@ -277,7 +277,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private void EndOrphanedCheck(JobRow check)
+    private const string OrphanedCheckError = "the node restarted and nothing waits for this check any more, so it was ended";
+
+    private void EndOrphanedCheck(JobRow check, string error = OrphanedCheckError)
     {
         if (check is { State: JobState.Running, Pid: { } pid, ProcessStartedAt: { } startedAt })
         {
@@ -293,7 +295,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         var ended = Unpaused(check, time.GetUtcNow()) with
         {
             State = JobState.Failed,
-            Error = "the node restarted and nothing waits for this check any more, so it was ended",
+            Error = error,
             EndedAt = time.GetUtcNow(),
         };
         state.PutJob(ended);
@@ -314,11 +316,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             _running[job.Id] = process;
             if (job.Kind == JobKind.Check)
             {
-                // A crash of this node must end it again, as for a check it started: held where the process can still be assigned
-                // (it sits in the wrapper's own job, and nesting is allowed from Windows 8); else it is only followed.
+                // A crash of this node must end it again, as for a check it started: the wrapper is held where it can still be
+                // assigned (it sits in its own job, and nesting is allowed from Windows 8); else it is only followed. The hold covers
+                // the wrapper and what it starts from now on. Children it started before the re-hold (a test host already running)
+                // stay only in the first node's job, which the graceful stop let go, so a crash of this node leaves those alive.
                 try
                 {
-                    var found = System.Diagnostics.Process.GetProcessById(job.Pid!.Value);
+                    using var found = System.Diagnostics.Process.GetProcessById(job.Pid!.Value);
                     if (KillOnCloseJob.Hold(found, Priority) is { } hold)
                     {
                         _holds[job.Id] = hold;
@@ -330,6 +334,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 }
             }
             _watches[job.Id] = Task.Run(() => WatchAsync(job, process, fromEnd: true), CancellationToken.None);
+            return;
+        }
+
+        // A check gone with no exit recorded was ended by the kill-on-close hold of a node that crashed (a graceful stop lets it go,
+        // and the wrapper writes an exit however the command ends). That run is not the check's verdict: it is ended as orphaned,
+        // with no kept result, so the next finish runs the check afresh as it did before checks carried over (pilot #737).
+        if (job.Kind == JobKind.Check && ReadExit(exitPath) is null)
+        {
+            EndOrphanedCheck(job, "ended while the node was down with no exit recorded (a crash of the node ended it), so the next finish runs it afresh");
             return;
         }
 

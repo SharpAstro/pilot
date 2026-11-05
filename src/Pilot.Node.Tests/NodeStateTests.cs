@@ -38,10 +38,11 @@ public sealed class NodeStateTests
     }
 
     [Theory]
-    [InlineData(JobState.Queued, true)]
-    [InlineData(JobState.Running, false)]
-    [InlineData(null, false)]
-    public void ARestartTurnsAnOpenRecheckIntoTheCarriedOutcomeOnlyWhenItsCheckJobIsStillQueued(JobState? job, bool carried)
+    [InlineData(JobState.Queued, false, "carried")]
+    [InlineData(JobState.Running, true, "running")]
+    [InlineData(JobState.Running, false, "restarted")]
+    [InlineData(null, false, "restarted")]
+    public void ARestartTurnsAnOpenRecheckIntoTheOutcomeOfWhatBecameOfItsCheckJob(JobState? job, bool withProcess, string expected)
     {
         var journal = new InMemoryJournal();
         var before = new NodeState(journal, TimeProvider.System);
@@ -56,12 +57,18 @@ public sealed class NodeStateTests
             {
                 Id = "jc1", Command = "dotnet test", Cwd = "/r", Kind = JobKind.Check, Flight = "TIA1", Leg = "parser", State = state,
                 LogPath = "/r/log", Timeout = TimeSpan.FromMinutes(30), StartedAt = DateTimeOffset.UtcNow, QueuedAt = DateTimeOffset.UtcNow,
+                Pid = withProcess ? 4242 : null, ProcessStartedAt = withProcess ? DateTimeOffset.UtcNow : null,
             });
         }
 
         var after = new NodeState(journal, TimeProvider.System);
 
-        after.Legs("TIA1").Single().Recheck!.Outcome.ShouldBe(carried ? LegRecheck.CarriedOutcome("dotnet test") : LegRecheck.RestartedOutcome("dotnet test"));
+        after.Legs("TIA1").Single().Recheck!.Outcome.ShouldBe(expected switch
+        {
+            "carried" => LegRecheck.CarriedOutcome("dotnet test"),
+            "running" => LegRecheck.RunningCarriedOutcome("dotnet test"),
+            _ => LegRecheck.RestartedOutcome("dotnet test"),
+        });
     }
 
     [Fact]
