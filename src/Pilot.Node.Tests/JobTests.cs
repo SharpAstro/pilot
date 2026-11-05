@@ -93,8 +93,7 @@ public abstract class JobTestsBase : IDisposable
     /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
     private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        // 15 s: a real shell's cold start on a busy machine has taken over 6 s, and a passing test returns as soon as it holds.
-        for (var i = 0; i < 750; i++)
+        for (var i = 0; i < 300; i++)
         {
             if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
             {
