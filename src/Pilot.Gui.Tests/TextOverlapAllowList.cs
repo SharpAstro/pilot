@@ -23,44 +23,19 @@ internal sealed record AllowedTextFault(string Case, string Fault, string Reason
 /// <summary>The faults the sweep finds today and lets pass, each with its reason and issue: the list is the sweep's to-do.</summary>
 internal static class TextOverlapAllowList
 {
-    // Found by the first run of the widened sweep (500 wide, 500 high, Ideas, card detail): 42 failing cases, 300 fault lines, one cause each below.
-    // Every reason starts TODO(740): the next leg of flight PIL740 decides, per cause, fix (wrap, or ellipsis with the whole text on hover) or file an issue
-    // and put its number here.
+    // The first run of the widened sweep found 42 failing cases, 300 fault lines, in 13 causes. PIL740's fix-faults leg fixed 12 in the views (a long title
+    // wraps, the PR title column gives up its floor, a long identifier in an idea breaks at its humps, the priority line wraps, and a window shorter than
+    // 480 units scrolls the Flights, Jobs, Chat and Sessions pages, the flight page's head scrolling itself where it is long). One is left.
+    // Its issue could not be filed from the plane (pilot issue create is the controller's: "leave it to them"), so Pending (740) stands for it until
+    // the controller files it and puts the number here.
     private const int Pending = 740;
 
     public static readonly IReadOnlyList<AllowedTextFault> Entries =
     [
-        // ---- Too wide: a text wider than the room it is drawn in, cut at the edge (500 wide at DPI 1.5, the narrowest room) ----
-        new("settings | * | 500 wide | DPI 1.5*", "outside: 'SE1's settings (this machine)'*",
-            "TODO(740): the page heading is one 436 px line in a 422 px page, so its end is cut; it should wrap", Pending),
-        new("pull requests | * | 500 wide | DPI 1.5", "outside: '#1*' * reaches past its scroll *",
-            "TODO(740): a PR's title link is placed at x 378 with a 120 px width, past the right edge of the list's scroll (476), so the link's end is cut", Pending),
-        new("flight page | * | 500 wide | DPI 1.5*", "outside: 'urgent: skips the Opus cap*reaches past its scroll *",
-            "TODO(740): the priority explanation line is 409 px in a 374 px scroll and does not wrap", Pending),
-        new("ideas | long | *", "outside: 'EveryPageIsHeldApart*reaches past its scroll *",
-            "TODO(740): a word with no break point (a type name, 496 to 763 px) in an idea's text is not broken or cut with its whole text on hover, so it runs past the scroll's edge", Pending),
-
-        // ---- Overlap ----
         new("flights canvas | * | *", "overlap: 'PR states' * is drawn over 'artifacts' *",
-            "TODO(740): the canvas's 'PR states' chip is drawn over the 'artifacts' text beside it (500 and 700 wide)", Pending),
-        new("wizard repos | * | 500 wide | DPI 1.5 | 500 high", "overlap: * is drawn over 'Next: its issue' *",
-            "TODO(740): at 500 wide and 500 high the wizard's wrapped explanation (the words 'that waits for the one') is drawn over the 'Next: its issue' button", Pending),
-
-        // ---- Too tall: a page that does not scroll draws its content past the page's bottom edge, so at 500 high the end is cut ----
-        new("flight page | * | *", "outside: * reaches past its page *",
-            "TODO(740): text of the flight page (PR link, queued note, leg buttons, priority chips) sits in no scroll and lies below the page's bottom edge, so it is cut", Pending),
-        new("flights canvas | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the canvas's chips ('One node', 'PR states', 'Landed', ...) and the zoom label sit in no scroll and lie below a 500 px page's bottom edge, so they are cut", Pending),
-        new("wizard repos | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the wizard's repos step (its explanation and the 'Next: its issue' button) sits in no scroll and lies below a 500 px page's bottom edge", Pending),
-        new("wizard issues | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the wizard's issues step (its explanation and the 'Back' button) sits in no scroll and lies below a 500 px page's bottom edge", Pending),
-        new("chat | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the chat's node rows, 'held by' note and input hint sit in no scroll and lie below a 500 px page's bottom edge", Pending),
-        new("jobs | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the jobs page's queue note and table header sit in no scroll and lie below a 500 px page's bottom edge", Pending),
-        new("transcript | * | * | 500 high", "outside: * reaches past its page *",
-            "TODO(740): the transcript's header (session, flight, leg, live count) sits in no scroll and lies below a 500 px page's bottom edge", Pending),
+            "TODO(file): DIR.Lib's FloatingPalette (the LAYERS menu) floats over the pannable map and fades to 40% opacity, so a map label ('artifacts') panning under a "
+            + "row of it ('PR states') is drawn through its text; pilot passes the palette colours and a width only, so the fix is in DIR.Lib (opaque rows) or a decision "
+            + "that the sweep exempts a translucent floating menu over a pannable map", Pending),
     ];
 
     public static bool Covers(string key, string line) => Entries.Any(e => e.Covers(key, line));
