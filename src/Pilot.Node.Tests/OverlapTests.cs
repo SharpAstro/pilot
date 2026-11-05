@@ -66,21 +66,7 @@ public abstract class OverlapTestsBase : IDisposable
         {
         }
         // A plane's git may still be letting go of a folder while it is walked (seen as DirectoryNotFound mid-delete): tried again.
-        for (var attempt = 1; Directory.Exists(_root); attempt++)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(_root, recursive: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 5)
-            {
-                Thread.Sleep(200 * attempt);
-            }
-        }
+        TestDirs.DeleteTree(_root);
     }
 
     private protected static string Git(string cwd, params string[] args)
