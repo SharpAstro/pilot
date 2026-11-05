@@ -150,6 +150,19 @@ internal sealed class FlightMap
         return chain.Count > 1 ? chain : new HashSet<(string Node, string Code)>();
     }
 
+    /// <summary>The margin a row's band leaves at each side of its continent, the same the picked row's highlight leaves.</summary>
+    public const float BandInset = 6f;
+
+    /// <summary>
+    /// A route's row band: the continent's inner width wide and <see cref="RowHeight"/> high, centred on the route's line, so it
+    /// covers the code above the line and the labels below it. A click anywhere in it picks the flight.
+    /// </summary>
+    public (float X, float Y, float Width, float Height) RowBand(MapRoute route)
+    {
+        var c = Continents.First(c => c.Key == route.Node);
+        return (c.X + BandInset, route.Destination.Y - RowHeight / 2f, c.Width - 2f * BandInset, RowHeight);
+    }
+
     /// <summary>The route of <paramref name="flight"/>, on <paramref name="node"/> when given, else the first of that code.</summary>
     public MapRoute? Route(string flight, string? node = null) => Routes.FirstOrDefault(r => r.Flight == flight && (node is null || r.Node == node));
 

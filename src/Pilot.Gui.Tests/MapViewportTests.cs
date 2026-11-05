@@ -44,6 +44,26 @@ public sealed class MapViewportTests
         return (renderer, view, Show);
     }
 
+    [Fact]
+    public void EnsureVisiblePansJustFarEnoughAndNotAtAllWhenInView()
+    {
+        var vp = new MapViewport();
+        vp.Update(1000f, 2000f, "k");
+        vp.SetView(400f, 300f);
+        vp.SetScale(1f);
+
+        // A rect at the map's foot is out of view: it is brought to the view's lower edge, less the margin.
+        vp.EnsureVisible(100f, 1900f, 200f, 72f).ShouldBeTrue();
+        vp.ViewY(1900f + 72f).ShouldBe(300f - 8f, 0.01f);
+        var pan = (vp.PanX, vp.PanY);
+        // Now in view: nothing moves.
+        vp.EnsureVisible(100f, 1900f, 200f, 72f).ShouldBeFalse();
+        (vp.PanX, vp.PanY).ShouldBe(pan);
+        // One above the view comes in at the top edge.
+        vp.EnsureVisible(100f, 0f, 200f, 72f).ShouldBeTrue();
+        vp.ViewY(0f).ShouldBe(8f, 0.01f);
+    }
+
     private static List<ClickableRegion> Targets(FlightsView<RgbaImage> view)
     {
         var regions = new List<ClickableRegion>();
