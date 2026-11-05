@@ -26,6 +26,37 @@ public class CheckLimitTests
     private static CheckLimit For(IEnumerable<JobRow> jobs, string command = Test) => CheckLimit.For(jobs, command, Repo);
 
     [Fact]
+    public void APassFromARemovedPlaneCountsForALivePlane()
+    {
+        var clone = Path.Combine(Path.GetTempPath(), "checklimit-real-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var planes = Path.Combine(clone, ".claude", "worktrees");
+            var live = Path.Combine(planes, "a");
+            var removed = Path.Combine(planes, "b");
+            Directory.CreateDirectory(Path.Combine(clone, ".git"));
+            foreach (var root in new[] { clone, live })
+            {
+                Directory.CreateDirectory(Path.Combine(root, "src", "Pilot.Node.Tests"));
+                File.WriteAllText(Path.Combine(root, "src", "Pilot.slnx"), "<Solution />");
+                File.WriteAllText(Path.Combine(root, "src", "Pilot.Node.Tests", "Pilot.Node.Tests.csproj"), "<Project />");
+            }
+            File.WriteAllText(Path.Combine(live, ".git"), "gitdir: elsewhere");
+            const string command = "cd src && dotnet build Pilot.slnx -c Release && dotnet test Pilot.Node.Tests -c Release";
+
+            var limit = CheckLimit.For([Run(40, command: command, cwd: removed, id: "jgone")], command, live);
+
+            limit.Runs.ShouldBe(1);
+            limit.Limit.ShouldBe(TimeSpan.FromMinutes(60));
+            limit.Basis.ShouldContain("jgone");
+        }
+        finally
+        {
+            Directory.Delete(clone, true);
+        }
+    }
+
+    [Fact]
     public void NoHistoryGivesTheFloor()
     {
         var limit = For([]);

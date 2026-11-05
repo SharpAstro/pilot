@@ -22,6 +22,7 @@ public sealed record CommandKey(string Repo, IReadOnlyList<string> Steps)
     /// <summary>The key of <paramref name="command"/> run in <paramref name="cwd"/>.</summary>
     public static CommandKey Of(string command, string cwd)
     {
+        cwd = InClone(cwd);
         var folder = cwd;
         var steps = new List<string>();
         foreach (var words in JobKey.Segments(command))
@@ -42,6 +43,27 @@ public sealed record CommandKey(string Repo, IReadOnlyList<string> Steps)
             steps.Add($"{JobKey.KeyOf(tool, words, folder)}|filter={FilterOf(words)}");
         }
         return new CommandKey(JobKey.RepoOf(cwd), steps);
+    }
+
+    /// <summary>
+    /// A folder inside a plane (<c>&lt;clone&gt;/.claude/worktrees/&lt;code&gt;/rest</c>) as the same folder in the clone. A plane is
+    /// removed when its flight lands, and a removed plane's folders resolve differently on disk (no <c>.git</c> of its own, no
+    /// project found) than a live one's, so every row is keyed against the clone, which is always there.
+    /// </summary>
+    internal static string InClone(string cwd)
+    {
+        var full = Path.GetFullPath(cwd);
+        var sep = Path.DirectorySeparatorChar;
+        var marker = $"{sep}.claude{sep}worktrees{sep}";
+        var at = full.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (at <= 0)
+        {
+            return cwd;
+        }
+        var afterMarker = at + marker.Length;
+        var next = full.IndexOf(sep, afterMarker);
+        var rest = next < 0 ? "" : full[next..];
+        return full[..at] + rest;
     }
 
     /// <summary>The key of one of this command's steps run alone.</summary>

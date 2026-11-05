@@ -34,10 +34,20 @@ public sealed record CheckLimit(TimeSpan Limit, string Basis, int Runs, TimeSpan
     public static CheckLimit For(IEnumerable<JobRow> jobs, string command, string cwd)
     {
         var key = CommandKey.Of(command, cwd);
+        var keyed = new Dictionary<(string, string), string>();
+        string KeyText(JobRow j)
+        {
+            if (!keyed.TryGetValue((j.Command, j.Cwd), out var text))
+            {
+                keyed[(j.Command, j.Cwd)] = text = CommandKey.Of(j.Command, j.Cwd).Text;
+            }
+            return text;
+        }
+
         var passed = jobs
             .Where(j => j.State == JobState.Succeeded && j.EndedAt is not null)
             .OrderByDescending(j => j.EndedAt)
-            .Select(j => (Key: CommandKey.Of(j.Command, j.Cwd).Text, Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor, j.Id, j.Command))
+            .Select(j => (Key: KeyText(j),Time: j.EndedAt!.Value - j.StartedAt - j.PausedFor, j.Id, j.Command))
             .ToList();
 
         List<Pass> Passes(CommandKey k) => [.. passed.Where(p => p.Key == k.Text).Take(Window).Select(p => new Pass(p.Id, p.Command, p.Time))];
