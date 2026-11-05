@@ -60,8 +60,9 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     private const float StateWidth = 144f;
     private const float TitleMin = 180f;
 
-    // What a title keeps on the narrowest page: enough for its number and the start of its words.
-    private const float TitleFloor = 80f;
+    // What a title keeps on the narrowest page: its number and an ellipsis (the whole title is on hover). It was 80, which on a page
+    // 500 px wide at DPI 1.5 left the row 15 units wider than the list and cut the end of the link.
+    private const float TitleFloor = 40f;
     private const float FlightWidth = 92f;
     private const float AuthorWidth = 120f;
     private const float ReviewWidth = 84f;

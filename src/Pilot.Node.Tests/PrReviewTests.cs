@@ -65,23 +65,8 @@ internal static class PrOrigins
             return;
         }
         // A review the node posted is ended by a task of its own after the reviewer's grace, which may still hold a folder of the
-        // test as it ends: tried again for a few seconds before it counts as a failure.
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                }
-                Directory.Delete(root, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 50)
-            {
-                Thread.Sleep(100);
-            }
-        }
+        // test as it ends: the shared teardown is patient with that.
+        TestDirs.DeleteTree(root);
     }
 }
 
@@ -203,14 +188,7 @@ public abstract class PrReviewTestsBase : IDisposable
     /// <summary>The file the widget PR adds, the one file in its diff, one line long.</summary>
     private protected string Added() => PrOrigins.Git(WidgetClone, "show", "--name-only", "--format=", _widgetHead);
 
-    private protected static async Task WaitFor(Func<bool> condition, int tries = 200)
-    {
-        for (var i = 0; i < tries && !condition(); i++)
-        {
-            await Task.Delay(10, Ct);
-        }
-        condition().ShouldBeTrue();
-    }
+    private protected static Task WaitFor(Func<bool> condition) => Eventually.Holds(condition, Ct);
 }
 
 /// <summary>
@@ -476,7 +454,7 @@ public sealed class PrReviewTests1 : PrReviewTestsBase
         _workers.Stopped.ShouldNotContain(started.ReviewerJob!);
 
         // After the grace both are gone.
-        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed, 1000);
+        await WaitFor(() => Row("acme/widget", 7).State == PrReviewState.Closed);
         sinceAnswer.Elapsed.ShouldBeGreaterThanOrEqualTo(grace - TimeSpan.FromMilliseconds(250));
         Directory.Exists(started.Worktree).ShouldBeFalse();
         _workers.Stopped.ShouldBe([started.ReviewerJob!]);

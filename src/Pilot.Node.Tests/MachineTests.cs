@@ -241,6 +241,53 @@ public sealed class MachineTests
     }
 
     [Fact]
+    public void MachineOwnedCpuSumsEveryOwnedProcessBeyondTheTopFive()
+    {
+        // A job (200) with eight small children at 5% each of one core's 20 s, a big outsider (900), and an unrelated idle one.
+        var processes = new List<MachineSampler.ProcessSample> { new(200, "pwsh", TimeSpan.FromSeconds(100), 1), new(900, "outsider", TimeSpan.FromSeconds(120), 1) };
+        var parents = new Dictionary<int, int> { [200] = 1, [900] = 1 };
+        var previous = new Dictionary<int, TimeSpan> { [200] = TimeSpan.FromSeconds(100), [900] = TimeSpan.FromSeconds(100) };
+        for (var pid = 301; pid <= 308; pid++)
+        {
+            processes.Add(new(pid, "testhost", TimeSpan.FromSeconds(101), 1));
+            previous[pid] = TimeSpan.FromSeconds(100);
+            parents[pid] = 200;
+        }
+        var roots = new Dictionary<int, string> { [200] = "j7" };
+        var wall = TimeSpan.FromSeconds(20);
+
+        // Each child 1 s of 20 s on one core is 5%; eight make 40, and the top five would have shown only 25 of them.
+        MachineSampler.OwnedPercent(processes, previous, wall, 1, parents, roots).ShouldBe(40);
+        MachineSampler.Top(processes, previous, wall, 1, MachineSampler.TopCount).Count(p => p.Name == "testhost").ShouldBe(4);
+        MachineSampler.OwnedPercent(processes, previous, wall, 1, parents, new Dictionary<int, string>()).ShouldBe(0);
+    }
+
+    [Fact]
+    public void MachineLineNamesTheOutsideLoadOnlyWhenItIsARealShareOfABusyCpu()
+    {
+        MachineRow Row(double cpu, double? owned, params MachineProcess[] processes) => new()
+        {
+            SampledAt = Now, CpuPercent = cpu, Cores = 16, MemoryUsed = 21L << 30, MemoryTotal = 32L << 30, OwnedCpuPercent = owned, Processes = processes,
+        };
+        var tests = new MachineProcess { Pid = 1, Name = "TianWen.Lib.Tests", CpuPercent = 60, MemoryBytes = 1, WorkingDirectory = @"C:\work\grade-sky-trend\" };
+        var build = new MachineProcess { Pid = 2, Name = "msbuild", CpuPercent = 20, MemoryBytes = 1 };
+        var ours = new MachineProcess { Pid = 3, Name = "dotnet", CpuPercent = 90, MemoryBytes = 1, Owner = "j7" };
+
+        Row(100, 5, tests, ours, build).Line().ShouldBe("cpu 100%, 95% of it outside pilot: TianWen.Lib.Tests in grade-sky-trend, msbuild · mem 21/32 GB");
+        Row(100, 5, tests, ours, build).OutsideProcesses.Select(p => p.Name).ShouldBe(["TianWen.Lib.Tests", "msbuild"]);
+        Row(100, 5).OutsideCpuPercent.ShouldBe(95);
+        Row(10, 30).OutsideCpuPercent.ShouldBe(0);
+
+        // Mostly pilot's own, not busy, or an older node's row: as before.
+        Row(100, 90, tests).Line().ShouldBe("cpu 100% · mem 21/32 GB");
+        Row(40, 0, tests).Line().ShouldBe("cpu 40% · mem 21/32 GB");
+        Row(100, null, tests).Line().ShouldBe("cpu 100% · mem 21/32 GB");
+        Row(100, null).OutsideCpuPercent.ShouldBeNull();
+        Row(100, null, tests).Gauges().Select(g => g.Figure).ShouldBe(["100%", "21/32 GB"]);
+        Row(100, 5, tests).Gauges().Select(g => g.Figure).ShouldBe(["100%", "21/32 GB"]);
+    }
+
+    [Fact]
     public void MachineAParentChainThatLoopsMarksNothingAndNeverHangs()
     {
         // Reused ids can point two processes at each other.

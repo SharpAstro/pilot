@@ -45,6 +45,7 @@ internal sealed partial class FlightsView<TSurface>
         BeginFrame();
         _mapBodySeen = null;
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -213,7 +214,7 @@ internal sealed partial class FlightsView<TSurface>
             // Wrapped, never cut: a refusal's reason is what the person came to read.
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
-        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         // After the page's text and before the menus over it: where the selection is drawn.
         page = WithSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;

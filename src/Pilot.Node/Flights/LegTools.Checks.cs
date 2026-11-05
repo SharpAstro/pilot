@@ -28,14 +28,14 @@ public interface ICheckRunner
 }
 
 /// <summary>
-/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.RunCheckAsync"/>): it
+/// <see cref="ICheckRunner"/> as a node job of kind <see cref="JobKind.Check"/> (<see cref="JobRunner.CheckLimitFor"/>): it
 /// waits its turn with the other jobs, counts against max-jobs and the job-memory floor, and its
 /// <see cref="ShellCheckRunner.Timeout"/> counts from when it starts running.
 /// </summary>
 public sealed class JobCheckRunner(JobRunner jobs) : ICheckRunner
 {
     public Task<CheckRun> RunAsync(string command, string cwd, CancellationToken cancellationToken, string? flight = null, string? leg = null) =>
-        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, ShellCheckRunner.Timeout, cancellationToken);
+        jobs.RunCheckAsync(flight ?? "", leg ?? "", command, cwd, jobs.CheckLimitFor(command, cwd), cancellationToken);
 }
 
 /// <summary>
