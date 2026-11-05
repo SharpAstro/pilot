@@ -40,6 +40,21 @@ internal abstract class PilotWidgetBase<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>Takes the height of the room <paramref name="bounds"/> the page is rendered in, for <see cref="WhenShort"/>; call it before building the tree.</summary>
     protected void NoteHeight(RectF32 bounds) => PageHeight = Scale.ToDesignY(bounds.Height);
 
+    private readonly ListScrollController _headScroll = new() { Mode = ScrollBarMode.Interactive };
+
+    /// <summary>The room the body under a <see cref="ScrollingHead"/> keeps while the window is short: the page's own foot (the chat's box) stays in view.</summary>
+    protected float BodyFloor => PageHeight is { } height && height < ShortPageHeight ? 160f : 0f;
+
+    /// <summary>
+    /// <paramref name="head"/> (a page's top bar, which wraps onto many lines at a narrow width) as it is, or, where the room is shorter than
+    /// <see cref="ShortPageHeight"/>, taking what it needs of the room but leaving the body <see cref="BodyFloor"/> and scrolling itself past that: for
+    /// the page whose foot must stay in reach (a chat's box), where <see cref="WhenShort"/> would scroll the box away.
+    /// </summary>
+    protected Layout.Node ScrollingHead(Layout.Node head) =>
+        PageHeight is { } height && height < ShortPageHeight
+            ? Layout.Builder.VStack(head).WithScroll(_headScroll).WStar().HStarUpToContent()
+            : head;
+
     /// <summary>
     /// <paramref name="page"/> as it is, or, where the room is shorter than <see cref="ShortPageHeight"/>, laid out that tall inside a scroll: the
     /// body the page's own scrolls share would otherwise be left no room and the text of the page lie past its foot, cut (the 500 px
