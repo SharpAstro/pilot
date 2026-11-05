@@ -43,6 +43,15 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>The For-you card for a running job that has used next to no CPU while others queue behind it.</summary>
     public const string IdleKind = "job-idle";
 
+    /// <summary>The Ring card for a queued benchmark that has waited past <see cref="BenchQuietWait"/> for a quiet CPU.</summary>
+    public const string BenchBusyKind = "job-bench-busy";
+
+    /// <summary>How long a queued benchmark waits for a quiet CPU before its owner is rung and told why the CPU is busy.</summary>
+    public TimeSpan BenchQuietWait { get; set; } = TimeSpan.FromMinutes(30);
+
+    // Benches whose owner has been told they wait for a quiet CPU: once per bench.
+    private readonly ConcurrentDictionary<string, byte> _benchBusyTold = new(StringComparer.Ordinal);
+
     /// <summary>How long a job may run unless its owner said otherwise.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromHours(2);
 
@@ -626,6 +635,74 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
 
         CheckIdle();
+        CheckBenchBusy();
+    }
+
+    /// <summary>
+    /// A benchmark at the head of the queue that has waited past <see cref="BenchQuietWait"/> with nothing of pilot's running and the
+    /// CPU still busy rings its owner once (a Ring card on the job, and one say) naming why. The card closes when the bench starts
+    /// or leaves the queue, or the CPU reads quiet; the bench keeps its place (the owner decides).
+    /// </summary>
+    private void CheckBenchBusy()
+    {
+        var head = _queue.Count > 0 && _queue[0].Kind == JobKind.Bench ? _queue[0] : null;
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == BenchBusyKind).ToList())
+        {
+            if (head is null || card.Subject != Verbs.JobTarget(head.Id))
+            {
+                state.CloseCardsAbout(card.Subject, "the benchmark started or left the queue", BenchBusyKind);
+            }
+        }
+        if (head is null)
+        {
+            return;
+        }
+        var subject = Verbs.JobTarget(head.Id);
+        var cpuNow = MachineCpu is { } read ? read() : state.Machine()?.CpuPercent;
+        var outside = OutsideCpu();
+        var busy = !_running.IsEmpty ? false : (outside is { } o && o > BenchQuietCpu) || (cpuNow is { } c && c > BenchQuietCpu);
+        if (!busy)
+        {
+            state.CloseCardsAbout(subject, "the CPU is quiet again", BenchBusyKind);
+            return;
+        }
+        if (head.QueuedAt is not { } queuedAt || time.GetUtcNow() - queuedAt <= BenchQuietWait || !_benchBusyTold.TryAdd(head.Id, 0))
+        {
+            return;
+        }
+        var names = state.Machine()?.OutsideNames() ?? [];
+        var parts = new List<string>();
+        if (cpuNow is { } cpu)
+        {
+            parts.Add($"the CPU is at {cpu:0}% now");
+        }
+        if (outside is { } share)
+        {
+            parts.Add($"{share:0}% of it is outside pilot");
+        }
+        var why = (parts.Count > 0 ? string.Join(", ", parts) : "the CPU is busy") + (names.Length > 0 ? ", the busiest being " + string.Join(", ", names) : "");
+        var waited = Took(time.GetUtcNow() - queuedAt);
+        var owner = head.OwnerName ?? head.Owner ?? "the node";
+        state.RaiseCard(CardBin.Ring, BenchBusyKind, subject, $"benchmark {head.Id} has waited {waited} for a quiet CPU: {why}",
+            $"`{head.Command}` ({owner}) waits until the CPU is at {BenchQuietCpu:0}% or less. Cancel it with `pilot job cancel {head.Id}` or let it keep waiting.");
+        if (head.Owner is not null && Say is not null)
+        {
+            var text = $"Your benchmark {head.Id} (`{head.Command}`) has waited {waited} for a quiet CPU: {why}. Cancel it with 'pilot job cancel {head.Id}', or keep waiting.";
+            var target = WakeTarget(head.Owner, head.OwnerName);
+            _ = SayQuietlyAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who });
+        }
+    }
+
+    private async Task SayQuietlyAsync(CommandRequest request)
+    {
+        try
+        {
+            await Say!(request, _stopping);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The ring card already carries the news; a failed say is not worth more.
+        }
     }
 
     /// <summary>

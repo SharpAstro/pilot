@@ -124,16 +124,19 @@ public sealed record MachineRow
             return "";
         }
         var share = Math.Min(100, Math.Round(outside * 100 / Math.Max(CpuPercent, 1)));
-        var names = OutsideProcesses.Where(p => p.CpuPercent >= 1).Take(OutsideNamed).Select(Named).ToArray();
+        var names = OutsideNames();
         return $", {share:0}% of it outside pilot" + (names.Length > 0 ? ": " + string.Join(", ", names) : "");
+    }
 
-        static string Named(MachineProcess p)
-        {
-            // By hand, not Path: the folder may be a Windows path read on Linux or the reverse.
-            var folder = p.WorkingDirectory?.TrimEnd('/', '\\') ?? "";
-            var leaf = folder[(folder.LastIndexOfAny(['/', '\\']) + 1)..];
-            return leaf.Length > 0 ? $"{p.Name} in {leaf}" : p.Name;
-        }
+    /// <summary>The busiest outside processes (at most <see cref="OutsideNamed"/>) as <c>TianWen.Lib.Tests in grade-sky-trend</c>: name, and the folder's leaf where known.</summary>
+    public string[] OutsideNames() => [.. OutsideProcesses.Where(p => p.CpuPercent >= 1).Take(OutsideNamed).Select(Named)];
+
+    private static string Named(MachineProcess p)
+    {
+        // By hand, not Path: the folder may be a Windows path read on Linux or the reverse.
+        var folder = p.WorkingDirectory?.TrimEnd('/', '\\') ?? "";
+        var leaf = folder[(folder.LastIndexOfAny(['/', '\\']) + 1)..];
+        return leaf.Length > 0 ? $"{p.Name} in {leaf}" : p.Name;
     }
 
     private static string Mbps(double bytesPerSecond) => (bytesPerSecond * 8d / 1_000_000d).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);

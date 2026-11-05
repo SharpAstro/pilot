@@ -145,6 +145,53 @@ public sealed class BenchSlotTests : JobTestsBase
     }
 
     [Fact]
+    public async Task ABenchWaitingPastTheBoundForABusyCpuRingsOnceNamingTheProcessAndClosesWhenItStarts()
+    {
+        double? outside = 90;
+        _cpu = 95;
+        var (jobs, clock, _, _) = Idle(() => _cpu, () => outside);
+        var said = new List<CommandRequest>();
+        jobs.Say = (request, _) =>
+        {
+            said.Add(request);
+            return Task.FromResult(new CommandResult { Seq = 0, Verb = request.Verb, Target = request.Target, Who = request.Who, Ok = true });
+        };
+        _state.PutMachine(new MachineRow
+        {
+            SampledAt = clock.GetUtcNow(), CpuPercent = 95, Cores = 16, MemoryUsed = 1, MemoryTotal = 2, OwnedCpuPercent = 5,
+            Processes = [new MachineProcess { Pid = 4242, Name = "TianWen.Lib.Tests", CpuPercent = 80, MemoryBytes = 1, WorkingDirectory = @"C:\repos\tianwen\grade-sky-trend" }],
+        });
+        var bench = HandBench(jobs, Echo("bench"));
+        CardRow[] Busy() => [.. _state.Cards(openOnly: true).Where(c => c.Kind == JobRunner.BenchBusyKind)];
+
+        Look(jobs);
+        Busy().ShouldBeEmpty();
+        clock.Advance(TimeSpan.FromMinutes(29));
+        Look(jobs);
+        Busy().ShouldBeEmpty();
+        said.ShouldBeEmpty();
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        Look(jobs);
+        Look(jobs);
+        var card = Busy().ShouldHaveSingleItem();
+        (card.Bin, card.Subject).ShouldBe((CardBin.Ring, Verbs.JobTarget(bench)));
+        var say = said.ShouldHaveSingleItem();
+        say.Args[0].ShouldContain("TianWen.Lib.Tests in grade-sky-trend");
+        say.Args[0].ShouldContain("95%");
+        say.Args[0].ShouldContain("90% of it is outside pilot");
+        say.Args[0].ShouldContain($"pilot job cancel {bench}");
+        Row(bench).State.ShouldBe(JobState.Queued);
+
+        outside = 2;
+        _cpu = 5;
+        Look(jobs);
+        (await Until(bench, j => j.State is JobState.Running or JobState.Succeeded)).Kind.ShouldBe(JobKind.Bench);
+        Busy().ShouldBeEmpty();
+        said.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task ALegWorkerStartIsHeldWhileABenchIsQueuedOrRunningAndAdmittedAfter()
     {
         var (jobs, _, _, gone) = Idle(() => _cpu);
