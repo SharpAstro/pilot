@@ -51,8 +51,6 @@ public sealed partial class JobPriorityTests : JobTestsBase
         lines.ShouldContain("child=" + expected, output);
     }
 
-    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
-    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task AJobAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
@@ -68,8 +66,6 @@ public sealed partial class JobPriorityTests : JobTestsBase
     [Fact]
     public void AJobRunnerRunsBelowNormalUnlessToldOtherwise() => _jobs.Priority.ShouldBe(JobPriority.BelowNormal);
 
-    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
-    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task ACheckRunAsAJobAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
@@ -82,8 +78,6 @@ public sealed partial class JobPriorityTests : JobTestsBase
         ShouldRunAt(run.Tail, priority);
     }
 
-    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
-    [Trait("Category", "Slow")]
     [Theory]
     [MemberData(nameof(Priorities))]
     public async Task ACheckRunDirectlyAndAProcessItStartsRunAtTheRunnersPriority(JobPriority priority)
@@ -94,8 +88,6 @@ public sealed partial class JobPriorityTests : JobTestsBase
         ShouldRunAt(run.Tail, priority);
     }
 
-    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
-    [Trait("Category", "Slow")]
     [Fact]
     public async Task ACheckRunDirectlyRunsBelowNormalByDefault()
     {
@@ -128,8 +120,7 @@ public sealed partial class JobPriorityTests : JobTestsBase
         throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
-    // Slow: a cold pwsh (or sh) start at below-normal priority, which a busy machine stretches past the 15 s guard; CI runs Slow tests in their own step.
-    [Trait("Category", "Slow")]
+    // Starts a node of its own and runs a job at Idle priority, which a busy machine starves: it took 19 to 23 s under load.
     [Fact]
     public async Task SettingJobPriorityOnTheNodeChangesTheNextJobAndNormalRestoresNormal()
     {

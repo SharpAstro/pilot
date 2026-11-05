@@ -88,7 +88,7 @@ public sealed partial class PrReviews
         if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended) && await EndFixerAsync(review, cancellationToken))
         {
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
-                $"The PR's head is still {review.Head[..Math.Min(8, review.Head.Length)]}. Fix it starts another fixer on the same findings.",
+                $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings.",
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
@@ -149,7 +149,7 @@ public sealed partial class PrReviews
         }
         var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
         void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
-            $"{pr} merged while its fixer worked: commit {Short(tip)} has no follow-up PR ({LegCommander.OneLine(why)})",
+            $"{pr} merged while its fixer worked: commit {CommitRefs.Short(tip)} has no follow-up PR ({LegCommander.OneLine(why)})",
             $"{why}\nThe commit {tip} stays on the local branch {localBranch} in {review.ClonePath}; push it if {branch} is not on origin, and open a PR against {baseBranch} by hand.", link: review.Url);
         try
         {
@@ -161,10 +161,10 @@ public sealed partial class PrReviews
             }
             var answer = review.DesignAnswer is { Length: > 0 } given ? $"\n\nThe design answer it carried out: {given}" : "";
             var findings = review.Findings.Length > 0 ? "\n\nFindings of the review:\n" + string.Join('\n', review.Findings.Select(f => "- " + f)) : "";
-            var body = $"Follow-up of {pr} ({review.Url}), which merged while its fixer was still working. These are the fixer's commits past the merged head {Short(merged)}.\n\nFrom the review of {pr}.{findings}{answer}";
+            var body = $"Follow-up of {pr} ({review.Url}), which merged while its fixer was still working. These are the fixer's commits past the merged head {CommitRefs.Short(merged)}.\n\nFrom the review of {pr}.{findings}{answer}";
             var created = await github.CreateAsync(review.ClonePath, branch, baseBranch, $"Follow-up of {pr}: {read.Title}", body, cancellationToken);
             var follow = new PrRef(pr.Owner, pr.Name, created.Number);
-            state.RaiseCard(CardBin.Handled, FixFollowUpKind, subject, $"{pr} merged while its fixer worked: its commit {Short(tip)} is now {follow} on {branch}", $"against {baseBranch}", link: created.Url);
+            state.RaiseCard(CardBin.Handled, FixFollowUpKind, subject, $"{pr} merged while its fixer worked: its commit {CommitRefs.Short(tip)} is now {follow} on {branch}", $"against {baseBranch}", link: created.Url);
             try
             {
                 await StartAsync(follow, cancellationToken);
