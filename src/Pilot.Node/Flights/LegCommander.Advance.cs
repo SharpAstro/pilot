@@ -68,13 +68,19 @@ public sealed partial class LegCommander
         }
         // A planner held by the window goes by itself once it has reset: the same start, said again by the node.
         // Also a planner admission holds (queued on its flight, as a node restarted meanwhile has lost its memory of it), in the order admission gives.
-        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null } && state.Legs(f.Code).Length == 0))
+        foreach (var queued in state.Flights().Where(f => f is { State: FlightState.Flying, Queued: not null, OnHold: null } && state.Legs(f.Code).Length == 0))
         {
             _plannersWaiting.TryAdd(queued.Code, true);
         }
         foreach (var code in Slots.Order(_plannersWaiting.Keys).ToList())
         {
             _plannersWaiting.TryRemove(code, out _);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: not null })
+            {
+                // The owner's hold (#771): no planner starts; the sweep asks again once it is released.
+                _plannersWaiting[code] = true;
+                continue;
+            }
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { } asking)
             {
                 await PrimeAsync(asking, cancellationToken);
@@ -115,6 +121,11 @@ public sealed partial class LegCommander
         if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { MoveUnknown: not null })
         {
             await SettleMoveAsync(flight.Code, cancellationToken);
+            return;
+        }
+        // The owner's hold (#771): a held flight is advanced by no sweep, no finish and no card, until it is released.
+        if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is { OnHold: not null })
+        {
             return;
         }
         if (!Models.Advances || state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current

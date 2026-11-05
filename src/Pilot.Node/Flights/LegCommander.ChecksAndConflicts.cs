@@ -54,6 +54,10 @@ public sealed partial class LegCommander
         {
             return Task.FromResult<string?>($"{code} is not a flight");
         }
+        if (OnHoldRefusal(flight) is { } onHold)
+        {
+            return Task.FromResult<string?>(onHold);
+        }
         var subject = Verbs.FlightTarget(code);
         if (state.Cards(openOnly: true).Any(c => c.Kind == PrConflictsKind && c.Subject == subject))
         {

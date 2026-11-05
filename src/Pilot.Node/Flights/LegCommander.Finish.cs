@@ -402,7 +402,8 @@ public sealed partial class LegCommander
         // The leg-end mark's leak guard counts from here, not from when the finish began: the leg's own check can outlast it (#564).
         RefreshLegEndChecking(flight.Code);
         state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} done");
-        if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done))
+        // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
+        if (flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)
         {
             if (push)
             {

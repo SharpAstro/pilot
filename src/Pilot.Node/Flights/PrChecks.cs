@@ -213,7 +213,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private async Task LookAtQueuesAsync(CancellationToken cancellationToken)
     {
         var carded = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null }))
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, OnHold: null }))
         {
             var flown = state.Legs(flight.Code);
             if (flown.Length == 0 || flown.Any(l => l.State != LegState.Done))
@@ -296,7 +296,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return;
         }
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, Review: not null }))
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, Review: not null, OnHold: null }))
         {
             PullRequest? pr;
             try
@@ -399,7 +399,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// </summary>
     private async Task MergeWhenGreenAsync(CancellationToken cancellationToken)
     {
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null }))
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, MergeWhenGreen: [_, _, ..], PullRequest: not null, OnHold: null }))
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
             var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;
@@ -702,7 +702,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             return;
         }
         var carded = state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
-        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, MergeWhenGreen: null, Review: { State: ReviewState.Passed, ReviewedHead: not null } }
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, MergeWhenGreen: null, OnHold: null, Review: { State: ReviewState.Passed, ReviewedHead: not null } }
             && !carded.Contains(Verbs.FlightTarget(f.Code))))
         {
             var flown = state.Legs(flight.Code);
@@ -803,6 +803,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                         RaiseNotLanded(flight, number, pr.Head, ex);
                     }
                 }
+                continue;
+            }
+            // The owner's hold (#771): the node takes no step for the flight, whatever its card offers, until it is released.
+            if (flight.OnHold is not null)
+            {
                 continue;
             }
             // What GitHub says of the PR's merge, which the card's Merge mirrors; null while GitHub works it out.
