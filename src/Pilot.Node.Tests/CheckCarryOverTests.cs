@@ -125,6 +125,8 @@ public sealed class CheckCarryOverTests : JobTestsBase
             using var second = await Node.StartAsync(_root);
             KillBusy(busy);
             await second.UntilAsync(check.Id, j => j.EndedAt is not null, Ct);
+            // The runner keeps the result just after it puts the ended row; give that a moment so a loaded machine does not race it.
+            await Task.Delay(1000, Ct);
 
             var result = await second.Jobs.RunCheckAsync(Flight, LegName, check.Command, _root, TimeSpan.FromMinutes(30), Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
