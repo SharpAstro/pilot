@@ -101,7 +101,36 @@ public sealed class PageTextOverlapTests
                 File.AppendAllLines(dump, faults.Select(f => $"{Key(page, state, width, dpi, height)}\t{f.Line}"));
             }
         }
-        faults.Select(f => f.Line).ShouldBeEmpty($"{Key(page, state, width, dpi, height)} [{faults.Count} faults]");
+
+        var failing = Failures(key, faults, TextOverlapAllowList.Covers);
+        if (failing.Count == 0)
+        {
+            return;
+        }
+        // A picture to start the fix from: the page as the chrome paints it, beside the test's output.
+        var capture = await CaptureOf(page, state, width, dpi, height, key);
+        Assert.Fail(Message(key, failing, capture));
+    }
+
+    /// <summary>The faults of <paramref name="key"/>'s case that the allow-list (<paramref name="allowed"/>) does not cover: what fails the case.</summary>
+    internal static IReadOnlyList<TextFault> Failures(string key, IReadOnlyList<TextFault> faults, Func<string, string, bool> allowed) =>
+        [.. faults.Where(f => !allowed(key, f.Line))];
+
+    /// <summary>One line a fault: the case (page, state, size), the two texts and their bounds (the fault's own line), and where the capture is.</summary>
+    internal static string Message(string key, IReadOnlyList<TextFault> failing, string? capture) =>
+        $"{key} [{failing.Count} faults]" + string.Concat(failing.Select(f => $"{Environment.NewLine}  {key}: {f.Line}" + (capture is null ? "" : $" (capture: {capture})")));
+
+    /// <summary>Writes the page of a failing case as a PNG, as the chrome paints it, to <c>text-overlap/&lt;case&gt;.png</c> beside the test's output; the path.</summary>
+    private static async Task<string> CaptureOf(string page, string state, int width, float dpi, int height, string key)
+    {
+        var folder = Path.Combine(AppContext.BaseDirectory, "text-overlap");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".png");
+        using var prepared = await Prepare(page, state, width, dpi, null, height);
+        var data = prepared.Data;
+        prepared.Chrome.Render(data.Sessions, data.Flights, CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend);
+        File.WriteAllBytes(path, PngWriter.Encode(prepared.Renderer.Surface.Pixels, width, height));
+        return path;
     }
 
     private static readonly Lock DumpLock = new();
@@ -152,6 +181,28 @@ public sealed class PageTextOverlapTests
     private static IdeasScreen IdeasSample() => new(
         [Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box"), Idea(380, "Rail count", ""), Idea(370, "Old plan", "", IdeaState.Planned)],
         [], ["pilot", "tianwen"], "live from the node", PageData.Now);
+
+    /// <summary>The Ideas board in a state: the sample's three ideas, ideas with titles and bodies far past a column ("long"), sixty of every state ("many"), or none.</summary>
+    private static IdeasScreen IdeasFor(string state)
+    {
+        var states = Enum.GetValues<IdeaState>();
+        return state switch
+        {
+            "sample" => IdeasSample(),
+            "long" => new IdeasScreen(
+                [.. Enumerable.Range(0, 6).Select(i => Idea(381 - i, $"{PageData.LongTitle} {i}",
+                    $"{PageData.LongReport}\n\n- **Path:** {PageData.LongPath}\n- **Word:** {PageData.LongWord}\n- {PageData.LongTitle}", states[i % states.Length]))],
+                [], ["pilot", PageData.LongWord], "live from the node on " + PageData.LongPath, PageData.Now),
+            "many" => new IdeasScreen(
+                [.. Enumerable.Range(0, 60).Select(i => Idea(500 - i, $"Idea {i}: an idea with a title of some length", i % 3 == 0 ? "" : "Show **ideas** in a pane.\n\n- a list\n- a box", states[i % states.Length]))],
+                [], ["pilot", "tianwen"], "live from the node", PageData.Now),
+            "empty" => new IdeasScreen([], [], ["pilot"], "live from the node", PageData.Now),
+            _ => throw new ArgumentException($"no state '{state}'", nameof(state)),
+        };
+    }
+
+    /// <summary>The cards the page is drawn from: those with a long detail folded under a summary for "card detail", the plain ones otherwise.</summary>
+    private static CardsScreen CardsOf(PageData data, string page) => page == CardDetailPage ? data.CardsWithDetail : data.Cards;
 
     private static async Task<Prepared> Prepare(string page, string state, int width, float dpi, Action<PilotChrome<RgbaImage>>? setup = null, int height = Height)
     {

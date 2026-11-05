@@ -281,9 +281,7 @@ internal sealed class PageData
         var detailRows = cardRows.Select(c => c with
         {
             Summary = lengthen ? $"{LongTitle} (summary)" : "Merge PR #390 once the checks are green.",
-            Detail = lengthen ? LongReport + "
-
-" + LongPath : LongReport,
+            Detail = lengthen ? LongReport + "\n\n" + LongPath : LongReport,
         }).ToList();
         var cardsWithDetail = cards == 0 ? CardsScreen.Empty : CardsScreen.From(detailRows, sessionRows, asOf);
 

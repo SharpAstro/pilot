@@ -17,7 +17,7 @@ internal sealed record AllowedTextFault(string Case, string Fault, string Reason
     public bool CoversCase(string key) => Matches(Case, key);
 
     private static bool Matches(string pattern, string text) =>
-        Regex.IsMatch(text, "^" + Regex.Escape(pattern).Replace("\*", ".*", StringComparison.Ordinal) + "$", RegexOptions.Singleline);
+        Regex.IsMatch(text, "^" + Regex.Escape(pattern).Replace(@"\*", ".*", StringComparison.Ordinal) + "$", RegexOptions.Singleline);
 }
 
 /// <summary>The faults the sweep finds today and lets pass, each with its reason and issue: the list is the sweep's to-do.</summary>
