@@ -156,7 +156,7 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<string> SearchFail { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The repos of each search, in order.</summary>
-    public List<string[]> Searches { get; } = [];
+    public Recorded<string[]> Searches { get; } = [];
 
     /// <summary>The GraphQL points each search costs, as <c>rateLimit { cost }</c> says.</summary>
     public int SearchCost { get; set; } = 3;
@@ -174,10 +174,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken)
     {
-        lock (Searches)
-        {
-            Searches.Add(repos);
-        }
+        Searches.Add(repos);
         if (_searchHold is { } hold)
         {
             await hold.Task.WaitAsync(cancellationToken);
@@ -199,7 +196,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every issue created, as (repo path, title, body).</summary>
-    public List<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
+    public Recorded<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
     /// <summary>When set, CreateIssueAsync fails with it.</summary>
     public string? CreateIssueFails { get; set; }
@@ -224,7 +221,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Each issue closed, with its comment, in order.</summary>
-    public List<(int Number, string Comment)> ClosedIssues { get; } = [];
+    public Recorded<(int Number, string Comment)> ClosedIssues { get; } = [];
 
     /// <summary>When set, CloseIssueAsync fails with it.</summary>
     public string? CloseIssueFails { get; set; }
@@ -255,13 +252,13 @@ internal sealed class FakeGitHub : IGitHub
     public DateTimeOffset IdeaClock { get; set; } = new(2026, 10, 28, 9, 0, 0, TimeSpan.Zero);
 
     /// <summary>The milestones made by IdeasMilestoneAsync, as (repo folder path, title).</summary>
-    public List<(string Repo, string Title)> MilestonesMade { get; } = [];
+    public Recorded<(string Repo, string Title)> MilestonesMade { get; } = [];
 
     /// <summary>Every issue moved to a milestone, in order.</summary>
-    public List<(int Number, string Milestone)> Moves { get; } = [];
+    public Recorded<(int Number, string Milestone)> Moves { get; } = [];
 
     /// <summary>Every issue closed as not planned, with its comment, in order.</summary>
-    public List<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
+    public Recorded<(int Number, string Comment)> ClosedNotPlanned { get; } = [];
 
     /// <summary>Adds an open milestone to the repo; its number is the next one there.</summary>
     public Milestone AddMilestone(string repoPath, string title, DateTimeOffset? dueOn = null, string description = "", int openIssues = 0, int closedIssues = 0)
@@ -350,7 +347,7 @@ internal sealed class FakeGitHub : IGitHub
     public Action? BeforeNextWrite { get; set; }
 
     /// <summary>Every issue saved by EditIssueAsync, as (number, title, body), in order.</summary>
-    public List<(int Number, string Title, string Body)> Edits { get; } = [];
+    public Recorded<(int Number, string Title, string Body)> Edits { get; } = [];
 
     /// <summary>Changes an issue as someone on GitHub would: its updated_at moves on.</summary>
     public MilestoneIssue ChangeElsewhere(string repoPath, int number, Func<MilestoneIssue, MilestoneIssue> change)
@@ -401,7 +398,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every issue transferred, as (number, repo it went to as owner/name, the number it has there), in order.</summary>
-    public List<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
+    public Recorded<(int Number, string ToRepo, int NewNumber)> Transfers { get; } = [];
 
     /// <summary>The fake keeps every repo of a test as a sibling folder, so a repo as owner/name is the folder of that name beside this one.</summary>
     public Task<MilestoneIssue?> TransferIssueAsync(string repoPath, int number, string toRepo, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
@@ -442,10 +439,10 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every idea image committed by UploadIdeaImageAsync, as (repo folder path, id, ext, bytes), in order.</summary>
-    public List<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
+    public Recorded<(string Repo, string Id, string Ext, byte[] Bytes)> ImageUploads { get; } = [];
 
     /// <summary>Every idea image read back by IdeaImageAsync, as (id, ext), in order.</summary>
-    public List<(string Id, string Ext)> ImageReads { get; } = [];
+    public Recorded<(string Id, string Ext)> ImageReads { get; } = [];
 
     public Task<string> UploadIdeaImageAsync(string repoPath, string id, string ext, byte[] bytes, CancellationToken cancellationToken)
     {
@@ -459,7 +456,7 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
-    public List<(int Number, string Head, string Method)> Merged { get; } = [];
+    public Recorded<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }
@@ -550,10 +547,10 @@ internal sealed class FakeGitHub : IGitHub
     public string? DisarmFails { get; set; }
 
     /// <summary>Every auto-merge armed, as (PR number, head, method).</summary>
-    public List<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
+    public Recorded<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
 
     /// <summary>Every auto-merge disarmed, by PR number.</summary>
-    public List<int> AutoMergeDisarmed { get; } = [];
+    public Recorded<int> AutoMergeDisarmed { get; } = [];
 
     public Task<bool> AutoMergeAllowedAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult(AutoMergeAllowed);
 
@@ -561,7 +558,7 @@ internal sealed class FakeGitHub : IGitHub
     public HashSet<string> ProtectedBranches { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Every branch whose protection was asked, in order.</summary>
-    public List<string> ProtectionAsked { get; } = [];
+    public Recorded<string> ProtectionAsked { get; } = [];
 
     /// <summary>The merge method of the base's merge queue (REBASE, SQUASH, MERGE); null is no merge queue rule.</summary>
     public string? MergeQueueMethod { get; set; }
@@ -612,7 +609,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>How many times the failed runs were asked to run again, each as the PR's number.</summary>
-    public List<int> Reruns { get; } = [];
+    public Recorded<int> Reruns { get; } = [];
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
@@ -676,7 +673,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every dequeue the node asked for, by PR number.</summary>
-    public List<int> Dequeued { get; } = [];
+    public Recorded<int> Dequeued { get; } = [];
 
     /// <summary>When set, DequeueAsync fails with it.</summary>
     public string? DequeueFails { get; set; }
@@ -697,7 +694,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>Every draft (true) or ready (false) the node asked for, by PR number.</summary>
-    public List<(int Number, bool Draft)> DraftCalls { get; } = [];
+    public Recorded<(int Number, bool Draft)> DraftCalls { get; } = [];
 
     /// <summary>When set, SetDraftAsync fails with it, as a gh that could not reach GitHub.</summary>
     public string? DraftFails { get; set; }

@@ -1346,6 +1346,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 return;
             }
         }
+        // The exit file is written by the wrapper just before it exits: the job is not ended while the wrapper still lives, or it
+        // holds its cwd and log after the row says ended (a temp folder could not be deleted on Windows, #721).
+        await GoneAsync(process);
         // What the job wrote last, after the process has gone, and the whole of a last line it left without a newline.
         Follow(final: true);
         // Ended: the scripts it ran are of no use now.
