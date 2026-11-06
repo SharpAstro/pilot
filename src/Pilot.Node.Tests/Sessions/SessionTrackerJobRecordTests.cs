@@ -37,6 +37,9 @@ public sealed class SessionTrackerJobRecordTests : IDisposable
         // A listed session with no transcript is not given a row.
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m2", input: 1));
+        // An ended row ages from its transcript's last write: that is on the fake clock, not the real one, so the retention can pass.
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionA), Start.UtcDateTime);
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionB), Start.UtcDateTime);
     }
 
     public void Dispose() => _profile.Dispose();
