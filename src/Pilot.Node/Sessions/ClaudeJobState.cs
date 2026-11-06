@@ -2,10 +2,21 @@ using System.Text.Json;
 
 namespace Pilot.Node.Sessions;
 
-/// <summary>What Claude Code's own record of a background job says: its <c>state</c> and, when it has one, its <c>detail</c>.</summary>
-public sealed record ClaudeJobRecord(string State, string? Detail)
+/// <summary>
+/// What Claude Code's own record of a background job says: its <c>state</c>, when it has one its <c>detail</c>, and when its
+/// turn last reached a terminal state (<c>lastTerminalAt</c>, null while it never has).
+/// </summary>
+public sealed record ClaudeJobRecord(string State, string? Detail, DateTimeOffset? LastTerminalAt = null)
 {
     public bool Failed => State.Equals("failed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the job's turn is over: its state is done or blocked. Claude Code ends the process of such a <c>claude --bg</c> job a
+    /// minute or two later (PIL815), so a job that reads so and is gone ended by design, not by a crash. Read off the state, not
+    /// <see cref="LastTerminalAt"/>: a blocked job that never set a terminal time was ended the same way (SE1, 2026-11-06).
+    /// </summary>
+    public bool TurnFinished =>
+        State.Equals("done", StringComparison.OrdinalIgnoreCase) || State.Equals("blocked", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -34,7 +45,9 @@ public sealed class ClaudeJobState(string jobsFolder)
                 return null;
             }
             var detail = root.TryGetProperty("detail", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
-            return new ClaudeJobRecord(state.GetString() ?? "", detail);
+            var terminal = root.TryGetProperty("lastTerminalAt", out var t) && t.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(t.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var at) ? at : null as DateTimeOffset?;
+            return new ClaudeJobRecord(state.GetString() ?? "", detail, terminal);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -238,6 +238,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     state.CloseCardsAbout(subject, "working again", Kinds);
                     break;
                 case SessionState.Waiting:
+                    // Waiting on the node, not on a person (#799 rule 3, row c17099): no ring while the node has the next move.
+                    if (WaitsOnNode(leg, worker) && await NodeTakesOverAsync(leg, worker, cancellationToken))
+                    {
+                        break;
+                    }
                     var asks = worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission";
                     Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you for {Clip(asks)}",
                         $"{asks}; the worker cannot go on until it is answered in its own session ({Steps(leg)})", worker);
@@ -1251,6 +1256,53 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>The ledger of launched sessions: which were stopped on a land or merge, and which the node does not know; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
+
+    /// <summary>
+    /// The phrases (any case) by which a waiting worker says it waits on the node, or that its work is committed or done, rather than on a
+    /// question to the person: the one place they are kept, read by <see cref="WaitsOnNode"/>.
+    /// </summary>
+    internal static readonly string[] NodePhrases =
+    [
+        "waiting for the node", "waiting on the node", "waits on the node", "waits for the node", "node's check", "node to finish", "node finishes",
+        "node reruns", "node is rerunning", "check to pass", "check passes", "check is running", "check to finish",
+        "work is committed", "work committed", "all committed", "everything is committed", "changes are committed", "work is done", "leg is done", "work is finished", "leg is finished", "all done", "nothing left to do", "ready to finish",
+    ];
+
+    /// <summary>
+    /// Whether a Waiting worker waits on the node, not on its person: its leg's check is rerunning (the run finishes the leg), or what it
+    /// waits for holds no question (no question mark) and says the work is committed, finished or done, or that it waits on the node or its check.
+    /// </summary>
+    internal static bool WaitsOnNode(LegRow leg, SessionRow worker) =>
+        // A question mark is a question to the person, whatever the leg's check is doing: that worker waits on them.
+        worker.WaitingFor?.Contains('?') != true
+        && (leg.Recheck is not null
+            || worker.WaitingFor is { Length: > 0 } says && NodePhrases.Any(p => says.Contains(p, StringComparison.OrdinalIgnoreCase)));
+
+    // By worker job: the workers whose leg the node tried to finish for them once already; a second look at one still waiting rings.
+    private readonly HashSet<string> _finishTried = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A worker waiting on the node. With the leg's check rerunning nothing is done: the run finishes the leg. Otherwise the node finishes
+    /// the leg done, once per worker, by the same finish its worker would run (steps, check and push all asked). True when no ring is due
+    /// (the leg is finished, or the worker is told why not and gets its turn); false when that was tried already and the worker still waits.
+    /// </summary>
+    private async Task<bool> NodeTakesOverAsync(LegRow leg, SessionRow worker, CancellationToken cancellationToken)
+    {
+        if (leg.Recheck is not null)
+        {
+            return true;
+        }
+        if (!_finishTried.Add(leg.WorkerJob!))
+        {
+            return false;
+        }
+        var done = await run(new CommandRequest { Verb = Verbs.FinishLeg, Target = Subject(leg), Args = ["done", $"finished by the node: its worker waited on the node ({Clip(worker.WaitingFor ?? "work done")})"], Who = Who }, cancellationToken);
+        if (!done.Ok)
+        {
+            await SayAsync(worker, $"You wait on the node, but the node could not finish your leg for you: {done.Error} Put that right and run `{Pilot} leg finish done \"<one-line report>\"` yourself.", cancellationToken);
+        }
+        return true;
+    }
 
     private void Ring(LegRow leg, string kind, string title, string? detail, SessionRow? worker = null, string? lead = null, string? redoWhy = null)
     {

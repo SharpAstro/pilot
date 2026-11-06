@@ -300,7 +300,7 @@ public static class Verbs
     public const string Check = "check";
 
     /// <summary>
-    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|accepted|verified [report…]</c>. Done only with every step ticked and its
+    /// <c>finish-leg flight/&lt;code&gt;/&lt;leg&gt; done|failed|retired|accepted|verified [report…]</c>. Retired ends a flying leg stopped on the controller's or the owner's word: done in the row with its report starting <c>retired:</c>, a Handled line and no card, and the flight goes on. Done only with every step ticked and its
     /// check, rerun by the node in the plane, passing. Accepted takes a failed leg's read as it is (the controller's, never
     /// its worker's or the watchtower's): the leg is done, its failure kept in the report, and the flight goes on. Verified
     /// (anyone's) finishes a failed leg only when its steps are ticked, its plane is clean and matches its pushed branch, and

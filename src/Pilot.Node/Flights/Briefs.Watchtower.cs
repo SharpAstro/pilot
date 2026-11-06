@@ -284,6 +284,9 @@ public static partial class Briefs
         text.AppendLine($"  `{pilot} flight clear <code> <why>` when the notes are not worth a round. Say which you did on the review-notes card. A fix of your own");
         text.AppendLine($"  only for a one-line change: make it in the plane, commit it, then `{pilot} flight pr <code>`. With the autopilot on the node has");
         text.AppendLine("  planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
+        text.AppendLine("  A hold does not wait for you once your session has ended (it ends by design after a reply): with no watchtower running, five minutes after");
+        text.AppendLine("  the hold the node pushes any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or");
+        text.AppendLine("  posts the notes on the PR as one comment and releases the hold. So make or clear the fixes in the turn you take the card.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");

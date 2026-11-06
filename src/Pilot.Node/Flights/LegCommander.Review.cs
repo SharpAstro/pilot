@@ -353,6 +353,11 @@ public sealed partial class LegCommander
                 // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
                 call.Dispose();
                 var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
+                if (fixer is not null)
+                {
+                    HoldForLeg(flight.Code, fixer);
+                }
                 RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
@@ -612,9 +617,6 @@ public sealed partial class LegCommander
 
     /// <summary>The Handled card kind that says a flight was cleared to land.</summary>
     public const string HoldingClearedKind = "holding-cleared";
-
-    /// <summary>Why a flight whose review passed with notes holds its merge.</summary>
-    public const string HoldingReason = "the watchtower is making the review's small fixes";
 
     /// <summary>
     /// The watchtower's word, or the person's, that a flight in a holding pattern is cleared to land: the hold ends, the notes card
