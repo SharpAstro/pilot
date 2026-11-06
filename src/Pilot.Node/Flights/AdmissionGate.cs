@@ -108,39 +108,57 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     }
 
     /// <summary>
-    /// What an Idle session has pending that the node will wake it for, said as <c>idle, job j12 running</c>; null when it has nothing, and then it holds no
-    /// slot. A job Queued or Running it owns, an open card it asked (or one about its flight or leg a person must answer), or its leg's wait.
+    /// What an Idle session has pending that still holds its slot, said as <c>idle, leg wait</c>; null when it has nothing, and then it holds no
+    /// slot. See <see cref="Pending"/>: a session waiting on a person or a job holds none (a woken one resumes without admission).
     /// </summary>
-    private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
+    private static string? PendingWork(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs) => Pending(session, jobs, cards, legs).Holds;
+
+    /// <summary>
+    /// Splits an Idle session's pending work in two. <c>Holds</c> keeps its slot: no first turn yet, a job result not yet told (the node wakes it
+    /// now) and a leg wait. <c>Waiting</c> is a session waiting on a person (an open card it asked, or one for the owner about its flight or leg,
+    /// which covers a planner whose plan is filed and whose planned card waits) or on a job of its own queued or running: it holds no slot, and a
+    /// woken session resumes without admission. The two are not mutually exclusive in the data, but <c>Holds</c> wins.
+    /// </summary>
+    private static (string? Holds, string? Waiting) Pending(SessionRow session, JobRow[] jobs, CardRow[] cards, LegRow[] legs)
     {
         // A session the node just started has taken no first turn: it holds the slot it was admitted for.
         if (session is { ContextTokens: 0, LastResponseAt: null, Gone: false })
         {
-            return "idle, no first turn yet";
+            return ("idle, no first turn yet", null);
         }
         // The owner is matched as JobRunner.WakeTarget does: by the row's id, session id or an earlier session id (a continuation, #560).
         bool Owns(string? owner) => owner is not null && (string.Equals(owner, session.Id, StringComparison.Ordinal) || string.Equals(owner, session.SessionId, StringComparison.Ordinal)
             || session.EarlierSessionIds?.Contains(owner) == true);
-        if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && Owns(j.Owner)) is { } job)
-        {
-            return $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}";
-        }
         // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
         if (jobs.FirstOrDefault(j => !j.Told && j.Kind != JobKind.Check && Owns(j.Owner)) is { } ended)
         {
-            return $"idle, job {ended.Id} result to tell";
+            return ($"idle, job {ended.Id} result to tell", null);
+        }
+        if (session.Flight is not null && session.Leg is not null
+            && legs.Any(l => l.Wait is not null && string.Equals(l.Flight, session.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(l.Name, session.Leg, StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("idle, leg wait", null);
+        }
+        if (jobs.FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && Owns(j.Owner)) is { } job)
+        {
+            return (null, $"idle, job {job.Id} {(job.State == JobState.Queued ? "queued" : "running")}");
         }
         var subjects = session.Flight is null ? [] : session.Leg is null ? new[] { $"flight/{session.Flight}" } : [$"flight/{session.Flight}", $"flight/{session.Flight}/{session.Leg}"];
         var card = cards.FirstOrDefault(c => c.State == CardState.Open
             && (string.Equals(c.AskedBy, session.Name, StringComparison.OrdinalIgnoreCase) || c.AlsoAskedBy.Contains(session.Name, StringComparer.OrdinalIgnoreCase)
                 || c.Bin is CardBin.Ring or CardBin.ForYou && subjects.Contains(c.Subject, StringComparer.OrdinalIgnoreCase)));
-        if (card is not null)
-        {
-            return $"idle, card {card.Id} open";
-        }
-        return session.Flight is not null && session.Leg is not null
-            && legs.Any(l => l.Wait is not null && string.Equals(l.Flight, session.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(l.Name, session.Leg, StringComparison.OrdinalIgnoreCase))
-            ? "idle, leg wait" : null;
+        return card is not null ? (null, $"idle, card {card.Id} open") : (null, null);
+    }
+
+    /// <summary>The Idle sessions that wait on a person or a job and so hold no slot, as <c>label (note)</c>, for the status line.</summary>
+    private string[] WaitingOnPerson()
+    {
+        var jobs = state.Jobs();
+        var cards = state.Cards(openOnly: true);
+        var legs = state.Legs();
+        return [.. state.Sessions().Where(s => !s.Archived && s.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner && s.State == SessionState.Idle)
+            .Select(s => (Row: s, Pending: Pending(s, jobs, cards, legs))).Where(p => p.Pending.Holds is null && p.Pending.Waiting is not null)
+            .Select(p => $"{p.Row.Name} ({p.Pending.Waiting})")];
     }
 
     private static AdmissionRole RoleOf(SessionRole role) => role switch
@@ -254,6 +272,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             Counted = counted,
             Priority = [.. state.Flights().Where(f => f.State != FlightState.Landed && IsPriority(f)).Select(f => f.Code).Order(StringComparer.Ordinal)],
             PeersNotCounted = FleetAdmission.Note(view),
+            WaitingOnPerson = WaitingOnPerson(),
         });
     }
 

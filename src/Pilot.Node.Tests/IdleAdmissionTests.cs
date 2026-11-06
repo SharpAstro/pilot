@@ -77,7 +77,7 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
     }
 
     [Fact]
-    public async Task AnIdleSessionOwningARunningJobHoldsItsSlotAndTheWhyNamesItAsIdle()
+    public async Task AnIdleSessionOwningARunningJobHoldsNoSlotAndIsPublishedAsWaiting()
     {
         Settings(cap: 1);
         Put("du1-idle-aaaaaaa1", SessionState.Idle);
@@ -89,12 +89,30 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldBeEmpty();
-        _state.Legs("TIA1").Single().Queued.ShouldNotBeNull().ShouldContain("du1-idle-aaaaaaa1 (idle, job j12 running)");
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _legs.Slots.PublishState();
+        _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldBe("du1-idle-aaaaaaa1 (idle, job j12 running)");
     }
 
     [Fact]
-    public async Task AnIdleSessionWithAnOpenCardItAskedHoldsItsSlotAndPublishedCountedSaysIdle()
+    public async Task AnIdleSessionWithAJobResultNotYetToldStillHoldsItsSlot()
+    {
+        Settings(cap: 1);
+        Put("du1-idle-aaaaaaa1", SessionState.Idle);
+        _state.PutJob(new JobRow
+        {
+            Id = "j13", Command = "dotnet test", Cwd = "/elsewhere", Owner = "aaaaaaa1", State = JobState.Done, LogPath = "/tmp/j13.log",
+            Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow, Told = false,
+        });
+
+        await QueueLeg();
+
+        _workers.Started.ShouldBeEmpty();
+        _state.Legs("TIA1").Single().Queued.ShouldNotBeNull().ShouldContain("du1-idle-aaaaaaa1 (idle, job j13 result to tell)");
+    }
+
+    [Fact]
+    public async Task AnIdleSessionWithAnOpenCardItAskedHoldsNoSlotAndIsPublishedAsWaiting()
     {
         Settings(cap: 1);
         Put("du1-idle-aaaaaaa1", SessionState.Idle);
@@ -102,8 +120,26 @@ public sealed class IdleAdmissionTests : LegCommanderTestsBase
 
         await QueueLeg();
 
-        _workers.Started.ShouldBeEmpty();
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
         _legs.Slots.PublishState();
-        _state.Admission().ShouldNotBeNull().Counted.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
+        var admission = _state.Admission().ShouldNotBeNull();
+        admission.WaitingOnPerson.ShouldHaveSingleItem().ShouldBe($"du1-idle-aaaaaaa1 (idle, card {card.Id} open)");
+        admission.Counted.ShouldNotContain(c => c.StartsWith("du1-idle-aaaaaaa1"));
+    }
+
+    [Fact]
+    public async Task AnIdlePlannerWhoseFlightHasItsPlannedCardOpenHoldsNoSlot()
+    {
+        Settings(cap: 1);
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["2", "Other"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        Put("du1-tia2-planner-aaaaaaa1", SessionState.Idle, flight: "TIA2");
+        _state.PutSession(_state.Sessions().Single(s => s.Name == "du1-tia2-planner-aaaaaaa1") with { Role = SessionRole.Planner });
+        _state.RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, Verbs.FlightTarget("TIA2"), "TIA2: 1 leg planned");
+
+        await QueueLeg();
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-one");
+        _legs.Slots.PublishState();
+        _state.Admission().ShouldNotBeNull().WaitingOnPerson.ShouldHaveSingleItem().ShouldContain("du1-tia2-planner-aaaaaaa1");
     }
 }

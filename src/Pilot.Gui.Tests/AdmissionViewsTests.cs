@@ -289,6 +289,15 @@ public sealed class AdmissionViewsTests
     }
 
     [Fact]
+    public void PilotStatusSaysWhichIdleSessionsWaitingOnAPersonAreNotCounted()
+    {
+        var admission = new AdmissionRow { OpusCount = 1, OpusCap = 3, WaitingOnPerson = ["TIA1991 worker (idle, card c12 open)", "TIA7 planner (idle, card c3 open)", "TIA8 worker (idle, job j9 running)"] };
+        var lines = PilotCommand.AdmissionLines(Snapshot([], [], admission)).ToArray();
+        lines.ShouldContain("not counted: 3 idle, waiting on a person or a job: TIA1991 worker (idle, card c12 open), TIA7 planner (idle, card c3 open), TIA8 worker (idle, job j9 running)");
+        PilotCommand.AdmissionLines(Snapshot([], [], new AdmissionRow { OpusCount = 1, OpusCap = 3 })).ShouldNotContain(l => l.StartsWith("not counted"));
+    }
+
+    [Fact]
     public void TheFlightPageOffersEachOtherLevelAndNoneOnlyWhereTheRepoHasTheField()
     {
         var withField = FlightLine.Build([Leveled(1, IssuePriority.High, null)], [], Now, [], null).Single();
