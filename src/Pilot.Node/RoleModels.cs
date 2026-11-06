@@ -439,6 +439,26 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>The staleness bounds (#736), each its default unless the settings say.</summary>
+    public Pilot.Node.Flights.StaleBounds Stale
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return new Pilot.Node.Flights.StaleBounds
+                {
+                    FlightHours = _settings.StaleFlightHours ?? NodeSettings.DefaultStaleFlightHours,
+                    PrHours = _settings.StalePrHours ?? NodeSettings.DefaultStalePrHours,
+                    RecheckHours = _settings.StaleRecheckHours ?? NodeSettings.DefaultStaleRecheckHours,
+                    CardHours = _settings.StaleCardHours ?? NodeSettings.DefaultStaleCardHours,
+                    Holds = _settings.StaleHolds ?? NodeSettings.DefaultStaleHolds,
+                    UnreachableHours = _settings.StaleUnreachableHours ?? NodeSettings.DefaultStaleUnreachableHours,
+                };
+            }
+        }
+    }
+
     /// <summary>Free gigabytes on the repos' drive below which the disk sweep rings (<see cref="NodeSettings.DiskAlertGbKey"/>); 20 by default.</summary>
     public int DiskAlertGb
     {

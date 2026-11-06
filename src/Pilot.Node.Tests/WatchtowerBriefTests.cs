@@ -105,4 +105,36 @@ public class WatchtowerBriefTests
     {
         Brief().ShouldNotContain("—");
     }
+
+    private static Pilot.Node.Flights.StaleItem Stale(string subject, string age) => new()
+    {
+        Kind = Pilot.Node.Flights.StaleKind.Flight, Subject = subject, Age = TimeSpan.FromHours(19), AgeText = age, WaitsOn = "job j3178, 2nd in the queue",
+        Action = "wait for the queue", Timeline = ["09:00 flight created"], Cause = "open 19 h", Bound = "12 h",
+    };
+
+    [Fact]
+    public void TheStaleSectionComesBeforeWhereThingsStandAndNamesAgeWaitAndAction()
+    {
+        var brief = Briefs.Watchtower("wt", [], [], [], "pilot", stale: [Stale("DIR178", "19 h")]);
+
+        var at = brief.IndexOf("## Gone stale", StringComparison.Ordinal);
+        at.ShouldBeGreaterThan(0);
+        at.ShouldBeLessThan(brief.IndexOf("## Where things stand", StringComparison.Ordinal));
+        brief.ShouldContain("- DIR178, open 19 h: waiting on job j3178, 2nd in the queue. Next: wait for the queue. \"09:00 flight created. open 19 h\"");
+    }
+
+    [Fact]
+    public void NoStaleSectionWhenNothingIsStale()
+    {
+        Briefs.Watchtower("wt", [], [], [], "pilot").ShouldNotContain("Gone stale");
+        Briefs.Watchtower("wt", [], [], [], "pilot", stale: []).ShouldNotContain("Gone stale");
+    }
+
+    [Fact]
+    public void TheStaleSectionIsCutToFitTheBrief()
+    {
+        var many = Enumerable.Range(0, 2000).Select(i => Stale($"F{i}", "19 h")).ToList();
+
+        Briefs.Watchtower("wt", [], [], [], "pilot", stale: many).Length.ShouldBeLessThan(Briefs.MaxWatchtowerBrief);
+    }
 }

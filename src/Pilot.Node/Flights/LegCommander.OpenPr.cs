@@ -55,7 +55,7 @@ public sealed partial class LegCommander
                     if (!onto.Ok)
                     {
                         await git.RunAsync(["merge", "--abort"], repaired.Worktree, cancellationToken);
-                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {mergedHead[..Math.Min(8, mergedHead.Length)]}), then open the PR");
+                        throw new FlightException($"merging {repaired.Base} into {repaired.Code}'s plane conflicts ({onto.Why}): merge it by hand (git merge {repaired.Base}, the earlier PR merged at {CommitRefs.Short(mergedHead)}), then open the PR");
                     }
                 }
                 repaired = repaired with { MergedHead = null };
@@ -168,13 +168,11 @@ public sealed partial class LegCommander
         await git.RunAsync(["merge", "--abort"], flight.Worktree, cancellationToken);
         var plane = (await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken)).Output.Trim();
         var theirs = remote.Output.Trim();
-        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({Short(theirs)}) holds commits the plane ({Short(plane)}) lacks, and merging them conflicts";
+        var why = $"{flight.Branch} is not pushed: origin/{flight.Branch} ({CommitRefs.Short(theirs)}) holds commits the plane ({CommitRefs.Short(plane)}) lacks, and merging them conflicts";
         state.RaiseCard(CardBin.Ring, PushDivergedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} was not pushed: the remote branch holds commits it lacks",
             $"{why} ({merge.Why}). Nothing was overwritten. Merge origin/{flight.Branch} into the plane by hand ({flight.Worktree}), resolve the conflicts and commit, then push again.");
         throw new FlightException($"{why}: merge origin/{flight.Branch} ({theirs}) into the plane's head ({plane}) by hand, then push again");
     }
-
-    private static string Short(string sha) => sha[..Math.Min(8, sha.Length)];
 
     /// <summary>
     /// Fetches, takes in what the remote holds that the plane lacks (<see cref="TakeRemoteAsync"/>), then merges the base in

@@ -19,6 +19,9 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
     /// <summary>How many handled lines a digest lists before it says how many more there were.</summary>
     public int MaxLines { get; init; } = 15;
 
+    /// <summary>The bounds past which work is stale (#736); the defaults unless the node wires its settings.</summary>
+    public Func<StaleBounds> Bounds { get; set; } = () => new StaleBounds();
+
     private DateTimeOffset? _last;
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -85,8 +88,13 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         var failed = state.Legs().Where(l => l.State == LegState.Failed).ToList();
         var flying = flights.Count(f => f.State == FlightState.Flying);
 
-        var title = $"Digest: {Count(landed.Count, "landed", "landed")}, {flying} flying, {Count(open.Count, "card open", "cards open")}";
+        var stale = StaleSection.Read(state, now, Bounds(), time.LocalTimeZone);
+        var title = $"Digest: {Count(landed.Count, "landed", "landed")}, {flying} flying, {Count(open.Count, "card open", "cards open")}{(stale.Count > 0 ? $", {stale.Count} gone stale" : "")}";
         var text = new StringBuilder();
+        foreach (var line in StaleSection.Lines(stale, flights))
+        {
+            text.AppendLine(line);
+        }
         text.AppendLine(landed.Count == 0 ? "Landed: none." : "Landed:");
         foreach (var flight in landed)
         {

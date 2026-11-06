@@ -619,6 +619,6 @@ public sealed class MergeBatchTests
         };
 
         row.Open.ShouldBeTrue();
-        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #10  tianwen  1  {PrHead[..8]}  batched  · in a batch of 2 PRs: its CI runs once for them");
+        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #10  tianwen  1  {PrHead[..9]}  batched  · in a batch of 2 PRs: its CI runs once for them");
     }
 }

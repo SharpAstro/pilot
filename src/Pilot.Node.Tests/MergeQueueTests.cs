@@ -19,7 +19,7 @@ public sealed class MergeQueueTests
     [InlineData("gh: Required status check build is expected", false)]
     [InlineData("", false)]
     public void GitHubSayingAPullRequestIsInTheQueueAlreadyIsNotARefusal(string said, bool expected) =>
-        GhCli.AlreadyQueued(said).ShouldBe(expected);
+        MergeAnswers.AlreadyQueued(said).ShouldBe(expected);
 
     [Theory]
     [InlineData("gh: Pull request auto merge is already enabled", true)]
@@ -29,7 +29,7 @@ public sealed class MergeQueueTests
     [InlineData("gh: Head sha didn't match expected head oid", false)]
     [InlineData("", false)]
     public void GitHubSayingAutoMergeIsEnabledAlreadyIsNotARefusal(string said, bool expected) =>
-        GhCli.AlreadyArmed(said).ShouldBe(expected);
+        MergeAnswers.AlreadyArmed(said).ShouldBe(expected);
 
     [Fact]
     public void APullRequestWhoseBaseHasAQueueIsQueuedByItsNodeId() =>

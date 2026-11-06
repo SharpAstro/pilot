@@ -24,9 +24,11 @@ internal static class CardKindCatalog
     private const string LegOpenPr = "Flights/LegCommander.OpenPr.cs";
     private const string LegPlanners = "Flights/LegCommander.Planners.cs";
     private const string LegReview = "Flights/LegCommander.Review.cs";
+    private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
     private const string LegChecksAndConflicts = "Flights/LegCommander.ChecksAndConflicts.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
+    private const string Shape = "Flights/LegCommander.Shape.cs";
     private const string Watch = "Flights/LegWatch.cs";
     private const string FlightCommanderConnect = "Flights/FlightCommander.Connect.cs";
     private const string FlightCommanderCreate = "Flights/FlightCommander.Create.cs";
@@ -93,6 +95,8 @@ internal static class CardKindCatalog
         new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason"),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),
+        new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
+        new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
         new("holding-cleared", "Handled", [LegReview], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges"),
@@ -101,8 +105,9 @@ internal static class CardKindCatalog
 
         // Flights: landing, moving, PRs.
         new("review-changes", "Ring", [LegReview], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone"),
-        new("laid-on-base", "Handled", [Lay], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
-        new("lay-failed", "Ring", [Lay], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
+        new("rebased-on-base", "Handled", [Shape], "BranchShapeTests.ABranchHoldingAMergeOfItsBaseIsPushedLinearOnARebaseBaseWithItsReviewCarried"),
+        new("laid-on-base", "Handled", [Shape], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
+        new("lay-failed", "Ring", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain"),
         new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady"),
         new("pr-conflicts", "Ring", [LegChecksAndConflicts], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage"),
@@ -187,10 +192,13 @@ internal static class CardKindCatalog
         new("removal-held", "ForYou", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased"),
         new("job-idle", "ForYou", ["Flights/JobRunner.cs"], "JobTests.ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter"),
         new("bench-result", "ForYou", ["Flights/BenchRun.cs"], "BenchRunTests.ASingleRefRunsOnceInADetachedShortNamedWorktreeAndTheCardHoldsItsTableUnderItsRefAndSha"),
+        new("job-bench-busy", "Ring", ["Flights/JobRunner.cs"], "BenchSlotTests.ABenchWaitingPastTheBoundForABusyCpuRingsOnceNamingTheProcessAndClosesWhenItStarts"),
         new("job-untold", "Ring", ["Flights/JobRunner.cs"], "JobTests.AnOwnerThatCannotBeToldRings"),
         new("queued", "Handled", ["Flights/NamedLock.cs"], "LockWaitTests.ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees"),
         new("session-compacted", "Handled", ["Flights/Compactor.cs"], "CompactorTests.AWorkerWaitingOnItsJobIsCompactedWithWhatItWaitsOnAndOneNotWaitingIsNot"),
         new("digest", "ForYou", ["Flights/Digest.cs"], "SignalTests.TheDigestListsWhatLandedWhatWasHandledAndWhatIsParkedAndReplacesTheLastOne"),
+        new("stale-acted", "Handled", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundNudgesAnIdleWorkerOnce"),
+        new("stale-card-reminder", "ForYou", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundReRingsAnUnansweredCardOnce"),
         new("idea-conflict", "ForYou", ["Flights/Ideas.cs"], "IdeaEditTests.AContradictionRaisesACardWithBothVersionsAndTheMergeAsDefaultAndWritesNothingUntilItIsAnswered"),
         new("idea-repo", "ForYou", ["Flights/Ideas.cs"], "IdeaRepoTests.WhenTwoReposFitEquallyACardAsksAndNothingIsCreatedUntilItIsAnswered"),
     ];
@@ -239,7 +247,7 @@ internal static class CardKindCatalog
     public static readonly (string Kind, string TitleHas, string? LabelHas)[] SourcePins =
     [
         ("issue-left-open", "is still open", null),
-        ("pr-review-queue-refused", "refused to queue", "once more at"),
+        ("pr-review-queue-refused", "refused to queue", "once more"),
         ("pr-fix-failed", "the fixer could not start", "Start the fixer on"),
         ("pr-fix-left", "fixer worktree is still there", null),
         ("pr-recheck", "recheck of", null),

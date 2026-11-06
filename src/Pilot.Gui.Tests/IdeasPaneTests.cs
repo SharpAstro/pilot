@@ -117,7 +117,8 @@ public sealed class IdeasPaneTests
         chrome.Ideas.Nodes = new NodeFilter { Choices = [new NodeMark("here", "/sock", "DE1", Here: true), new NodeMark("se1", "http://se1", "SE1", Here: false)] };
         var screen = Sample();
 
-        Texts(renderer, chrome, screen, 1280).Select(t => t.Text).ShouldContain("DE1's ideas (this machine)");
+        // A long title wraps at its spaces, one leaf a word: it is what the leaves read together.
+        string.Concat(Texts(renderer, chrome, screen, 1280).Select(t => t.Text)).ShouldContain("DE1's ideas (this machine)");
         Actions(Regions(chrome, screen)).ShouldNotContain(a => a.StartsWith("nodes:", StringComparison.Ordinal));
     }
 

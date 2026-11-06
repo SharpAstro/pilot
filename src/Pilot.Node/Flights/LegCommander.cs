@@ -390,9 +390,10 @@ public sealed partial class LegCommander(
                 {
                     SetEntry(code, MergeEntryState.Checks, kept is not null ? "brought up to date with its base, its review carried over: merges once GitHub shows the new head" : "brought up to date with its base: waits for a fresh review at its head", awaitsReview: true, head: kept);
                 }
-                if (!conflicting && command.Who == "node" && command.Verb == Verbs.Merge)
+                if (command.Who == "node" && command.Verb == Verbs.Merge)
                 {
-                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did.
+                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did,
+                    // a conflict GitHub saw that the base merged in cleanly as much as a branch behind its base.
                     made = updated;
                     error = null;
                     way = MergeWays.Updated;
@@ -413,9 +414,9 @@ public sealed partial class LegCommander(
 
         // A merge refused for a head that moved past the reviewed one drops its row saying what comes next, and starts the review of the
         // new head as the sweep does, with the lock let go, so a passed flight is never left with an unread head and no reviewer.
-        if (error is not null && command.Verb == Verbs.Merge && HeadMoved(error) is { } movedHead)
+        if (error is not null && command.Verb == Verbs.Merge && HeadMoved(error))
         {
-            error = await HeadMovedAsync(command, error, movedHead, cancellationToken);
+            error = await HeadMovedAsync(command, error, cancellationToken);
         }
 
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
@@ -426,7 +427,11 @@ public sealed partial class LegCommander(
             state.MarkMerged(command.Target);
             try
             {
-                await flights.LandAfterMergeAsync(FlightOf(command.Target).Code, (command.Args ?? [""])[0].Trim(), cancellationToken);
+                // The head that merged is the review's head: a head re-pinned by the look (moved only by its base) is no longer the one asked for.
+                var asked = (command.Args ?? [""])[0].Trim();
+                var landed = FlightOf(command.Target);
+                var mergedAt = landed.Review?.ReviewedHead is { Length: > 0 } pinned && !pinned.StartsWith(asked, StringComparison.OrdinalIgnoreCase) ? pinned : asked;
+                await flights.LandAfterMergeAsync(landed.Code, mergedAt, cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -555,7 +560,7 @@ public sealed partial class LegCommander(
                 // new head (its status and label are set again there), and its PR-ready card offers the merge at that head.
                 flight = Record(code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = kept, StatusState = null } : null })!;
                 await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
-                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
                 if (flight.PullRequest is not null)
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);

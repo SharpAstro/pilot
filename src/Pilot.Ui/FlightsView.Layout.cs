@@ -45,6 +45,7 @@ internal sealed partial class FlightsView<TSurface>
         BeginFrame();
         _mapBodySeen = null;
         PageWidth = Table.PageWidth = Scale.ToDesignX(bounds.Width);
+        NoteHeight(bounds);
         var arranged = RenderLayout(Tree(screen), bounds, drawFill: (fill, rect) =>
         {
             DrawCanvas(fill, rect);
@@ -213,7 +214,7 @@ internal sealed partial class FlightsView<TSurface>
             // Wrapped, never cut: a refusal's reason is what the person came to read.
             parts.Add(Prose(said, 11f, Dim).Pad(Gutter, 4f).Bg(HeaderBg).WStar().HAuto());
         }
-        var page = Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch();
+        var page = WhenShort(Layout.Builder.VStack([.. parts]).Bg(Ground).Stretch());
         // After the page's text and before the menus over it: where the selection is drawn.
         page = WithSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;
@@ -268,7 +269,8 @@ internal sealed partial class FlightsView<TSurface>
             var isPaused = job.State == JobState.Running && job.PausedAt is not null;
             var color = isPaused ? Held : job.State switch { JobState.Running => Flying, JobState.Queued => Held, JobState.Succeeded => Landed, _ => Failed };
             var waiting = job.State == JobState.Queued && job.Step is { } step ? $" ({step})" : "";
-            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}: {job.Command}", color));
+            var failing = job.State == JobState.Running && job.FailuresSoFar() is { } so ? $" · {so}" : "";
+            legs.Add(DetailLine($"job {job.Id} {(isPaused ? "paused" : job.State.ToString().ToLowerInvariant())}{waiting}{failing}: {job.Command}", failing.Length > 0 ? Failed : color));
         }
 
         var artifacts = new List<Layout.Node> { Label("artifacts").RowH(20f) };

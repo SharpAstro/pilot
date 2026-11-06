@@ -54,6 +54,62 @@ public sealed record NodeSettings
     public const string DiskAlertGbKey = "disk-alert-gb";
     public const int DefaultDiskAlertGb = 20;
 
+    /// <summary>Hours a flight may stay open before the digest and the brief call it stale (#736).</summary>
+    public const string StaleFlightHoursKey = "stale-flight-hours";
+    public const int DefaultStaleFlightHours = 12;
+    /// <summary>Hours a flight's PR may sit open with green CI before it is called stale.</summary>
+    public const string StalePrHoursKey = "stale-pr-hours";
+    public const int DefaultStalePrHours = 12;
+    /// <summary>Hours a leg may sit rechecking its check before it is called stale.</summary>
+    public const string StaleRecheckHoursKey = "stale-recheck-hours";
+    public const int DefaultStaleRecheckHours = 2;
+    /// <summary>Hours a ringing card may stay open before it is called stale.</summary>
+    public const string StaleCardHoursKey = "stale-card-hours";
+    public const int DefaultStaleCardHours = 2;
+    /// <summary>How many times a flight's hold may pass its timeout before it is called stale.</summary>
+    public const string StaleHoldsKey = "stale-holds";
+    public const int DefaultStaleHolds = 2;
+    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked before it is called stale (#753).</summary>
+    public const string StaleUnreachableHoursKey = "stale-unreachable-hours";
+    public const int DefaultStaleUnreachableHours = 1;
+
+    /// <summary>The five staleness bounds' keys (#736).</summary>
+    public static IReadOnlyList<string> StaleKeys { get; } = [StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey];
+
+    /// <summary>The default of a staleness key; 0 for any other key.</summary>
+    public static int StaleDefault(string key) => key switch
+    {
+        StaleFlightHoursKey => DefaultStaleFlightHours,
+        StalePrHoursKey => DefaultStalePrHours,
+        StaleRecheckHoursKey => DefaultStaleRecheckHours,
+        StaleCardHoursKey => DefaultStaleCardHours,
+        StaleHoldsKey => DefaultStaleHolds,
+        StaleUnreachableHoursKey => DefaultStaleUnreachableHours,
+        _ => 0,
+    };
+
+    /// <summary>The value saved for a staleness key; null when unset.</summary>
+    public int? StaleValue(string key) => key switch
+    {
+        StaleFlightHoursKey => StaleFlightHours,
+        StalePrHoursKey => StalePrHours,
+        StaleRecheckHoursKey => StaleRecheckHours,
+        StaleCardHoursKey => StaleCardHours,
+        StaleHoldsKey => StaleHolds,
+        StaleUnreachableHoursKey => StaleUnreachableHours,
+        _ => null,
+    };
+
+    private NodeSettings WithStale(string key, int? value) => key switch
+    {
+        StaleFlightHoursKey => this with { StaleFlightHours = value },
+        StalePrHoursKey => this with { StalePrHours = value },
+        StaleRecheckHoursKey => this with { StaleRecheckHours = value },
+        StaleCardHoursKey => this with { StaleCardHours = value },
+        StaleUnreachableHoursKey => this with { StaleUnreachableHours = value },
+        _ => this with { StaleHolds = value },
+    };
+
     /// <summary>How long the pull request watch waits between reads while no client shows the Pull requests page.</summary>
     public static readonly TimeSpan DefaultPrWatchIdle = TimeSpan.FromMinutes(15);
     public const string OpusCapKey = "opus-cap";
@@ -70,7 +126,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -128,6 +184,14 @@ public sealed record NodeSettings
 
     /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
     public int? DiskAlertGb { get; init; }
+
+    /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
+    public int? StaleFlightHours { get; init; }
+    public int? StalePrHours { get; init; }
+    public int? StaleRecheckHours { get; init; }
+    public int? StaleCardHours { get; init; }
+    public int? StaleHolds { get; init; }
+    public int? StaleUnreachableHours { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
     public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
@@ -306,6 +370,7 @@ public sealed record NodeSettings
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
+                    StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
@@ -355,6 +420,7 @@ public sealed record NodeSettings
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
+        StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
@@ -537,6 +603,19 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var scratchDays) && scratchDays is >= 1 and <= 365
                     ? (settings with { ScratchDays = scratchDays }, null)
                     : (null, "scratch-days takes a number, 1 to 365");
+            case StaleFlightHoursKey:
+            case StalePrHoursKey:
+            case StaleRecheckHoursKey:
+            case StaleCardHoursKey:
+            case StaleHoldsKey:
+            case StaleUnreachableHoursKey:
+                if (clear)
+                {
+                    return (settings.WithStale(key, null), null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var staleBound) && staleBound is >= 1 and <= 1000
+                    ? (settings.WithStale(key, staleBound), null)
+                    : (null, $"{key} takes a number, 1 to 1000");
             case DiskAlertGbKey:
                 if (clear)
                 {

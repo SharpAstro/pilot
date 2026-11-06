@@ -101,7 +101,12 @@ public static partial class NodeApp
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
         // A flight connected to a flight another node flies is held until that node says it landed.
-        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
+        builder.Services.AddHostedService(services =>
+        {
+            var commander = services.GetRequiredService<FlightCommander>();
+            commander.Error = logWriter;
+            return new PeerConnectionWatch(commander, services.GetRequiredService<TimeProvider>()) { Error = logWriter };
+        });
     }
 
     /// <summary>The flight commander, with what it reaches: the trackers, the fleet, the ledger.</summary>
@@ -438,6 +443,7 @@ public static partial class NodeApp
                 Priority = nodeOptions.JobPriority,
                 PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
+                Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<JobRunner>());
@@ -489,13 +495,26 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
             // What a card the call proposes as resolved is checked against.
             GitHub = services.GetRequiredService<IGitHub>(),
             // The nodes this user's grants reach, the same a create-flight in maintenance may route to.
             Fleet = services.GetRequiredService<FlightCommander>().Fleet,
         });
-        builder.Services.AddSingleton<Digest>();
+        builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+        });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
+        builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Trackers = () => services.GetRequiredService<FlightCommander>().Trackers,
+            TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
+            Say = async (id, text, ct) =>
+                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok,
+        });
+        builder.Services.AddHostedService(services => services.GetRequiredService<StaleWatch>());
     }
 
     /// <summary>Releases of pilot itself.</summary>

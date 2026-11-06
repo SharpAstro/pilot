@@ -131,10 +131,10 @@ public static partial class PilotCommand
         }
     }
 
-    private static async Task<int> SendAsync(NodeClient client, string? hereSocket, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken)
+    private static async Task<int> SendAsync(NodeClient client, string? hereSocket, string verb, string target, string[] args, string who, bool bySession, bool agent, string? why, string cwd, string? sessionId, TextWriter output, string requestId, TimeSpan deadline, CancellationToken cancellationToken, string? attachment = null)
     {
         who = await SenderAsync(client, hereSocket, who, bySession, agent, cwd, sessionId, cancellationToken);
-        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId, SessionId = verb == Verbs.ReportState ? sessionId : null }, deadline, cancellationToken);
+        var envelope = await SendCommandAsync(client, new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why, RequestId = requestId, SessionId = verb == Verbs.ReportState ? sessionId : null, Attachment = attachment }, deadline, cancellationToken);
         if (envelope.Success && envelope.Response is { Ok: true, Waiting: { Length: > 0 } waiting })
         {
             // Queued behind a lock the node's other work holds: not done, and not to be sent again, as it runs once the lock frees.

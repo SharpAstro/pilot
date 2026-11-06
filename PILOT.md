@@ -62,7 +62,7 @@ dotnet test Pilot.Node.Tests -c Release --no-build
 dotnet test Pilot.Gui.Tests -c Release --no-build
 ```
 
-- A `Pilot.Node.Tests` test over 5 s fails, naming itself, unless it is tagged `[Trait("Category", "Slow")]`; CI runs the slow ones in their own step.
+- A `Pilot.Node.Tests` test over 5 s fails on CI (GITHUB_ACTIONS=true or PILOT_TEST_TIME_STRICT=1) unless tagged `[Trait("Category", "Slow")]`; elsewhere a `slow-test:` line on stderr reports it without failing, since a loaded machine inflates wall clock.
 - Repo-wide guard tests carry `[Trait("Category", "Invariant")]` and run in seconds (`--filter Category=Invariant`); a new repo-wide guard gets the trait too.
 - CI builds the whole solution and runs exactly two test projects, `Pilot.Node.Tests` and `Pilot.Gui.Tests`, on
   ubuntu and windows (win-x64). A check that matches CI runs both; a narrower one filters with
@@ -99,6 +99,14 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
   NU1101 or NU1102 on a package a sibling is publishing is held by the node, not fixed in the plane.
 - **Docs only** (`README.md`, `src/README.md`, this file): the Release build still runs, since CI does for any change
   under `src`, and a PR touching nothing of `src` skips the build and passes the gate.
+
+## Human verification
+
+- Checks only a person can make (hardware, UI, real-window feel: what tests and CPU captures cannot settle) are filed as
+  issues in the milestone `Human verification: UI that needs eyes` (milestone 12 in pilot).
+- Only a flight whose issue carries the `pilot: human verification` label files them, from the `## Human verification`
+  heading of the reviewer's report. Without the label nothing is filed.
+- Each issue says what to do and what to look for. The controller closes it once checked; a worker never does.
 
 ## Writing
 

@@ -56,6 +56,26 @@ public sealed record CardRow
 
     /// <summary>The message that assistant said it acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
+
+    /// <summary>
+    /// The commits the card's text names (title, detail, summary, choice notes), each 9-character sha mapped to its commit page on
+    /// GitHub (#691). A client draws each such sha as a link to that URL; a card an older node wrote has none and reads as before.
+    /// </summary>
+    public Dictionary<string, string> Commits { get; init => field = value ?? []; } = [];
+
+    /// <summary>
+    /// The id of the one image the node keeps for the card (a screenshot of what it is about), served by <see cref="NodeWire.AttachmentRoute"/>
+    /// as a leg artifact's copy is; null when the card has none. The copy lives in the node's folder no archive empties, so it stays while the card does.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Attachment { get; init; }
+
+    /// <summary>The image's extension without the dot (<c>png</c>); null when there is no <see cref="Attachment"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AttachmentExt { get; init; }
+
+    /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
+    public const int ShortShaLength = 9;
 }
 
 /// <summary>A card's button: what it says, and the command it runs.</summary>
