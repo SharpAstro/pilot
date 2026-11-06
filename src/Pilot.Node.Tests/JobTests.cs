@@ -90,10 +90,14 @@ public abstract class JobTestsBase : IDisposable
     private protected CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
+    /// <summary>The longest a test waits on a condition: a ceiling a busy machine does not reach, not a time the code is held to.</summary>
+    private protected static readonly TimeSpan WaitCeiling = TimeSpan.FromMinutes(2);
+
     /// <summary>The job once <paramref name="condition"/> holds: the dispatcher acts on its own loop, a moment after the call.</summary>
     private protected async Task<JobRow> Until(string id, Func<JobRow, bool> condition)
     {
-        for (var i = 0; i < 300; i++)
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (_state.Jobs().Single(j => j.Id == id) is var job && condition(job))
             {
@@ -101,12 +105,13 @@ public abstract class JobTestsBase : IDisposable
             }
             await Task.Delay(20, Ct);
         }
-        throw new TimeoutException($"job {id} never came to the state awaited");
+        throw new TimeoutException($"job {id} never came to the state awaited within {WaitCeiling}");
     }
 
     private protected async Task<JobRow> Ended(string id)
     {
-        for (var i = 0; i < 300; i++)
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
         {
             if (_state.Jobs().Single(j => j.Id == id) is { EndedAt: not null } job && (job.Owner is null || job.Told || _refuse is not null))
             {
@@ -114,7 +119,7 @@ public abstract class JobTestsBase : IDisposable
             }
             await Task.Delay(100, Ct);
         }
-        throw new TimeoutException($"job {id} did not end");
+        throw new TimeoutException($"job {id} did not end within {WaitCeiling}");
     }
 
     private protected static bool IsAlive(int pid)
@@ -337,6 +342,43 @@ public abstract class JobTestsBase : IDisposable
     // (a pid reused by a new process reads as less, never as negative time).
     private protected static TimeSpan CpuSince(IEnumerable<int> pids, Dictionary<int, TimeSpan> before) =>
         Cpu(pids).Where(now => before.ContainsKey(now.Key)).Aggregate(TimeSpan.Zero, (sum, now) => sum + TimeSpan.FromTicks(Math.Max(0, (now.Value - before[now.Key]).Ticks)));
+
+    // PIL746: waits until <paramref name="condition"/> holds on a fresh sample, under WaitCeiling, and fails with the last samples
+    // it saw. The bounds this replaces (under 100 ms of CPU in 1.5 s, over 100 ms in 1 s) measured the machine's load, not the pause.
+    private protected async Task WaitForSample(Func<(bool Holds, string Seen)> condition, string what)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var seen = "no sample taken";
+        while (clock.Elapsed < WaitCeiling)
+        {
+            (var holds, seen) = condition();
+            if (holds)
+            {
+                return;
+            }
+            await Task.Delay(100, Ct);
+        }
+        throw new TimeoutException($"{what} did not hold within {WaitCeiling}; last samples: {seen}");
+    }
+
+    // A window of <paramref name="window"/> over the same processes: the CPU they used in it and whether the log length moved.
+    private protected async Task<(TimeSpan Cpu, long Before, long After)> SampleWindow(IReadOnlyCollection<int> tree, Func<long> length, TimeSpan window)
+    {
+        var (cpu, before) = (Cpu(tree), length());
+        await Task.Delay(window, Ct);
+        return (CpuSince(tree, cpu), before, length());
+    }
+
+    // Once paused: waits for two consecutive windows with no CPU advance and no log growth (a straggler started between the node's
+    // read of the tree and its suspend, PIL537, shows its start-up CPU once and then settles).
+    private protected Task WaitSettled(IReadOnlyCollection<int> tree, Func<long> length) =>
+        WaitForSample(() =>
+        {
+            var (cpu, before) = (Cpu(tree), length());
+            Thread.Sleep(300);
+            var (used, after) = (CpuSince(tree, cpu), length());
+            return (used == TimeSpan.Zero && before == after, $"cpu +{used.TotalMilliseconds:0} ms, log {before} -> {after}");
+        }, "the paused tree settling (no CPU, no log growth)");
 
     private protected static bool Alive(int pid)
     {
@@ -1554,10 +1596,10 @@ public sealed class JobTests3 : JobTestsBase
         var pid = first.Job(id).Pid!.Value;
         var tree = TreeOf(pid);
         await first.StopAsync();
-        await Task.Delay(700, Ct);
+        // PIL746: settle, then a quiet window of the same processes must show no CPU, instead of fixed delays and a 100 ms bound.
+        await WaitSettled(tree, () => 0);
         var cpu = Cpu(tree);
-        await Task.Delay(1000, Ct);
-        CpuSince(tree, cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
+        (await SampleWindow(tree, () => 0, TimeSpan.FromMilliseconds(500))).Cpu.ShouldBe(TimeSpan.Zero);
 
         using var second = await Node.StartAsync(_root);
         var found = second.Job(id);
@@ -1565,9 +1607,11 @@ public sealed class JobTests3 : JobTestsBase
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Error.ShouldBe($"job {id} is already paused");
         second.Jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         (second.Job(id).PausedAt, second.Job(id).PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        // The tree runs below normal priority: on a busy machine it may need longer than a second to get 100 ms of CPU.
-        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100));
-        CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+        await WaitForSample(() =>
+        {
+            var used = CpuSince(tree, cpu);
+            return (used > TimeSpan.Zero, $"cpu +{used.TotalMilliseconds:0} ms");
+        }, "the resumed tree using CPU again");
 
         second.Jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
         second.Cancel(id).Ok.ShouldBeTrue();
@@ -1681,15 +1725,6 @@ public sealed class JobTests3 : JobTestsBase
         return $"sh '{sh}' '{flag}'";
     }
 
-    /// <summary>Waits (up to 15 s) until the work a resumed tree should show has shown, polling; the caller then asserts it.</summary>
-    private async Task WorkedAsync(Func<bool> worked)
-    {
-        for (var i = 0; i < 150 && !worked(); i++)
-        {
-            await Task.Delay(100, Ct);
-        }
-    }
-
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APausedJobsTreeStopsWorkingAndWritingAndResumesToItsRealExitCode()
@@ -1706,18 +1741,23 @@ public sealed class JobTests3 : JobTestsBase
         // Pause now returns once a pass of the tree froze nothing new, so the sample is taken at once, on that event, not after
         // a fixed delay that let a straggler's start-up CPU look like work.
         var tree = TreeOf(_jobs.PidOf(id)!.Value);
+        // PIL746: wait until the tree settled, then one more window must show no CPU and no log growth at all (a frozen process
+        // accrues exactly none); the window's length no longer matters, so load cannot move the verdict.
+        await WaitSettled(tree, () => LogLength(log));
         var (cpu, length) = (Cpu(tree), LogLength(log));
-        await Task.Delay(1500, Ct);
-        CpuSince(tree, cpu).ShouldBeLessThan(TimeSpan.FromMilliseconds(100));
-        LogLength(log).ShouldBe(length);
+        var quiet = await SampleWindow(tree, () => LogLength(log), TimeSpan.FromMilliseconds(500));
+        quiet.Cpu.ShouldBe(TimeSpan.Zero);
+        (quiet.Before, quiet.After).ShouldBe((length, length));
 
         _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
         var resumed = _state.Jobs().Single(j => j.Id == id);
         (resumed.PausedAt, resumed.PausedFor > TimeSpan.Zero).ShouldBe((null, true));
-        // The tree runs below normal priority: on a busy machine it may need longer than a second to work and write.
-        await WorkedAsync(() => CpuSince(tree, cpu) > TimeSpan.FromMilliseconds(100) && LogLength(log) > length);
-        CpuSince(tree, cpu).ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
-        LogLength(log).ShouldBeGreaterThan(length);
+        // Resumed: wait until the same tree has used CPU since the paused sample and the log grew, under the ceiling.
+        await WaitForSample(() =>
+        {
+            var (used, now) = (CpuSince(tree, cpu), LogLength(log));
+            return (used > TimeSpan.Zero && now > length, $"cpu +{used.TotalMilliseconds:0} ms, log {length} -> {now}");
+        }, "the resumed tree working and writing again");
 
         File.WriteAllText(flag, "");
         var job = await Ended(id);
@@ -1729,13 +1769,17 @@ public sealed class JobTests3 : JobTestsBase
     public async Task ThePausedSpanIsNotCountedAgainstTheTimeout()
     {
         var flag = Path.Combine(_root, "go");
-        var id = Run(Busy(flag), timeoutSeconds: 15).Made!;
+        // PIL746 (j3539: Pause refused, the job had already run out its 15 s before a loaded machine got to pause it): the time
+        // before the pause counts against the timeout, so it is generous (30 s), and the wait for "past the deadline" is measured
+        // from the pause itself, so a slow start cannot move it.
+        var id = Run(Busy(flag), timeoutSeconds: 30).Made!;
         await Running(id);
 
         var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
         paused.Ok.ShouldBeTrue(paused.Error);
-        // Past the deadline it would have had without the pause.
-        while (DateTimeOffset.UtcNow - _state.Jobs().Single(j => j.Id == id).StartedAt < TimeSpan.FromSeconds(16))
+        // Paused for longer than the whole timeout: it would have been stopped without the pause.
+        var pausedAt = DateTimeOffset.UtcNow;
+        while (DateTimeOffset.UtcNow - pausedAt < TimeSpan.FromSeconds(31))
         {
             await Task.Delay(100, Ct);
         }
