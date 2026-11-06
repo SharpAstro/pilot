@@ -101,8 +101,7 @@ internal sealed record FlightLine
 
     /// <summary>The whole text of the stale mark on hover: the mark, the last move with its time, and the stale timeline, one to a line.</summary>
     public string? StaleWorkTip => StaleWorkMark is { } mark
-        ? string.Join('
-', new[] { mark, LastMoveText, StaleSummary }.OfType<string>()) : null;
+        ? string.Join('\n', new[] { mark, LastMoveText, StaleSummary }.OfType<string>()) : null;
 
     /// <summary>
     /// <c>last activity 25 m ago</c> for a flight in the air that is not stale, for its detail page only (a table row stays clean);
