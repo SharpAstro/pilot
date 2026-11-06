@@ -77,6 +77,8 @@ public sealed partial class LegCommander
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
         var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
+        // The marks and kept jobs of the reviewer replaced, let go once the replacement's row is in (or the start is held).
+        ReviewerReplacement? replacement = null;
         if (flight.Review?.ReviewerJob is { } last)
         {
             // One still reviewing is replaced without its verdict.
@@ -84,8 +86,7 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
             }
-            DropQueuedJobsOf(last, "its reviewer was replaced");
-            await StopQuietly(last, cancellationToken);
+            replacement = await ReplaceReviewerAsync(flight, last, cancellationToken);
         }
         // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being
         // replaced does not count against its own successor.
@@ -93,6 +94,7 @@ public sealed partial class LegCommander
         var waiting = !held && AdmissionWaits(AdmissionRole.Reviewer, reviewModel, flight, null, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ReviewerName(flight) });
         if (held || waiting)
         {
+            NoReplacementComes(replacement);
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
@@ -148,6 +150,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
+                Unmark(replacement);
                 // A fresh review of a head past the reviewed one is a push that ends a hold (a pass kept over a base that only came in
                 // starts no reviewer and keeps it): the hold's leg, or flight pr, is who pushed.
                 var endsHold = EndHoldPastReview(now, reviewedHead, now.Holding?.By is { } leg && leg != "node" ? $"the {leg} leg" : "a push");

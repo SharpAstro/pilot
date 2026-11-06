@@ -563,14 +563,21 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     internal IdleCause ClassifyIdle(LegRow leg, SessionRow worker)
     {
-        if (state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
-            && (j.Owner == worker.Id || string.Equals(j.OwnerName, worker.Name, StringComparison.OrdinalIgnoreCase)
-                || (string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)))))
+        if (JobsOf(worker, leg).Any(j => j.State is JobState.Running or JobState.Queued))
         {
             return IdleCause.OwnJob;
         }
         return worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow ? IdleCause.Full : IdleCause.Room;
     }
+
+    /// <summary>
+    /// The jobs of a session's own (pilot #777): owned by its id, session id or an earlier one, or by its name (a replaced session
+    /// keeps its name), and for a worker (a <paramref name="leg"/> given) also the leg's own flight and leg.
+    /// </summary>
+    private IEnumerable<JobRow> JobsOf(SessionRow session, LegRow? leg = null) => state.Jobs().Where(j =>
+        (j.Owner is { Length: > 0 } owner && (owner == session.Id || owner == session.SessionId || session.EarlierSessionIds?.Contains(owner) == true))
+        || string.Equals(j.OwnerName, session.Name, StringComparison.OrdinalIgnoreCase)
+        || (leg is not null && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
     private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
@@ -789,13 +796,23 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             return;
         }
+        // Waiting on a job of its own (pilot #777) is not stalled: the job's end wakes the reviewer.
+        var ownJobs = row is { State: not SessionState.Failed, Gone: false } ? JobsOf(row).ToArray() : [];
+        if (ownJobs.Any(j => j.State is JobState.Running or JobState.Queued))
+        {
+            state.CloseCardsAbout(subject, "waiting on its own job", ReviewStalled);
+            return;
+        }
+        // The idle clock starts at the later of its last response and the end of its last job.
+        var idleSince = row is null ? startedAt
+            : new[] { row.LastResponseAt ?? row.StartedAt }.Concat(ownJobs.Where(j => j.EndedAt is not null).Select(j => j.EndedAt!.Value)).Max();
         string? why = row switch
         {
             null when now - startedAt > ShowUpGrace => $"started {Ago(now, startedAt)} ago and never showed up",
             null => null,
             { State: SessionState.Working or SessionState.Waiting } => null,
             { State: SessionState.Failed } => "it failed",
-            _ when now - (row.LastResponseAt ?? row.StartedAt) >= IdleGrace => $"it stopped {Ago(now, row.LastResponseAt ?? row.StartedAt)} ago without its verdict",
+            _ when now - idleSince >= IdleGrace => $"it stopped {Ago(now, idleSince)} ago without its verdict",
             _ => null,
         };
         if (row is { State: SessionState.Working })
