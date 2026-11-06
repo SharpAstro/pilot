@@ -235,6 +235,62 @@ public sealed class CarriedFinishTests : LegCommanderTestsBase
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task AWorkersOwnFinishTakingTheCallBeforeTheNodesFinishDoesLeavesTheNodeSilentForTheRefusalAndTheWorkerToItsOwnAnswer()
+    {
+        // The other order, with no timing assumed: the node's finish is launched by a look but held on Ready (as it is while the job
+        // runner takes up the old jobs), so the worker's own finish takes the flight's call first, and only then is Ready completed.
+        var check = WaitingFor(0);
+        await using var node = await RestartedAsync(check, flight => Queued(check, flight));
+        var ready = new TaskCompletionSource();
+        node.Watch.Ready = ready.Task;
+
+        await node.Watch.LookAsync(Ct);
+        node.Watch.ResumesInFlight.ShouldBe(1);
+        var workers = Task.Run(() => node.Legs.RunAsync(new CommandRequest { Verb = Verbs.FinishLeg, Target = "flight/TIA1/parser", Args = ["done", Report], Who = "tests" }, Ct), Ct);
+        await UntilAsync(() => node.Parser.Recheck is { Resume: false, Outcome: null } && node.Checks.Any(j => j.State == JobState.Running), "the worker's own finish is rerunning the check");
+
+        ready.SetResult();
+        await UntilAsync(() => node.Watch.ResumesInFlight == 0, "the node's held finish ends, refused as the call is taken");
+        await node.Watch.LookAsync(Ct);
+
+        // Nothing of the refusal is told, and the worker's rerun is neither cleared nor given an outcome.
+        node.Said.ShouldBeEmpty();
+        node.Parser.Recheck.ShouldNotBeNull().Outcome.ShouldBeNull();
+        File.WriteAllText(Gate, "go");
+        var answer = await workers.WaitAsync(Ceiling, Ct);
+        if (answer.Later is { } later)
+        {
+            answer = await later;
+        }
+        answer.Ok.ShouldBeTrue(answer.Error);
+        await UntilAsync(() => node.Parser.State == LegState.Done, "the worker's own finish ends the leg");
+        await node.Watch.LookAsync(Ct);
+        node.Said.ShouldBeEmpty();
+        node.Checks.ShouldHaveSingleItem().State.ShouldBe(JobState.Succeeded);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task TheNodesWordIsKeptOnTheLegUntilTheWatchTellsItSoANodeStoppingBeforeThatLookLosesNothing()
+    {
+        var check = Echoing("two tests failed", 1);
+        await using var node = await RestartedAsync(check, flight => Queued(check, flight));
+
+        // Looks without telling: the watch's own loop is not run again once the node's finish has ended, as a node stopping there would not.
+        await node.Watch.LookAsync(Ct);
+        await UntilAsync(() => node.Watch.ResumesInFlight == 0, "the node's finish has ended");
+
+        var kept = node.Parser.Recheck.ShouldNotBeNull();
+        kept.Outcome.ShouldNotBeNull().ShouldContain("`leg finish done` again");
+        node.Said.ShouldBeEmpty();
+
+        // A node that comes up on that state (its journal) tells it at its first look.
+        var next = new NodeState(_journal, TimeProvider.System);
+        next.Legs("TIA1").Single(l => l.Name == "parser").Recheck.ShouldNotBeNull().Outcome.ShouldBe(kept.Outcome);
+        await node.Watch.LookAsync(Ct);
+        node.Said.ShouldHaveSingleItem().Args[0].ShouldBe(kept.Outcome);
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task ARerunWithNoOneWhoAskedItKeepsTheOldOutcomeThatTellsTheWorkerToFinishAgain()
     {
         var check = Echoing("old", 0);
