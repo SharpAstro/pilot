@@ -17,12 +17,20 @@ public sealed class TurnOutage(NodeState state)
     /// <summary>How close together two subjects' missing first turns must be to count as one outage rather than two stuck sessions.</summary>
     public static readonly TimeSpan Window = TimeSpan.FromMinutes(10);
 
+    /// <summary>How often one held start (the oldest) is let through while the outage lasts, so the node finds out by itself that turns are back.</summary>
+    public static readonly TimeSpan ProbeEvery = TimeSpan.FromMinutes(5);
+
     private readonly object _gate = new();
     private readonly Dictionary<string, DateTimeOffset> _stalled = new(StringComparer.Ordinal);
     private DateTimeOffset? _since;
     private string? _cardId;
     private Dictionary<string, long>? _baseline;
     private (DateTimeOffset Since, DateTimeOffset Until)? _last;
+
+    // The starts held by the outage, by the gate's key: when each first asked and last asked. A start that stopped asking is not waited for.
+    private readonly Dictionary<string, (DateTimeOffset First, DateTimeOffset Last)> _waiting = new(StringComparer.Ordinal);
+    private DateTimeOffset _probedAt;
+    private string? _probeKey;
 
     /// <summary>Whether an outage is open now.</summary>
     public bool IsOpen
@@ -40,6 +48,41 @@ public sealed class TurnOutage(NodeState state)
     public (DateTimeOffset Since, DateTimeOffset Until)? LastWindow
     {
         get { lock (_gate) { return _last; } }
+    }
+
+    /// <summary>
+    /// A start asks to go while the outage lasts (<paramref name="key"/> is the gate's key for it). False holds it. True lets it through as the
+    /// probe: the oldest start still asking, once per <see cref="ProbeEvery"/> (the outage's own opening counts as the last), and every start
+    /// when no outage is open. The start the probe went to is let through again when it asks again within the period, as one start asks the gate
+    /// at more than one step (the sweep's, then the command's own). A turn of the probe's session, or of any other, is what ends the outage.
+    /// </summary>
+    public bool Probe(string key, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (_since is null)
+            {
+                return true;
+            }
+            if (_probeKey == key && now - _probedAt < ProbeEvery)
+            {
+                return true;
+            }
+            _waiting[key] = _waiting.TryGetValue(key, out var asked) ? (asked.First, now) : (now, now);
+            foreach (var gone in _waiting.Where(p => now - p.Value.Last > ProbeEvery).Select(p => p.Key).ToList())
+            {
+                _waiting.Remove(gone);
+            }
+            if (now - _probedAt < ProbeEvery
+                || _waiting.OrderBy(p => p.Value.First).ThenBy(p => p.Key, StringComparer.Ordinal).First().Key != key)
+            {
+                return false;
+            }
+            _probedAt = now;
+            _probeKey = key;
+            _waiting.Remove(key);
+            return true;
+        }
     }
 
     /// <summary>The account's login changed at <paramref name="at"/>: no session can be taking turns on the old one, so an outage opens.</summary>
@@ -90,6 +133,8 @@ public sealed class TurnOutage(NodeState state)
             _since = null;
             _baseline = null;
             _stalled.Clear();
+            _waiting.Clear();
+            _probeKey = null;
             if (_cardId is { } id)
             {
                 state.CloseCard(id, $"sessions take turns again since {now.ToLocalTime():HH:mm}", LegWatch.Who);
@@ -109,6 +154,9 @@ public sealed class TurnOutage(NodeState state)
             _since = at;
             _baseline = null;
             _stalled.Clear();
+            _waiting.Clear();
+            _probedAt = at;
+            _probeKey = null;
             var card = state.RaiseCard(CardBin.Ring, CardKind, Verbs.NodeTarget, $"Sessions are not taking turns since {at.ToLocalTime():HH:mm}: {why}",
                 $"outage opened at {at:O}: {why}; first-turn restarts and rings are held until a session takes a turn",
                 summary: $"No session has taken a turn since {at.ToLocalTime():HH:mm} ({why}). The node holds its restarts and rings for first turns and closes this card by itself once any session takes a turn.");

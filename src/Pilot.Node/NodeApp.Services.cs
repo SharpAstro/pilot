@@ -211,7 +211,10 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        {
+            Outage = services.GetRequiredService<TurnOutage>(),
+        });
     }
 
     /// <summary>The admission gate, counting this node's sessions and the fleet's.</summary>

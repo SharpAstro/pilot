@@ -13,6 +13,11 @@ namespace Pilot.Node.Flights;
 /// The 7-day window is softer: past <see cref="RoleModels.WeekLimit"/> it rings once per window and holds nothing, as a
 /// week spent is the controller's to weigh (SE1 read 99 % on 23 Oct, 2026), not a wait of days the node could end for them.
 /// </para>
+/// <para>
+/// An open <see cref="TurnOutage"/> (<see cref="Outage"/>) holds a start too, with a Handled card saying it waits for sessions to take turns
+/// again, so the sweep starts it once the outage ends. One start, the oldest asking, is let through every <see cref="TurnOutage.ProbeEvery"/>
+/// as a probe: the node has no other way to find out that turns are back than a session taking one (PIL791).
+/// </para>
 /// </summary>
 public sealed class StartGate(NodeState state, TimeProvider time)
 {
@@ -24,7 +29,22 @@ public sealed class StartGate(NodeState state, TimeProvider time)
 
     // By what waits: the reset it last said so for, so a sweep or a look says it once per window, not every time.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _said = new(StringComparer.Ordinal);
+    // By what waits: the card an open outage's hold said it with, closed again once the start is let go.
+    private readonly ConcurrentDictionary<string, string> _outageCards = new(StringComparer.Ordinal);
     private DateTimeOffset? _weekRung;
+
+    /// <summary>Whether sessions take turns at all (PIL791): while an outage is open every start waits but one probe per <see cref="TurnOutage.ProbeEvery"/>. Null holds nothing on it.</summary>
+    public TurnOutage? Outage { get; set; }
+
+    /// <summary>
+    /// Why an open turn outage holds the start asking under <paramref name="key"/>: nothing takes a turn, so a fresh session would show none either.
+    /// Null when no outage is open, or when this start is the probe the outage lets through to find out whether turns are back. The reset is the
+    /// outage's start, so a hold says itself once per outage.
+    /// </summary>
+    public StartHeld? CheckOutage(string key) =>
+        Outage is { Since: { } since } outage && !outage.Probe(key, time.GetUtcNow())
+            ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since, ByOutage: true)
+            : null;
 
     /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
     public StartHeld? Check(double limit)
@@ -73,17 +93,32 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     public bool Hold(string key, double limit, double weekLimit, string kind, string subject, string what, double? paceMargin = null)
     {
         RingWeek(weekLimit);
-        if ((Check(limit) ?? CheckPace(paceMargin)) is not { } held)
+        // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
+        if ((Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
+            CloseOutageCard(key, "its start was let go");
             return false;
         }
         if (!_said.TryGetValue(key, out var said) || said != held.Resets)
         {
             _said[key] = held.Resets;
-            state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
+            CloseOutageCard(key, "its wait has another reason now");
+            var card = state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
+            if (held.ByOutage)
+            {
+                _outageCards[key] = card.Id;
+            }
         }
         return true;
+    }
+
+    private void CloseOutageCard(string key, string why)
+    {
+        if (_outageCards.TryRemove(key, out var id))
+        {
+            state.CloseCard(id, why, LegWatch.Who);
+        }
     }
 
     /// <summary>Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead.</summary>
@@ -102,5 +137,5 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     }
 }
 
-/// <summary>A start held by the 5-hour window: why, in words, and when the window resets.</summary>
-public sealed record StartHeld(string Say, DateTimeOffset Resets);
+/// <summary>A start held by the 5-hour window or the 7-day pace (or, <paramref name="ByOutage"/>, by sessions not taking turns): why, in words, and when it resets.</summary>
+public sealed record StartHeld(string Say, DateTimeOffset Resets, bool ByOutage = false);
