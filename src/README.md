@@ -838,6 +838,32 @@ The run is without `--inProcess`: BenchmarkDotNet builds and starts its own proc
 detached worktree and its short name are for. A node that stops while the job runs leaves the worktrees and the post
 undone; the next bench picks free names beside them.
 
+**Where a bench runs (#823).** A bench on a busy machine waits for a quiet CPU and then carries whatever else the machine was
+doing, so the node can be told where a bench may run in Azure instead: a spot VM of a fixed size, image and region, so two
+runs compare. These are settings (`pilot settings`, `pilot set node <key> <value>`), live as soon as they are saved:
+
+| key | takes | default |
+|---|---|---|
+| `bench-subscription` | the Azure subscription id (a GUID) | unset |
+| `bench-resource-group` | an Azure resource group name | unset |
+| `bench-region` | an Azure region, as `az account list-locations` names it | `westeurope` |
+| `bench-vm-size` | an Azure VM size | `Standard_F8s_v2` |
+| `bench-image` | a marketplace image URN, `publisher:offer:sku:version` | `Canonical:ubuntu-24_04-lts:server:latest` |
+| `bench-spot-price` | the most to pay per VM hour, in USD | `0.30` |
+| `bench-monthly-cap` | the most cloud benches may cost in a calendar month, in USD | `50` |
+| `bench-auth` | `az-login` (this machine's own `az login`) or `service-principal` | `az-login` |
+| `bench-sp-app-id`, `bench-sp-tenant`, `bench-sp-secret` | the service principal's app id (GUID), tenant (GUID or domain) and secret | unset |
+
+**An unset subscription or resource group means cloud benches are off**, and every bench runs on the node's machine exactly as
+described above; the answer to a `set` of any of these keys says whether cloud benches are on. With `service-principal` the app
+id, tenant and secret must all be set too. Nothing secret is in the repo: `az-login` stores nothing, and the secret lives only in
+the node's `settings.json`, which the Settings page, `pilot settings` and the answer to `set` show only as `set` or not.
+
+`--local` (`pilot bench ... --local`, `pilot run --alone --local -- <command>`) keeps one benchmark on the node's own machine, for
+one that needs its hardware (a camera, a GPU kernel test): it is never sent to a VM. The job's row keeps it as `Local`. A job row
+also has an optional `BenchVm` (size, image, region, price per hour, minutes, cost, evictions, and why the bench ran local when it
+did); both fields are optional, so `NodeWire.Version` stays.
+
 ### The MCP server
 
 **Sessions the node starts are lean.** Every session it starts or resumes (watchtower, planner, worker, reviewer, validator,

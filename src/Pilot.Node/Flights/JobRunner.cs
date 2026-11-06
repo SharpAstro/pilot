@@ -554,6 +554,16 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             args = [.. args.Skip(1)];
         }
+        // --local follows --alone: the benchmark stays on this machine (it needs its hardware), whatever cloud benches the settings turn on.
+        var local = args.Length > 0 && args[0] == Verbs.LocalArg;
+        if (local)
+        {
+            if (!alone)
+            {
+                return state.Complete(command, $"{Verbs.LocalArg} is for a benchmark: use it with {Verbs.AloneArg}");
+            }
+            args = [.. args.Skip(1)];
+        }
         if (args.Length < 3)
         {
             return state.Complete(command, "run takes the folder, the timeout in seconds (0 for the default) and the command");
@@ -644,6 +654,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Flight = owner?.Flight,
             Leg = owner?.Leg,
             Kind = alone ? JobKind.Bench : JobKind.Run,
+            Local = local,
             State = JobState.Queued,
             LogPath = logPath,
             ExitPath = ExitPathOf(logPath),
@@ -824,8 +835,9 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>
     /// Queues a benchmark as a job of kind <see cref="JobKind.Bench"/> (the node to itself) and returns its id and a task that
     /// completes with the ended row when the job ends however it ends. <paramref name="owner"/>, when given, is woken as for any job.
+    /// <paramref name="local"/> keeps the benchmark on this machine (<c>--local</c>) and is kept on the row as <see cref="JobRow.Local"/>.
     /// </summary>
-    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner)
+    public (string Id, Task<JobRow> Ended) QueueBench(string command, string cwd, TimeSpan timeout, SessionRow? owner, bool local = false)
     {
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
@@ -842,6 +854,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Flight = owner?.Flight,
             Leg = owner?.Leg,
             Kind = JobKind.Bench,
+            Local = local,
             State = JobState.Queued,
             LogPath = logPath,
             ExitPath = ExitPathOf(logPath),

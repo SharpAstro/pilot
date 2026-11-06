@@ -31,14 +31,14 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     private sealed record Leg(string Label, string Ref, string Sha, string Worktree);
 
     /// <summary>The words of a bench command, parsed.</summary>
-    private sealed record Spec(string Repo, string? Ref, string? Baseline, string? Candidate, string? Fetch, int? Pr, TimeSpan Timeout, string[] Command);
+    private sealed record Spec(string Repo, string? Ref, string? Baseline, string? Candidate, string? Fetch, int? Pr, TimeSpan Timeout, string[] Command, bool Local = false);
 
     /// <summary>Queues the benchmark; its result's <c>Made</c> is the job's id. The post follows when the job ends.</summary>
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         if (Parse(command.Args ?? []) is not { } spec)
         {
-            return state.Complete(command, "bench takes <repo> (--ref <ref> | --baseline <ref> --candidate <ref>) [--fetch <command>] [--pr <n>] [--timeout <seconds>] -- <command>");
+            return state.Complete(command, "bench takes <repo> (--ref <ref> | --baseline <ref> --candidate <ref>) [--fetch <command>] [--pr <n>] [--local] [--timeout <seconds>] -- <command>");
         }
         var hasRef = spec.Ref is not null;
         var hasPair = spec.Baseline is not null && spec.Candidate is not null;
@@ -109,7 +109,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             ? $"pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)}"
             : $"sh {Quote(script)}";
         var timeout = spec.Timeout == TimeSpan.Zero ? JobRunner.DefaultTimeout : spec.Timeout;
-        var (jobId, ended) = jobs.QueueBench(line, legs[0].Worktree, timeout, owner);
+        var (jobId, ended) = jobs.QueueBench(line, legs[0].Worktree, timeout, owner, spec.Local);
         _ = PostWhenEndedAsync(repo, legs, spec, jobId, ended, script);
         return state.Complete(command, null, made: jobId);
     }
@@ -362,7 +362,8 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
 
     private static string ShQuote(string text) => "'" + text.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
-    // bench <repo> --ref r | --baseline b --candidate c [--fetch cmd] [--pr n] [--timeout seconds] -- command…; null when it does not read.
+    // bench <repo> --ref r | --baseline b --candidate c [--fetch cmd] [--pr n] [--local] [--timeout seconds] -- command…; null when it does not read.
+    // --local is the one flag that takes no value: the bench stays on this machine.
     private static Spec? Parse(string[] args)
     {
         if (args.Length == 0)
@@ -372,9 +373,15 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         string? @ref = null, baseline = null, candidate = null, fetch = null;
         int? pr = null;
         var seconds = 0L;
+        var local = false;
         var i = 1;
         for (; i < args.Length && args[i] != "--"; i++)
         {
+            if (args[i] == Verbs.LocalArg)
+            {
+                local = true;
+                continue;
+            }
             if (i + 1 >= args.Length || args[i] is not ("--ref" or "--baseline" or "--candidate" or "--fetch" or "--pr" or "--timeout"))
             {
                 return null;
@@ -402,6 +409,6 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             }
             i++;
         }
-        return new Spec(args[0], @ref, baseline, candidate, fetch, pr, TimeSpan.FromSeconds(seconds), i < args.Length ? [.. args.Skip(i + 1)] : []);
+        return new Spec(args[0], @ref, baseline, candidate, fetch, pr, TimeSpan.FromSeconds(seconds), i < args.Length ? [.. args.Skip(i + 1)] : [], local);
     }
 }
