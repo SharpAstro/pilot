@@ -48,6 +48,13 @@ public sealed record CommandRequest
     public string? SessionId { get; init; }
 
     /// <summary>
+    /// The image a <see cref="Verbs.Raise"/> card carries, as <c>&lt;id&gt;.&lt;ext&gt;</c> of a copy the node holds (uploaded through
+    /// <see cref="NodeWire.AttachmentsRoute"/>, or a leg's artifact copy). Optional: a raise without it is the form it always was.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Attachment { get; init; }
+
+    /// <summary>
     /// Names this one attempt at the command: the CLI fills it with a fresh id per invocation, or with the one the caller
     /// gives it (<c>PILOT_REQUEST_ID</c>) to retry a command that timed out. The node runs a command with an id it has
     /// seen once, and answers a repeat with the first's result (waiting for it if it is still running). The GUI gives
