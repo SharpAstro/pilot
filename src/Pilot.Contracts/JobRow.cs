@@ -149,6 +149,20 @@ public sealed record JobRow
     public bool FailFast { get; init; }
 
     /// <summary>
+    /// Whether a benchmark was asked to run on the node's own machine (<c>pilot bench --local</c>, <c>pilot run --alone --local</c>), for
+    /// one that needs its hardware: it is never sent to a cloud VM, and waits for a quiet CPU as a bench always did. False for any other
+    /// job and on a row from before this. Optional, so <see cref="NodeWire.Version"/> stays (#823).
+    /// </summary>
+    public bool Local { get; init; }
+
+    /// <summary>
+    /// Where a benchmark ran: the Azure VM's size, image, region, price per hour, minutes, cost and evictions, or why it ran on the node's
+    /// machine instead. Null for a job that is not a bench, for one still waiting, and on a row from before this. Optional, so
+    /// <see cref="NodeWire.Version"/> stays: an older reader skips the field, and an older row reads it as null (#823).
+    /// </summary>
+    public BenchVm? BenchVm { get; init; }
+
+    /// <summary>
     /// The failures read so far in a line: <c>1 failed so far (BranchShapeTests.ARebase)</c>, <c>2 errors so far (CS0234 in A.cs)</c>,
     /// or both; null while there are none.
     /// </summary>
