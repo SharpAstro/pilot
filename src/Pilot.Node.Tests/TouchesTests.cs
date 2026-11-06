@@ -438,7 +438,7 @@ public sealed class TouchesTests : IDisposable
                 throw new HttpRequestException("connection reset");
             }
             var code = command.Target[(command.Target.LastIndexOf('/') + 1)..];
-            var result = new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true };
+            var result = new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Seq = 0, Ok = true };
             if (RefusesVerb)
             {
                 return Task.FromResult(result with { Ok = false, Error = $"The node knows no verb {command.Verb}" });
