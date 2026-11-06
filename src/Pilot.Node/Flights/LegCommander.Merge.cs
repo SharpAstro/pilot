@@ -403,6 +403,15 @@ public sealed partial class LegCommander
             DropMerge(flight.Code, error);
             return error;
         }
+        // The unread-head review reads the plane: a head pushed from outside it leaves the plane at the reviewed head, and the start
+        // would quietly do nothing, so that case says so instead of promising a review.
+        var plane = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        if (plane.Ok && string.Equals(plane.Output.Trim(), reviewed, StringComparison.OrdinalIgnoreCase))
+        {
+            var outside = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)} from outside the plane, which still holds the reviewed head: no review starts until the plane has the new head";
+            DropMerge(flight.Code, outside);
+            return $"{error}; {outside}";
+        }
         var reason = $"the head moved to {CommitRefs.Short(pr.Head)} past the reviewed {CommitRefs.Short(reviewed)}: a review of it starts, and the merge is offered again once it passes";
         DropMerge(flight.Code, reason);
         var started = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);

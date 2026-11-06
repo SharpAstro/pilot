@@ -104,6 +104,7 @@ public sealed class BranchShapeTests : ReviewTestsBase
         _github.Pr = _github.Pr! with { Head = Git(plane, "rev-parse", "HEAD") };
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", reviewed);
+        await Started(_legs, flight.Code);
 
         merge.Error.ShouldNotBeNull().ShouldContain("newer than the review: 1 commit (Add N)");
         merge.Error.ShouldContain(CommitRefs.Short(reviewed));

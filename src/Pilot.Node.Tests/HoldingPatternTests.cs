@@ -45,13 +45,14 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("1", Notes);
+        await WithoutTheFixerLeg(flight.Code);
 
         F(flight.Code).Holding.ShouldNotBeNull().Reason.ShouldBe(LegCommander.HoldingReason);
         Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8]);
-        refused.Error.ShouldNotBeNull();
+        refused.Error.ShouldNotBeNull().ShouldContain("holding pattern");
     }
 
     [Fact]
@@ -242,7 +243,14 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task WithAutopilotOffNoLegIsPlannedAndTheCardIsTheWatchtowers()
     {
-        var flight = await Reviewed("11", Notes);
+        var flight = await NewFlight("11", "parser");
+        await Fly(flight, "parser");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // A real node with autopilot not set: it advances flights (Advances is on), but the autopilot setting is off.
+        _legs.Models = new RoleModels(new NodeSettings());
+        _legs.Models.Advances.ShouldBeTrue();
+        _legs.Models.Autopilot.ShouldBeFalse();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
 
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
@@ -297,6 +305,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
+
     /// <summary>The review-notes leg of a holding flight (planned by hand, autopilot off), started: returns its worker.</summary>
     private async Task<string> StartedNotesLeg(FlightRow flight)
     {
@@ -405,6 +414,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Pr = _github.Pr! with { Head = moved };
 
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "me", reviewed[..8]);
+        await Started(_legs, flight.Code);
 
         refused.Error.ShouldNotBeNull().ShouldContain("newer than the");
         var row = _state.Merges().Single(m => m.Flight == flight.Code);
@@ -438,6 +448,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         var merge = card.Choices[0];
         var refused = await Run(merge.Verb, merge.Target, "me", [.. merge.Args]);
+        await Started(_legs, flight.Code);
 
         refused.Error.ShouldNotBeNull().ShouldContain("newer than the");
         _github.Merged.ShouldBeEmpty();
@@ -453,7 +464,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task ThePrReadyAndTimeoutCardsSayWhatTheHoldWaitsOn()
     {
         var flight = await Reviewed("24", Notes);
-        var worker = await StartedNotesLeg(flight);
+        await StartedNotesLeg(flight);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
 
         // The leg flying covers the wait: no timeout rings however long it flies.
@@ -463,7 +474,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         // The leg stopped with the hold still its: the card carries the hold's own reason, not the constant.
         _state.PutLeg(_state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg) with { State = LegState.Failed });
-        _ = worker;
         await TimedChecks(clock, live: false).LookAsync(Ct);
         Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Detail.ShouldNotBeNull().ShouldContain($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
     }

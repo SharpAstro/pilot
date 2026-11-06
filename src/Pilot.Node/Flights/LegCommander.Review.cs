@@ -566,7 +566,8 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
-        if (!Models.Advances)
+        // Advances is on for every real node; the owner's autopilot setting is what this waits on.
+        if (!Models.Advances || !Models.Autopilot)
         {
             return null;
         }
