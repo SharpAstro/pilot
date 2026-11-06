@@ -470,6 +470,15 @@ public sealed partial class LegCommander
                         : again;
                 }
             }
+            catch (OperationCanceledException) when (checks.NodeStopping)
+            {
+                // The node is stopping (an update, a restart), and the wait on the check's job was cancelled with it: the job is left
+                // for the next node, which carries a queued one over or reattaches to a running one. So the recheck stays open (no
+                // outcome, Since and Check kept) for NodeState's restart pass to word as carried or still running, instead of
+                // recording the cancellation as the check having thrown ("could not be run (A task was canceled.)", pilot #819).
+                HoldForLeg(flight.Code, leg.Name);
+                throw;
+            }
             catch (Exception ex)
             {
                 HoldForLeg(flight.Code, leg.Name);
