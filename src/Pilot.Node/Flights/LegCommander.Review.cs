@@ -37,6 +37,15 @@ public sealed partial class LegCommander
     /// <summary>The Handled line a leg's start leaves for a sibling clone it pulled up to its origin.</summary>
     public const string SiblingPulledKind = "sibling-pulled";
 
+    /// <summary>Session ids of reviewers being replaced (marked by StartReviewAsync, cleared when the launch ends); the tracker keeps their jobs meanwhile.</summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _replacing = new(StringComparer.Ordinal);
+
+    // A launch that fails leaves its mark, so a mark lapses on its own rather than keeping a dead reviewer's jobs for ever.
+    private static readonly TimeSpan ReplacingFor = TimeSpan.FromMinutes(5);
+
+    /// <summary>Whether a reviewer is being replaced: its queued jobs wait for the replacement to adopt them.</summary>
+    public bool IsBeingReplaced(string id) => _replacing.TryGetValue(id, out var since) && time.GetUtcNow() - since < ReplacingFor;
+
     private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
@@ -84,7 +93,21 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
             }
-            DropQueuedJobsOf(last, "its reviewer was replaced");
+            // The same head keeps the old reviewer's queued jobs: their end goes to the replacement (#601) and its own run of the
+            // same command adopts the job, so the build the predecessor queued is not thrown away. A moved head makes them stale.
+            var nowHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
+            var sameHead = flight.Review.ReviewedHead is { Length: > 0 } reviewed && nowHead.Ok && nowHead.Output.Trim() == reviewed;
+            if (!sameHead)
+            {
+                DropQueuedJobsOf(last, "its reviewer was replaced");
+            }
+            // Marked before the stop: the stopped row must not be judged ended for good before the replacement's row exists.
+            _replacing[last] = time.GetUtcNow();
+            if (state.Sessions().FirstOrDefault(s => s.Id == last || s.SessionId == last) is { } oldRow)
+            {
+                _replacing[oldRow.Id] = time.GetUtcNow();
+                _replacing[oldRow.SessionId] = time.GetUtcNow();
+            }
             await StopQuietly(last, cancellationToken);
         }
         // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being
@@ -148,6 +171,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
+                _replacing.Clear();
                 state.PutFlight(now with
                 {
                     Review = new ReviewRow

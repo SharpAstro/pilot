@@ -462,6 +462,21 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
         }
 
+        // A session that replaced another of its name and role takes up the predecessor's queued or running job of the same command
+        // in the same folder, rather than queueing the same work twice (its end already goes to the replacement, #601).
+        if (owner is not null && !alone)
+        {
+            var sessions = state.Sessions();
+            var inherited = state.Jobs().FirstOrDefault(j => j.State is JobState.Queued or JobState.Running && j.Kind == JobKind.Run && j.Owner is { Length: > 0 } && j.Owner != owner.Id
+                && j.Command == line && string.Equals(j.Cwd, cwd, StringComparison.OrdinalIgnoreCase)
+                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions)?.Id == owner.Id);
+            if (inherited is not null)
+            {
+                state.PutJob(inherited with { Owner = owner.Id, OwnerName = owner.Name, Flight = owner.Flight, Leg = owner.Leg, Told = false });
+                return state.Complete(command, null, way: $"adopted job {inherited.Id}, which your predecessor queued with the same command in the same folder", made: inherited.Id);
+            }
+        }
+
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
