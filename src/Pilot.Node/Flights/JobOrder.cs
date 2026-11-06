@@ -4,11 +4,12 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The order the job queue starts waiting jobs in: by the rank of the job's flight (<see cref="IssuePriorities.Rank"/>), then
-/// first come. A job that has waited past <see cref="WaitBound"/> ranks one level higher, once.
+/// first come. A job ranks one level higher for every whole <see cref="WaitBound"/> it has waited, up to urgent, so a job reaches
+/// the front in bounded time however many urgent jobs keep arriving.
 /// </summary>
 internal static class JobOrder
 {
-    /// <summary>How long a job may wait before it ranks one level higher.</summary>
+    /// <summary>How long a job waits for each level it is lifted: 2 h one level, 4 h two, and so on.</summary>
     public static readonly TimeSpan WaitBound = TimeSpan.FromHours(2);
 
     /// <summary>The rank of the Urgent level: a lift never goes above it.</summary>
@@ -16,12 +17,13 @@ internal static class JobOrder
 
     /// <summary>
     /// The job's rank now: its flight's (a check carries the flight it checks, a run the flight of its owner; no flight, or one
-    /// not found, is unset), one level higher once <paramref name="now"/> minus its <see cref="JobRow.QueuedAt"/> exceeds <see cref="WaitBound"/>.
+    /// not found, is unset), one level higher for each whole <see cref="WaitBound"/> that <paramref name="now"/> minus its
+    /// <see cref="JobRow.QueuedAt"/> has passed, never above urgent.
     /// </summary>
     public static int RankOf(JobRow job, IReadOnlyCollection<FlightRow> flights, AdmissionRow? admission, DateTimeOffset now)
     {
         var rank = BaseRankOf(job, flights, admission);
-        return job.QueuedAt is { } queued && now - queued > WaitBound ? Math.Max(Top, rank - 1) : rank;
+        return Math.Max(Top, rank - LevelsLifted(job, rank, now));
     }
 
     /// <summary>The rank of the job's flight alone, before any lift for a long wait.</summary>
@@ -31,20 +33,25 @@ internal static class JobOrder
         return IssuePriorities.Rank(flight is null ? null : QueuedFlight.LevelOf(flight, admission));
     }
 
-    /// <summary>Whether the wait bound has raised the job's rank: it waited past <see cref="WaitBound"/> and was not already at the top.</summary>
-    public static bool IsLifted(JobRow job, int baseRank, DateTimeOffset now) =>
-        baseRank > Top && job.QueuedAt is { } queued && now - queued > WaitBound;
+    /// <summary>How long the job has waited since it was queued; zero when it has no queued time.</summary>
+    public static TimeSpan Waited(JobRow job, DateTimeOffset now) =>
+        job.QueuedAt is { } queued && now > queued ? now - queued : TimeSpan.Zero;
+
+    /// <summary>How many levels the wait raised the job: one per whole <see cref="WaitBound"/> waited, no more than it takes to reach urgent from <paramref name="baseRank"/>.</summary>
+    public static int LevelsLifted(JobRow job, int baseRank, DateTimeOffset now) =>
+        (int)Math.Clamp(Math.Floor(Waited(job, now) / WaitBound), 0, Math.Max(0, baseRank - Top));
 
     /// <summary>
     /// The short reason for a waiting job's place when priority moved it, for its step: the highest level among the jobs ahead that
-    /// outrank it ("urgent flights first"), and "lifted, waited over 2 h" for a job the bound raised. Null when every job ahead has
-    /// the same or a lower rank and the job was not lifted, and for a benchmark, which keeps its own rule.
+    /// outrank it ("urgent flights first"), and "lifted to high, waited 4 h 10 m" for a job the bound raised. Null when every job
+    /// ahead has the same or a lower rank and the job was not lifted, and for a benchmark, which keeps its own rule.
     /// </summary>
     /// <param name="job">The waiting job.</param>
     /// <param name="rank">Its rank now (see <see cref="RankOf"/>).</param>
-    /// <param name="lifted">Whether the bound raised it (see <see cref="IsLifted"/>).</param>
+    /// <param name="lifted">How many levels the bound raised it (see <see cref="LevelsLifted"/>); zero for none.</param>
+    /// <param name="waited">How long it has waited (see <see cref="Waited"/>).</param>
     /// <param name="aheadRanks">The ranks of the non-benchmark jobs ahead of it.</param>
-    public static string? WhyHere(JobRow job, int rank, bool lifted, IEnumerable<int> aheadRanks)
+    public static string? WhyHere(JobRow job, int rank, int lifted, TimeSpan waited, IEnumerable<int> aheadRanks)
     {
         if (job.Kind == JobKind.Bench)
         {
@@ -56,9 +63,10 @@ internal static class JobOrder
         {
             reasons.Add($"{LevelName(top)} flights first");
         }
-        if (lifted)
+        if (lifted > 0)
         {
-            reasons.Add($"lifted, waited over {WaitBound.TotalHours.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} h");
+            var minutes = (int)waited.TotalMinutes;
+            reasons.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"lifted to {LevelName(rank)}, waited {minutes / 60} h {minutes % 60} m"));
         }
         return reasons.Count == 0 ? null : string.Join(", ", reasons);
     }
