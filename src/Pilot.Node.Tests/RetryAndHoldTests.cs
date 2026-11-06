@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
@@ -185,7 +186,7 @@ public sealed class RetryAndHoldTests : IDisposable
         card.Title.ShouldContain("NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
         card.Title.ShouldContain("1 flight held");
         card.Detail.ShouldNotBeNull().ShouldContain("TIA72 (PR #72)");
-        card.Detail.ShouldContain(Message);
+        card.Detail.ShouldContain("(503, No answer within 11s) should be (409,");
         _alerts.HoldOf("TIA72").ShouldNotBeNull().Reason.ShouldBe("held for TIA901: NodePlanetaryTests.ARefusedStartSaysWhyAndHoldsNothing");
         // No second investigation, and the flight is neither run again nor sent round, not even after the rerun grace.
         _github.IssuesCreated.Count.ShouldBe(1);
@@ -310,7 +311,7 @@ public sealed class RetryAndHoldTests : IDisposable
         _github.IssuesCreated.ShouldBeEmpty();
         _flights.ShouldBeEmpty();
         _alerts.HoldOf("TIA76").ShouldBeNull();
-        _state.Cards().ShouldNotContain(c => c.Kind is FailureAlerts.RetriedKind or FailureAlerts.AlertKind or "checks-rerun");
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureAlerts.AlertKind || c.Kind == "checks-rerun");
     }
 
     [Fact]
@@ -342,7 +343,10 @@ public sealed class RetryAndHoldTests : IDisposable
 
         // Every hold is released with a Handled line, and what each was held from is done: queued again, CI run again, leg check run again.
         _alerts.Open().ShouldBeEmpty();
-        new[] { "TIA71", "TIA74", "TIA77" }.ShouldAllBe(code => _alerts.HoldOf(code) == null);
+        foreach (var code in new[] { "TIA71", "TIA74", "TIA77" })
+        {
+            _alerts.HoldOf(code).ShouldBeNull();
+        }
         var lines = _state.Cards().Where(c => c.Kind == FailureAlerts.ReleasedKind).ToArray();
         lines.Length.ShouldBe(3);
         lines.ShouldAllBe(c => c.Bin == CardBin.Handled && c.Title.Contains("TIA901 landed"));

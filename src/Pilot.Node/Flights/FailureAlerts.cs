@@ -285,7 +285,7 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
         var test = ShortOf(finding);
         var named = finding.Investigation.Length > 0 ? $"{finding.Investigation} investigates" : $"{site.Name}#{finding.Issue} investigates";
         var place = site.Flight is { Length: > 0 } flight ? $"{flight}'s PR #{site.Pr}" : $"{site.Name}#{site.Pr}";
-        var subject = site.Flight is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.PrTarget(site.Name, site.Pr ?? 0);
+        var subject = site.Flight is { Length: > 0 } code ? Verbs.FlightTarget(code) : Verbs.PrTarget(site.Repo, site.Pr ?? 0);
         state.RaiseCard(CardBin.Handled, RetriedKind, subject, $"{place}: {what} once, {test} fails in a PR that does not touch it and {named}",
             $"{test} failed {Where(site.Where)} at {CommitRefs.Short(site.Head)}, a test the PR does not touch. It is a bug with a cause to find, filed as {site.Name}#{finding.Issue}"
             + (finding.Investigation.Length > 0 ? $" and flown as {finding.Investigation}" : "")
