@@ -1129,7 +1129,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         pr = null;
         if (row.Role == SessionRole.Watchtower)
         {
-            return Sessions.SessionMessenger.ReplacedBy(row, sessions) is null;
+            return Sessions.SessionMessenger.ReplacedBy(row, sessions, state.CurrentWatchtower) is null;
         }
         if (row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
             && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg && leg.WorkerJob == row.Id)
