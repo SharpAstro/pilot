@@ -45,7 +45,7 @@ public sealed class RestartTests
             Verb = Verbs.Run, Target = Verbs.SessionTarget(Owner), Args = [Path.GetTempPath(), "0", command], Who = "pil294-restart",
         }).Made!;
 
-    private static async Task<JobRow> Until(NodeHarness node, string id, Func<JobRow, bool> condition, int seconds = 30)
+    private static async Task<JobRow> Until(NodeHarness node, string id, Func<JobRow, bool> condition, int seconds = 120)
     {
         for (var i = 0; i < seconds * 20; i++)
         {

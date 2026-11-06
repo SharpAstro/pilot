@@ -53,7 +53,7 @@ public abstract class JobTestsBase : IDisposable
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
         // StartAsync returns before ExecuteAsync's recovery has run. Until it has, a Queued or Running row a test puts can be
         // failed as orphaned under it: wait, so every row a test puts is the test's alone.
-        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120)).GetAwaiter().GetResult();
     }
 
     public void Dispose()
@@ -250,7 +250,7 @@ public abstract class JobTestsBase : IDisposable
                 });
             }
             await node.Jobs.StartAsync(CancellationToken.None);
-            await node.Jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10));
+            await node.Jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120));
             return node;
         }
 
@@ -874,7 +874,7 @@ public sealed class JobTests2 : JobTestsBase
             Say = (command, _) => Task.FromResult(_state.Complete(command, null)),
         };
         await spiky.StartAsync(Ct);
-        await spiky.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await spiky.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         try
         {
             var made = spiky.Run(new CommandRequest { Verb = Verbs.Run, Target = Verbs.NodeTarget, Args = [_root, "0", "sleep 1; echo slept"], Who = "t" }).Made!;

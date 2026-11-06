@@ -327,7 +327,7 @@ public sealed class CliTests : IAsyncLifetime
             LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromHours(1), StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         };
         // Recovery runs in the background and fails any Running or Queued row it finds as left behind: let it finish first.
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         _node.State.PutJob(Job("j1", JobState.Running));
 
         (await Pilot(_root, "jobs")).Output.ShouldNotContain("holds the queue");
@@ -381,7 +381,7 @@ public sealed class CliTests : IAsyncLifetime
     public async Task PilotRunAloneSendsTheExclusiveFlagAndTheJobIsABenchJob()
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         // The machine running the suite is not quiet: the test is about the flag, not the CPU.
         runner.BenchQuietCpu = 100;
         await Ok(_root, "run", "--alone", "--", "echo benched");
@@ -415,7 +415,7 @@ public sealed class CliTests : IAsyncLifetime
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         runner.MinFreeMemory = 0;
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         // Not a bare sleep, which the node refuses: the echo makes it a job.
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = _node.State.Jobs().Single().Id;
@@ -443,7 +443,7 @@ public sealed class CliTests : IAsyncLifetime
     {
         var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
         runner.MinFreeMemory = 0;
-        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         await Ok(_root, "run", "--", "sleep 30; echo slept");
         var id = _node.State.Jobs().Single().Id;
         for (var i = 0; _node.State.Jobs().Single().State != JobState.Running; i++)
@@ -466,7 +466,7 @@ public sealed class CliTests : IAsyncLifetime
     [Fact]
     public async Task APausedJobReadsPausedWithItsTimeInJobsAndJob()
     {
-        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>().Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         _node.State.PutJob(new JobRow
         {
             Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,

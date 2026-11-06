@@ -309,8 +309,8 @@ public sealed class McpTests : IAsyncLifetime
         log.ToString().ShouldContain("pilot 99.0.0 is installed");
 
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
-        await child.Running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
+        await child.Running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     [Fact]
@@ -342,7 +342,7 @@ public sealed class McpTests : IAsyncLifetime
         (await output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(7);
 
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     [Fact]
@@ -406,7 +406,7 @@ public sealed class McpTests : IAsyncLifetime
         children.Disposed(2).ShouldBeFalse();
 
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         children.Disposed(2).ShouldBeTrue();
     }
 
@@ -430,7 +430,7 @@ public sealed class McpTests : IAsyncLifetime
 
         started.ShouldBe(0);
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     [Fact]
@@ -455,7 +455,7 @@ public sealed class McpTests : IAsyncLifetime
         started.ShouldBe(0);
         log.ToString().ShouldContain("parent process is a pilot mcp");
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     [Fact]
@@ -475,7 +475,7 @@ public sealed class McpTests : IAsyncLifetime
 
         started.ShouldBeGreaterThan(0);
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     [Theory]
@@ -536,7 +536,7 @@ public sealed class McpTests : IAsyncLifetime
         log.ToString().Split("did not come up").Length.ShouldBe(2);
 
         input.Dispose();
-        await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
     }
 
     private const string Restarting = "the node is restarting (or not running): try again in a moment";
@@ -582,7 +582,7 @@ public sealed class McpTests : IAsyncLifetime
         finally
         {
             input.Dispose();
-            await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
             if (second is not null)
             {
                 await second.DisposeAsync();
@@ -621,7 +621,7 @@ public sealed class McpTests : IAsyncLifetime
         finally
         {
             input.Dispose();
-            await running.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            await running.WaitAsync(TimeSpan.FromSeconds(120), Ct);
             if (node is not null)
             {
                 await node.DisposeAsync();

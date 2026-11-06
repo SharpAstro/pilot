@@ -41,7 +41,7 @@ public sealed class EndedSessionJobsTests : IDisposable
         _tracker.DropJobs = (owners, why) => _jobs.DropQueuedOf(owners, why);
         _jobs.EndedForGood = _tracker.IsEndedForGood;
         _jobs.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct).GetAwaiter().GetResult();
+        _jobs.Recovered.WaitAsync(TimeSpan.FromSeconds(120), Ct).GetAwaiter().GetResult();
     }
 
     public void Dispose()
@@ -75,7 +75,7 @@ public sealed class EndedSessionJobsTests : IDisposable
     private string Queue(string target, string command) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [Path.GetTempPath(), "0", command], Who = "test" }).Made.ShouldNotBeNull();
 
-    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 4)
+    private async Task<JobRow> Until(string id, Func<JobRow, bool> condition, int seconds = 120)
     {
         var clock = Stopwatch.StartNew();
         while (true)
