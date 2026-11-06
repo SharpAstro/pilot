@@ -144,6 +144,35 @@ public sealed record LegRecheck
     /// </summary>
     public string? Outcome { get; init; }
 
+    /// <summary>
+    /// What the worker said when it asked for the finish (the words after <c>done</c>), kept so the node can run that same finish
+    /// itself if it restarts meanwhile (pilot #819). Written only with <see cref="By"/>; null for a rerun no finish of a worker asked for.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Report { get; init; }
+
+    /// <summary>
+    /// Who asked for the finish (its command's <c>Who</c>). When set, a rerun that outlives the node is finished by the next node
+    /// itself (<see cref="Resume"/>), not by a second <c>leg finish done</c> from its worker. Null on a rerun an older node wrote.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? By { get; init; }
+
+    /// <summary>
+    /// Set by a node's restart pass on a rerun that names <see cref="By"/> and had no outcome when the node went down: the leg watch
+    /// runs that finish once, under the node's own token, and clears the mark when it ends.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Resume { get; init; }
+
+    /// <summary>What the worker is told when the node, after a restart, finished its leg itself by waiting on or rerunning the check.</summary>
+    public static string NodeFinishedOutcome(string check) =>
+        $"The node restarted while it was rerunning your leg's check `{check}`. It waited on that check (or ran it again, if its job did not survive), it passed, and the node finished the leg with your report. You do not need to run `leg finish done`; end your turn.";
+
+    /// <summary>What the worker is told when the node's own finish after a restart ended with the check failing or the finish refused, so the leg is still flying.</summary>
+    public static string NodeFinishRefusedOutcome(string check, string error) =>
+        $"The node restarted while it was rerunning your leg's check `{check}`, so it finished your `leg finish done` itself, and the node refused it; the leg is still flying. {error}\nFix what it says, then run `leg finish done` again.";
+
     /// <summary>The outcome of a rerun that died with the node that ran it.</summary>
     public static string RestartedOutcome(string check) =>
         $"The node restarted while it was rerunning your leg's check `{check}`, so the rerun never finished and the leg is still flying. Run `leg finish done` again.";

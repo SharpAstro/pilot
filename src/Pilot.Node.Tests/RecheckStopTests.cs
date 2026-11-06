@@ -122,7 +122,7 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
     [Theory(Timeout = 120_000)]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ThatStateLoadedIntoAFreshNodeStateGivesTheCarriedOutcomeForAQueuedJobAndTheRunningOneForARunningJobNeverTheThrewOutcome(bool queued)
+    public async Task ThatStateLoadedIntoAFreshNodeStateMarksTheRerunForTheNodeToResumeWhateverItsJobWasAndNeverGivesTheThrewOutcome(bool queued)
     {
         var job = await FinishInterruptedByTheNodeStoppingAsync();
         try
@@ -135,9 +135,10 @@ public sealed class RecheckStopTests : LegCommanderTestsBase
 
             var next = new NodeState(_journal, TimeProvider.System);
 
-            var outcome = next.Legs("TIA1").Single(l => l.Name == "parser").Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull();
-            outcome.ShouldBe(queued ? LegRecheck.CarriedOutcome(LongCheck) : LegRecheck.RunningCarriedOutcome(LongCheck));
-            outcome.ShouldNotBe(LegRecheck.ThrewOutcome(LongCheck, "A task was canceled."));
+            // The finish was asked by "tests" with its report, so the next node finishes it itself (CarriedFinishTests): no outcome that
+            // asks the worker to finish again, and never the cancellation recorded as the check having thrown.
+            var recheck = next.Legs("TIA1").Single(l => l.Name == "parser").Recheck.ShouldNotBeNull();
+            (recheck.Resume, recheck.Outcome, recheck.By, recheck.Report).ShouldBe((true, null, "tests", "parser in"));
         }
         finally
         {
