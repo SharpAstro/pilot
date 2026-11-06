@@ -457,10 +457,7 @@ public sealed partial class LegCommander
             {
                 return $"{code} is not a flying flight with a passed review";
             }
-            if (OnHoldRefusal(flight) is { } onHold)
-            {
-                return onHold;
-            }
+            RefuseIfOnHold(code);
             var changes = changesFor(number);
             await TurnToChangesAsync(flight, changes, cancellationToken);
             state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
