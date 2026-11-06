@@ -157,11 +157,6 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
     /// </summary>
     public AdmissionDecision Ask(AdmissionRole role, string? model, FlightRow? flight, IReadOnlySet<string>? ignoring = null, string? subject = null)
     {
-        // A benchmark queued or running has the node to itself: no new session starts until it ends. Sessions already running go on.
-        if (state.Jobs().FirstOrDefault(j => j.Kind == JobKind.Bench && j.State is JobState.Queued or JobState.Running) is { } bench)
-        {
-            return new AdmissionDecision.Wait($"a benchmark ({bench.Id}) holds the node");
-        }
         var view = Fleet.Current();
         var input = Input(flight?.Code, ignoring, view);
         var decision = Admission.Decide(input, new AdmissionRequest(role, model, machine, flight?.Code));
