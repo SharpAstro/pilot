@@ -196,6 +196,8 @@ jobs:
     steps:
     - uses: actions/download-artifact@v8
       with:
+        # Only the beta zips: this run can also hold node-tests-hang-* dumps, and every file in dist/ is uploaded.
+        pattern: beta-*
         path: dist
         merge-multiple: true
     - name: Replace the beta prerelease's zips
