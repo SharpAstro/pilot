@@ -164,6 +164,29 @@ public static partial class Briefs
     internal const string InvariantRule =
         "A new test that guards the whole repo (a catalog, a size limit, a fixture, a rule over every source file) carries `[Trait(\"Category\", \"Invariant\")]` (`InvariantChecks.Category` or the test project's constant), so checks run it.";
 
+    /// <summary>
+    /// PIL795 (the TIA2000 post-mortem): a repeat workflow with a pull_request trigger ran 30 passes on every push to its own PR,
+    /// 37 runner-hours for one PR. A proof that repeats is run once, on demand, at the end.
+    /// </summary>
+    internal const string OnDemandProofRule =
+        "A repeat, soak or N-pass proof (a workflow that runs the same tests many times to show they are stable) is a `workflow_dispatch` workflow, run once at the end, on demand.\n" +
+        "It is never a `pull_request` or `push` trigger, which would re-run it on every push to the PR, and never a done-when that every push must pass.";
+
+    /// <summary>PIL795: a failure the flight did not cause gets its own issue; it does not become a leg of this flight (TIA2000 absorbed five unrelated races).</summary>
+    internal static string UnrelatedFailureRule(string run) =>
+        "When your check or the PR's CI fails on a test your flight does not touch (a test class and files your diff leaves alone, and the test fails on main too), it is not this flight's to fix:\n" +
+        "file it as a new issue with `gh issue create`, with the failing log and the test's name, and link it from your report. Do not fix it here, and do not add a leg to the flight for it.\n" +
+        $"The issue flies on its own, or the correlated-failure path (PIL716) takes it. Say in your report that the failure is not this flight's, with the issue's number; if it blocks your leg's check, `{run} leg finish failed` with that said, not a new leg.";
+
+    /// <summary>PIL795: the planner's rule on growth. A flight's legs grow by one past its plan; the second extra leg rings the owner (<c>LegCommander.PlannedLegCap</c>).</summary>
+    internal const string LegGrowthRule =
+        "The legs you lay are the flight's plan: the node keeps their count when you say planned. A later `leg plan` may add one leg past it without a word; a second extra leg raises a card to the owner, so plan every leg the issue needs now.";
+
+    /// <summary>PIL795: a reviewer treats a CI trigger that re-runs on its own PR pushes, or a job over 30 minutes on every PR, as blocking.</summary>
+    internal const string SelfTriggeringCiRule =
+        "A PR that adds or changes a CI workflow so that it re-runs on the PR's own pushes (a `pull_request` or `push` trigger on a repeat, soak or N-pass proof, or a path filter that includes the workflow itself), or so that a job over 30 minutes runs on every PR, is a blocking finding:\n" +
+        "such a proof is `workflow_dispatch` only, run once at the end (TIA2000's 30-pass repeat on every push cost 37 runner-hours).";
+
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
     internal const string CheckWhereRule =
         "A check runs in the plane's root: write it as CI runs it, including its working-directory (`cd <dir> && dotnet build <solution> -c Release`).\n" +

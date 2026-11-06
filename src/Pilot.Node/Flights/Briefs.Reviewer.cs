@@ -114,6 +114,7 @@ public static partial class Briefs
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        text.AppendLine(SelfTriggeringCiRule);
         if (flight.HumanVerification)
         {
             text.AppendLine();

@@ -200,6 +200,14 @@ public sealed record FlightRow
     public string[]? PlannedFiles { get; init; }
 
     /// <summary>
+    /// How many legs the flight had when its planner said <c>planned</c> (PIL795): a later <c>leg plan</c> may take it one past this
+    /// without a word, and a leg beyond that raises a card to the owner. Null until the plan is said, so a flight journaled before
+    /// it has no cap. Optional and additive, so the wire version does not move.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PlannedLegs { get; init; }
+
+    /// <summary>
     /// The issues of other flights folded into this one (<c>fold</c>): its planner plans their points as legs after its own,
     /// and its PR closes each beside <see cref="Issue"/>. Null-safe for the reason <see cref="Overlaps"/> is.
     /// </summary>

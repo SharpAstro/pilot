@@ -35,6 +35,10 @@ public static partial class Briefs
         text.AppendLine("Prefer few legs: one for a small issue, two to four for a larger one, split where a reviewer would want to");
         text.AppendLine($"see the work land in steps. No leg may be named `{LegCommander.ReviewLeg}` or `{LegCommander.PlanLeg}`.");
         text.AppendLine("A leg that needs outside work (a file, a time) says so in its steps; its worker waits with `leg wait`, never with a job.");
+        // PIL795: a repeat proof on every push to its own PR cost 37 runner-hours (TIA2000); an unrelated failure is an issue, not a leg.
+        text.AppendLine(OnDemandProofRule);
+        text.AppendLine(UnrelatedFailureRule(run));
+        text.AppendLine(LegGrowthRule);
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
         if (flight.FromIdea is { Length: > 0 } idea)

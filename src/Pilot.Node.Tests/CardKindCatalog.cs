@@ -76,6 +76,7 @@ internal static class CardKindCatalog
         new("leg-self-finished", "Handled", [LegFinish], "LegSelfFinishTests.A_failed_leg_with_its_work_pushed_and_its_check_passing_is_finished_by_the_node"),
         new("leg-no-go", "Ring", [LegStart], "CardSummaryRaiserTests.TheNoGoSummaryNamesTheChoicesTheCardOffers"),
         new("leg-validating", "Handled", [LegStart], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
+        new("leg-cap", "ForYou", [LegPlan], "PlannedLegCapTests.TheSecondExtraLegRaisesAForYouCardNamingTheFlightAndTheCounts"),
         new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
         new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard"),

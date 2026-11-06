@@ -56,6 +56,9 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine(CiRule);
         text.AppendLine(MachineLoadRule(run));
+        // PIL795 (TIA2000): no CI loop on a PR push, and a failure the flight did not cause is an issue, never one of its legs.
+        text.AppendLine(OnDemandProofRule);
+        text.AppendLine(UnrelatedFailureRule(run));
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         if (CiShape.Of(flight.Worktree) is { } ci)
         {

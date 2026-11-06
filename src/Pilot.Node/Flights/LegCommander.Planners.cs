@@ -149,6 +149,12 @@ public sealed partial class LegCommander
         }
         var summary = string.Join(' ', command.Args ?? []).Trim();
         var lines = legs.Select(l => $"{l.Order}. {l.Name}: {l.Goal}");
+        // PIL795: the plan's leg count is kept, so a flight that grows past it (TIA2000 absorbed five unrelated fixes as legs) is noticed.
+        // Only while no leg has flown: a planned line said later would otherwise move the cap with the growth it measures.
+        if (flight.PlannedLegs is null || legs.All(l => l.State == LegState.Planned))
+        {
+            state.PutFlight(flight with { PlannedLegs = legs.Count });
+        }
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "planned again", PlannedKind);
         state.RaiseCard(CardBin.ForYou, PlannedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: {legs.Count} {(legs.Count == 1 ? "leg" : "legs")} planned",
