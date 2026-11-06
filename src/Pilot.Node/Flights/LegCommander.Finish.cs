@@ -88,9 +88,11 @@ public sealed partial class LegCommander
                     {
                         var seenLeg = leg;
                         // The base is merged at most once per go-around (#752): a later attempt of the same round skips it.
-                        if (_baseMerged.TryAdd(RoundKey(flight, leg), 0))
+                        // A merge that conflicted was undone and refused, so it is not the round's: the next attempt tries again.
+                        if (!_baseMerged.ContainsKey(RoundKey(flight, leg)))
                         {
                             await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
+                            _baseMerged[RoundKey(flight, seenLeg)] = 0;
                         }
                         leg = UnchangedFinishing(flight.Code, seenLeg) is { } current
                             ? current
