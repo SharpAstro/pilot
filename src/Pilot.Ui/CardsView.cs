@@ -428,7 +428,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     {
         BeginFrame();
         var over = Pointer is { } p && p.X >= bounds.X && p.X < bounds.X + bounds.Width && p.Y >= bounds.Y && p.Y < bounds.Y + bounds.Height;
-        RenderLayout(Tree(Steady(screen, over)), bounds);
+        RenderLayout(Tree(Steady(screen, over)), bounds, drawFill: Gallery.DrawFill);
     }
 
     // The panel as it stood when the pointer came over it, which it keeps to until the pointer leaves; null while it is
@@ -573,7 +573,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
 
-    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && _links.HandleKey(key, this);
+    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && (_links.HandleKey(key, this) || Gallery.InPanel && Gallery.HandleKey(key.Key));
+
+    /// <summary>The window's gallery: the picture of a card's image is fetched, decoded and painted through it, as a flight's attachments are.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
+    /// <summary>What a card's image is called under its thumbnail and in the viewer.</summary>
+    internal const string ImageTitle = "Screenshot";
 
     internal Layout.Node Build(CardsScreen screen)
     {
@@ -637,7 +643,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
-        return _links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch()));
+        // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
+        return Gallery.Over(_links.Over(WithSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).Stretch())), panel: true);
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>
@@ -813,6 +820,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                     detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
             }
+        }
+        // The one image the node keeps for the card (an overlap's screenshot): a thumbnail under the detail, a click opens it full size.
+        if (card.Attachment is { Length: > 0 } image && card.AttachmentExt is { Length: > 0 } imageExt)
+        {
+            lines.Add(Layout.Builder.Spacer().RowH(4f));
+            lines.Add(Gallery.Single($"card:{card.Id}", new AttachmentRef(image, ImageTitle, imageExt, node),
+                words => WrappedProse.Of(words, 11f, Dim, DetailLines, lineChars: LineChars / 2).WStar()));
         }
         if (CommitLinkRow(card, $"card:{card.Id}") is { } commitLinks)
         {

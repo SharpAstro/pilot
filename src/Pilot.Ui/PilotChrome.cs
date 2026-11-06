@@ -152,7 +152,7 @@ internal sealed class PilotChrome<TSurface>
         Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Spend = new SpendView<TSurface>(renderer);
-        Cards = new CardsView<TSurface>(renderer);
+        Cards = new CardsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
         Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
@@ -610,6 +610,12 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
+        // A card's image open over the panel is shut by Escape wherever the page is: the page's own views only close what a page opened.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Gallery.InPanel && Gallery.HandleKey(InputKey.Escape))
+        {
+            return true;
+        }
+
         // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && Chat.HandleNewLine(evt))
         {
