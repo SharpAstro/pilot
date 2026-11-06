@@ -677,6 +677,31 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return past.Ok ? past.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
     }
 
+    /// <summary>
+    /// Whether the plane's HEAD holds exactly the tree of <paramref name="commit"/> (a merge commit, however the PR was merged:
+    /// squash, rebase or merge commit all leave one tree behind), each resolved with <c>rev-parse '&lt;sha&gt;^{tree}'</c>. The commit
+    /// is fetched first when the plane lacks it. True or false when both trees were read; else null and <c>Said</c> is
+    /// why they could not be (the card says it).
+    /// </summary>
+    public async Task<(bool? Same, string? Said)> HeadTreeIsAsync(string worktree, string commit, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
+        {
+            return (null, "its plane is gone");
+        }
+        if (!(await git.RunAsync(["cat-file", "-e", $"{commit}^{{commit}}"], worktree, cancellationToken)).Ok)
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], worktree, cancellationToken);
+        }
+        var merged = await git.RunAsync(["rev-parse", $"{commit}^{{tree}}"], worktree, cancellationToken);
+        if (!merged.Ok)
+        {
+            return (null, $"the merge commit {CommitRefs.Short(commit)} could not be read here");
+        }
+        var plane = await git.RunAsync(["rev-parse", "HEAD^{tree}"], worktree, cancellationToken);
+        return plane.Ok ? (string.Equals(merged.Output.Trim(), plane.Output.Trim(), StringComparison.OrdinalIgnoreCase), null) : (null, "its plane's tree could not be read");
+    }
+
     /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>
     public async Task<string?> UncommittedAsync(string worktree, CancellationToken cancellationToken)
     {

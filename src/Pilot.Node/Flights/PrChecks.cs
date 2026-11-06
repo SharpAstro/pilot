@@ -969,7 +969,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
             return;
         }
+        // A merge of a PR that is merged lands the flight and never reaches here (#799 rule 6); one closed unmerged has nothing to merge:
+        // no card offers a Merge on a PR that is merged or closed.
+        var closed = result.Error?.EndsWith(", not open", StringComparison.Ordinal) == true;
         state.RaiseCard(CardBin.Ring, AutopilotMergeRefused, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge on autopilot was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}",
-            result.Error, [merge with { Status = null, Label = $"Merge {flight.Code}'s PR #{flight.PullRequest} once more" }], link: flight.PullRequestUrl);
+            result.Error, closed ? [] : [merge with { Status = null, Label = $"Merge {flight.Code}'s PR #{flight.PullRequest} once more" }], link: flight.PullRequestUrl);
     }
 }
