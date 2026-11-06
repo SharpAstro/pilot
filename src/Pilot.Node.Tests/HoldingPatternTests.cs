@@ -409,7 +409,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         refused.Error.ShouldNotBeNull().ShouldContain("newer than the");
         var row = _state.Merges().Single(m => m.Flight == flight.Code);
         row.State.ShouldBe(MergeEntryState.Dropped);
-        row.Why.ShouldNotBeNull().ShouldContain($"the head moved to {moved[..8]} past the reviewed {reviewed[..8]}");
+        row.Why.ShouldNotBeNull().ShouldContain($"the head moved to {CommitRefs.Short(moved)} past the reviewed {CommitRefs.Short(reviewed)}");
         row.Why.ShouldContain("a review of it starts, and the merge is offered again once it passes");
         var now = F(flight.Code);
         now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
