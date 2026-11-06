@@ -46,11 +46,15 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
 
     private Task LookAsync() => new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
+    /// <summary>The fake's PR head is the one from before the push; the look would note that as a head disagreement, which is not what these tests are about.</summary>
+    private void GitHubHasTheHeadThePlaneHas() => _github.Pr = _github.Pr! with { Head = Reviewed };
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AReviewThatPassesWithNotesEndsWithOnlyPilotPassedOnThePrAfterAChangesRound()
     {
         var flight = await Opened();
+        GitHubHasTheHeadThePlaneHas();
         (await Verdict(flight.Code, "changes", "## Blocking\n- the null check in Parse is gone")).Error.ShouldBeNull();
         Pilot(_github.Labels[71]).ShouldBe(["pilot: changes"]);
         (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
@@ -75,6 +79,7 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
     public async Task APilotChangesLabelLeftOnGitHubAfterAPassIsReplacedAtTheNextLookAndTheBlackBoxSaysSo()
     {
         var flight = await Opened();
+        GitHubHasTheHeadThePlaneHas();
         (await Verdict(flight.Code, "pass", Notes)).Error.ShouldBeNull();
         // Something else wrote pilot: changes after the pass.
         _github.Labels[71].Clear();
