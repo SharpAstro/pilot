@@ -63,6 +63,13 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// <summary>How often a running job's log and exit file are looked at.</summary>
     public TimeSpan FollowEvery { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// How long a fail-fast job runs on after its first failed test, at most, for that test's report (its error message, up to
+    /// its stack trace) to reach the log: xunit's <c>[FAIL]</c> line comes before it, often by several lines. It stops as soon as
+    /// the report is in.
+    /// </summary>
+    public TimeSpan FailFastGrace { get; set; } = TimeSpan.FromSeconds(3);
+
     /// <summary>Where a job's exit code is written when it ends: its log's path plus <c>.exit</c>.</summary>
     public static string ExitPathOf(string logPath) => logPath + ".exit";
 
@@ -409,6 +416,11 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     {
         var args = command.Args ?? [];
         // A leading --alone asks for the node to itself (a benchmark); the rest is as for any run.
+        var failFast = args.Length > 0 && args[0] == Verbs.FailFastArg;
+        if (failFast)
+        {
+            args = [.. args.Skip(1)];
+        }
         var alone = args.Length > 0 && args[0] == Verbs.AloneArg;
         if (alone)
         {
@@ -497,6 +509,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Timeout = timeout,
             StartedAt = time.GetUtcNow(),
             MemoryKey = JobKey.Of(line, cwd).ToString(),
+            FailFast = failFast || IsLegCheckOfReviewerOrFixer(owner, line),
         };
         job = job with { QueuedAt = job.StartedAt };
 
@@ -505,6 +518,25 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         state.PutJob(job);
         _signals.Writer.TryWrite(new HandedOver(job));
         return state.Complete(command, null, made: jobId);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="owner"/> is a reviewer or a fixer and <paramref name="command"/>, trimmed, is one of its flight's legs'
+    /// checks (every leg's when its session names no flight, as a PR review's does): such a run stops at its first failed test, as a check does.
+    /// </summary>
+    private bool IsLegCheckOfReviewerOrFixer(SessionRow? owner, string command)
+    {
+        if (owner is null)
+        {
+            return false;
+        }
+        var fixer = owner.Role != SessionRole.Reviewer && state.PrReviews().Any(r => r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal));
+        if (owner.Role != SessionRole.Reviewer && !fixer)
+        {
+            return false;
+        }
+        var wanted = command.Trim();
+        return state.Legs(owner.Flight).Any(l => l.Check is { } check && string.Equals(check.Trim(), wanted, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -570,6 +602,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             Command = command,
             Cwd = cwd,
             Kind = JobKind.Check,
+            FailFast = true,
             Flight = flight,
             Leg = leg,
             State = JobState.Queued,
@@ -783,7 +816,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             var job = _queue[i];
             var why = i > 0 && ranks[i] is { } rank
-                ? JobOrder.WhyHere(job, rank, JobOrder.IsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), ranks.Take(i).OfType<int>())
+                ? JobOrder.WhyHere(job, rank, JobOrder.LevelsLifted(job, JobOrder.BaseRankOf(job, flights, admission), now), JobOrder.Waited(job, now), ranks.Take(i).OfType<int>())
                 : null;
             var place = why is null ? "" : $" ({why})";
             _queue[i] = job with
@@ -1667,11 +1700,26 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         // The looks at the machine's CPU while this job ran, and how many found it above 90%.
         int looks = 0, hot = 0;
 
+        var failures = new TestFailures();
+        // When a fail-fast job read its first failed test, and the test it was stopped at.
+        DateTimeOffset? failedAt = null;
+        string? stoppedAt = null;
+
         void Follow(bool final)
         {
             foreach (var line in follower.Read(final))
             {
-                tail.Add(line);
+                var failure = failures.Read(line);
+                // A fail-fast job's tail ends with its first failed test's report: what came after is cut short by the stop, and
+                // other tests' reports read in the same look would push why it failed out of the tail.
+                if (!(job.FailFast && failures.PastFirstReport))
+                {
+                    tail.Add(line);
+                }
+                if (failure is { } found)
+                {
+                    NoteFailure(job, found);
+                }
                 // The step, put on the stream now and then: a long run shows it is alive, without a delta per line.
                 var now = time.GetUtcNow();
                 if (now - lastStep >= StepEvery && line.Trim().Length > 0 && !IsShellHeader(line, job))
@@ -1728,6 +1776,23 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                     {
                         break;
                     }
+                    var grace = TimeSpan.MaxValue;
+                    if (job.FailFast && failures.FirstTest is { } first && !_cancelled.ContainsKey(job.Id) && TimeLeft(job) > TimeSpan.Zero)
+                    {
+                        // A fail-fast job read its first failed test: once that test's report says why (or the grace is over), its
+                        // whole tree ends, as a timeout ends it, and the queue moves on.
+                        failedAt ??= time.GetUtcNow();
+                        grace = FailFastGrace - (time.GetUtcNow() - failedAt.Value);
+                        if (failures.FirstTestReported || grace <= TimeSpan.Zero)
+                        {
+                            stoppedAt = first;
+                            Kill(job.Id, process);
+                            Tree.KillAll(job.Id, process);
+                            await GoneAsync(process);
+                            exitCode = null;
+                            break;
+                        }
+                    }
                     var left = TimeLeft(job);
                     if (left <= TimeSpan.Zero)
                     {
@@ -1741,9 +1806,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                         exitCode = ReadExit(exitPath);
                         break;
                     }
-                    // Between two looks, or sooner when a cancel says so, or the timeout is due.
+                    // Between two looks, or sooner when a cancel says so, or the timeout or a fail-fast grace is due.
                     using var pause = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                    var tick = Task.Delay(left < FollowEvery ? left : FollowEvery, time, pause.Token);
+                    var wait = left < FollowEvery ? left : FollowEvery;
+                    var tick = Task.Delay(grace < wait ? grace : wait, time, pause.Token);
                     if (await Task.WhenAny(tick, nudge.Task) == tick)
                     {
                         await tick;
@@ -1801,6 +1867,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
         }
+        else if (stoppedAt is not null)
+        {
+            ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
+        }
         else if (exitCode is { } code)
         {
             ended = code == 0
@@ -1841,6 +1911,74 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
         await TellAsync(ended, CancellationToken.None, last);
         process.Child?.Dispose();
+    }
+
+    /// <summary>
+    /// A failed test or build error read in a running job's output: counted on its row now, and the owner told the first one,
+    /// once, at once (a check has no owner, so it only gets the row). A refused say is no card: the end-of-run tell still comes.
+    /// </summary>
+    private void NoteFailure(JobRow job, TestFailures.Failure failure)
+    {
+        JobRow? toTell = null;
+        lock (_rowLock)
+        {
+            if (state.Jobs().FirstOrDefault(j => j.Id == job.Id) is not { State: JobState.Running } current)
+            {
+                return;
+            }
+            var updated = failure.IsBuildError
+                ? current with { BuildErrors = current.BuildErrors + 1, FirstBuildError = current.FirstBuildError ?? failure.Name }
+                : current with { TestsFailed = current.TestsFailed + 1, FirstTestFailed = current.FirstTestFailed ?? failure.Name };
+            // A fail-fast run ends at its first failed test and its end names it at once: an early word would say it twice, the
+            // first time wrongly ("runs on"). A build error does not stop it, so that one is still told early.
+            if (!updated.FailureTold && updated.Owner is not null && updated.Kind != JobKind.Check && !(updated.FailFast && updated.TestsFailed > 0) && Say is not null)
+            {
+                updated = updated with { FailureTold = true };
+                toTell = updated;
+            }
+            state.PutJob(updated);
+        }
+        if (toTell is not null)
+        {
+            _ = TellFirstFailureAsync(toTell, failure);
+        }
+    }
+
+    private async Task TellFirstFailureAsync(JobRow job, TestFailures.Failure failure)
+    {
+        try
+        {
+            var sessions = state.Sessions();
+            var ownerRow = OwnerRow(job.Owner!, sessions);
+            var target = WakeTarget(job.Owner!, job.OwnerName);
+            var handed = "";
+            if (ownerRow is not null)
+            {
+                var candidates = ownerRow.Role == SessionRole.Worker
+                    ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
+                    : sessions;
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+                {
+                    target = replacement.Id;
+                    handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
+                }
+                else if (EndedNormally(ownerRow) || EndedForGood?.Invoke(ownerRow.Id) == true)
+                {
+                    return;
+                }
+            }
+            else if (Ledger?.Find([job.Owner!]) is { EndedAt: not null })
+            {
+                return;
+            }
+            var what = failure.IsBuildError ? $"a build error ({failure.Name})" : $"a failed test ({failure.Name})";
+            var text = $"{handed}Your job {job.Id} (`{job.Command}`, in {job.Cwd}) has {what} so far, and runs on. You will be told how it ends; the output so far is in {job.LogPath}.";
+            await Say!(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, _stopping);
+        }
+        catch (Exception)
+        {
+            // Not told early: no card for it, the end of the run is still told.
+        }
     }
 
     private void ReleaseHold(string id)

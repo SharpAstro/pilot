@@ -172,6 +172,9 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
+    /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
+    Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
     /// <summary>
     /// Where PR <paramref name="number"/>'s checks stand: <see cref="ChoiceStatus.Failing"/> when any failed,
     /// <see cref="ChoiceStatus.Pending"/> while any runs, <see cref="ChoiceStatus.Passing"/> when all passed (skipped ones
@@ -462,7 +465,10 @@ public static class PilotMarks
     public const string Recheck = LabelPrefix + "recheck";
 
     /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
-    public static readonly string[] ReadFromPeople = [Priority, Recheck];
+    public static readonly string[] ReadFromPeople = [Priority, Recheck, HumanVerification];
+
+    /// <summary>Put on a flight's issue by a person: the flight's live behaviour needs a person's check, so its briefs say how to note such checks and the node files each as an issue for the controller.</summary>
+    public const string HumanVerification = LabelPrefix + "human verification";
 
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
@@ -499,6 +505,7 @@ public static class PilotMarks
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
+        HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),
         _ => ("ededed", "set by pilot"),
     };
 }

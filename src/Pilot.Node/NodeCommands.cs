@@ -745,8 +745,57 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         var detail = string.Join(' ', args.Skip(2)).Trim();
         var title = args[1].Trim();
         var from = string.Equals(command.Who, "cli", StringComparison.Ordinal) ? "" : $" (from {command.Who})";
-        state.RaiseCard(bin.Value, Watchtower.RaisedKind, command.Target, title, (detail.Length > 0 ? detail : null) is { } d ? d + from : from.Length > 0 ? from.Trim() : null);
+        string? attachment = null, attachmentExt = null;
+        if (command.Attachment is { Length: > 0 } named && KeepCardImage(named, out attachment, out attachmentExt) is { } refused)
+        {
+            return state.Complete(command, refused);
+        }
+        state.RaiseCard(bin.Value, Watchtower.RaisedKind, command.Target, title, (detail.Length > 0 ? detail : null) is { } d ? d + from : from.Length > 0 ? from.Trim() : null,
+            attachment: attachment, attachmentExt: attachmentExt);
         return state.Complete(command, null);
+    }
+
+    /// <summary>
+    /// The copy a card is raised with: <paramref name="named"/> is <c>&lt;id&gt;.&lt;ext&gt;</c> of an image the node holds. One uploaded for a card
+    /// (or an idea) lives in a folder no archive empties and is kept as it is; a leg artifact's copy goes when its flight lands, so a card
+    /// gets a copy of its own. Null when it is kept, else why not.
+    /// </summary>
+    private string? KeepCardImage(string named, out string? id, out string? ext)
+    {
+        id = ext = null;
+        var attachments = Get<Attachments>();
+        var dot = named.LastIndexOf('.');
+        if (dot <= 0 || Attachments.IdeaImageExtension(named[(dot + 1)..]) is not { } kind)
+        {
+            return $"the attachment is <id>.<ext> of an image the node holds (png, jpg, jpeg, gif, webp or bmp), not {named}";
+        }
+        var wanted = named[..dot];
+        if (attachments.FindIdeaImage(wanted) is { } held)
+        {
+            (id, ext) = (wanted, held.Ext);
+            return null;
+        }
+        var owned = state.Flights().SelectMany(f => state.Legs(f.Code).SelectMany(l => l.Artifacts).Select(a => (Owner: f.Code, Artifact: a)))
+            .Concat(state.Sessions().SelectMany(s => (s.Artifacts ?? []).Select(a => (Owner: s.Id, Artifact: a))))
+            .FirstOrDefault(x => x.Artifact?.Attachment == wanted && x.Artifact.AttachmentExt is not null);
+        if (owned.Artifact is { AttachmentExt: { } ownedExt } && attachments.PathOf(owned.Owner, wanted, ownedExt) is var path && File.Exists(path))
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(path);
+                if (bytes.Length > IdeaImages.MaxBytes)
+                {
+                    return $"a card's image is at most {IdeaImages.MaxBytes / (1024 * 1024)} MB";
+                }
+                (id, ext) = (attachments.AddIdeaImage(bytes, ownedExt), ownedExt);
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FlightException)
+            {
+                return $"could not keep a copy of {named}: {ex.Message}";
+            }
+        }
+        return $"the node holds no image {wanted}.{kind}: upload it first (pilot ring --attachment <file>)";
     }
 
     private T Get<T>() where T : notnull => services.GetRequiredService<T>();
