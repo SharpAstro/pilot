@@ -102,6 +102,7 @@ public sealed class FailureInvestigationTests
         await Checks().LookAsync(Ct);
 
         OneInvestigation("tianwen#71 (TIA71)", 5001);
+        _state.Cards().ShouldContain(c => c.Kind == FailureInvestigations.CardKind && c.Bin == CardBin.ForYou);
         var record = _failures.Ledger.All().ShouldHaveSingleItem();
         (record.Where, record.Pr, record.Flight, record.RunId, record.Test, record.Investigation, record.Issue).ShouldBe((FailureWhere.Queue, 71, "TIA71", 5001L, Test, "TIA901", 1));
 
@@ -148,7 +149,6 @@ public sealed class FailureInvestigationTests
     public async Task ASecondOccurrenceOfTheSameSignatureInAnotherPrCommentsItsRunAndPrOnTheSameIssue()
     {
         Flight("TIA71", 71);
-        Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.PrFiles[71] = ["a.cs"];
         _github.PrFiles[74] = ["b.cs"];
         FailedRun(71, queue: true, id: 5001);
@@ -157,6 +157,7 @@ public sealed class FailureInvestigationTests
         _github.IssueComments.ShouldBeEmpty();
 
         // Another PR, another run, the same test with another timing in its message.
+        Flight("TIA74", 74, armed: [Head('d'), "squash"]);
         _github.Queue = null;
         _github.Pr = new PullRequest(74, "OPEN", Head('d'), "https://github.com/x/tianwen/pull/74");
         _github.Summary = new ChecksSummary(ChoiceStatus.Failing, 1, 2, "build", null);
