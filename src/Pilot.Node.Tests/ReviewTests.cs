@@ -22,14 +22,32 @@ public abstract class ReviewTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected ReviewTestsBase()
+    /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or <see cref="GitCli"/> for a class that is about git itself.</summary>
+    private protected readonly IGit _git;
+
+    private readonly FakeRepoGit? _fake;
+
+    /// <summary>
+    /// Real git's cost is the reason these tests were slow (#813): a git run is 100 to 400 ms on Windows and a flight's lifecycle makes
+    /// about 50, so a class of a few dozen flights took minutes there. Tests that check what the node decides run on <see cref="FakeRepoGit"/>;
+    /// a class that checks what git does (a rebase, a conflict a person resolves) passes <paramref name="realGit"/>. Setting
+    /// <c>PILOT_TEST_REAL_GIT=1</c> runs every class on real git: the fidelity check, and the "before" of a timing.
+    /// </summary>
+    protected ReviewTestsBase(bool realGit = false)
     {
-        // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-        SeedRepo.Make(_root);
-        var git = new GitCli();
-        _flights = new FlightCommander(_state, new Planes(git), TimeProvider.System, _workers, _github);
+        if (realGit || Environment.GetEnvironmentVariable("PILOT_TEST_REAL_GIT") == "1")
+        {
+            // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+            SeedRepo.Make(_root);
+            _git = new GitCli();
+        }
+        else
+        {
+            _git = _fake = new FakeRepoGit(_root);
+        }
+        _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, git, new Planes(git), _flights, options, TimeProvider.System)
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights, options, TimeProvider.System)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };
@@ -39,6 +57,14 @@ public abstract class ReviewTestsBase : IDisposable
 
     public void Dispose()
     {
+        if (_fake is { } fake)
+        {
+            fake.Release();
+            TestDirs.DeleteTree(_root);
+            // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+            fake.Unsupported.ShouldBeEmpty("this test needs real git: pass realGit: true to ReviewTestsBase");
+            return;
+        }
         try
         {
             Git(Repo, "worktree", "prune");
@@ -51,6 +77,11 @@ public abstract class ReviewTestsBase : IDisposable
 
     private protected static string Git(string cwd, params string[] args)
     {
+        if (FakeRepoGit.Owning(cwd) is { } fake)
+        {
+            var run = fake.Run(args, cwd);
+            return run.Ok ? run.Output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {run.Error}{run.Output}");
+        }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)
         {
