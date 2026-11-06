@@ -121,6 +121,8 @@ public sealed class SessionTrackerJobRecordTests : IDisposable
         _state.Sessions().ShouldBeEmpty();
 
         // The same job listed again (a resume that ended): its record is read again, not taken from before.
+        // It wrote again, so its transcript is recent (an ended session whose transcript is older than the retention is not given a row).
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionB), _time.GetUtcNow().UtcDateTime);
         _record = new ClaudeJobRecord("done", "replied again", _time.GetUtcNow());
         _agents.Json = EndedJob();
         await _tracker.PollAsync(Ct);
