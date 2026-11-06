@@ -63,7 +63,7 @@ public static partial class CardSummaries
             LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
             LegCommander.OnHoldKind => $"{what} is on its owner's hold, or was just released from it. While held the node starts nothing for it and takes no outward step; a session already running finishes its turn. Nothing to do; `pilot flight unhold` releases it.",
-            "worker-told-job" =>$"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",
+            "worker-told-job" => $"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
             "worker-nudged" => $"The worker of {what} went idle with its leg unfinished and the node nudged it. Nothing to do unless it goes idle again.",
             "worker-waiting-job" => $"The worker of {what} is idle because it waits on a job of its own, which wakes it. Nothing to do.",

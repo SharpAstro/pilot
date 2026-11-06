@@ -229,4 +229,89 @@ public sealed class FlightHoldTests : ReviewTestsBase
     }
 
     private string on(FlightRow flight) => FlightWaiting.OnHoldText(F(flight.Code))!;
+
+    /// <summary>A leg's worker as the session listing shows it: idle after a turn, or working with no first turn yet.</summary>
+    private void WorkerSession(LegRow leg, bool turned, DateTimeOffset at) =>
+        _state.PutSession(new SessionRow
+        {
+            Id = leg.WorkerJob!,
+            SessionId = leg.WorkerJob + "-0000-4000-8000-000000000000",
+            Name = leg.Worker!,
+            Kind = SessionKind.Background,
+            Cwd = leg.Flight,
+            Role = SessionRole.Worker,
+            Flight = leg.Flight,
+            Leg = leg.Name,
+            ContextTokens = turned ? 50_000 : 0,
+            ContextWindow = 200_000,
+            State = turned ? SessionState.Idle : SessionState.Working,
+            SpendWeighted = 0,
+            LastResponseAt = turned ? at : null,
+            StartedAt = at,
+        });
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheLegWatchNeitherNudgesNorRestartsAHeldFlightsWorkersAndTakesUpBothOnceItIsReleased()
+    {
+        var idle = await NewFlight("9", "parser");
+        var never = await NewFlight("10", "parser");
+        foreach (var flight in new[] { idle, never })
+        {
+            (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
+            await Started(_legs, flight.Code);
+        }
+        var at = DateTimeOffset.UtcNow;
+        WorkerSession(_state.Legs(idle.Code).Single(), turned: true, at);
+        WorkerSession(_state.Legs(never.Code).Single(), turned: false, at);
+        var said = new List<CommandRequest>();
+        var time = new Sessions.ManualTime(at);
+        var watch = new LegWatch(_state, (c, _) => { said.Add(c); return Task.FromResult(_state.Complete(c, null)); }, time)
+        {
+            RestartWorker = _legs.RestartWorkerAsync,
+        };
+        (await Hold(idle)).Error.ShouldBeNull();
+        (await Hold(never)).Error.ShouldBeNull();
+        var (started, stopped) = (_workers.Started.Count, _workers.Stopped.Count);
+
+        // Well past the idle grace and the first-turn grace, looked at again and again: nothing is said, stopped, started or rung.
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            time.Advance(TimeSpan.FromMinutes(10));
+            await watch.LookAsync(Ct);
+        }
+        said.ShouldBeEmpty();
+        (_workers.Started.Count, _workers.Stopped.Count).ShouldBe((started, stopped));
+        _state.Cards(openOnly: false).ShouldNotContain(c => LegWatch.Kinds.Contains(c.Kind) || c.Kind == "worker-nudged");
+        // A restart asked for some other way is refused before the worker is stopped.
+        (await Should.ThrowAsync<FlightException>(() => _legs.RestartWorkerAsync(never.Code, "parser", Ct))).Message.ShouldContain($"on hold by me: {Why}");
+        _workers.Stopped.Count.ShouldBe(stopped);
+
+        (await Run(Verbs.Unhold, Verbs.FlightTarget(idle.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Unhold, Verbs.FlightTarget(never.Code), "me")).Error.ShouldBeNull();
+        time.Advance(TimeSpan.FromMinutes(1));
+        await watch.LookAsync(Ct);
+        await Started(_legs, never.Code);
+
+        // The first look after the release takes up both: the idle worker nudged, the one with no first turn stopped and started afresh.
+        said.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
+            c => c.Verb.ShouldBe(Verbs.Say),
+            c => c.Target.ShouldBe(Verbs.SessionTarget(_state.Legs(idle.Code).Single().WorkerJob!)));
+        (_workers.Started.Count, _workers.Stopped.Count).ShouldBe((started + 1, stopped + 1));
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegWatch.NeverTurned && c.Subject == Verbs.LegTarget(never.Code, "parser") && c.Title.Contains("started again"));
+    }
+
+    /// <summary>Who a hold names, with no plane to set up.</summary>
+    public sealed class HeldBy
+    {
+        [Fact]
+        public void AHoldByAPersonsChannelSaysTheOwnerAndANameIsKept()
+        {
+            foreach (var channel in new[] { "cli", "gui", "tui", "mcp", "", " ", null })
+            {
+                LegCommander.HeldBy(channel).ShouldBe(LegCommander.TheOwner);
+            }
+            LegCommander.HeldBy(" seb ").ShouldBe("seb");
+        }
+    }
 }

@@ -19,7 +19,8 @@ public sealed class FlightHoldPageTests
         Repo = "pilot",
         RepoPath = "/r/pilot",
         Issue = 771,
-        Title = "Hold",
+        // Not a word a button says, so the page's text tells the title from the Hold and Release buttons.
+        Title = "Parse the ephemeris",
         Branch = "flight/pil771",
         Worktree = "/r/pilot/.claude/worktrees/pil771",
         Base = "origin/main",
@@ -60,12 +61,14 @@ public sealed class FlightHoldPageTests
     }
 
     [Theory]
-    [InlineData(1400, false)]
-    [InlineData(700, false)]
-    [InlineData(1400, true)]
-    public void TheFlightsPageAndDetailShowTheHoldAndItsButtonWithoutOverlap(int width, bool detail)
+    [InlineData(1400, false, true)]
+    [InlineData(700, false, true)]
+    [InlineData(1400, true, true)]
+    [InlineData(1400, false, false)]
+    [InlineData(1400, true, false)]
+    public void TheFlightsPageAndDetailShowTheHoldAndItsButtonWithoutOverlap(int width, bool detail, bool held)
     {
-        var line = FlightLine.Build([Flight(true)], [], Live.At, [Leg(LegState.Planned, 1)]).Single();
+        var line = FlightLine.Build([Flight(held)], [], Live.At, [Leg(LegState.Planned, 1)]).Single();
         using var vessel = new RgbaImageRenderer((uint)width, 900);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         var flights = chrome.Flights;
@@ -83,15 +86,27 @@ public sealed class FlightHoldPageTests
         var arranged = Layout.Engine.Arrange(flights.Tree(screen), new Rect<float>(0, 0, width, 900), new PixelMeasureContext<RgbaImage>(vessel, SessionsCapture.FontPath, 1f));
         var text = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value).ToList();
 
-        if (!detail)
+        var said = string.Join(" / ", text);
+        if (!held)
         {
-            text.ShouldContain(t => t.Contains("on hold", StringComparison.Ordinal), string.Join(" / ", text));
+            // A flight not held offers Hold, on the row's panel and in the detail alike, and no Release.
+            text.ShouldContain(t => t.Trim() == "Hold", said);
+            text.ShouldNotContain(t => t.Contains("Release", StringComparison.Ordinal) || t.Contains("on hold", StringComparison.Ordinal), said);
         }
-        if (detail)
+        else
         {
-            string.Join(" ", text).Replace("  ", " ").ShouldContain($"on hold by seb: {Why}");
-            text.ShouldContain(t => t.Contains("Release", StringComparison.Ordinal), string.Join(" / ", text));
-            text.ShouldNotContain(t => t.Contains("Open PR", StringComparison.Ordinal) || t.Contains("Merge", StringComparison.Ordinal) || t.Contains("Redo", StringComparison.Ordinal) || t.StartsWith("Start ", StringComparison.Ordinal));
+            if (detail)
+            {
+                string.Join(" ", text).Replace("  ", " ").ShouldContain($"on hold by seb: {Why}");
+            }
+            else
+            {
+                text.ShouldContain(t => t.Contains("on hold", StringComparison.Ordinal), said);
+            }
+            // The row's panel and the detail offer Release, and no step the node would refuse.
+            text.ShouldContain(t => t.Contains("Release", StringComparison.Ordinal), said);
+            text.ShouldNotContain(t => t.Trim() == "Hold", said);
+            text.ShouldNotContain(t => t.Contains("Open PR", StringComparison.Ordinal) || t.Contains("Merge", StringComparison.Ordinal) || t.Contains("Redo", StringComparison.Ordinal) || t.StartsWith("Start ", StringComparison.Ordinal), said);
         }
         TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
     }

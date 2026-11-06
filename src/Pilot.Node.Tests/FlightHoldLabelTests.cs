@@ -178,8 +178,8 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
             await Look(repo);
 
             var one = F(1).OnHold.ShouldNotBeNull();
-            (one.By, one.Reason, one.Labelled).ShouldBe((PilotMarks.Hold, "the newest reason", true));
-            F(2).OnHold!.Reason.ShouldBe("held on GitHub");
+            (one.By, one.Reason, one.Labelled).ShouldBe(("seb", "the newest reason", true));
+            (F(2).OnHold!.By, F(2).OnHold!.Reason).ShouldBe((LegCommander.TheOwner, "held on GitHub"));
             F(3).OnHold.ShouldBeNull();
             _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.OnHoldKind && c.Bin == CardBin.Handled).Select(c => c.Subject)
                 .ShouldBe([Verbs.FlightTarget("TIA1"), Verbs.FlightTarget("TIA2")], ignoreOrder: true);

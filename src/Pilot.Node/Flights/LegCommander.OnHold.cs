@@ -19,6 +19,16 @@ public sealed partial class LegCommander
     internal static bool TakenOnHold(string verb) =>
         verb is Verbs.Hold or Verbs.Unhold or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.Check or Verbs.AddArtifact;
 
+    /// <summary>Who a hold names when the person gave no name of their own: a hold is the person's alone (<see cref="Standing.YourOnlyVerbs"/>).</summary>
+    public const string TheOwner = "the owner";
+
+    /// <summary>
+    /// Who holds or releases, as the hold says it: a person's channel (<c>cli</c>, <c>gui</c>, <c>tui</c>, <c>mcp</c>) or nothing reads as
+    /// <see cref="TheOwner"/>, since only the person may hold, and a name given is kept.
+    /// </summary>
+    public static string HeldBy(string? who) =>
+        who?.Trim() is not { Length: > 0 } named || named is "cli" or "gui" or "tui" or "mcp" ? TheOwner : named;
+
     /// <summary>The words that refuse a step on a flight on the owner's hold; null when it is not held. The one predicate every gate asks.</summary>
     private static string? OnHoldRefusal(FlightRow flight) =>
         flight.OnHold is { } hold
@@ -28,6 +38,19 @@ public sealed partial class LegCommander
     /// <summary>Whether the flight is on the owner's hold now (by the row as it is kept, not a copy read earlier).</summary>
     public bool IsOnHold(string code) =>
         state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { OnHold: not null };
+
+    /// <summary>
+    /// The last gate, in every start of a planner, worker or validator: one on a flight on hold now (by the row as it is kept) is
+    /// refused, whoever called. The dispatch gate refuses a command; this catches the starts that come from no command of the flight's
+    /// own (the leg watch's first-turn restarts, a fold into a held flight), so the hold starts nothing whichever way a start comes.
+    /// </summary>
+    private void RefuseIfOnHold(string code)
+    {
+        if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } flight && OnHoldRefusal(flight) is { } onHold)
+        {
+            throw new FlightException(onHold);
+        }
+    }
 
     /// <summary>The refusal for <paramref name="command"/> when its flight is on hold and its verb is not one a held flight takes; null otherwise.</summary>
     private string? OnHoldRefusalFor(CommandRequest command)
@@ -47,7 +70,7 @@ public sealed partial class LegCommander
     private async Task<string> HoldAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var why = (command.Args is { Length: > 0 } ? string.Join(' ', command.Args) : command.Why ?? "").Trim();
-        var by = string.IsNullOrWhiteSpace(command.Who) ? "the owner" : command.Who.Trim();
+        var by = HeldBy(command.Who);
         if (FlightNamed(command.Target) is not { } flight)
         {
             return await LabelUnflownAsync(command.Target, hold: true, by, why, cancellationToken);
@@ -224,7 +247,7 @@ public sealed partial class LegCommander
     private async Task<string> UnholdAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var why = (command.Args is { Length: > 0 } ? string.Join(' ', command.Args) : command.Why ?? "").Trim();
-        var by = string.IsNullOrWhiteSpace(command.Who) ? "the owner" : command.Who.Trim();
+        var by = HeldBy(command.Who);
         if (FlightNamed(command.Target) is not { } flight)
         {
             return await LabelUnflownAsync(command.Target, hold: false, by, why, cancellationToken);

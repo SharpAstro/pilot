@@ -11,6 +11,9 @@ namespace Pilot.Node.Flights;
 /// <remarks>
 /// What it has resumed and nudged is kept in memory only: a node restarted mid-flight may nudge a worker once more than
 /// it would have, which costs a turn, never a silent stall.
+/// A flight on the owner's hold (#771) is left alone: no restart, nudge, resume, compaction, go-around, wake, tell, plan or ring
+/// for its legs, validators, planner or reviewer. A wait or a recheck outcome that came meanwhile is kept, and the first look
+/// after the release takes up every stall from the top, as a fresh one.
 /// </remarks>
 public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
 {
@@ -177,6 +180,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         await LookAtPlannersAsync(sessions, now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
+            if (OnHold(leg.Flight))
+            {
+                continue;
+            }
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
             var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
             // A worker that shows no first turn is stopped and started once more, before any ring or nudge.
@@ -246,6 +253,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
     }
 
+    /// <summary>Whether the flight is on the owner's hold now, read from the row as it is kept, since a hold can come mid-look.</summary>
+    private bool OnHold(string code) =>
+        state.Flights().Any(f => f.OnHold is not null && string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// A flying leg whose worker waits on a file or a time (<see cref="LegRow.Wait"/>): once the file exists or the time comes the
     /// wait is cleared first, so it fires once, and the worker is woken with a say naming what came. A file wait past its
@@ -255,6 +266,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Wait: not null }))
         {
+            // A held flight's worker is not woken: the wait stays, and fires on the first look after the release.
+            if (OnHold(leg.Flight))
+            {
+                continue;
+            }
             var wait = leg.Wait!;
             var came = wait.Path is { } path
                 ? (File.Exists(path) || Directory.Exists(path) ? $"`{path}` now exists" : null)
@@ -296,6 +312,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         foreach (var leg in state.Legs().Where(l => l is { State: LegState.Flying, Recheck.Outcome: not null }))
         {
+            if (OnHold(leg.Flight))
+            {
+                continue;
+            }
             state.PutLeg(leg with { Recheck = null });
             if (leg.WorkerJob is not { } job)
             {
@@ -589,7 +609,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     private async Task LookAtReviewsAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var reviewing = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
+        foreach (var flight in state.Flights().Where(f => f.State != FlightState.Landed && f.OnHold is null && f.Review is { State: ReviewState.Reviewing, ReviewerJob: not null }))
         {
             var subject = Verbs.FlightTarget(flight.Code);
             reviewing.Add(subject);
@@ -617,6 +637,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     {
         foreach (var leg in state.Legs().Where(l => l is { State: LegState.Planned, Validation: LegValidation.Pending, ValidatorJob: not null }))
         {
+            if (OnHold(leg.Flight))
+            {
+                continue;
+            }
             var subject = Subject(leg);
             var startedAt = state.Cards().Where(c => c.Kind == LegCommander.ValidatingKind && c.Subject == subject).Select(c => c.At).DefaultIfEmpty(now).Max();
             var row = sessions.FirstOrDefault(s => s.Id == leg.ValidatorJob);
@@ -864,6 +888,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             var subject = Verbs.FlightTarget(flight.Code);
             unplanned.Add(subject);
+            // Counted as unplanned, so its stall's ladder and card stand through the hold, and nothing is done about them until the release.
+            if (flight.OnHold is not null)
+            {
+                continue;
+            }
             var planner = sessions.Where(s => s.Role == SessionRole.Planner && s.Flight == flight.Code).MaxBy(s => s.StartedAt);
             if (planner is { State: SessionState.Working })
             {

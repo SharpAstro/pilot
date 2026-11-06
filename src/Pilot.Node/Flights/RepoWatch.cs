@@ -303,6 +303,19 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
     /// Each change is confirmed on a fresh read of the issue's labels, so a hold or unhold that is mid-way is not undone by an older list.
     /// A read that fails leaves the rows as they were.
     /// </summary>
+    /// <summary>Who a hold comment names, from its head (<c>pilot: on hold by seb from SE1</c>); null when it names nobody.</summary>
+    private static string? HoldCommentBy(string head)
+    {
+        const string lead = PilotMarks.HoldCommentStart + " by ";
+        if (!head.StartsWith(lead, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var rest = head[lead.Length..];
+        var from = rest.LastIndexOf(" from ", StringComparison.Ordinal);
+        return (from >= 0 ? rest[..from] : rest).Trim() is { Length: > 0 } named ? named : null;
+    }
+
     private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
         Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
     {
@@ -333,6 +346,7 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             if (labelled && current.OnHold is null)
             {
                 var why = "held on GitHub";
+                var by = LegCommander.TheOwner;
                 var comments = await read($"comments of #{issue.Number}", async () =>
                     [.. (await github.IssueCommentsAsync(repo.Path, issue.Number, cancellationToken))
                         .Where(c => c.Body.StartsWith(PilotMarks.HoldCommentStart, StringComparison.Ordinal))
@@ -341,11 +355,12 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
                     && newest[(colon + 2)..].Trim() is { Length: > 0 } said)
                 {
                     why = said;
+                    by = HoldCommentBy(newest[..colon]) ?? by;
                 }
-                state.PutFlight(current with { OnHold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = PilotMarks.Hold, Labelled = true } });
-                state.CloseCardsAbout(target, $"{current.Code} is on hold by {PilotMarks.Hold}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
+                state.PutFlight(current with { OnHold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true } });
+                state.CloseCardsAbout(target, $"{current.Code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
                 state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
-                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is on hold by {PilotMarks.Hold}: {why}",
+                state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is on hold by {by}: {why}",
                     $"{PilotMarks.Hold} was put on {current.Item.Noun} {current.Item.Display} on GitHub. The node starts nothing for {current.Code} and takes no outward step until the label is taken off (or `pilot flight unhold {current.Code}`).");
             }
             else if (!labelled && current.OnHold is { Labelled: true } held)
