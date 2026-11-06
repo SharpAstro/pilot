@@ -72,6 +72,11 @@ public sealed partial class PrReviews
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
         if (checks?.Status == ChoiceStatus.Failing)
         {
+            // A failing test the PR does not touch is an investigation, once a head (a flight's PR is looked into by its flight's checks).
+            if (Investigations is not null && !FlightOwns(review) && _investigated.Add($"{review.Repo}#{review.Number} {review.Head}"))
+            {
+                await Investigations.LookAtRunAsync(new FailureSite(review.Repo, review.ClonePath, review.Number, null, review.Head, FailureWhere.Ci, review.Url), mergeGroup: false, cancellationToken);
+            }
             state.PutPrReview(review with { QueueNote = $"its checks fail{(checks.FailedName is { } name ? $" ({name})" : "")}" });
             return;
         }

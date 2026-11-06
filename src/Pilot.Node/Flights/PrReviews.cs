@@ -52,6 +52,12 @@ public sealed partial class PrReviews(
     public AdmissionGate Slots { get => field ??= new(state, () => Models, options.Machine); set; }
 
     // The reviews and fixers admission holds, by PR target: the sweep asks again and starts them in turn.
+    /// <summary>The failures looked into: a failing test the PR does not touch is filed as an investigation. Null for one built without.</summary>
+    public FailureInvestigations? Investigations { get; set; }
+
+    // The failed heads already looked into: once a head, not every sweep.
+    private readonly HashSet<string> _investigated = new(StringComparer.Ordinal);
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PrRef Pr, bool Fix)> _queued = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _queuedSaid = new(StringComparer.Ordinal);
 

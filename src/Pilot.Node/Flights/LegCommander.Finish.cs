@@ -478,6 +478,51 @@ public sealed partial class LegCommander
 
     private const string VerifyNoteMark = "Verify refused: ";
 
+    /// <summary>The failures looked into: a failing test the leg's work does not touch is filed as an investigation. Null for one built without.</summary>
+    public FailureInvestigations? Investigations { get; set; }
+
+    /// <summary>
+    /// A leg's failed check looked into for a failing test the leg's own work does not touch (a test it does touch is the leg's to
+    /// fix). Never throws and never changes what the finish does with the failure.
+    /// </summary>
+    private async Task InvestigateCheckAsync(FlightRow flight, string output, CancellationToken cancellationToken)
+    {
+        if (Investigations is null)
+        {
+            return;
+        }
+        try
+        {
+            var head = (await git.RunAsync(["rev-parse", "--verify", "--quiet", "HEAD"], flight.Worktree, cancellationToken)) is { Ok: true } rev ? rev.Output.Trim() : "";
+            var site = new FailureSite(flight.Repo, flight.RepoPath, flight.PullRequest, flight.Code, head, FailureWhere.LegCheck, flight.PullRequestUrl);
+            await Investigations.LookAtCheckAsync(site, output, () => PlaneChangedFilesAsync(flight, cancellationToken), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await Error.WriteLineAsync($"failures: {flight.Code}'s failed check could not be looked into: {ex.Message}");
+        }
+    }
+
+    /// <summary>The files the plane's work changes against its base: its commits, its uncommitted changes and its new files.</summary>
+    private async Task<string[]> PlaneChangedFilesAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        var baseRef = flight.Base.Length > 0 ? flight.Base : "origin/main";
+        var mergeBase = await git.RunAsync(["merge-base", "HEAD", baseRef], flight.Worktree, cancellationToken);
+        if (!mergeBase.Ok || mergeBase.Output.Trim().Length == 0)
+        {
+            throw new FlightException($"the merge base of the plane and {baseRef} could not be read");
+        }
+        var changed = await git.RunAsync(["diff", "--name-only", mergeBase.Output.Trim()], flight.Worktree, cancellationToken);
+        var added = await git.RunAsync(["ls-files", "--others", "--exclude-standard"], flight.Worktree, cancellationToken);
+        if (!changed.Ok)
+        {
+            throw new FlightException("the plane's changed files could not be read");
+        }
+        return [.. changed.Output.Split('
+').Concat(added.Ok ? added.Output.Split('
+') : []).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.Ordinal)];
+    }
+
     /// <summary>
     /// The conditions shared by a worker's "failed" and the verified outcome: every step ticked, the plane clean and at
     /// <c>origin/&lt;branch&gt;</c> after a fetch, and the check passing at that head. <paramref name="who"/> is null for the worker's own.
@@ -542,6 +587,7 @@ public sealed partial class LegCommander
         leg = leg with { Recheck = null };
         if (run is { Passed: false })
         {
+            await OffLockAsync(null, () => InvestigateCheckAsync(flight, run.Tail, cancellationToken));
             return (false, $"The node did not finish it itself, though its plane matched origin/{flight.Branch} at {CommitRefs.Short(head)}: its check `{leg.Check}` failed ({run.ExitCode}). Last of its output:\n{run.Tail}", true);
         }
         var pushes = flight.Review is { State: ReviewState.Changes } && flight.PullRequest is not null
