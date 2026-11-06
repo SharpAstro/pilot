@@ -109,7 +109,7 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         var (exit, output, error) = await OverlapsAsync(node, _registry);
 
         exit.ShouldBe(0, output + error);
-        node.State.Cards().Count.ShouldBe(1);
+        node.State.Cards().Count().ShouldBe(1);
         output.ShouldContain("not raised again");
     }
 
