@@ -112,6 +112,24 @@ public sealed record JobRow
     /// <summary>Whether its owner was told how it ended: false until the node said it, so a wake that failed shows.</summary>
     public bool Told { get; init; }
 
+    /// <summary>When the node marked it <see cref="Told"/> (said, or given up on); null while untold and on a row from before this. Optional, so the wire version stays.</summary>
+    public DateTimeOffset? ToldAt { get; init; }
+
+    /// <summary>How it was told: <c>relayed</c>, <c>resumed</c>, <c>owner-ended</c>, <c>replaced-to &lt;id&gt;</c> or <c>gone</c>; null while untold and on an older row. Optional, so the wire version stays.</summary>
+    public string? ToldWay { get; init; }
+
+    /// <summary>Whether its target was mid-turn when it was told (so the tell was relayed into a busy turn); null on an older row. Optional (#756).</summary>
+    public bool? ToldWhileWorking { get; init; }
+
+    /// <summary>When the node told it a second time, because the owner sat idle without acting on the first tell; null if it never did. At most once per row, so a restart does not retell. Optional (#756).</summary>
+    public DateTimeOffset? RetoldAt { get; init; }
+
+    /// <summary>How the second tell went (as <see cref="ToldWay"/>); null until retold. Optional (#756).</summary>
+    public string? RetoldWay { get; init; }
+
+    /// <summary>Whether the card for a tell that went unanswered twice was raised; null until it is. Optional (#756).</summary>
+    public bool? RetellRung { get; init; }
+
     /// <summary>How many failed tests the node has read in the job's output so far (each test once). Zero on a row from before this.</summary>
     public int TestsFailed { get; init; }
 
