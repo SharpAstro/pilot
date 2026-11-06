@@ -69,9 +69,12 @@ public sealed record NodeSettings
     /// <summary>How many times a flight's hold may pass its timeout before it is called stale.</summary>
     public const string StaleHoldsKey = "stale-holds";
     public const int DefaultStaleHolds = 2;
+    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked before it is called stale (#753).</summary>
+    public const string StaleUnreachableHoursKey = "stale-unreachable-hours";
+    public const int DefaultStaleUnreachableHours = 1;
 
     /// <summary>The five staleness bounds' keys (#736).</summary>
-    public static IReadOnlyList<string> StaleKeys { get; } = [StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey];
+    public static IReadOnlyList<string> StaleKeys { get; } = [StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey];
 
     /// <summary>The default of a staleness key; 0 for any other key.</summary>
     public static int StaleDefault(string key) => key switch
@@ -81,6 +84,7 @@ public sealed record NodeSettings
         StaleRecheckHoursKey => DefaultStaleRecheckHours,
         StaleCardHoursKey => DefaultStaleCardHours,
         StaleHoldsKey => DefaultStaleHolds,
+        StaleUnreachableHoursKey => DefaultStaleUnreachableHours,
         _ => 0,
     };
 
@@ -92,6 +96,7 @@ public sealed record NodeSettings
         StaleRecheckHoursKey => StaleRecheckHours,
         StaleCardHoursKey => StaleCardHours,
         StaleHoldsKey => StaleHolds,
+        StaleUnreachableHoursKey => StaleUnreachableHours,
         _ => null,
     };
 
@@ -101,6 +106,7 @@ public sealed record NodeSettings
         StalePrHoursKey => this with { StalePrHours = value },
         StaleRecheckHoursKey => this with { StaleRecheckHours = value },
         StaleCardHoursKey => this with { StaleCardHours = value },
+        StaleUnreachableHoursKey => this with { StaleUnreachableHours = value },
         _ => this with { StaleHolds = value },
     };
 
@@ -120,7 +126,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -185,6 +191,7 @@ public sealed record NodeSettings
     public int? StaleRecheckHours { get; init; }
     public int? StaleCardHours { get; init; }
     public int? StaleHolds { get; init; }
+    public int? StaleUnreachableHours { get; init; }
 
     public double? JobMemoryGigabytes { get; init; }
     public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
@@ -363,7 +370,7 @@ public sealed record NodeSettings
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
-                    StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey => JsonValue.Create(StaleValue(key)),
+                    StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
                     RepoRootsKey or PriorityReposKey or RepoTrackersKey or NoAutoMergeReposKey or SubTaskReposKey => new JsonArray([.. values.Select(v => (JsonNode?)JsonValue.Create(v))]),
@@ -413,7 +420,7 @@ public sealed record NodeSettings
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
-        StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
+        StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
@@ -601,6 +608,7 @@ public sealed record NodeSettings
             case StaleRecheckHoursKey:
             case StaleCardHoursKey:
             case StaleHoldsKey:
+            case StaleUnreachableHoursKey:
                 if (clear)
                 {
                     return (settings.WithStale(key, null), null);

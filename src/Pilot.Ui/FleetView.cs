@@ -45,6 +45,9 @@ internal sealed record NodeSummary
     /// <summary>Who holds the job queue while a job waits (<see cref="JobQueue.HolderLine"/>); null with no queue.</summary>
     public string? JobHolder { get; init; }
 
+    /// <summary>The first running job that has failures so far, <c>j14 running · 1 failed so far (X)</c>; null with none.</summary>
+    public string? JobFailing { get; init; }
+
     /// <summary>What a flying leg's worker waits on (<see cref="FlightWaiting.WaitText"/>), the first when several; null with none.</summary>
     public string? LegWait { get; init; }
 
@@ -152,6 +155,9 @@ internal sealed record FleetLine
     /// <summary>Who holds the job queue and for how long, <c>j12 holds the queue (…), held for 4m 2s</c>; null while no job waits.</summary>
     public string? JobHolder { get; init; }
 
+    /// <summary>A running job that has failures so far, <c>j14 running · 1 failed so far (X)</c>; null with none.</summary>
+    public string? JobFailing { get; init; }
+
     public required int Rings { get; init; }
 
     /// <summary>The role ranges the node runs with (#599), each with its source; empty for a node not heard or an older one.</summary>
@@ -163,6 +169,7 @@ internal sealed record FleetLine
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
         Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
+        + (JobFailing is { } failing ? " | " + failing : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
         + (WatchtowerSummary is { } summary ? " | " + summary : "")
         + (Traffic is { } traffic ? " | " + traffic : "");
@@ -210,6 +217,7 @@ internal sealed record FleetLine
             Flights = !summary.Connected && !lastKnown ? "—" : Counted(summary.Flying, "flying", summary.Held, "held", "none in the air") + (summary.LegWait is { } wait ? $" · {wait}" : ""),
             Jobs = !summary.Connected && !lastKnown ? "—" : Counted(summary.JobsRunning, "running", summary.JobsQueued, "queued", "none"),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
+            JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
             Rings = summary.Connected || lastKnown ? summary.Rings : 0,
             Ranges = (summary.Connected || lastKnown) && summary.Node?.Ranges is { } ranges ? ranges : [],
         };
@@ -448,6 +456,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     private static RGBAColor32 Dim => Palette.Current.Dim;
     private static RGBAColor32 Live => Palette.Current.Flying;
     private static RGBAColor32 Away => Palette.Current.Away;
+    private static RGBAColor32 Failed => Palette.Current.Failed;
     private static RGBAColor32 Ringing => Palette.Current.Held;
     private static RGBAColor32 Button => Palette.Current.Button;
     private static RGBAColor32 ButtonHover => Palette.Current.ButtonHover;
@@ -788,7 +797,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             SessionsCell(line),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Flights, 13f, line.LastKnown ? Dim : Body).Selectable().RowH(22f),
-                Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).Selectable().RowH(18f)),
+                line.JobFailing is { } failing && !line.LastKnown
+                    ? Layout.Builder.Text(failing, 11f, Failed).Selectable().RowH(18f)
+                    : Layout.Builder.Text(line.JobHolder ?? line.Jobs switch { "—" => "", "none" => "no jobs", var jobs => $"jobs: {jobs}" }, 11f, line.JobHolder is null || line.LastKnown ? Dim : Ringing).Selectable().RowH(18f)),
             ListTable.Top(Layout.Builder.Text(rings, 13f, line.Rings == 0 || line.LastKnown ? Dim : Ringing).Selectable().Whole(rings)),
             Layout.Builder.VStack(
                 Layout.Builder.HStack([.. buttons, Layout.Builder.Spacer().WStar()]).WithGap(8f),

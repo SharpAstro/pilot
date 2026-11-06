@@ -100,11 +100,11 @@ public sealed partial class FlightCommander
             {
                 throw new FlightException($"{flight.Code} cannot wait for {peer.Flight.Code} on {peer.Node}: it already waits for {flight.Code} on {Machine}, so neither would leave");
             }
-            wait = new PeerConnection { Code = peer.Flight.Code, Node = peer.Node, Since = time.GetUtcNow() };
+            wait = new PeerConnection { Code = peer.Flight.Code, Node = peer.Node, Since = time.GetUtcNow(), Branch = peer.Flight.Branch, PullRequest = peer.Flight.PullRequest, Issue = peer.Flight.Issue };
         }
         else if (knownNode is not null && why.Count > 0)
         {
-            wait = new PeerConnection { Code = code, Node = knownNode, Since = time.GetUtcNow(), Note = $"{knownNode} could not be asked: {string.Join("; ", why)}" };
+            wait = new PeerConnection { Code = code, Node = knownNode, Since = time.GetUtcNow(), Branch = Planes.BranchOf(code), Note = $"{knownNode} could not be asked: {string.Join("; ", why)}", UnreachableSince = time.GetUtcNow() };
         }
         else
         {
@@ -200,15 +200,36 @@ public sealed partial class FlightCommander
         if (read is null)
         {
             var why = reads.Where(r => r.Why is not null).Select(r => r.Why).ToList();
-            var note = why.Count > 0 ? $"{wait.Node} could not be asked: {string.Join("; ", why)}" : $"{wait.Node} is not a node this one holds a grant for";
-            return (wait with { Note = note }, false);
+            // GitHub is the record both nodes share: a merged PR or a closed issue ends the wait whether or not the node answers (#753).
+            var (ended, pr) = await GitHubSaysAsync(flight, wait, cancellationToken);
+            if (ended)
+            {
+                return (null, true);
+            }
+            if (why.Count == 0)
+            {
+                return (wait with { Note = $"{wait.Node} is not a node this one holds a grant for" }, false);
+            }
+            // The hold says it in words (#753); the technical reason is in the node's log, once, at the first look.
+            var since = wait.UnreachableSince ?? time.GetUtcNow();
+            if (wait.UnreachableSince is null)
+            {
+                await Error.WriteLineAsync($"{flight.Code}: {wait.Node} could not be asked for {wait.Code}: {string.Join("; ", why)}");
+            }
+            return (wait with { Note = UnreachableNote(wait.Node, since, pr), UnreachableSince = since }, false);
         }
         // The peer's flights of the one repo: its own checkout's path is its own, so the flight is matched by its code.
         var row = read.Flights!.FirstOrDefault(f => string.Equals(f.Code, wait.Code, StringComparison.OrdinalIgnoreCase));
         if (row is null)
         {
-            return (wait with { Note = $"{wait.Node} lists no flight {wait.Code}" }, false);
+            if ((await GitHubSaysAsync(flight, wait, cancellationToken)).Ended)
+            {
+                return (null, true);
+            }
+            return (wait with { Note = $"{wait.Node} lists no flight {wait.Code}", UnreachableSince = null }, false);
         }
+        // What the node last said of the flight is kept on the wait, for the look that cannot ask it.
+        wait = wait with { UnreachableSince = null, Branch = row.Branch, PullRequest = row.PullRequest ?? wait.PullRequest, Issue = row.Issue };
         if (row.State == FlightState.Landed)
         {
             // Moved to another node: landed there, not landed at all, so the wait follows it (to this node too, made a wait of its own then).
@@ -226,6 +247,40 @@ public sealed partial class FlightCommander
             return (null, true);
         }
         return (wait with { Note = null }, false);
+    }
+
+    /// <summary>Where this says what it would have said on stderr: the node's log; nothing for one built without.</summary>
+    public TextWriter Error { get; set; } = TextWriter.Null;
+
+    /// <summary>The note of a wait whose node cannot be asked (#753): <c>SE1 is not on the LAN since 21:10; its PR #738 is open</c>.</summary>
+    internal static string UnreachableNote(string node, DateTimeOffset since, string pr) =>
+        $"{node} is not on the LAN since {since.ToLocalTime():HH:mm}; {pr}";
+
+    /// <summary>
+    /// Whether GitHub says the waited-for flight is done (its PR merged, or its recorded issue closed), and its PR in words as that same
+    /// look read it (<c>its PR #738 is open</c>, <c>no PR yet</c>). Not ended on doubt, an error or no github.
+    /// </summary>
+    private async Task<(bool Ended, string Pr)> GitHubSaysAsync(FlightRow flight, PeerConnection wait, CancellationToken cancellationToken)
+    {
+        if (github is null)
+        {
+            return (false, wait.PullRequest is { } known ? $"its PR is #{known}" : "no PR yet");
+        }
+        try
+        {
+            var branch = wait.Branch ?? Planes.BranchOf(wait.Code);
+            var pr = await github.PullRequestAsync(flight.RepoPath, branch, cancellationToken);
+            if (pr is { State: "MERGED" } && (wait.PullRequest is null || pr.Number == wait.PullRequest))
+            {
+                return (true, $"its PR #{pr.Number} is merged");
+            }
+            var words = pr is null ? "no PR yet" : $"its PR #{pr.Number} is {pr.State.ToLowerInvariant()}";
+            return (wait.Issue is > 0 and var issue && await github.IssueClosedAsync(flight.RepoPath, issue, cancellationToken) == true, words);
+        }
+        catch (FlightException)
+        {
+            return (false, "GitHub could not be asked about its PR");
+        }
     }
 
     /// <summary>Whether the peer flight's PR merged, as GitHub says now (its branch is looked up in this node's clone of the repo); false when it cannot say.</summary>
