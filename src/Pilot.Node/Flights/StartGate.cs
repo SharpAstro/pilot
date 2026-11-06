@@ -29,8 +29,6 @@ public sealed class StartGate(NodeState state, TimeProvider time)
 
     // By what waits: the reset it last said so for, so a sweep or a look says it once per window, not every time.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _said = new(StringComparer.Ordinal);
-    // By what waits: the card an open outage's hold said it with, closed again once the start is let go.
-    private readonly ConcurrentDictionary<string, string> _outageCards = new(StringComparer.Ordinal);
     private DateTimeOffset? _weekRung;
 
     /// <summary>Whether sessions take turns at all (PIL791): while an outage is open every start waits but one probe per <see cref="TurnOutage.ProbeEvery"/>. Null holds nothing on it.</summary>
@@ -43,7 +41,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// </summary>
     public StartHeld? CheckOutage(string key) =>
         Outage is { Since: { } since } outage && !outage.Probe(key, time.GetUtcNow())
-            ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since, ByOutage: true)
+            ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since)
             : null;
 
     /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
@@ -97,28 +95,14 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         if ((Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
-            CloseOutageCard(key, "its start was let go");
             return false;
         }
         if (!_said.TryGetValue(key, out var said) || said != held.Resets)
         {
             _said[key] = held.Resets;
-            CloseOutageCard(key, "its wait has another reason now");
-            var card = state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
-            if (held.ByOutage)
-            {
-                _outageCards[key] = card.Id;
-            }
+            state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
         }
         return true;
-    }
-
-    private void CloseOutageCard(string key, string why)
-    {
-        if (_outageCards.TryRemove(key, out var id))
-        {
-            state.CloseCard(id, why, LegWatch.Who);
-        }
     }
 
     /// <summary>Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead.</summary>
@@ -137,5 +121,5 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     }
 }
 
-/// <summary>A start held by the 5-hour window or the 7-day pace (or, <paramref name="ByOutage"/>, by sessions not taking turns): why, in words, and when it resets.</summary>
-public sealed record StartHeld(string Say, DateTimeOffset Resets, bool ByOutage = false);
+/// <summary>A start held by the 5-hour window, the 7-day pace or an outage of turns: why, in words, and when it resets (an outage's start).</summary>
+public sealed record StartHeld(string Say, DateTimeOffset Resets);
