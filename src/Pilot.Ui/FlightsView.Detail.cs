@@ -241,6 +241,11 @@ internal sealed partial class FlightsView<TSurface>
         page.AddRange(RefusalOf(line));
         page.AddRange(AskRefusalOf(line));
         page.AddRange(WhyRow(line));
+        if (line.ActivityText is { } activity)
+        {
+            // How long ago the flight really moved: here only, so a table row stays clean.
+            page.Add(Prose(activity, 12f, Dim));
+        }
         if (line.StaleSummary is { } staleSummary)
         {
             // What went stale (the timeline and the one-line cause) and the priority raise the node made for it (#736): wrapped, never cut.
@@ -290,11 +295,15 @@ internal sealed partial class FlightsView<TSurface>
         // What stays above the scroll (the head, the buttons, the notes) takes what it needs and no more, and scrolls itself where the room
         // is short (a header that wrapped onto many lines, a leg's long name on a button): it had no scroll, so its end lay past the window's
         // foot and the legs' scroll was left none. The legs' scroll keeps a floor of its own.
-        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).WStar().HStarUpToContent();
+        // The gutters are each scrolled stack's own padding, not the outer stack's. A scrolled stack keeps its scrollbar column free of its rows
+        // but may measure them at the full width and lay them out at the narrower one, so wrapped text comes out taller than its row and runs into
+        // the next. A trailing padding as wide as the bar needs no reserve, so the rows are measured and laid out at one width. The outer stack
+        // has no side padding, so the scrollbar column sits at the page's edge and the text keeps its gutter.
+        var sticky = Layout.Builder.VStack([.. page]).WithScroll(_flightHeadScroll).Pad(Gutter, 0f).WStar().HStarUpToContent();
         return Layout.Builder.VStack(
                 sticky,
-                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).WStar().HStar(1f, ScrolledMinHeight))
-            .Pad(Gutter, 8f)
+                Layout.Builder.VStack([.. scrolled]).WithGap(10f).WithScroll(_detailScroll).Pad(Gutter, 0f).WStar().HStar(1f, ScrolledMinHeight))
+            .Pad(0f, 8f)
             .Stretch();
     }
 

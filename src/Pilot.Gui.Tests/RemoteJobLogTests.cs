@@ -35,16 +35,25 @@ public sealed class RemoteJobLogTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var jobs = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath }.Jobs;
         var changed = new SemaphoreSlim(0);
+        // The first frame's content otherwise depends on timing (#807): Follow starts the read on the pool before the page is built,
+        // so a fast loopback read could land first and the frame would already show the log, not "reading…". The first read waits here
+        // until the test has looked at that frame; once the gate is open, later reads pass straight through.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         // As pilot-gui's Program wires it.
-        jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
-            ? log
-            : throw new InvalidOperationException($"the node did not send {id}'s log");
+        jobs.LoadLog = async (node, id, ct) =>
+        {
+            await gate.Task.WaitAsync(ct);
+            return (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
+                ? log
+                : throw new InvalidOperationException($"the node did not send {id}'s log");
+        };
         jobs.Changed = () => changed.Release();
         var screen = new JobsScreen([JobLine.Build([Job("j43")], Live.At).Single() with { Node = le1 }], "test", Live.At);
 
         string Cells() => CellLayout.Describe(Layout.Engine.Arrange(jobs.Tree(screen), new Rect<int>(0, 0, 160, 50), CellMeasureContext.PixelAuthored));
 
         Cells().ShouldContain("reading…");
+        gate.SetResult();
         (await changed.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeTrue();
         node.Requests.ShouldContain("/api/v1/jobs/j43/log");
         var first = Cells();

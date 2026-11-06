@@ -70,7 +70,7 @@ public sealed class SignalTests
         title.ShouldContain("1 gone stale");
         var lines = detail.Split(Environment.NewLine);
         lines[0].ShouldBe("Gone stale:");
-        lines[1].ShouldStartWith("- TIA3, open 1 d 0 h: waiting on leg parser flying. Next: ");
+        lines[1].ShouldStartWith("- TIA3, open 1 d 0 h: no progress for 1 d 0 h, waiting on leg parser flying. Next: ");
         lines[1].ShouldContain("\"07:00 flight created");
         lines[2].ShouldBe("Landed: none.");
     }
