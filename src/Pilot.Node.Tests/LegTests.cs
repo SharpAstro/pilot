@@ -1493,6 +1493,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         await FlightWithTwoLegs();
 
@@ -1511,6 +1513,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ASiblingPulledByHandSinceItWasCountedBehindGivesNeitherAHandledLineNorACard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1528,6 +1532,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AfterALegStartPulledASiblingRepoWatchShowsItZeroBehind()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         var watch = WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1545,6 +1551,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         var flight = await FlightWithTwoLegs();
@@ -1563,6 +1571,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartPullsAStaleCleanSiblingItselfAndRingsNobody()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 3);
         WithSiblingSync();
         await FlightWithTwoLegs();
@@ -1580,6 +1590,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartLeavesADirtySiblingAloneAndItsCardSaysWhy()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 2);
         File.WriteAllText(Path.Combine(_root, "DIR.Lib", "wip.txt"), "mine");
         Git(Path.Combine(_root, "DIR.Lib"), "add", "wip.txt");
@@ -1597,6 +1609,8 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ALegStartedWithItsSiblingsUpToDateRaisesNoCard()
     {
+        // A sibling clone beside the repo, read by the node's own repo watch: git's own.
+        RealGit();
         SiblingDirLib(behind: 0);
         await FlightWithTwoLegs();
 
@@ -2232,6 +2246,8 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task ACleanPlaneWithASubmoduleIsRemoved()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         // git refuses "working trees containing submodules" without --force, and PDF439 did not land for it (SE1, 2026-10-29).
         var flight = await FlightWithTwoLegs();
         // Beside the repo, under the test's folder, so it goes with it.
@@ -2329,6 +2345,8 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     [Trait("Category", "Slow")]
     public async Task APlaneWhoseGitFileWentIsPrunableAndStillLands()
     {
+        // A submodule, and a plane whose git file went: what git does to a worktree.
+        RealGit();
         var flight = await FlightWithTwoLegs();
         // Listed by git, marked prunable: the folder's .git file is gone, as a half torn-down worktree leaves it.
         File.Delete(Path.Combine(flight.Worktree, ".git"));

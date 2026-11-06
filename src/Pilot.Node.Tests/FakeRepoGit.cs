@@ -1333,6 +1333,10 @@ internal sealed class FakeRepoGit : IGit
             {
                 amend = true;
             }
+            else if (x.StartsWith("--date=", StringComparison.Ordinal))
+            {
+                // The commit's date: nothing here is ordered by it.
+            }
             else if (x.StartsWith('-') && !x.StartsWith("--", StringComparison.Ordinal) && x[1..].All(c => c is 'q' or 'a' or 'm'))
             {
                 all |= x.Contains('a');
