@@ -297,4 +297,118 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
+    /// <summary>The review-notes leg of a holding flight (planned by hand, autopilot off), started: returns its worker.</summary>
+    private async Task<string> StartedNotesLeg(FlightRow flight)
+    {
+        (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", $"name={LegCommander.ReviewNotesLeg}", "goal=make the notes", "done-when=Notes made", "item=The step")).Error.ShouldBeNull();
+        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "controller", "anyway")).Error.ShouldBeNull();
+        return _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).Worker!;
+    }
+
+    private void CommitFix(FlightRow flight)
+    {
+        File.WriteAllText(Path.Combine(flight.Worktree, $"fix-{Guid.NewGuid():N}.txt"), "fixed\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "make the notes");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AReviewNotesLegStartedOnAHoldingFlightIsWhatTheHoldWaitsOn()
+    {
+        var flight = await Reviewed("20", Notes);
+        F(flight.Code).Holding.ShouldNotBeNull().Reason.ShouldBe(LegCommander.HoldingReason);
+
+        await StartedNotesLeg(flight);
+
+        var hold = F(flight.Code).Holding.ShouldNotBeNull();
+        hold.Reason.ShouldBe($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
+        hold.Reason.ShouldNotContain("watchtower");
+        hold.By.ShouldBe(LegCommander.ReviewNotesLeg);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AReviewNotesLegThatPushesItsFixesEndsTheHoldAndStartsTheReReview()
+    {
+        var flight = await Reviewed("21", Notes);
+        var worker = await StartedNotesLeg(flight);
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        CommitFix(flight);
+        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "1")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "made the notes")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        head.ShouldNotBe(reviewed);
+        Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+        var now = F(flight.Code);
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        now.Review.ReviewedHead.ShouldBe(head);
+        now.Holding.ShouldBeNull();
+        var notes = _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.ReviewNotesKind).ToList();
+        notes.ShouldNotBeEmpty();
+        notes.ShouldAllBe(c => c.State == CardState.Closed);
+        notes.ShouldAllBe(c => c.Outcome!.Contains(LegCommander.ReviewNotesLeg) && c.Outcome.Contains("pushed"));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AReviewNotesLegThatEndsWithNoNewCommitStartsNoReviewerAndKeepsTheHold()
+    {
+        var flight = await Reviewed("22", Notes);
+        var worker = await StartedNotesLeg(flight);
+        var reviewer = F(flight.Code).Review!.ReviewerJob;
+        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "1")).Ok.ShouldBeTrue();
+
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "nothing to change")).Error.ShouldBeNull();
+
+        var now = F(flight.Code);
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        now.Review.ReviewerJob.ShouldBe(reviewer);
+        now.Holding.ShouldNotBeNull().Reason.ShouldBe(LegCommander.HoldingReason);
+        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheSweepStartsTheReviewOfAPassedHoldingFlightWhosePlaneMovedPastTheReviewedHead()
+    {
+        var flight = await Reviewed("23", Notes);
+        AutopilotOn();
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        CommitFix(flight);
+        Git(flight.Worktree, "push", "-q", "origin", $"flight/{flight.Code.ToLowerInvariant()}");
+
+        await _legs.AdvanceFlightAsync(flight.Code, Ct);
+        await Started(_legs, flight.Code);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        var now = F(flight.Code);
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        now.Review.ReviewedHead.ShouldBe(head);
+        head.ShouldNotBe(reviewed);
+        now.Holding.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ThePrReadyAndTimeoutCardsSayWhatTheHoldWaitsOn()
+    {
+        var flight = await Reviewed("24", Notes);
+        var worker = await StartedNotesLeg(flight);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+
+        // The leg flying covers the wait: no timeout rings however long it flies.
+        clock.Advance(TimeSpan.FromMinutes(45));
+        await TimedChecks(clock, live: false).LookAsync(Ct);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        // The leg stopped with the hold still its: the card carries the hold's own reason, not the constant.
+        _state.PutLeg(_state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg) with { State = LegState.Failed });
+        _ = worker;
+        await TimedChecks(clock, live: false).LookAsync(Ct);
+        Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Detail.ShouldNotBeNull().ShouldContain($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
+    }
 }

@@ -668,6 +668,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
             var subject = Verbs.FlightTarget(flight.Code);
+            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies: no timeout rings for it.
+            if (holding.By is { Length: > 0 } by && by != "node" && state.Legs(flight.Code).Any(l => l.Name == by && l.State == LegState.Flying))
+            {
+                continue;
+            }
             var live = WatchtowerLive?.Invoke() ?? true;
             if ((live && now - holding.Since < HoldingBound)
                 || cards.Any(c => c.Subject == subject)
@@ -679,7 +684,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             _holdingRung[key] = now;
             var why = live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
             var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still holding: {why}",
-                $"{LegCommander.HoldingReason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
+                $"{holding.Reason}. Merge as it is lands the PR at the reviewed head, notes and all; Wait keeps holding and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
                 link: flight.PullRequestUrl,
                 summary: $"{flight.Code} has circled in a holding pattern and {why}. Merge as it is clears the hold and merges at the reviewed head; Wait keeps it holding and asks again later.");
             state.UpdateChoices(card.Id,
