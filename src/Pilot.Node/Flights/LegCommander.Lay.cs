@@ -17,52 +17,6 @@ public sealed partial class LegCommander
     public const string LaidKind = "laid-on-base";
 
     /// <summary>
-    /// Before a PR joins a merge queue that rebases: probes whether its branch rebases onto its base, and where it does not (though
-    /// its merge with the base is clean) lays it on the base as one commit. Returns the head to queue: the laid commit, or
-    /// <paramref name="head"/> when nothing was needed. Asks git and GitHub, so never under the lock. A merge that is not clean, or
-    /// a tree that is not the merge's, pushes nothing, rings once with the reason and throws.
-    /// </summary>
-    private async Task<string> LayIfNotRebaseableAsync(FlightRow flight, string head, CancellationToken cancellationToken)
-    {
-        if (!Directory.Exists(flight.Worktree)
-            || !string.Equals(await OffLockAsync(null, () => github.MergeQueueMethodAsync(flight.RepoPath, BaseBranch(flight), cancellationToken)), "REBASE", StringComparison.OrdinalIgnoreCase))
-        {
-            return head;
-        }
-        var probe = await OffLockAsync(null, () => ProbeRebaseAsync(flight.Worktree, BaseBranch(flight), cancellationToken));
-        if (probe.Clean || probe.Error is not null)
-        {
-            // A probe that could not run says nothing about the rebase: the queue is joined as before.
-            return head;
-        }
-        try
-        {
-            var (laid, old) = await OffLockAsync(null, () => LayOnBaseAsync(flight, cancellationToken));
-            // The passed review read the old head; the branch's tree is the merge's, so the pass goes with it (status and label set again there).
-            // Or the reviewed head is an older one whose files (the flight's own changes against the base) are the laid commit's exactly.
-            if (flight.Review is { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read }
-                && (string.Equals(read, old, StringComparison.OrdinalIgnoreCase)
-                    || await OffLockAsync(null, () => SameFlightFilesAsync(flight.Worktree, $"origin/{BaseBranch(flight)}", read, laid, cancellationToken))))
-            {
-                Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = laid, StatusState = null } : null });
-                await OffLockAsync(null, () => _marks.ApplyAsync(flight.Code, cancellationToken));
-            }
-            _laidAt[$"{flight.Code} {laid}"] = DateTimeOffset.UtcNow;
-            state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} laid on {flight.Base}; its review carries to {Short(laid)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
-            state.RaiseCard(CardBin.Handled, LaidKind, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} laid on {flight.Base} as one commit",
-                $"Its merge with {flight.Base} was clean but its branch did not rebase onto it (stopped at {string.Join(", ", probe.Files)}), which the merge queue needs. Laid as {Short(laid)}, one commit with the clean merge's tree; the old head is kept as refs/pilot/laid/{flight.Code}. Its review carries to the new head, and it joins the queue there.");
-            return laid;
-        }
-        catch (FlightException ex)
-        {
-            state.RaiseCard(CardBin.Ring, LayFailedKind, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code} could not be laid on {flight.Base}", ex.Message);
-            throw new FlightException($"{flight.Code} does not rebase onto {flight.Base} and could not be laid on it: {ex.Message}");
-        }
-    }
-
-    /// <summary>
     /// Lays the plane's branch on <c>origin/&lt;base&gt;</c> as one commit with the tree of the clean merge of the two, keeps the old head
     /// as <c>refs/pilot/laid/&lt;code&gt;</c>, moves the plane's branch to the commit and pushes it. <b>This is the one push of the node
     /// that replaces a pushed branch</b> (<c>--force-with-lease=&lt;branch&gt;:&lt;old head&gt;</c>, naming the head read, so a branch
@@ -105,12 +59,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"the plane's branch could not be moved ({moved.Why})");
         }
-        var push = await git.RunAsync(["push", $"--force-with-lease={flight.Branch}:{old}", "origin", flight.Branch], plane, cancellationToken);
-        if (!push.Ok)
-        {
-            await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
-            throw new FlightException($"git could not push {flight.Branch} ({push.Why}); the plane is back at {Short(old)}");
-        }
+        await LeasePushAsync(plane, flight.Branch, old, cancellationToken);
         return (laid, old);
     }
 
@@ -201,7 +150,7 @@ public sealed partial class LegCommander
                 return true;
             }
             flight = now;
-            laid = await LayIfNotRebaseableAsync(flight, head, cancellationToken);
+            laid = await ShapeForMergeAsync(flight, head, Models.MergeMethod, cancellationToken);
         }
         catch (FlightException)
         {
@@ -217,24 +166,26 @@ public sealed partial class LegCommander
         {
             // The laid head is new, so the queue is joined once there.
             // Asked of GitHub directly, at the head just pushed: its PR may still show the old one for a moment, which a merge command would refuse.
-            try
+            if (flight.PullRequest is { } queued)
             {
-                if (flight.PullRequest is { } queued)
+                var outcome = await LandPrAsync(github, flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
+                if (outcome.Kind is LandKind.RetryLater)
                 {
-                    await github.MergeAsync(flight.RepoPath, queued, laid, Models.MergeMethod, cancellationToken);
+                    // GitHub did not answer: the node waits on the laid head and asks again at its next look, with no card.
+                    Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
                 }
-            }
-            catch (FlightException ex)
-            {
-                // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
-                // once they pass. The laid head is the node's own, never marked as a GitHub drop.
-                RaiseReadyAtLaid(flight, laid, ex.Message);
-                // Where the repo's queue needs the checks first (auto-merge off, enqueue refused until they report), the node waits for
-                // them on the laid head and joins the queue then, as for any armed merge.
-                Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
-                if (_dropRung.TryAdd($"{code} {laid}", true))
+                else if (outcome.Kind is LandKind.Refused)
                 {
-                    state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", ex.Message);
+                    // Refused (its checks have not run on the new head): a Merge card at the laid head stays, so the merge goes through
+                    // once they pass. The laid head is the node's own, never marked as a GitHub drop.
+                    RaiseReadyAtLaid(flight, laid, outcome.Said ?? "");
+                    // Where the repo's queue needs the checks first (auto-merge off, enqueue refused until they report), the node waits for
+                    // them on the laid head and joins the queue then, as for any armed merge.
+                    Record(code, f => f with { MergeWhenGreen = [laid, Models.MergeMethod] });
+                    if (_dropRung.TryAdd($"{code} {laid}", true))
+                    {
+                        state.RaiseCard(CardBin.Handled, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s laid PR could not be queued yet", outcome.Said);
+                    }
                 }
             }
             return true;
@@ -253,7 +204,7 @@ public sealed partial class LegCommander
                 reason = $"no cause found ({ex.Message})";
             }
             state.RaiseCard(CardBin.Ring, DropUnexplainedKind, Verbs.FlightTarget(code), $"{code}'s PR was dropped from the merge queue for a conflict",
-                $"GitHub's queue dropped {Short(head)} for a conflict: {reason}. It is not queued again at this head; push a changed head, or look at the PR page.");
+                $"GitHub's queue dropped {CommitRefs.Short(head)} for a conflict: {reason}. It is not queued again at this head; push a changed head, or look at the PR page.");
         }
         return true;
     }
@@ -262,7 +213,7 @@ public sealed partial class LegCommander
     private void RaiseReadyAtLaid(FlightRow flight, string laid, string why) =>
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{flight.PullRequest} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
+            $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {CommitRefs.Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,
             summary: $"{flight.Code} was laid on its base and is reviewed; its PR is ready. Merge lands it.");
 

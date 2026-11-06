@@ -19,7 +19,7 @@ public static partial class Briefs
         var by = review.Author is { Length: > 0 } a ? $", by {a}" : "";
         text.AppendLine($"You review PR {pr}{title}{by} ({review.Url}).");
         text.AppendLine();
-        text.AppendLine($"Work in this folder ({review.Worktree}), a worktree pinned at the PR's head {review.Head[..Math.Min(8, review.Head.Length)]}");
+        text.AppendLine($"Work in this folder ({review.Worktree}), a worktree pinned at the PR's head {CommitRefs.Short(review.Head)}");
         text.AppendLine($"(detached), against `origin/{review.Base}`. Read the PR's description and its discussion first");
         text.AppendLine($"(`gh pr view {review.Number} -R {review.Repo} --comments`), then the whole diff (`git diff origin/{review.Base}...HEAD`).");
         text.AppendLine("Check each claim, the description's and the code's, against the tree as it stands here, not against the diff");

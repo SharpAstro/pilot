@@ -241,8 +241,8 @@ public sealed class FlightDetailTests
         oldWord.Color.ShouldNotBe(curWord.Color);
         Contrast(oldWord.Color, Palette.Standard.PanelBg).ShouldBeGreaterThanOrEqualTo(4.5);
         Contrast(oldWord.Color, Palette.Standard.Ground).ShouldBeGreaterThanOrEqualTo(4.5);
-        Joined(older).ShouldContain("review of cafe000, round 3; the head is now beef111");
-        Joined(current).ShouldContain("review of cafe000, round 3");
+        Joined(older).ShouldContain("review of cafe0000a, round 3; the head is now beef1111b");
+        Joined(current).ShouldContain("review of cafe0000a, round 3");
         Joined(current).ShouldNotContain("the head is now");
         // The head not yet known (no look at the PR) says nothing of a newer one, and the report is not dimmed.
         var (unknown, _) = LeavesOf(Flight() with { Review = changes });
@@ -877,12 +877,12 @@ public sealed class FlightDetailTests
         {
             Review = Reviewed("success", "pilot: passed"),
             GitHubHead = "beef1111bbbb",
-            GitHubDisagrees = "the head moved to beef111 since the review read cafe000",
+            GitHubDisagrees = "the head moved to beef1111b since the review read cafe0000a",
         };
 
         var (texts, _) = PageOf(flight, page);
 
-        texts.ShouldContain("⚠ GitHub: the head moved to beef111 since the review read cafe000");
+        texts.ShouldContain("⚠ GitHub: the head moved to beef1111b since the review read cafe0000a");
     }
 
     [Fact]
@@ -890,7 +890,7 @@ public sealed class FlightDetailTests
     {
         var flight = Flight() with { Review = Reviewed("success", "pilot: passed"), GitHubHead = "beef1111bbbb" };
 
-        FlightMarks.From(flight).Warning.ShouldBe("the head moved to beef111 since the review read cafe000");
+        FlightMarks.From(flight).Warning.ShouldBe("the head moved to beef1111b since the review read cafe0000a");
     }
 
     [Theory]

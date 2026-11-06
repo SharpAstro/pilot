@@ -514,6 +514,6 @@ public sealed class MergesTests
         mirror.Apply(new MergeRemovedEvent { Seq = 3, At = at, Flight = "TIA1" });
         mirror.Merges.Keys.ShouldBe(["TIA2"]);
 
-        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #63  tianwen  1  {PrHead[..8]}  checks  · merging when checks pass");
+        PilotCommand.MergeLine(row).ShouldBe($"TIA1  #63  tianwen  1  {PrHead[..9]}  checks  · merging when checks pass");
     }
 }

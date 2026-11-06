@@ -156,7 +156,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
                 if (!add.Ok)
                 {
                     TryDelete(leg.Worktree);
-                    throw new FlightException($"git could not make the worktree of {name} ({sha[..Math.Min(7, sha.Length)]}): {add.Why}");
+                    throw new FlightException($"git could not make the worktree of {name} ({CommitRefs.Short(sha)}): {add.Why}");
                 }
                 made.Add(leg);
             }
@@ -248,7 +248,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             .Append(", log ").AppendLine(job.LogPath);
         foreach (var leg in legs)
         {
-            text.AppendLine().Append("## ").Append(leg.Label).Append(" `").Append(leg.Ref).Append("` at `").Append(leg.Sha[..Math.Min(7, leg.Sha.Length)]).AppendLine("`");
+            text.AppendLine().Append("## ").Append(leg.Label).Append(" `").Append(leg.Ref).Append("` at `").Append(CommitRefs.Short(leg.Sha)).AppendLine("`");
             var tables = Tables(leg.Worktree);
             if (tables.Count == 0)
             {
@@ -314,7 +314,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             text.AppendLine("$bad = 0");
             foreach (var leg in legs)
             {
-                text.AppendLine($"Write-Output {PwshQuote($"=== bench {leg.Label}: {leg.Ref} ({leg.Sha[..Math.Min(7, leg.Sha.Length)]}) ===")}");
+                text.AppendLine($"Write-Output {PwshQuote($"=== bench {leg.Label}: {leg.Ref} ({CommitRefs.Short(leg.Sha)}) ===")}");
                 text.AppendLine($"Set-Location -LiteralPath {PwshQuote(leg.Worktree)}");
                 text.AppendLine("$global:LASTEXITCODE = 0");
                 if (fetch is { Length: > 0 })
@@ -339,7 +339,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             text.AppendLine("bad=0");
             foreach (var leg in legs)
             {
-                text.AppendLine($"echo {ShQuote($"=== bench {leg.Label}: {leg.Ref} ({leg.Sha[..Math.Min(7, leg.Sha.Length)]}) ===")}");
+                text.AppendLine($"echo {ShQuote($"=== bench {leg.Label}: {leg.Ref} ({CommitRefs.Short(leg.Sha)}) ===")}");
                 text.AppendLine($"cd {ShQuote(leg.Worktree)} || bad=1");
                 text.AppendLine("if {");
                 text.AppendLine(fetch is { Length: > 0 } ? fetch : "true");

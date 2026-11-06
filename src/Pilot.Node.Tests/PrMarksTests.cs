@@ -176,7 +176,7 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
         payload.RootElement.GetProperty("commit_id").GetString().ShouldBe(Reviewed);
         payload.RootElement.GetProperty("body").GetString().ShouldNotBeNull().ShouldContain("every Done-when holds");
         var last = _github.Statuses.Last();
-        (last.Sha, last.State, last.Description).ShouldBe((Reviewed, "success", $"passed at {Reviewed[..8]}"));
+        (last.Sha, last.State, last.Description).ShouldBe((Reviewed, "success", $"passed at {Reviewed[..9]}"));
         last.Url.ShouldBe("https://github.com/x/tianwen/pull/71#pullrequestreview-9001");
         _github.Statuses.ShouldAllBe(s => s.Sha == Reviewed);
         var review = F(flight.Code).Review.ShouldNotBeNull();
@@ -275,7 +275,7 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
 
         var review = F(flight.Code).Review!;
         (review.StatusState, review.Label, review.MarksWhy).ShouldBe(("success", "pilot: passed", null));
-        _github.Statuses.Last().ShouldBe((Reviewed, "success", $"passed at {Reviewed[..8]}", review.ReviewUrl));
+        _github.Statuses.Last().ShouldBe((Reviewed, "success", $"passed at {Reviewed[..9]}", review.ReviewUrl));
         _github.Posted.Count.ShouldBe(1);
         Open().ShouldNotContain(c => c.Kind == PrMarks.RefusedKind);
     }

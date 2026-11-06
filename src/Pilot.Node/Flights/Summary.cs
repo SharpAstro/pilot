@@ -16,7 +16,7 @@ namespace Pilot.Node.Flights;
 public static class SummaryRecords
 {
     /// <summary>How many characters of a commit a record quotes.</summary>
-    public const int HashLength = 8;
+    public const int HashLength = CommitRefs.ShortLength;
 
     /// <summary>The longest a report, a card's detail or a review's findings run in a record before they are cut.</summary>
     public const int MaxReport = 1500;
@@ -28,7 +28,7 @@ public static class SummaryRecords
     /// The records of every flight in play (not landed), the open cards about none of them and the PR reviews not closed; null
     /// when there is nothing of that to say, which a summary does not spend a call on.
     /// </summary>
-    public static string? Fleet(NodeState state, DateTimeOffset now)
+    public static string? Fleet(NodeState state, DateTimeOffset now, StaleBounds? bounds = null)
     {
         var held = state.Snapshot();
         var inPlay = held.Flights.Where(f => f.State != FlightState.Landed).OrderBy(f => f.CreatedAt).ThenBy(f => f.Code, StringComparer.Ordinal).ToList();
@@ -41,6 +41,15 @@ public static class SummaryRecords
         }
 
         var text = new StringBuilder();
+        var stale = StaleSection.Read(state, now, bounds ?? new StaleBounds());
+        foreach (var line in StaleSection.Lines(stale, state.Flights()))
+        {
+            text.AppendLine(line);
+        }
+        if (stale.Count > 0)
+        {
+            text.AppendLine();
+        }
         text.AppendLine(CultureInfo.InvariantCulture, $"Records of the node as of {Stamp(now)}: {Count(inPlay.Count, "flight")} in play.");
         foreach (var flight in inPlay)
         {
@@ -100,7 +109,7 @@ public static class SummaryRecords
 
         if (flight.PullRequest is { } pr)
         {
-            text.AppendLine(CultureInfo.InvariantCulture, $"  PR #{pr}{(flight.PullRequestUrl is { } url ? $" {url}" : "")}{(flight.GitHubHead is { } head ? $", head {Short(head)}" : "")}.");
+            text.AppendLine(CultureInfo.InvariantCulture, $"  PR #{pr}{(flight.PullRequestUrl is { } url ? $" {url}" : "")}{(flight.GitHubHead is { } head ? $", head {CommitRefs.Short(head)}" : "")}.");
             if (flight.MergeQueue is { } queue)
             {
                 text.AppendLine(CultureInfo.InvariantCulture, $"  Merge: {queue}.");
@@ -116,7 +125,7 @@ public static class SummaryRecords
         }
         if (flight.Review is { } review)
         {
-            text.AppendLine(CultureInfo.InvariantCulture, $"  Review: {review.State.ToString().ToLowerInvariant()}, started {Stamp(review.StartedAt)}{(review.FinishedAt is { } done ? $", finished {Stamp(done)}" : "")}{(review.ReviewedHead is { } read ? $", read head {Short(read)}" : "")}{(review.Label is { } label ? $", label {label}" : "")}.");
+            text.AppendLine(CultureInfo.InvariantCulture, $"  Review: {review.State.ToString().ToLowerInvariant()}, started {Stamp(review.StartedAt)}{(review.FinishedAt is { } done ? $", finished {Stamp(done)}" : "")}{(review.ReviewedHead is { } read ? $", read head {CommitRefs.Short(read)}" : "")}{(review.Label is { } label ? $", label {label}" : "")}.");
             if (review.Report is { Length: > 0 } report)
             {
                 text.AppendLine(CultureInfo.InvariantCulture, $"  Review report: {Clip(report, MaxReport)}");
@@ -201,7 +210,7 @@ public static class SummaryRecords
 
     private static void PrReview(StringBuilder text, PrReviewRow review)
     {
-        text.AppendLine(CultureInfo.InvariantCulture, $"  {review.Repo}#{review.Number}{(review.Title is { Length: > 0 } title ? $" \"{title}\"" : "")}: {review.State.ToString().ToLowerInvariant()}{(review.Verdict is { } verdict ? $", verdict {verdict}" : "")}, head {Short(review.Head)}, started {Stamp(review.StartedAt)}.");
+        text.AppendLine(CultureInfo.InvariantCulture, $"  {review.Repo}#{review.Number}{(review.Title is { Length: > 0 } title ? $" \"{title}\"" : "")}: {review.State.ToString().ToLowerInvariant()}{(review.Verdict is { } verdict ? $", verdict {verdict}" : "")}, head {CommitRefs.Short(review.Head)}, started {Stamp(review.StartedAt)}.");
         if (review.Report is { Length: > 0 } report)
         {
             text.AppendLine(CultureInfo.InvariantCulture, $"    Report: {Clip(report, MaxReport)}");
@@ -218,8 +227,6 @@ public static class SummaryRecords
         var subject = Verbs.FlightTarget(code);
         return string.Equals(card.Subject, subject, StringComparison.OrdinalIgnoreCase) || card.Subject.StartsWith(subject + "/", StringComparison.OrdinalIgnoreCase);
     }
-
-    private static string Short(string hash) => hash.Length > HashLength ? hash[..HashLength] : hash;
 
     private static string Stamp(DateTimeOffset at) => at.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
 
@@ -272,7 +279,8 @@ public static class SummaryPrompt
         {{Needs}}
         - One bullet per thing that stays stuck unless the person acts: a question only they can answer, a
           permission prompt, a card in the ring, a PR waiting for their merge, a leg that failed, a worker
-          that stopped or waits. If there is nothing, write the single word: Nothing.
+          that stopped or waits. If there is nothing, write the single word: Nothing. When the records open
+          with "Gone stale", list those first, oldest first, each with its age and what moves it.
 
         {{Where}}
         At most {{words.ToString(CultureInfo.InvariantCulture)}} words of plain prose: what has been done, what is happening now, what is left. Quote
@@ -289,7 +297,6 @@ public static class SummaryPrompt
           again, its conflict gone, its review given, its flight landed), written as its id alone, such as c12,
           never a card that waits for the person's decision. The node checks each against what it holds before it
           closes anything. If there is none, write the single word: {NoneResolved}
-
 
         """;
 
@@ -405,6 +412,9 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
     /// <summary>The nodes this one holds a grant for, whose records <see cref="SummaryRow.FleetArgument"/> gathers; none when unset.</summary>
     public IFleet? Fleet { get; set; }
 
+    /// <summary>The bounds past which work is stale (#736); the defaults unless the node wires its settings.</summary>
+    public Func<StaleBounds> Bounds { get; set; } = () => new StaleBounds();
+
     /// <summary>This node's name in a fleet's records: its machine prefix.</summary>
     public string Machine { get; set; } = "this node";
 
@@ -454,7 +464,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         var now = time.GetUtcNow();
         if (command.Target == Verbs.NodeTarget)
         {
-            return state.Complete(command, null, made: SummaryRecords.Fleet(state, now));
+            return state.Complete(command, null, made: SummaryRecords.Fleet(state, now, Bounds()));
         }
         if (command.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) && command.Target[Verbs.FlightTargetPrefix.Length..] is { Length: > 0 } code && !code.Contains('/'))
         {
@@ -477,7 +487,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
         var text = new StringBuilder();
         var nodes = 0;
         var missed = false;
-        if (SummaryRecords.Fleet(state, now) is { } own)
+        if (SummaryRecords.Fleet(state, now, Bounds()) is { } own)
         {
             nodes++;
             text.AppendLine(CultureInfo.InvariantCulture, $"=== Node {Machine} (this node) ===").AppendLine(own).AppendLine();
@@ -536,7 +546,7 @@ public sealed class Summaries(NodeState state, ISummaryModel model, TimeProvider
             string prompt;
             if (scope == SummaryRow.FleetScope)
             {
-                var records = SummaryRecords.Fleet(state, now);
+                var records = SummaryRecords.Fleet(state, now, Bounds());
                 if (records is null)
                 {
                     return (Keep(scope, EmptyFleet, tokens: 0, cost: null), null);

@@ -226,7 +226,13 @@
       "toldWhileWorking": null,
       "retoldAt": null,
       "retoldWay": null,
-      "retellRung": null
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j15",
@@ -264,7 +270,13 @@
       "toldWhileWorking": null,
       "retoldAt": null,
       "retoldWay": null,
-      "retellRung": null
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j13",
@@ -302,7 +314,13 @@
       "toldWhileWorking": null,
       "retoldAt": null,
       "retoldWay": null,
-      "retellRung": null
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j12",
@@ -340,7 +358,13 @@
       "toldWhileWorking": null,
       "retoldAt": null,
       "retoldWay": null,
-      "retellRung": null
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     }
   ],
   "merges": [],
