@@ -87,7 +87,11 @@ public sealed partial class LegCommander
                     using (Calling(flight.Code, "being brought up to date"))
                     {
                         var seenLeg = leg;
-                        await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
+                        // The base is merged at most once per go-around (#752): a later attempt of the same round skips it.
+                        if (_baseMerged.TryAdd(RoundKey(flight, leg), 0))
+                        {
+                            await OffLockAsync(null, () => FetchAndMergeBaseAsync(flight, cancellationToken));
+                        }
                         leg = UnchangedFinishing(flight.Code, seenLeg) is { } current
                             ? current
                             : throw new FlightException($"{flight.Code}/{seenLeg.Name} changed while it was brought up to date: nothing was recorded, look again and finish again");
@@ -111,9 +115,10 @@ public sealed partial class LegCommander
                         }
                         var sibling = SiblingRestoreFailure.In(run.Tail, flight.Worktree);
                         var head = sibling is null ? "" : sibling.Text + "\n\n";
+                        var pushNote = await PushEarlyAsync(flight, cancellationToken);
                         state.PutLeg(leg with
                         {
-                            Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}",
+                            Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}{pushNote}",
                             Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
                         });
                         throw new FlightException($"{head}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
@@ -148,6 +153,12 @@ public sealed partial class LegCommander
                 if (SiblingRestoreFailure.In(report, flight.Worktree) is { } stale && _siblingRefused.TryAdd($"{flight.Code}/{leg.Name}", 0))
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
+                }
+                // The work reaches the PR early: a failed finish pushes the plane's commits too (#752). Its outcome is no change.
+                var failedPushNote = await PushEarlyAsync(flight, cancellationToken);
+                if (failedPushNote.Length > 0)
+                {
+                    report = report.Length > 0 ? report + failedPushNote : failedPushNote.Trim();
                 }
                 // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it.
                 var (selfFinished, notWhy) = await TrySelfFinishAsync(flight, leg, report, cancellationToken);
@@ -201,6 +212,29 @@ public sealed partial class LegCommander
                 DropQueuedJobsOf(job, "its worker ended");
                 await StopQuietly(job, cancellationToken);
             }
+        }
+    }
+
+    // The (flight, leg, go-around) rounds whose base merge has run.
+    private readonly ConcurrentDictionary<string, byte> _baseMerged = new(StringComparer.Ordinal);
+
+    private static string RoundKey(FlightRow flight, LegRow leg) => $"{flight.Code}/{leg.Name}/{leg.GoArounds}";
+
+    /// <summary>
+    /// Pushes the plane's branch plain after disarming auto-merge, off the lock, so CI and the PR see the work of a finish attempt
+    /// whose check failed. No PR is opened and no review started. Returns a note for the leg's report when the push failed
+    /// (empty otherwise); a failed push never changes the outcome.
+    /// </summary>
+    private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await OffLockAsync(flight, () => PushAsync(flight, cancellationToken, brought: true));
+            return "";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"\nThe branch was not pushed early: {ex.Message}";
         }
     }
 

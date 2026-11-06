@@ -80,7 +80,7 @@ public static partial class Briefs
             if (update is not null)
             {
                 // The node pushes the branch after the last go-around and refuses one behind its base: it is brought up to date here, checked, then done.
-                text.AppendLine($"Before you say done, bring the branch up to date with its base, as the node says for this repo: {update}. Rerun the check after it, and say done only when it passes.");
+                text.AppendLine($"Merge the base once in this round, just before the final check, not on every attempt, as the node says for this repo: {update}. Rerun the check after it, and say done only when it passes. The node pushes the branch on each finish attempt, so the reviewer and CI see the work early.");
             }
             if (plane is not null)
             {
