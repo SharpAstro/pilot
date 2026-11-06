@@ -647,10 +647,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private readonly Dictionary<string, DateTimeOffset> _holdingRung = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A flight in a holding pattern never circles forever: with no live watchtower, or once the hold is older than
-    /// <see cref="HoldingBound"/>, a Ring card asks the person to merge as it is or wait. Closed when the hold ends.
+    /// How long a hold waits for a watchtower to be told and take it (a watchtower that ended by design is resumed or started by the tell)
+    /// before the node handles it with no watchtower: PIL815, SE1's watchtower ended about two minutes after each reply and its holds never cleared.
     /// </summary>
-    private void LookAtHolds()
+    public TimeSpan HoldingTakeBound { get; init; } = TimeSpan.FromMinutes(5);
+
+    // The holds the node already handled on, once each (flight code and Holding.Since): a push that did not end the hold is not repeated each look.
+    private readonly HashSet<string> _holdHandled = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A flight in a holding pattern never circles forever. With no live watchtower, once the hold is older than
+    /// <see cref="HoldingTakeBound"/>, the node handles it itself: commits past the reviewed head in the plane are pushed as
+    /// <c>flight pr</c> does (which ends the hold, and a fresh review gates the merge), and with none the hold is released with the
+    /// review's notes written on the PR. A hold a live watchtower has left past <see cref="HoldingBound"/> rings a person to merge as it
+    /// is or wait. Closed when the hold ends.
+    /// </summary>
+    private async Task LookAtHoldsAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var cards = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.HoldingTimeoutKind).ToList();
@@ -668,12 +680,25 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
             var subject = Verbs.FlightTarget(flight.Code);
-            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies: no timeout rings for it.
-            if (holding.By is { Length: > 0 } by && by != "node" && state.Legs(flight.Code).Any(l => l.Name == by && l.State == LegState.Flying))
+            // A hold a leg makes the fixes of is covered by that leg's own watch while it flies (or waits to be started): no timeout rings for it.
+            if (holding.By is { Length: > 0 } by && by != "node" && state.Legs(flight.Code).Any(l => l.Name == by && l.State is LegState.Flying or LegState.Planned))
             {
                 continue;
             }
             var live = WatchtowerLive?.Invoke() ?? true;
+            if (!live)
+            {
+                // Told, and given the bound to take it up (a tell resumes or starts the watchtower); then the node does what a watchtower would not be there to.
+                if (now - holding.Since < HoldingTakeBound)
+                {
+                    continue;
+                }
+                if (legs is not null && _holdHandled.Add(key)
+                    && await legs.HandleHoldWithoutWatchtowerAsync(flight.Code, cancellationToken) != LegCommander.HoldHandling.None)
+                {
+                    continue;
+                }
+            }
             if ((live && now - holding.Since < HoldingBound)
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
@@ -741,7 +766,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await RestorePassedWithoutCardAsync(cancellationToken);
-        LookAtHolds();
+        await LookAtHoldsAsync(cancellationToken);
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
         {

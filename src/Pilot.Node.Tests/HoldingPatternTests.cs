@@ -147,12 +147,13 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ANotLiveWatchtowerRingsAtOnceAndWaitSilencesItForAnotherBound()
+    public async Task ALiveWatchtowerThatLeavesAHoldPastTheBoundRingsAndWaitSilencesItForAnotherBound()
     {
         var flight = await Reviewed("7", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
-        var checks = TimedChecks(clock, live: false);
+        var checks = TimedChecks(clock, live: true);
 
+        clock.Advance(TimeSpan.FromMinutes(31));
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
@@ -275,7 +276,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ANotLiveWatchtowerRingsAtOnceEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
+    public async Task ALiveWatchtowersTimeoutRingsEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
     {
         var flight = await NewFlight("9", "parser");
         await Fly(flight, "parser");
@@ -286,8 +287,9 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
         Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(31));
 
-        await TimedChecks(clock, live: false).LookAsync(Ct);
+        await TimedChecks(clock, live: true).LookAsync(Ct);
 
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
         Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Bin.ShouldBe(CardBin.Ring);
@@ -437,7 +439,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("26", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
-        var checks = TimedChecks(clock, live: false);
+        var checks = TimedChecks(clock, live: true);
+        clock.Advance(TimeSpan.FromMinutes(31));
         await checks.LookAsync(Ct);
         var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
         var reviewed = F(flight.Code).Review!.ReviewedHead!;
@@ -459,6 +462,168 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         moved.ShouldNotBe(reviewed);
     }
 
+    /// <summary>PrChecks as the node builds it, its watchtower question answered by the real <see cref="Watchtower.IsLive"/> over a row that reads ended (by design, after a reply).</summary>
+    private PrChecks ChecksWithEndedWatchtower(ManualTime clock)
+    {
+        var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "wt-data"), MachinePrefix: "DU1");
+        var tower = new Watchtower(_state, new FakeWorkers(), (command, _) => Task.FromResult(_state.Complete(command, null)), options, TimeProvider.System) { Pilot = "pilot", Version = "2.0.1" };
+        _state.PutSession(new SessionRow
+        {
+            Id = "job00001", SessionId = "job00001-0000-4000-8000-000000000000", Name = "du1-watchtower", Kind = SessionKind.Background,
+            Cwd = options.WatchtowerFolder, Role = SessionRole.Watchtower, ContextTokens = 10_000, ContextWindow = 200_000,
+            State = SessionState.Ended, SpendWeighted = 0, LastResponseAt = DateTimeOffset.UtcNow, StartedAt = DateTimeOffset.UtcNow,
+        });
+        tower.IsLive().ShouldBeFalse();
+        return new PrChecks(_state, _github, clock, _flights, _legs) { WatchtowerLive = tower.IsLive };
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("30", Notes);
+        // The pass planned the review-notes leg and the hold names it, never a watchtower that may not be running.
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
+        F(flight.Code).Holding!.Reason.ShouldBe($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
+
+        // The node starts the leg as its sweep does; its worker finds nothing to change and ends: the hold is nobody's now.
+        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "node")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+        var worker = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).Worker!;
+        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "1")).Ok.ShouldBeTrue();
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "nothing to change")).Error.ShouldBeNull();
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe("node");
+
+        // The watchtower's row reads ended; no person or watchtower command follows, only time passes on the fake clock.
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = ChecksWithEndedWatchtower(clock);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.IssueComments.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        var comment = _github.IssueComments.ShouldHaveSingleItem();
+        comment.Number.ShouldBe(F(flight.Code).PullRequest!.Value);
+        comment.Body.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
+        comment.Body.ShouldContain("rename `x` to `count`");
+        comment.Body.ShouldContain("merges with them");
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == "hold-released" && c.Title.Contains("released"));
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task WithAutopilotOffAHoldWhoseWatchtowerEndedIsClearedWithOneCommentOfTheNotesAndThePrReadyCardStopsHolding()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("31", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
+        _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe("node");
+        Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = ChecksWithEndedWatchtower(clock);
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        var comment = _github.IssueComments.ShouldHaveSingleItem();
+        comment.Body.ShouldContain("rename `x` to `count`");
+        comment.Body.ShouldContain("a comment is stale");
+        comment.Body.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        ready.Title.ShouldNotContain("holding");
+        ready.Title.ShouldContain("ready to merge");
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        // Autopilot is off: nothing merges by itself, the card is the person's.
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARefusedNotesCommentIsAHandledCardAndTheHoldIsReleasedAllTheSame()
+    {
+        var flight = await Reviewed("32", Notes);
+        _github.CommentFails = "comments are locked";
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = ChecksWithEndedWatchtower(clock);
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        _github.IssueComments.ShouldBeEmpty();
+        var handled = _state.Cards(openOnly: false).Single(c => c.Kind == "hold-released");
+        handled.Bin.ShouldBe(CardBin.Handled);
+        handled.Detail.ShouldNotBeNull().ShouldContain("comments are locked");
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldNotContain("holding");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldWhoseWatchtowerEndedWithCommitsPastTheReviewedHeadInThePlaneIsPushedAsFlightPrDoesAndReviewedAfresh()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("33", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        // The watchtower made a fix in the plane and ended before it ran flight pr.
+        CommitFix(flight);
+        _github.Pr = _github.Pr! with { Head = "beef0000beef0000" };
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = ChecksWithEndedWatchtower(clock);
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await checks.LookAsync(Ct);
+        await Started(_legs, flight.Code);
+
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+        head.ShouldNotBe(reviewed);
+        Git(flight.Worktree, "ls-remote", "origin", $"flight/{flight.Code.ToLowerInvariant()}").ShouldStartWith(head);
+        var now = F(flight.Code);
+        now.Holding.ShouldBeNull();
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        now.Review.ReviewedHead.ShouldBe(head);
+        // The fresh review gates the merge: nothing merged, and no notes comment for fixes that were made.
+        _github.Merged.ShouldBeEmpty();
+        _github.IssueComments.ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AHoldIsLeftToALiveWatchtowerAndToAReviewNotesLegStillOnItsWay()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("34", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        // A live watchtower is given the whole bound: nothing is done for it.
+        await TimedChecks(clock, live: true).LookAsync(Ct);
+        F(flight.Code).Holding.ShouldNotBeNull();
+
+        // The leg planned and not started yet is what the hold waits on, whether or not a watchtower runs.
+        await ChecksWithEndedWatchtower(clock).LookAsync(Ct);
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
+        _github.IssueComments.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ThePrReadyAndTimeoutCardsSayWhatTheHoldWaitsOn()
@@ -469,12 +634,12 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         // The leg flying covers the wait: no timeout rings however long it flies.
         clock.Advance(TimeSpan.FromMinutes(45));
-        await TimedChecks(clock, live: false).LookAsync(Ct);
+        await TimedChecks(clock, live: true).LookAsync(Ct);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
         // The leg stopped with the hold still its: the card carries the hold's own reason, not the constant.
         _state.PutLeg(_state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg) with { State = LegState.Failed });
-        await TimedChecks(clock, live: false).LookAsync(Ct);
+        await TimedChecks(clock, live: true).LookAsync(Ct);
         Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind).Detail.ShouldNotBeNull().ShouldContain($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
     }
 }
