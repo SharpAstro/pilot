@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using Pilot.Contracts;
@@ -156,6 +157,10 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
         }
         // Never a prompt for credentials or an editor: the node has no terminal to show one in.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // A read the node makes never writes the repo as a side effect: git status would otherwise refresh the index on disk, which
+        // moves the stamp RepoWatch fingerprints to see that nothing changed (so the node's own status read made the next round
+        // read again, pilot #794), and takes index.lock beside a person's own git. A command that must lock still does.
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         // The node never reads LFS content itself, so no checkout it makes (plane, review worktree, merge) smudges it:
         // 59 git-lfs runs in 30 minutes were seen on DE1 (2026-10-29), each a transfer the step did not need. The update of
         // the owner's main checkout (RunSmudgingAsync) is the exception, and leaves whatever the environment says.
@@ -390,8 +395,44 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         return entries;
     }
 
-    /// <summary>The remote's default branch as last fetched (<c>origin/main</c>), read without a fetch; null when the repo has no origin to say.</summary>
+    /// <summary>How long an answer of <see cref="DefaultRefAsync"/> is kept at most, whatever the files say: a net under a read that could not see what it missed.</summary>
+    public TimeSpan DefaultRefMaxAge { get; init; } = TimeSpan.FromHours(1);
+
+    private readonly ConcurrentDictionary<string, CachedDefaultRef> _defaultRefs = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    private sealed record CachedDefaultRef(string Fingerprint, string? Ref, long Stamp);
+
+    /// <summary>
+    /// The remote's default branch as last fetched (<c>origin/main</c>), read without a fetch; null when the repo has no origin to say.
+    /// Kept per repo while the files that answer it are as they were (<c>refs/remotes/origin/HEAD</c>, <c>packed-refs</c>, and
+    /// whether <c>origin/main</c> and <c>origin/master</c> exist), so a read that finds them the same starts no git: the node
+    /// asked three times in a round per repo, 7,000 git starts an hour in all (pilot #794). A repo whose files cannot be read as a
+    /// fingerprint (no <c>HEAD</c>, an IO error, <c>reftable</c> refs) is asked of git each time, and so is any answer older than
+    /// <see cref="DefaultRefMaxAge"/>. A null answer (no origin yet) is kept the same way.
+    /// </summary>
     public async Task<string?> DefaultRefAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        // Taken before git is asked: a ref that moves during the read leaves a fingerprint the next read will not match.
+        var fingerprint = GitLayout.Of(repoPath)?.DefaultRefFingerprint();
+        var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+        if (fingerprint is not null && _defaultRefs.TryGetValue(key, out var kept) && kept.Fingerprint == fingerprint
+            && Stopwatch.GetElapsedTime(kept.Stamp) < DefaultRefMaxAge)
+        {
+            return kept.Ref;
+        }
+        var resolved = await ResolveDefaultRefAsync(repoPath, cancellationToken);
+        if (fingerprint is null)
+        {
+            _defaultRefs.TryRemove(key, out _);
+        }
+        else
+        {
+            _defaultRefs[key] = new CachedDefaultRef(fingerprint, resolved, Stopwatch.GetTimestamp());
+        }
+        return resolved;
+    }
+
+    private async Task<string?> ResolveDefaultRefAsync(string repoPath, CancellationToken cancellationToken)
     {
         var head = await git.RunAsync(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath, cancellationToken);
         if (head.Ok && head.Output.Trim().Length > 0)

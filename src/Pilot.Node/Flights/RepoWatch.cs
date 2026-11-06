@@ -9,9 +9,10 @@ namespace Pilot.Node.Flights;
 /// <see cref="NodeState"/> as a <see cref="ReposRow"/> on the event stream, and a node with no row yet puts one at boot with the
 /// repos the catalog knows, each marked <see cref="RepoStatus.Unread"/>. Refreshed every <see cref="Interval"/> from boot, and on demand; never more than one refresh runs at once, and one asked
 /// for while another runs gets that one's answer. A git or gh call that fails leaves its part of the repo's status empty
-/// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest.
+/// and says so in its <see cref="RepoStatus.Errors"/>, never failing the rest. The git half of a round is skipped for whatever
+/// the files git keeps say has not moved since the last round (RepoWatch.Git.cs); the GitHub half is read every round.
 /// </summary>
-public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
+public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes planes, IGitHub github, TimeProvider time) : BackgroundService
 {
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
@@ -133,6 +134,11 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
             await Parallel.ForEachAsync(Enumerable.Range(0, catalog.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Parallelism), CancellationToken = _stopping },
                 async (i, token) => statuses[i] = await ReadAsync(catalog[i], flights, now, tracked.Contains(catalog[i].Path), token));
+            // A clone no longer under a root keeps no memory of its git half.
+            foreach (var gone in _memory.Keys.Where(k => !catalog.Any(r => r.Path == k)))
+            {
+                _memory.TryRemove(gone, out _);
+            }
             _latest = statuses;
             state.PutRepos(new ReposRow { Repos = statuses, ReadAt = time.GetUtcNow() });
             return statuses;
@@ -150,62 +156,29 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
     {
         var errors = new List<string>();
         var flights = allFlights.Where(f => SamePath(f.RepoPath, repo.Path)).ToArray();
+        var reads = new Reads(errors, cancellationToken);
 
-        async Task<T?> Ref<T>(string what, Func<Task<T?>> read) where T : class
-        {
-            try
-            {
-                return await read();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                errors.Add($"{what}: {ex.Message}");
-                return null;
-            }
-        }
+        Task<T?> Ref<T>(string what, Func<Task<T?>> read) where T : class => reads.Ref(what, read);
 
-        async Task<T?> Value<T>(string what, Func<Task<T?>> read) where T : struct
-        {
-            try
-            {
-                return await read() ?? Failed<T>(what);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                errors.Add($"{what}: {ex.Message}");
-                return null;
-            }
-        }
-
-        T? Failed<T>(string what) where T : struct
-        {
-            errors.Add($"git could not read {what}");
-            return null;
-        }
-
-        var entries = await Ref("worktrees", () => planes.WorktreesAsync(repo.Path, cancellationToken));
-        if (entries is null && errors.Count == 0)
-        {
-            errors.Add("git could not list the worktrees");
-        }
-        var defaultRef = await Ref("default branch", () => planes.DefaultRefAsync(repo.Path, cancellationToken));
-        var dirty = await Value("main checkout's status", () => planes.IsDirtyAsync(repo.Path, cancellationToken, withoutPlanes: true));
-        (int Ahead, int Behind)? sync = defaultRef is null ? null : await Value($"main checkout against {defaultRef}", () => planes.AheadBehindAsync(repo.Path, defaultRef, cancellationToken));
+        // The git half: kept from the last round while the files it read are as they were (RepoWatch.Git.cs).
+        var side = await ReadGitAsync(repo, now, reads, cancellationToken);
+        var entries = side.Entries;
+        var defaultRef = side.DefaultRef;
+        var dirty = side.Dirty;
+        var sync = side.Sync;
 
         var worktrees = new List<WorktreeStatus>();
-        foreach (var entry in (entries ?? []).Skip(1).Where(e => !e.Prunable && Directory.Exists(e.Path)))
+        foreach (var read in side.Worktrees)
         {
-            var wDirty = await Value($"{entry.Path}'s status", () => planes.IsDirtyAsync(entry.Path, cancellationToken));
-            (int Files, int Added, int Removed)? diff = defaultRef is null ? null : await Value($"{entry.Path}'s diff", () => planes.DiffStatAsync(entry.Path, defaultRef, cancellationToken));
             worktrees.Add(new WorktreeStatus
             {
-                Path = entry.Path,
-                Branch = entry.Branch,
-                Flight = flights.FirstOrDefault(f => SamePath(f.Worktree, entry.Path))?.Code,
-                Dirty = wDirty ?? false,
-                Files = diff?.Files ?? 0,
-                Added = diff?.Added ?? 0,
-                Removed = diff?.Removed ?? 0,
+                Path = read.Entry.Path,
+                Branch = read.Entry.Branch,
+                Flight = flights.FirstOrDefault(f => SamePath(f.Worktree, read.Entry.Path))?.Code,
+                Dirty = read.Dirty ?? false,
+                Files = read.Diff?.Files ?? 0,
+                Added = read.Diff?.Added ?? 0,
+                Removed = read.Diff?.Removed ?? 0,
             });
         }
 
