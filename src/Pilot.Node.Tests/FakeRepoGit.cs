@@ -56,9 +56,13 @@ internal sealed class FakeRepoGit : IGit
     private readonly string _originPath;
     private readonly List<string> _unsupported = [];
     private readonly Dictionary<string, string> _config = [];
-    private bool _originHead = true;
+    private bool _originHead;
 
-    private readonly bool _hasOrigin;
+    /// <summary>Whether a bare origin repo exists to fetch from and push to; a remote can be configured (<see cref="_remoteUrl"/>) with none reachable, as a GitHub URL is offline.</summary>
+    private bool _hasOrigin;
+
+    /// <summary>The URL of the remote <c>origin</c>; null when the repo has none.</summary>
+    private string? _remoteUrl;
 
     /// <summary>
     /// A repo <c>tianwen</c> under <paramref name="root"/>, with one commit on main. With <paramref name="withOrigin"/> it has a bare origin beside it
@@ -69,8 +73,10 @@ internal sealed class FakeRepoGit : IGit
     {
         _root = Norm(root);
         _hasOrigin = withOrigin;
+        _originHead = withOrigin;
         RepoPath = Path.Combine(root, "tianwen");
         _originPath = Path.Combine(root, "origin.git");
+        _remoteUrl = withOrigin ? _originPath : null;
         Directory.CreateDirectory(Path.Combine(RepoPath, ".git"));
         if (withOrigin)
         {
@@ -172,21 +178,33 @@ internal sealed class FakeRepoGit : IGit
     private GitRun Dispatch(string verb, List<string> a, string cwd)
     {
         var wt = WorktreeOf(cwd);
+        // A bare origin is made, or cloned from the repo, beside it: the only repos made besides the one modelled.
+        if (wt is null && verb is "init" or "clone" && Under(Norm(cwd), _root))
+        {
+            return verb == "init" ? Init(a, cwd) : Clone(a, cwd);
+        }
         if (wt is null && !Under(Norm(cwd), Norm(_originPath)))
         {
             return Fail($"fatal: not a git repository (or any of the parent directories): .git", 128);
         }
-        if (!_hasOrigin && a.Any(x => x is "origin" or "refs/remotes/origin/HEAD"))
+        if (a.Any(x => x is "origin" or "refs/remotes/origin/HEAD") && verb is "remote" or "fetch" or "push" or "ls-remote" or "symbolic-ref")
         {
-            // A repo made by git init has no remote: what asks for one fails as git says.
-            switch (verb)
+            // A repo made by git init has no remote; one whose remote is a URL no model serves (GitHub's) cannot be reached: each fails as git says.
+            if (_remoteUrl is null && !(verb == "remote" && a is ["add", ..]))
             {
-                case "remote":
-                    return Fail("error: No such remote 'origin'", 2);
-                case "fetch" or "push" or "ls-remote":
-                    return Fail("fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.", 128);
-                case "symbolic-ref":
-                    return Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
+                switch (verb)
+                {
+                    case "remote":
+                        return Fail("error: No such remote 'origin'", 2);
+                    case "symbolic-ref":
+                        return Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
+                    default:
+                        return Fail("fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.", 128);
+                }
+            }
+            if (!_hasOrigin && verb is "fetch" or "push" or "ls-remote")
+            {
+                return Fail($"fatal: unable to access '{_remoteUrl}': Could not resolve host: github.com", 128);
             }
         }
         return verb switch
@@ -210,6 +228,7 @@ internal sealed class FakeRepoGit : IGit
             "reset" => Reset(a, wt),
             "cherry" => Cherry(a, wt),
             "cherry-pick" => CherryPick(a, wt),
+            "branch" => Branch(a, wt),
             "rebase" => Rebase(a, wt),
             "config" => Config(a),
             "ls-remote" => LsRemote(a),
@@ -363,6 +382,10 @@ internal sealed class FakeRepoGit : IGit
         {
             return Ok(Norm(Path.Combine(RepoPath, ".git")) + "\n");
         }
+        if (a is ["--abbrev-ref", "HEAD"] && wt is not null)
+        {
+            return Ok((wt.Branch ?? "HEAD") + "\n");
+        }
         if (a is ["--git-common-dir"])
         {
             // Relative to where it is asked: ".git" in the main checkout, absolute in a linked worktree.
@@ -400,17 +423,81 @@ internal sealed class FakeRepoGit : IGit
     {
         switch (a)
         {
+            case ["add", "origin", var url]:
+                if (_remoteUrl is not null)
+                {
+                    return Fail("error: remote origin already exists.", 3);
+                }
+                _remoteUrl = url;
+                _config["remote.origin.url"] = url;
+                WriteConfigFile();
+                return Ok("");
             case ["get-url", "origin"]:
-                return Ok(_config.GetValueOrDefault("remote.origin.url", _originPath) + "\n");
+                // As git prints it: with the url.<base>.insteadOf rewrites applied.
+                var rewrite = _config.Where(c => c.Key.StartsWith("url.", StringComparison.Ordinal) && c.Key.EndsWith(".insteadOf", StringComparison.Ordinal) && c.Value == _remoteUrl)
+                    .Select(c => c.Key["url.".Length..^".insteadOf".Length]).FirstOrDefault();
+                return Ok((rewrite ?? _remoteUrl) + "\n");
             case ["set-head", "origin", "--auto"]:
-                _originHead = true;
+                _originHead = _hasOrigin;
                 return Ok("");
             case ["set-head", "origin", "--delete"]:
                 _originHead = false;
                 return Ok("");
+            case ["set-head", "origin", var branch] when !branch.StartsWith('-'):
+                _originHead = _refs.ContainsKey("refs/remotes/origin/" + branch);
+                return _originHead ? Ok("") : Fail($"error: Not a valid ref: refs/remotes/origin/{branch}", 1);
             default:
                 throw new NotSupportedException("remote form");
         }
+    }
+
+    /// <summary><c>git init --bare [-b main] origin.git</c>: the origin the repo's remote can be pointed at.</summary>
+    private GitRun Init(List<string> a, string cwd)
+    {
+        a.RemoveAll(x => x is "-q" or "--quiet");
+        var bare = a.Remove("--bare");
+        var at = a.IndexOf("-b");
+        if (at >= 0)
+        {
+            a.RemoveRange(at, 2);
+        }
+        if (!bare || a.Count != 1 || Norm(Path.Combine(cwd, a[0])) != Norm(_originPath))
+        {
+            throw new NotSupportedException("init of a repo other than the origin");
+        }
+        Directory.CreateDirectory(_originPath);
+        _hasOrigin = true;
+        return Ok("");
+    }
+
+    /// <summary><c>git clone --bare &lt;the repo&gt; origin.git</c>: the origin holding the repo's branches.</summary>
+    private GitRun Clone(List<string> a, string cwd)
+    {
+        a.RemoveAll(x => x is "-q" or "--quiet");
+        var bare = a.Remove("--bare");
+        if (!bare || a.Count != 2 || Norm(Path.Combine(cwd, a[0])) != Norm(RepoPath) || Norm(Path.Combine(cwd, a[1])) != Norm(_originPath))
+        {
+            throw new NotSupportedException("clone of anything but the repo into the origin");
+        }
+        Directory.CreateDirectory(_originPath);
+        foreach (var (name, id) in _refs.Where(r => r.Key.StartsWith("refs/heads/", StringComparison.Ordinal)).ToList())
+        {
+            _origin[name] = id;
+        }
+        _hasOrigin = true;
+        return Ok("");
+    }
+
+    /// <summary><c>git branch --list &lt;pattern&gt;</c>: the local branches that match, one per line, the checked out one starred.</summary>
+    private GitRun Branch(List<string> a, Worktree? wt)
+    {
+        if (wt is null || a is not ["--list", var pattern])
+        {
+            throw new NotSupportedException("branch form");
+        }
+        var regex = new System.Text.RegularExpressions.Regex("^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*") + "$");
+        return Ok(string.Concat(_refs.Keys.Where(k => k.StartsWith("refs/heads/", StringComparison.Ordinal)).Select(k => k["refs/heads/".Length..])
+            .Where(b => regex.IsMatch(b)).Order(StringComparer.Ordinal).Select(b => (b == wt.Branch ? "* " : "  ") + b + "\n")));
     }
 
     private GitRun Config(List<string> a)
@@ -435,8 +522,8 @@ internal sealed class FakeRepoGit : IGit
     /// <summary>The clone's <c>.git/config</c> as the repo catalog reads it from the folder, without asking git (it names the clone by its origin's URL).</summary>
     private void WriteConfigFile() =>
         File.WriteAllText(Path.Combine(RepoPath, ".git", "config"),
-            "[core]\n\trepositoryformatversion = 0\n" + (_hasOrigin
-                ? $"[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _originPath)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+            "[core]\n\trepositoryformatversion = 0\n" + (_remoteUrl is not null
+                ? $"[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _remoteUrl)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
                 : ""));
 
     /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
