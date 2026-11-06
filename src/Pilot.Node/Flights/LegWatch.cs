@@ -59,6 +59,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>The kind of ring for a leg's validator that stopped without its answer.</summary>
     public const string ValidationStalled = "validation-stalled";
 
+    /// <summary>A leg past <see cref="StaleLegs.MostGoArounds"/> go-arounds or <see cref="StaleLegs.MostFlying"/> flying: a Handled line, once per leg, with its check runs as a table.</summary>
+    public const string LegStale = "leg-stale";
+
+    /// <summary>The files a flight's change touches (repo-relative), to tell its failures from others'; null when unread. The node sets it.</summary>
+    public Func<FlightRow, CancellationToken, Task<IReadOnlyList<string>?>> ChangedFiles { get; set; } = (_, _) => Task.FromResult<IReadOnlyList<string>?>(null);
+
     /// <summary>A flight in the air with no legs whose planner stopped, or never started.</summary>
     public const string PlanStalled = "plan-stalled";
 
@@ -174,6 +180,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
         await LookAtLegRechecksAsync(now, cancellationToken);
+        await LookAtStaleLegsAsync(now, cancellationToken);
         await LookAtPlannersAsync(sessions, now, cancellationToken);
         foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying && l.WorkerJob is not null))
         {
@@ -312,6 +319,42 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             {
                 Ring(leg, Idle, $"{Name(leg)}'s check rerun ended but its worker could not be told: {Clip(result.Error ?? "no reason given")}", $"the node tried to tell it how the rerun ended: {result.Error}", redoWhy: "could not be told how its check rerun ended");
             }
+        }
+    }
+
+    /// <summary>
+    /// A flying leg past <see cref="StaleLegs"/>'s limits raises one Handled <see cref="LegStale"/> card, ever, whose detail is the table of
+    /// its check runs. Handled: the node already acts on the leg (the go-around cap and stale watch own the asks); this says why it is slow.
+    /// </summary>
+    private async Task LookAtStaleLegsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (var leg in state.Legs().Where(l => l.State == LegState.Flying))
+        {
+            var subject = Subject(leg);
+            if (state.Cards().Any(c => c.Kind == LegStale && c.Subject == subject))
+            {
+                continue;
+            }
+            var checks = state.Jobs().Where(j => j.Kind == JobKind.Check
+                && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (StaleLegs.Why(leg, checks, now) is not { } why)
+            {
+                continue;
+            }
+            var flight = state.Flights().FirstOrDefault(f => f.Code == leg.Flight);
+            IReadOnlyList<string>? changed = null;
+            try
+            {
+                changed = flight is null ? null : await ChangedFiles(flight, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                changed = null;
+            }
+            var table = StaleLegs.Table(checks, changed, leg.Check ?? "");
+            state.RaiseCard(CardBin.Handled, LegStale, subject, $"{Name(leg)} is stale: {why}",
+                checks.Length == 0 ? "no check has run for this leg yet" : table,
+                summary: $"{Name(leg)} has gone round or flown past the stale limits. The detail lists its check runs and whether each failure was the flight's. Nothing to do unless the cause is yours to fix.");
         }
     }
 
@@ -1134,7 +1177,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         pr = null;
         if (row.Role == SessionRole.Watchtower)
         {
-            return Sessions.SessionMessenger.ReplacedBy(row, sessions) is null;
+            return Sessions.SessionMessenger.ReplacedBy(row, sessions, state.CurrentWatchtower) is null;
         }
         if (row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
             && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg && leg.WorkerJob == row.Id)

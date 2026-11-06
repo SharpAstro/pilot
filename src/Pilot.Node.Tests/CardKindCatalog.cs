@@ -70,6 +70,7 @@ internal static class CardKindCatalog
         new("worker-replaced", "Handled", [Watch], "LegWatchTests.AnIdleWorkerStillFullAfterItsCompactionIsReplacedByAGoAroundAndAReplacementThatFillsAgainRings"),
         new("worker-resumed", "Handled", [Watch], "LegWatchTests.AWorkerTheUsageLimitStoppedIsResumedOnlyOnceItsLimitHasReset"),
         new("over-budget", "Ring", [Watch], "SignalTests.AWorkerPastItsBudgetRingsUntilTheBudgetIsRaised", "the worker's weighted spend in its session row is past the leg's budget", [nameof(Verbs.ExtendBudget), nameof(Verbs.GoAround)]),
+        new("leg-stale", "Handled", [Watch], "StaleLegTests.ALegAtGoAroundThreeRaisesOneStaleCardWithATableOfItsCheckJobs"),
         new("review-stalled", "Ring|Handled", [Watch], "LegWatchTests.AReviewerThatStopsWithoutItsVerdictIsToldThenReviewedAfreshAndOnlyThenRings", "the reviewer's session ended with no verdict recorded on the flight, after one telling and one fresh review", [nameof(Verbs.StartReview)]),
         new("validation-stalled", "Ring", [Watch], "LegWatchTests.AValidatorThatStopsWithoutItsAnswerRingsWithGoAnywayAndRemove", "the validator's session ended with no answer recorded on the leg", [nameof(Verbs.StartLeg), nameof(Verbs.RemoveLeg)]),
         new("plan-stalled", "Ring|Handled", [Watch], "LegWatchTests.AnIdlePlannerWithNoLegsIsToldToHandThemInThenRungNeverReplaced", "the planner's session is idle and the flight still has no legs, after one telling", [nameof(Verbs.PlanFlight)]),

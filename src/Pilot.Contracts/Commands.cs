@@ -454,6 +454,18 @@ public static class Verbs
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 
+    /// <summary>
+    /// <c>order node &lt;text&gt;</c>: keeps a standing order (a hold on a flight or repo, a scope rule) that every fresh watchtower
+    /// reads first in its brief; the result's <see cref="CommandResult.Made"/> is its id. Kept as a <see cref="NodeNote"/> with an id.
+    /// </summary>
+    public const string Order = "order";
+
+    /// <summary><c>order-done node &lt;id&gt;</c>: retires a standing order, so the next brief no longer lists it.</summary>
+    public const string OrderDone = "order-done";
+
+    /// <summary><c>orders node</c>: the live standing orders, one line each as <c>o1  text</c>, in the result's <see cref="CommandResult.Made"/>.</summary>
+    public const string Orders = "orders";
+
     /// <summary><c>digest node</c>: the digest now, as a For-you card, beside the ones at 08:00 and 18:00.</summary>
     public const string Digest = "digest";
 

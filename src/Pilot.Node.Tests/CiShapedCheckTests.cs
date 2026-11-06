@@ -162,7 +162,7 @@ public sealed class CiShapedCheckTests : IDisposable
 
         (await PlanLeg("dotnet test src/TianWen.Tests")).Error.ShouldNotBeNull().ShouldContain("dotnet.yml");
         _state.Legs("TIA1").ShouldBeEmpty();
-        (await PlanLeg("dotnet test src/TianWen.Tests -c Release")).Ok.ShouldBeTrue();
+        (await PlanLeg("dotnet test src/TianWen.Tests -c Release --filter A")).Ok.ShouldBeTrue();
     }
 
     [Fact]
