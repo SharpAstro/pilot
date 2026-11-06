@@ -30,6 +30,8 @@ public sealed class FlightHoldTests : ReviewTestsBase
         return flight;
     }
 
+    private CardRow[] HeldCards() => [.. _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.OnHoldKind && c.Title.Contains("is on hold"))];
+
     private Task<CommandResult> Hold(FlightRow flight, string who = "me", string why = Why) =>
         Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), who, why.Split(' '));
 
@@ -53,12 +55,12 @@ public sealed class FlightHoldTests : ReviewTestsBase
         var held = F(flight.Code).OnHold.ShouldNotBeNull();
         (held.By, held.Reason).ShouldBe(("me", Why));
         FlightWaiting.OnHoldText(F(flight.Code)).ShouldBe($"on hold by me: {Why}");
-        Open().Single(c => c.Kind == LegCommander.OnHoldKind).Title.ShouldContain("on hold");
+        HeldCards().Last().Title.ShouldContain("on hold");
 
         (await Hold(flight, "me", "a newer reason")).Error.ShouldBeNull();
         var again = F(flight.Code).OnHold.ShouldNotBeNull();
         (again.Reason, again.Since).ShouldBe(("a newer reason", held.Since));
-        Open().Count(c => c.Kind == LegCommander.OnHoldKind).ShouldBe(1);
+        HeldCards().Last().Title.ShouldContain("a newer reason");
     }
 
     [Fact]
@@ -95,9 +97,9 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHeldFlightsDueReviewAndPrAreNotTakenAndUnholdLetsTheNextAdvanceTakeThem()
     {
-        SweepsAdvance();
         var flight = await NewFlight("3", "parser");
         await Fly(flight, "parser");
+        SweepsAdvance();
         (await Hold(flight)).Error.ShouldBeNull();
 
         // Its legs are done and no PR is open: that is the next step, and a hold takes none.
@@ -123,7 +125,9 @@ public sealed class FlightHoldTests : ReviewTestsBase
         SweepsAdvance(autopilot: true);
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("4");
-        var head = _github.Pr!.Head[..8];
+        // The fake PR's head is a fixed one: it stands for the head the review read, as GitHub shows it.
+        _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
+        var head = _github.Pr.Head[..8];
 
         (await Hold(flight)).Error.ShouldBeNull();
         await Checks().LookAsync(Ct);
@@ -158,7 +162,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         _github.AutoMergeDisarmed.ShouldContain(number);
         _github.Dequeued.ShouldContain(number);
         _github.Merged.ShouldBeEmpty();
-        Open().Single(c => c.Kind == LegCommander.OnHoldKind).Detail.ShouldNotBeNull().ShouldContain("nothing follows");
+        HeldCards().Single().Detail.ShouldNotBeNull().ShouldContain("nothing follows");
     }
 
     [Fact]
