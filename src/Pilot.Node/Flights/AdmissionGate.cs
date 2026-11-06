@@ -130,7 +130,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         bool Owns(string? owner) => owner is not null && (string.Equals(owner, session.Id, StringComparison.Ordinal) || string.Equals(owner, session.SessionId, StringComparison.Ordinal)
             || session.EarlierSessionIds?.Contains(owner) == true);
         // A job that ended but whose owner the node has not told yet: the node wakes the owner with its result, so it holds its slot until then.
-        if (jobs.FirstOrDefault(j => !j.Told && j.Kind != JobKind.Check && Owns(j.Owner)) is { } ended)
+        if (jobs.FirstOrDefault(j => !j.Told && j.State is not (JobState.Queued or JobState.Running) && j.Kind != JobKind.Check && Owns(j.Owner)) is { } ended)
         {
             return ($"idle, job {ended.Id} result to tell", null);
         }
