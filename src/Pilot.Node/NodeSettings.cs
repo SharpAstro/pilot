@@ -53,6 +53,14 @@ public sealed record NodeSettings
     public const int DefaultScratchDays = 2;
     public const string DiskAlertGbKey = "disk-alert-gb";
     public const int DefaultDiskAlertGb = 20;
+    /// <summary>
+    /// Runner-hours of CI a flight's PR may spend before the node stops pushing for it and rings the owner (PIL795). The same flight
+    /// red for more than <see cref="FlightCiRedHours"/> in a row stops it too.
+    /// </summary>
+    public const string FlightCiBudgetKey = "flight-ci-budget";
+    public const int DefaultFlightCiBudget = 4;
+    /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
+    public const int FlightCiRedHours = 3;
 
     /// <summary>Hours a flight may stay open before the digest and the brief call it stale (#736).</summary>
     public const string StaleFlightHoursKey = "stale-flight-hours";
@@ -126,7 +134,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, MaxGoAroundsKey, ScratchDaysKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. RoleModels.Roles.Select(RoleModels.RangeKey), WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -184,6 +192,9 @@ public sealed record NodeSettings
 
     /// <summary>Free gigabytes on the repos' drive below which the node rings (<see cref="DiskAlertGbKey"/>); <see cref="DefaultDiskAlertGb"/> unless set.</summary>
     public int? DiskAlertGb { get; init; }
+
+    /// <summary>Runner-hours of CI a flight may spend (<see cref="FlightCiBudgetKey"/>); <see cref="DefaultFlightCiBudget"/> unless set.</summary>
+    public int? FlightCiBudget { get; init; }
 
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
@@ -370,6 +381,7 @@ public sealed record NodeSettings
                     MaxGoAroundsKey => JsonValue.Create(MaxGoArounds),
                     ScratchDaysKey => JsonValue.Create(ScratchDays),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
+                    FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     JobPriorityKey => JsonValue.Create(Pilot.Node.Flights.JobPriorities.Name(JobPriority!.Value)),
@@ -420,6 +432,7 @@ public sealed record NodeSettings
         MaxGoAroundsKey => MaxGoArounds is { } rounds ? [rounds.ToString(CultureInfo.InvariantCulture)] : null,
         ScratchDaysKey => ScratchDays is { } days ? [days.ToString(CultureInfo.InvariantCulture)] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
+        FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -624,6 +637,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var diskAlertGb) && diskAlertGb is >= 1 and <= 10000
                     ? (settings with { DiskAlertGb = diskAlertGb }, null)
                     : (null, "disk-alert-gb takes a number, 1 to 10000");
+            case FlightCiBudgetKey:
+                if (clear)
+                {
+                    return (settings with { FlightCiBudget = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciBudget) && ciBudget is >= 1 and <= 1000
+                    ? (settings with { FlightCiBudget = ciBudget }, null)
+                    : (null, "flight-ci-budget takes a number of runner-hours, 1 to 1000");
             case JobPriorityKey:
                 if (clear)
                 {

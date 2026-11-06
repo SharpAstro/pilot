@@ -737,6 +737,81 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>How often a flight's CI spend is counted: each count reads the runs of its branch and the jobs of each run still going.</summary>
+    public TimeSpan CiInterval { get; init; } = TimeSpan.FromMinutes(2);
+
+    // When each flight's CI was last counted, so a look every 30 s does not read the Actions API every time.
+    private readonly Dictionary<string, DateTimeOffset> _ciCounted = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// PIL795: counts each flying flight's PR's CI from GitHub Actions (<see cref="CiBudgets"/>) and puts it on the flight. Past the
+    /// <c>flight-ci-budget</c> or red for more than three hours the flight is capped: its pushes are refused with the numbers, and one
+    /// For-you card rings the owner with continue, land what is green, or split. The card is raised once for a cap; the owner's
+    /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself.
+    /// </summary>
+    internal async Task LookAtCiAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        var budget = legs?.Models.FlightCiBudget ?? NodeSettings.DefaultFlightCiBudget;
+        foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null }))
+        {
+            if (_ciCounted.TryGetValue(flight.Code, out var last) && now - last < CiInterval)
+            {
+                continue;
+            }
+            CiRun[] runs;
+            try
+            {
+                runs = await github.CiRunsAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                // One flight's runs GitHub would not list are not a reason to skip the others'; asked again at the next count.
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s CI runs could not be read: {ex.Message}");
+                continue;
+            }
+            _ciCounted[flight.Code] = now;
+            if (state.Flights().FirstOrDefault(f => f.Code == flight.Code) is not { State: FlightState.Flying } current)
+            {
+                continue;
+            }
+            var counted = CiBudgets.Count(runs, current.Ci, now);
+            var why = CiBudgets.Why(counted, budget, now);
+            var subject = Verbs.FlightTarget(flight.Code);
+            if (why is not null && counted.CappedWhy is null)
+            {
+                counted = counted with { CappedWhy = why, CappedAt = now, Answer = null };
+                state.PutFlight(current with { Ci = counted });
+                state.CloseCardsAbout(subject, "the CI cap was set again", CiBudgets.CapKind);
+                state.RaiseCard(CardBin.ForYou, CiBudgets.CapKind, subject, $"{flight.Code}: CI stopped, {CiBudgets.Numbers(counted)}",
+                    $"{flight.Code}: {why}. The node pushes nothing more for this flight until you answer: continue (one more budget of {budget} runner-hours), land what is green, or split the flight.",
+                    [
+                        new CardChoice { Label = "Continue", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiContinue] },
+                        new CardChoice { Label = "Land what is green", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiLandGreen] },
+                        new CardChoice { Label = "Split", Verb = Verbs.CiBudget, Target = subject, Args = [Verbs.CiSplit] },
+                    ], link: flight.PullRequestUrl,
+                    summary: $"The CI of {flight.Code} (PR {flight.PullRequestUrl}) is past its budget: {why}. The node has stopped pushing for it. Continue raises the cap by one budget, land what is green and split are recorded for the controller.");
+                continue;
+            }
+            if (why is null && counted.CappedWhy is not null)
+            {
+                // Back within the budget (the setting was raised): the stop and its card go.
+                counted = counted with { CappedWhy = null, CappedAt = null, Answer = null };
+                state.CloseCardsAbout(subject, "the flight is within its CI budget again", CiBudgets.CapKind);
+            }
+            else if (why is not null)
+            {
+                // Capped already: the numbers move on, the stop and its card stay as they were raised.
+                counted = counted with { CappedWhy = why };
+            }
+            // Written only when a number moved, so a look that finds the same spend does not stir every client's snapshot.
+            if (current.Ci is not { } before || counted with { CountedAt = before.CountedAt } != before)
+            {
+                state.PutFlight(current with { Ci = counted });
+            }
+        }
+    }
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
@@ -755,6 +830,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             await legs.RetryMarksAsync(cancellationToken);
         }
         await LookAtMarksAsync(cancellationToken);
+        await LookAtCiAsync(cancellationToken);
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed))
         {
             var code = card.Subject.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal) ? card.Subject[Verbs.FlightTargetPrefix.Length..] : null;
