@@ -116,6 +116,8 @@ public abstract class ReviewTestsBase : IDisposable
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
+        // start-leg answers "started" after StartAnswerWithin; the worker is on the leg only once its launch is done, which a loaded machine does later.
+        await Started(_legs, flight.Code);
         var worker = _state.Legs(flight.Code).Single(l => l.Name == leg).Worker!;
         File.WriteAllText(Path.Combine(flight.Worktree, $"{leg}-{Guid.NewGuid():N}.txt"), string.Concat(Enumerable.Repeat("work\n", lines)));
         Git(flight.Worktree, "add", ".");
