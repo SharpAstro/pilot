@@ -103,7 +103,7 @@ public sealed class RebaseLayFlightTests : ReviewTestsBase
         Git(Repo, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(head);
         Should.Throw<InvalidOperationException>(() => Git(flight.Worktree, "rev-parse", "--verify", "--quiet", $"refs/pilot/laid/{flight.Code}"));
         _github.Merged.ShouldBeEmpty();
-        _state.Cards().Count(c => c.Kind == LegCommander.LayFailedKind && c.Bin == CardBin.Ring).ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == LegCommander.LayFailedKind && c.Bin == CardBin.ForYou).ShouldBe(1);
     }
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, legs: _legs);

@@ -200,7 +200,7 @@ public sealed partial class LegCommander
             return null;
         }
         var why = $"{peer.Code} flies {flight.Branch} on {peer.Node}: {flight.Code} is flown by one node, so it is not {(command.Verb == Verbs.PlanFlight ? "planned" : "started")} here";
-        state.RaiseCard(CardBin.Ring, FlownElsewhereKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is flown on {peer.Node} too", why);
+        state.RaiseCard(CardBin.ForYou, FlownElsewhereKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is flown on {peer.Node} too", why);
         return why;
     }
 

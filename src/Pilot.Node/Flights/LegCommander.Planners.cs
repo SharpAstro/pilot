@@ -152,8 +152,33 @@ public sealed partial class LegCommander
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "planned again", PlannedKind);
         state.RaiseCard(CardBin.ForYou, PlannedKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: {legs.Count} {(legs.Count == 1 ? "leg" : "legs")} planned",
-            string.Join('\n', (summary.Length > 0 ? new[] { summary } : []).Concat(lines)),
-            [new CardChoice { Label = $"Start {first.Name}", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, first.Name) }]);
+            PlannedDetail(string.Join('\n', (summary.Length > 0 ? new[] { summary } : []).Concat(lines)), flight),
+            PlannedChoices(flight, first));
+    }
+
+    /// <summary>The line a planned card of a held flight carries in place of Start (#799 rule 6): what the flight waits for.</summary>
+    internal const string PlannedWaitingPrefix = "Waiting for ";
+
+    /// <summary>
+    /// The choices of a planned card: Start the first leg while the flight is flying, none while it is held (a connected flight waiting for
+    /// another to land, or for a package), since the node refuses a start on a flight that is not flying. The card offers Start once the hold
+    /// lifts (<see cref="NodeState.PutFlight"/> gives it then).
+    /// </summary>
+    internal static CardChoice[] PlannedChoices(FlightRow flight, LegRow first)
+        => flight.State == FlightState.Flying
+            ? [new CardChoice { Label = $"Start {first.Name}", Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, first.Name) }]
+            : [];
+
+    /// <summary>A planned card's detail with the waiting line of a held flight (and none for a flying one): any waiting line it carried is replaced.</summary>
+    internal static string? PlannedDetail(string? detail, FlightRow flight)
+    {
+        var kept = (detail ?? "").Split('\n').Where(l => !l.StartsWith(PlannedWaitingPrefix, StringComparison.Ordinal)).ToList();
+        if (flight.State == FlightState.Held)
+        {
+            kept.Add($"{PlannedWaitingPrefix}{FlightWaiting.For(flight)}: Start is offered here once it lifts.");
+        }
+        var text = string.Join('\n', kept).Trim('\n');
+        return text.Length == 0 ? null : text;
     }
 
     /// <summary>

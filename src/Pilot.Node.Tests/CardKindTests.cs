@@ -179,6 +179,47 @@ public sealed class CardKindTests
         problems.ShouldBeEmpty(string.Join('\n', problems));
     }
 
+    /// <summary>
+    /// A ring is for what only the person can settle (#799 rule 5). So each Ring kind names the fact it was checked against before it rang,
+    /// and offers at least one choice that does something: a verb of <see cref="Verbs"/> that its raising files really offer (so a card
+    /// whose choices were all dropped, or never written, fails here). Dismissing alone is no choice: every card has it. A kind with no
+    /// verb to press is a For-you card or a Handled line, not a Ring.
+    /// </summary>
+    [Fact]
+    public void EveryRingKindNamesTheFactItIsCheckedAgainstAndAChoiceThePersonCanUsefullyPress()
+    {
+        var known = typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.IsLiteral).Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+        var rings = CardKindCatalog.All.Where(e => e.Bins.Split('|', StringSplitOptions.RemoveEmptyEntries).Contains("Ring")).ToList();
+        rings.Count.ShouldBeGreaterThan(30);
+        var problems = new List<string>();
+        foreach (var entry in rings)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Fact) || entry.Fact.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length < 5)
+            {
+                problems.Add($"{entry.Kind}: rings and names no fact it is checked against (CardKindEntry.Fact: what the node read that says the person must act)");
+            }
+            var choices = entry.Choices ?? [];
+            if (choices.Where(c => c != nameof(Verbs.Dismiss)).Count() == 0)
+            {
+                problems.Add($"{entry.Kind}: rings with no choice to press but Dismiss; give its card a verb the person can use, or raise it into ForYou or Handled");
+            }
+            foreach (var choice in choices)
+            {
+                if (!known.Contains(choice))
+                {
+                    problems.Add($"{entry.Kind}: its choice '{choice}' is no Verbs constant, so the node would refuse it");
+                }
+                else if (!entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{choice}", StringComparison.Ordinal)))
+                {
+                    problems.Add($"{entry.Kind}: its choice '{choice}' is not offered by {string.Join(", ", entry.Files)}");
+                }
+            }
+        }
+        problems.ShouldBeEmpty(string.Join('\n', problems));
+        // Only a Ring kind carries them: a fact or choices on another bin would be read as checked when nothing is.
+        CardKindCatalog.All.Where(e => !rings.Contains(e) && (e.Fact is not null || e.Choices is not null)).Select(e => e.Kind).ShouldBeEmpty();
+    }
+
     [Fact]
     public void SourcePinned()
     {

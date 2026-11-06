@@ -102,7 +102,7 @@ public sealed class StartGateTests
         _gate.Hold("k", 90, 90, "kind", "flight/TIA9", "x").ShouldBeFalse();
 
         var ring = Cards(StartGate.WeekKind).ShouldHaveSingleItem();
-        (ring.Bin, ring.Title).ShouldBe((CardBin.Ring, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
+        (ring.Bin, ring.Title).ShouldBe((CardBin.ForYou, $"The 7-day window is 99 % spent; it resets {_time.GetUtcNow().AddDays(3).ToLocalTime():ddd HH:mm}"));
 
         // Under its limit, it rings nothing.
         _gate.RingWeek(100);

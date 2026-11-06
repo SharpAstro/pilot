@@ -52,7 +52,7 @@ public sealed class FalseRingTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AMergeWhoseTreeLacksThePlanesWorkStillRings_TIA2000()
+    public async Task AMergeWhoseTreeLacksThePlanesWorkStillRaisesItsCardAndStaysFlying_TIA2000()
     {
         var (flight, _) = await Passed("2001");
         LegNotDone(flight);
@@ -63,7 +63,7 @@ public sealed class FalseRingTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).State.ShouldBe(FlightState.Flying);
-        Open().Single(c => c.Kind == FlightCommander.MergedUnderLegKind).Bin.ShouldBe(CardBin.Ring);
+        Open().Single(c => c.Kind == FlightCommander.MergedUnderLegKind).Bin.ShouldBe(CardBin.ForYou);
         _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Flying);
     }
 
@@ -277,5 +277,87 @@ public sealed class FalseRingTests : ReviewTestsBase
 
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "render"), leg.Worker!, "retired")).Ok.ShouldBeFalse();
         _state.Legs(flight.Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Flying);
+    }
+
+    // Rules 5 and 6 (#799): no meta-card for an unanswered card, and no choice the node would refuse.
+
+    [Fact]
+    public async Task AStaleCardIsRungAgainInPlaceNotByACardAboutIt_StillRinging()
+    {
+        var card = _state.RaiseCard(CardBin.Ring, "worker-waiting", Verbs.FlightTarget("TIA9"), "TIA9's worker asks which model to use", null,
+            [new CardChoice { Label = "Answer in the chat", Verb = Verbs.Say, Target = "session/a1b2c3d4" }]);
+        var later = new ManualTime(card.At + TimeSpan.FromHours(1.5));
+        var watch = new StaleWatch(_state, later);
+
+        await watch.TickAsync(Ct);
+        await watch.TickAsync(Ct);
+
+        // The same card, id and all, rung again at the time of the look: it sorts first, and its age (At) stays true.
+        var rung = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        rung.Id.ShouldBe(card.Id);
+        rung.RungAgainAt.ShouldBe(later.GetUtcNow());
+        rung.At.ShouldBe(card.At);
+        rung.Choices.ShouldBe(card.Choices);
+        _state.Cards().ShouldNotContain(c => c.Kind == "stale-card-reminder");
+        _state.Cards().Count(c => c.Kind == StaleWatch.ActedKind && c.Title.Contains(card.Id, StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ARungAgainCardSortsBeforeACardRaisedAfterItAndSaysItWasRungAgain_StillRinging()
+    {
+        var first = _state.RaiseCard(CardBin.Ring, "worker-waiting", Verbs.FlightTarget("TIA9"), "TIA9's worker asks which model to use");
+        await Task.Delay(5, Ct);
+        var second = _state.RaiseCard(CardBin.Ring, "worker-waiting", Verbs.FlightTarget("TIA8"), "TIA8's worker asks which branch to use");
+        _state.Cards(openOnly: true).First().Id.ShouldBe(second.Id);
+
+        _state.RingAgain(first.Id).ShouldBeTrue();
+
+        _state.Cards(openOnly: true).First().Id.ShouldBe(first.Id);
+        _state.RingAgain("c999").ShouldBeFalse();
+    }
+
+    private FlightRow Held(string code, params string[] connections)
+    {
+        var flight = new FlightRow
+        {
+            Code = code, Repo = "tianwen", RepoPath = Repo, Issue = 9, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = Path.Combine(_root, "wt", code),
+            Base = "origin/main", State = connections.Length > 0 ? FlightState.Held : FlightState.Flying, Connections = connections, CreatedAt = DateTimeOffset.UtcNow,
+        };
+        _state.PutFlight(flight);
+        _state.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "Parse", DoneWhen = "It parses", State = LegState.Planned });
+        return flight;
+    }
+
+    [Fact]
+    public async Task APlannedCardForAHeldFlightOffersNoStartAndOffersItOnceTheHoldLifts_Held()
+    {
+        var flight = Held("TIA9", "PIL1");
+
+        (await _legs.RunAsync(new CommandRequest { Verb = Verbs.Planned, Target = Verbs.FlightTarget(flight.Code), Args = ["parser first"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind);
+        card.Choices.ShouldBeEmpty();
+        card.Detail.ShouldNotBeNull().ShouldContain("Waiting for PIL1");
+        // The node would refuse the start while the flight is held; the press is never offered.
+        (await _legs.RunAsync(new CommandRequest { Verb = Verbs.StartLeg, Target = Verbs.LegTarget(flight.Code, "parser"), Who = "tests" }, Ct)).Ok.ShouldBeFalse();
+
+        // The flight it waits for lands: the same card now offers Start, with no waiting line.
+        _state.PutFlight(flight with { State = FlightState.Flying, Connections = [] });
+
+        var lifted = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind);
+        lifted.Id.ShouldBe(card.Id);
+        var start = lifted.Choices.ShouldHaveSingleItem();
+        (start.Label, start.Verb, start.Target).ShouldBe(("Start parser", Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser")));
+        lifted.Detail.ShouldNotBeNull().ShouldNotContain("Waiting for");
+    }
+
+    [Fact]
+    public async Task APlannedCardForAFlyingFlightStillOffersStart_Held()
+    {
+        var flight = Held("TIA9");
+
+        (await _legs.RunAsync(new CommandRequest { Verb = Verbs.Planned, Target = Verbs.FlightTarget(flight.Code), Args = ["parser first"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+
+        _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PlannedKind).Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.StartLeg);
     }
 }

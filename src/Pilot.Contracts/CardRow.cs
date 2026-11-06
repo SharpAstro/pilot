@@ -38,6 +38,18 @@ public sealed record CardRow
 
     public required DateTimeOffset At { get; init; }
 
+    /// <summary>
+    /// When the node rang this same card again, unanswered (#799 rule 5): a card nobody answered is rung again in place, not by a second
+    /// card about it. It sorts first again by this time while <see cref="At"/> stays when it was raised, so its age is true. Null when it
+    /// was never rung again; an older client ignores it and sorts by <see cref="At"/>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? RungAgainAt { get; init; }
+
+    /// <summary>The time the card sorts by: when it was last rung, which is when it was raised unless it was rung again.</summary>
+    [JsonIgnore]
+    public DateTimeOffset RungAt => RungAgainAt ?? At;
+
     public required CardState State { get; init; }
 
     /// <summary>How it was closed: the choice taken, <c>dismissed</c>, or what closed it (<c>TIA1611 landed</c>).</summary>

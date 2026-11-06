@@ -60,7 +60,9 @@ public static partial class CardSummaries
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
-            LegCommander.PlannedKind => $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
+            LegCommander.PlannedKind => choices.Count == 0
+                ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
+                : $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
             "worker-told-job" => $"The worker of {what} was idle because a job of its own had ended untold, and the node told it. Nothing to do.",
             "not-landed" => $"The PR of {what} merged on GitHub, but landing the flight was refused. The branch is in the base; the detail says what stood in the way, and the flight lands once that is dealt with.",
@@ -154,7 +156,6 @@ public static partial class CardSummaries
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
             Digest.Kind => "What landed, what was handled and what is parked since the last digest. Read it and dismiss it.",
             StaleWatch.ActedKind => $"The node acted on {what} at half a stale bound (told its worker of an ended job, nudged it, or raised its priority). Nothing to do.",
-            StaleWatch.ReminderKind => $"A card about {what} has rung with no answer for over half a stale bound. Answer or dismiss it.",
             NodeUpdater.Kind => "A new pilot is out, or an update was installed or failed. The card's choice installs it; otherwise nothing to do.",
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             "restart" => "The node restarted at someone's word. Nothing to do.",

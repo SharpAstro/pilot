@@ -10,7 +10,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.At).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+            return [.. _cards.Values.Where(c => !openOnly || c.State == CardState.Open).OrderByDescending(c => c.RungAt).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
         }
     }
 
@@ -86,6 +86,25 @@ public sealed partial class NodeState
         }
         var parts = subject[Verbs.FlightTargetPrefix.Length..].Split('/');
         return parts.Length >= 2 && parts[0].Length > 0 ? parts[0] : null;
+    }
+
+    /// <summary>
+    /// Rings an open card again where it is (#799 rule 5): one <see cref="CardChangedEvent"/> with <see cref="CardRow.RungAgainAt"/> set to
+    /// now, so it sorts first again on every client and pushes as a change. Its id, kind, choices and <see cref="CardRow.At"/> stay, so
+    /// no second card says what the first already did. False when it is not open.
+    /// </summary>
+    public bool RingAgain(string id)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return false;
+            }
+            var now = _time.GetUtcNow();
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { RungAgainAt = now } });
+            return true;
+        }
     }
 
     /// <summary>Closes an open card with what became of it; false when it is not open (closed already, or no such card).</summary>
