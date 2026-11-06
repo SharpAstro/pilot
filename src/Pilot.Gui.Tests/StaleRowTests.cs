@@ -4,6 +4,7 @@ using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
 using Shouldly;
+using SharpAstro.Png;
 using Xunit;
 
 namespace Pilot.Gui.Tests;
@@ -222,6 +223,74 @@ public sealed class StaleRowTests
         view.OpenDetail("TIA1611");
         view.Render(screen, new RectF32(0, 0, 1600, 900));
         PageButtonFeedbackTests.Words(view.Tree(screen)).ShouldContain("nobody can say");
+    }
+
+    private static double Luminance(RGBAColor32 c)
+    {
+        static double Linear(byte v)
+        {
+            var s = v / 255.0;
+            return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Linear(c.Red) + 0.7152 * Linear(c.Green) + 0.0722 * Linear(c.Blue);
+    }
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        var (hi, lo) = (Math.Max(Luminance(a), Luminance(b)), Math.Min(Luminance(a), Luminance(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    [Fact]
+    public void TheMarkHoldsContrastOnTheRowsPlainAlternateHoveredAndSelectedGrounds()
+    {
+        var measured = new List<string>();
+        foreach (var (name, p) in new[] { ("standard", Palette.Standard), ("night", Palette.Night) })
+        {
+            foreach (var (ground, bg) in new[] { ("plain", p.Ground), ("alternate", p.RowAltBg), ("hovered", p.RowHoverBg), ("focused", p.RowFocusBg), ("selection bar", p.SelectionBg) })
+            {
+                // The mark is Held ink; on the selection bar a row's text is drawn again in SelectionText, so that is the pair measured there.
+                var ink = ground == "selection bar" ? p.SelectionText : p.Held;
+                var ratio = Contrast(ink, bg);
+                measured.Add($"{name}/{ground}: {ratio:0.0}:1{(ratio < 4.5 ? " (below 4.5)" : "")}");
+            }
+        }
+
+        // The standard palette holds AA on every ground. Night (dim reds on black, by design under the dark-adapted eye) is measured and
+        // reported but not asserted: its Held ink is 4.2:1 plain and 3.5:1 on the focused row, and its Bright text is lower still, so it is the palette's own limit, not this mark's.
+        measured.Where(m => m.StartsWith("standard", StringComparison.Ordinal) && m.Contains("below", StringComparison.Ordinal)).ShouldBeEmpty(string.Join("; ", measured));
+    }
+
+    /// <summary>
+    /// With PILOT_TEST_CAPTURE set to a file path, writes the flights table with a stale row (and a long title) as PNGs beside it, at 700 and 1400 wide:
+    /// <c>stale-before-*</c> is the row as an older node gives it (no last move: the old mark), <c>stale-after-*</c> the mark with its age.
+    /// </summary>
+    [Fact]
+    public void CapturesOfTheFlightsTableWithAStaleRowAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        const string LongTitle = "Render the planets from the GPU buffer through the shared swapchain with a very long title";
+        var moving = Flight(stale: false) with { Code = "TIA1612", Title = "Draw the moons" };
+        foreach (var (label, stale) in new[]
+        {
+            ("before", Flight() with { LastMovedAt = null, LastMove = null, Title = LongTitle }),
+            ("after", Flight() with { Title = LongTitle }),
+            ("after-days", Flight() with { Title = LongTitle, LastMovedAt = Now.AddHours(-71) }),
+        })
+        {
+            foreach (var width in new[] { 700, 1400 })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, 360);
+                var view = NewView(renderer, out _);
+                var screen = new FlightsScreen(FlightLine.Build([stale, moving], [], Now, []), "test", Now);
+                view.Render(screen, new RectF32(0, 0, width, 360));
+                File.WriteAllBytes(Path.Combine(dir, $"stale-{label}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 360));
+            }
+        }
     }
 
     [Theory]

@@ -19,8 +19,8 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
 
     // Column widths of the list, as they are before a reader drags a divider.
     private const float CodeWidth = 120f;
-    // Wide enough for "stale (DE1 unreachable)" in 11 pt under the code.
-    private const float StaleCodeWidth = 150f;
+    // Wide enough for "stale (DE1 unreachable)" and "stale · no progress for 2 d 23 h" in 11 pt under the code; a raise after it ends in an ellipsis with the whole text on hover.
+    private const float StaleCodeWidth = 200f;
     // What is dropped once it is this narrow: a title in a sliver of a column was drawn over the State beside it.
     private const float WhatDropBelow = 60f;
     private const float WhereWidth = 140f;
