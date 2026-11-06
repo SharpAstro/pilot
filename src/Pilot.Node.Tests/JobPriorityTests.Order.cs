@@ -208,7 +208,7 @@ public sealed partial class JobPriorityTests
         Look(jobs);
 
         // Lifted to Urgent, level with the job ahead: nothing outranks it, so the only reason is the lift.
-        Row(lifted).Step.ShouldNotBeNull().ShouldStartWith("queued, 1 ahead of it (lifted, waited over 2 h); ");
+        Row(lifted).Step.ShouldNotBeNull().ShouldStartWith("queued, 1 ahead of it (lifted to urgent, waited 2 h 1 m);");
         await StartsNext(jobs, gone, blocker, urgentJob, lifted);
     }
 
@@ -247,5 +247,86 @@ public sealed partial class JobPriorityTests
         Row(second).Step.ShouldNotBeNull().ShouldContain("next in line");
         Row(first).Step.ShouldNotBeNull().ShouldContain("queued, 1 ahead");
         await StartsNext(jobs, gone, blocker, second, first);
+    }
+
+    private static JobRow RankJob(DateTimeOffset now, TimeSpan waited, string? flight = "FLT") => new()
+    {
+        Id = "j1", Command = "x", Cwd = "x", State = JobState.Queued, LogPath = "x.log", Timeout = JobRunner.DefaultTimeout, Flight = flight, QueuedAt = now - waited, StartedAt = now - waited,
+    };
+
+    [Fact]
+    public void AnUnsetJobIsLiftedOneLevelPerWholeWaitBoundAndStaysUrgent()
+    {
+        var now = new DateTimeOffset(2026, 11, 6, 9, 0, 0, TimeSpan.Zero);
+        var one = TimeSpan.FromMinutes(1);
+        FlightRow[] flights = [FlightRowOf("FLT", null)];
+        int Rank(TimeSpan waited) => JobOrder.RankOf(RankJob(now, waited), flights, null, now);
+
+        Rank(JobOrder.WaitBound - one).ShouldBe(IssuePriorities.Rank(null));
+        Rank(JobOrder.WaitBound + one).ShouldBe(IssuePriorities.Rank(IssuePriority.Medium));
+        Rank(2 * JobOrder.WaitBound + one).ShouldBe(IssuePriorities.Rank(IssuePriority.High));
+        Rank(3 * JobOrder.WaitBound + one).ShouldBe(IssuePriorities.Rank(IssuePriority.Urgent));
+        Rank(30 * JobOrder.WaitBound).ShouldBe(IssuePriorities.Rank(IssuePriority.Urgent));
+    }
+
+    [Fact]
+    public void ALowJobKeepsLiftingToUrgent()
+    {
+        var now = new DateTimeOffset(2026, 11, 6, 9, 0, 0, TimeSpan.Zero);
+        FlightRow[] flights = [FlightRowOf("FLT", IssuePriority.Low)];
+        var one = TimeSpan.FromMinutes(1);
+        int Rank(TimeSpan waited) => JobOrder.RankOf(RankJob(now, waited), flights, null, now);
+
+        Rank(TimeSpan.Zero).ShouldBe(IssuePriorities.Rank(IssuePriority.Low));
+        Rank(JobOrder.WaitBound + one).ShouldBe(IssuePriorities.Rank(IssuePriority.Low) - 1);
+        Rank(10 * JobOrder.WaitBound).ShouldBe(IssuePriorities.Rank(IssuePriority.Urgent));
+    }
+
+    [Fact]
+    public void AJobLiftedToHighSortsAheadOfAFreshHighJob()
+    {
+        var now = new DateTimeOffset(2026, 11, 6, 9, 0, 0, TimeSpan.Zero);
+        FlightRow[] flights = [FlightRowOf("FLT", IssuePriority.Medium), FlightRowOf("HIGHF", IssuePriority.High)];
+        var lifted = RankJob(now, JobOrder.WaitBound + TimeSpan.FromMinutes(1), "FLT") with { Id = "b" };
+        var fresh = RankJob(now, TimeSpan.Zero, "HIGHF") with { Id = "a" };
+
+        JobOrder.Sort([fresh, lifted], flights, null, now).Select(j => j.Id).ShouldBe(["b", "a"]);
+    }
+
+    [Fact]
+    public void ALiftedStepNamesTheLevelReachedAndTheRealWait()
+    {
+        var job = RankJob(DateTimeOffset.UnixEpoch, TimeSpan.Zero);
+        JobOrder.WhyHere(job, IssuePriorities.Rank(IssuePriority.High), 2, new TimeSpan(4, 10, 30), [IssuePriorities.Rank(IssuePriority.High)])
+            .ShouldBe("lifted to high, waited 4 h 10 m");
+    }
+
+    [Fact]
+    public async Task AnUnsetJobStartsWithinThreeWaitBoundsHoweverManyUrgentJobsKeepArriving()
+    {
+        var (jobs, clock, _, gone) = Idle(() => _cpu);
+        var unset = Flight("UNSET", null);
+        var urgent = Flight("URGNT", IssuePriority.Urgent);
+        var blocker = HandAs(jobs, urgent, clock, Eight);
+        await Until(blocker, j => j.State == JobState.Running);
+
+        var waiting = HandAs(jobs, unset, clock);
+        var urgentJobs = new List<string>();
+        var step = TimeSpan.FromMinutes(10);
+        // An urgent job every ten minutes: the unset one stays behind them until it has waited three bounds.
+        while (JobOrder.Waited(Row(waiting), clock.GetUtcNow()) + step < 3 * JobOrder.WaitBound)
+        {
+            urgentJobs.Add(HandAs(jobs, urgent, clock));
+            clock.Advance(step);
+            Look(jobs);
+            Row(waiting).Step.ShouldNotBeNull().ShouldNotContain("next in line");
+        }
+
+        clock.Advance(step + TimeSpan.FromMinutes(1));
+        Look(jobs);
+
+        // Lifted to urgent and queued before every urgent job that arrived since: it goes first, and the step says how far it rose.
+        Row(waiting).Step.ShouldNotBeNull().ShouldContain("next in line");
+        await StartsNext(jobs, gone, blocker, waiting, [.. urgentJobs]);
     }
 }

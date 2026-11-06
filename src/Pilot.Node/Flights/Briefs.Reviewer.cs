@@ -102,6 +102,9 @@ public static partial class Briefs
         // green, filled their context waiting and reading, and stopped without a verdict three times (2026-10-26).
         text.AppendLine("Do not run the whole test suite: CI runs it on the PR, and `gh pr checks` says how it went. Rerun only the legs'");
         text.AppendLine($"checks, each through `{run} run -- <check>` so the node holds the job and wakes you with its end.");
+        text.AppendLine("A check run stops at its first failed test (the node ends the job and names that test), so the queue is free for the next job.");
+        text.AppendLine($"The node knows it for a check only when it is handed over whole, as the leg's check reads; `{run} run --fail-fast -- <command>`");
+        text.AppendLine("stops any run that way, a check split into its commands too.");
         text.AppendLine(JobShellRule);
         text.AppendLine();
         text.AppendLine("Look for: a Done-when that does not hold, bugs and regressions, tests that do not test what they say, and");
@@ -111,6 +114,15 @@ public static partial class Briefs
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        if (flight.HumanVerification)
+        {
+            text.AppendLine();
+            text.AppendLine("This flight's issue carries the `pilot: human verification` label. A check only a person can make (it cannot be settled by a");
+            text.AppendLine("test or a CPU-rendered capture: hardware, a live window, how it feels) goes under a third heading, `## Human verification`,");
+            text.AppendLine("one list item each. The item's first line is a short title; under it, a `Do:` line (exactly what to do) and a `Done when:`");
+            text.AppendLine("line (what to look for). Carry over such checks the legs' reports name. The node files each item as an issue for the");
+            text.AppendLine("controller. They never block: do not put them under `## Blocking`, and they do not change your verdict.");
+        }
         text.AppendLine(AttachmentRule(run));
         text.AppendLine(ReportRule(run));
         text.AppendLine();

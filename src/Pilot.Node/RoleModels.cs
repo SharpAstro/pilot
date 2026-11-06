@@ -453,6 +453,7 @@ public sealed partial class RoleModels
                     RecheckHours = _settings.StaleRecheckHours ?? NodeSettings.DefaultStaleRecheckHours,
                     CardHours = _settings.StaleCardHours ?? NodeSettings.DefaultStaleCardHours,
                     Holds = _settings.StaleHolds ?? NodeSettings.DefaultStaleHolds,
+                    UnreachableHours = _settings.StaleUnreachableHours ?? NodeSettings.DefaultStaleUnreachableHours,
                 };
             }
         }

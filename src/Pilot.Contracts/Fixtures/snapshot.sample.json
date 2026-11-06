@@ -220,7 +220,19 @@
       "endedAt": null,
       "pausedAt": null,
       "pausedFor": "00:00:00",
-      "told": false
+      "told": false,
+      "toldAt": null,
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j15",
@@ -252,7 +264,19 @@
       "endedAt": null,
       "pausedAt": null,
       "pausedFor": "00:00:00",
-      "told": false
+      "told": false,
+      "toldAt": null,
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j13",
@@ -284,7 +308,19 @@
       "endedAt": "2026-10-18T09:06:48+00:00",
       "pausedAt": null,
       "pausedFor": "00:00:00",
-      "told": false
+      "told": false,
+      "toldAt": null,
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     },
     {
       "id": "j12",
@@ -316,7 +352,19 @@
       "endedAt": "2026-10-18T08:40:44+00:00",
       "pausedAt": null,
       "pausedFor": "00:00:00",
-      "told": true
+      "told": true,
+      "toldAt": null,
+      "toldWay": null,
+      "toldWhileWorking": null,
+      "retoldAt": null,
+      "retoldWay": null,
+      "retellRung": null,
+      "testsFailed": 0,
+      "firstTestFailed": null,
+      "buildErrors": 0,
+      "firstBuildError": null,
+      "failureTold": false,
+      "failFast": false
     }
   ],
   "merges": [],

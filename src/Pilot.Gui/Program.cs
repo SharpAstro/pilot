@@ -1183,6 +1183,41 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
         }
         return regions;
     },
+    // The text faults of the page shown, found by the one TextOverlap check (PageFaults), as flat values: faults is a JSON array a tool parses.
+    AppState = state =>
+    {
+        var shown = chrome.Faults();
+        state.Set("page", shown.Page);
+        state.Set("pages", string.Join(", ", Pilot.Ui.PilotPageNames.Names));
+        state.Set("window", shown.WindowText);
+        // So a tool that sizes the window can put it back (pilot gui overlaps): maximised again, or its own size.
+        state.Set("maximized", window.IsMaximized);
+        state.Set("pageSize", shown.PageSizeText);
+        state.Set("dpi", shown.Dpi);
+        state.Set("faultCount", shown.Count);
+        state.Set("faults", shown.FaultsJson());
+    },
+    // The arranged nodes of everything the window painted: the rail, the page and the panel beside it.
+    GetLayout = () =>
+    {
+        var nodes = new List<DIR.Lib.Layout.ArrangedNode<float>>();
+        foreach (var widget in chrome.Widgets)
+        {
+            widget.CollectPaintedNodes(nodes);
+        }
+        return nodes;
+    },
+    // "page" takes the window to a page by name ({"page":"settings"}); an unknown name is refused with the names that exist.
+    SignalFactories = new Dictionary<string, Action<System.Text.Json.JsonElement>>
+    {
+        ["page"] = args =>
+        {
+            if (!chrome.TryShow(args.OptString("page") ?? args.OptString("name"), out var refusal))
+            {
+                throw new ArgumentException(refusal);
+            }
+        },
+    },
 });
 #endif
 
