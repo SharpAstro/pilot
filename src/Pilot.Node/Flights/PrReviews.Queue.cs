@@ -93,6 +93,11 @@ public sealed partial class PrReviews
         }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
         {
+            // On autopilot a base with no queue is merged by the repo's method, as a flight's PR is; off, the person's Merge card.
+            if (await LandOnAutopilotAsync(review, read, cancellationToken))
+            {
+                return;
+            }
             state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });
             state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed {review.Verdict} and green, but {read.Base} has no merge queue",
                 $"Reviewed {review.Verdict} at {at}, checks green. Merge it when you are ready.",
