@@ -37,27 +37,6 @@ public sealed partial class LegCommander
     /// <summary>The Handled line a leg's start leaves for a sibling clone it pulled up to its origin.</summary>
     public const string SiblingPulledKind = "sibling-pulled";
 
-    /// <summary>Session ids of reviewers being replaced (marked by StartReviewAsync, cleared when the launch ends); the tracker keeps their jobs meanwhile.</summary>
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _replacing = new(StringComparer.Ordinal);
-
-    // A launch that fails leaves its mark, so a mark lapses on its own. The tracker looks at an ended row once only, so a row it
-    // passed over while marked is not looked at again when the mark lapses: its jobs stay queued (and run, telling nobody but a
-    // replacement). The node's own stop never reaches that look anyway (it marks the row stopped, not ended on its own), so the
-    // mark matters only for a reviewer that ended by itself within a poll or two of being replaced.
-    private static readonly TimeSpan ReplacingFor = TimeSpan.FromMinutes(5);
-
-    /// <summary>Whether a reviewer is being replaced: its queued jobs wait for the replacement to adopt them.</summary>
-    public bool IsBeingReplaced(string id) => _replacing.TryGetValue(id, out var since) && time.GetUtcNow() - since < ReplacingFor;
-
-    /// <summary>Takes this start's marks off, and only these: another flight's reviewer may be being replaced at the same time.</summary>
-    private void Unmark(IEnumerable<string> ids)
-    {
-        foreach (var id in ids)
-        {
-            _replacing.TryRemove(id, out _);
-        }
-    }
-
     private string ReviewerName(FlightRow flight) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{ReviewLeg}";
 
     /// <summary>A fresh reviewer on the flight's branch, the last one stopped; any earlier verdict's cards close.</summary>
@@ -98,9 +77,8 @@ public sealed partial class LegCommander
         // A spent 5-hour window holds the reviewer. The review is let go meanwhile, as a fresh one replaces it either way and an
         // old pass must not let the merge by a head nobody read: with its PR open and no review kept, the sweep starts it afresh.
         var held = Gate.Hold($"{Verbs.StartReview} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its reviewer", Models.WeekPaceFor(flight.Repo));
-        // The ids this call marks as being replaced, unmarked once the replacement's row is in (or the start is held).
-        var marked = new List<string>();
-        string? keptJobsOf = null;
+        // The marks and kept jobs of the reviewer replaced, let go once the replacement's row is in (or the start is held).
+        ReviewerReplacement? replacement = null;
         if (flight.Review?.ReviewerJob is { } last)
         {
             // One still reviewing is replaced without its verdict.
@@ -108,30 +86,7 @@ public sealed partial class LegCommander
             {
                 GaveUp(flight.Code, state.Sessions().FirstOrDefault(s => s.Id == last), "reviewer given up without a verdict");
             }
-            // The same head keeps the old reviewer's queued jobs: their end goes to the replacement (#601) and its own run of the
-            // same command adopts the job, so the build the predecessor queued is not thrown away. A moved head makes them stale.
-            var nowHead = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, CancellationToken.None);
-            var sameHead = flight.Review.ReviewedHead is { Length: > 0 } reviewed && nowHead.Ok && nowHead.Output.Trim() == reviewed;
-            if (!sameHead)
-            {
-                DropQueuedJobsOf(last, "its reviewer was replaced");
-            }
-            else
-            {
-                keptJobsOf = last;
-            }
-            // Marked before the stop: the stopped row must not be judged ended for good before the replacement's row exists.
-            marked.Add(last);
-            if (state.Sessions().FirstOrDefault(s => s.Id == last || s.SessionId == last) is { } oldRow)
-            {
-                marked.Add(oldRow.Id);
-                marked.Add(oldRow.SessionId);
-            }
-            foreach (var id in marked)
-            {
-                _replacing[id] = time.GetUtcNow();
-            }
-            await StopQuietly(last, cancellationToken);
+            replacement = await ReplaceReviewerAsync(flight, last, cancellationToken);
         }
         // The Opus cap and the repo mode hold it the same way (queued on the flight, its review let go meanwhile); the reviewer being
         // replaced does not count against its own successor.
@@ -139,12 +94,7 @@ public sealed partial class LegCommander
         var waiting = !held && AdmissionWaits(AdmissionRole.Reviewer, reviewModel, flight, null, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ReviewerName(flight) });
         if (held || waiting)
         {
-            // No replacement comes now (a later start finds no reviewer to adopt from): the jobs kept for one would run for nobody.
-            if (keptJobsOf is not null)
-            {
-                DropQueuedJobsOf(keptJobsOf, "its reviewer was replaced");
-            }
-            Unmark(marked);
+            NoReplacementComes(replacement);
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
@@ -200,7 +150,7 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
-                Unmark(marked);
+                Unmark(replacement);
                 // A fresh review of a head past the reviewed one is a push that ends a hold (a pass kept over a base that only came in
                 // starts no reviewer and keeps it): the hold's leg, or flight pr, is who pushed.
                 var endsHold = EndHoldPastReview(now, reviewedHead, now.Holding?.By is { } leg && leg != "node" ? $"the {leg} leg" : "a push");
