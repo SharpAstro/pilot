@@ -33,8 +33,14 @@ internal sealed class FakeRepoGit : IGit
 
         public Dictionary<string, string> Index { get; set; } = index;
 
-        /// <summary>A merge that stopped on conflicts: the commit being merged, and the paths in conflict.</summary>
+        /// <summary>A merge that stopped (on conflicts, or by <c>--no-commit</c>): the commit being merged, and the paths in conflict.</summary>
         public (string Target, List<string> Paths)? Merging { get; set; }
+
+        /// <summary>What a merge that is finished by <c>git commit --no-edit</c> is called.</summary>
+        public string? MergeMessage { get; set; }
+
+        /// <summary>A rebase that stopped on a conflict: the head it began at, which <c>rebase --abort</c> returns to.</summary>
+        public string? Rebasing { get; set; }
     }
 
     private static readonly ConcurrentDictionary<string, FakeRepoGit> Roots = new(StringComparer.OrdinalIgnoreCase);
@@ -49,6 +55,8 @@ internal sealed class FakeRepoGit : IGit
     private readonly string _root;
     private readonly string _originPath;
     private readonly List<string> _unsupported = [];
+    private readonly Dictionary<string, string> _config = [];
+    private bool _originHead = true;
 
     /// <summary>A repo <c>tianwen</c> with a bare origin, both under <paramref name="root"/>, as <see cref="SeedRepo"/> makes them: one commit on main, pushed.</summary>
     public FakeRepoGit(string root)
@@ -159,6 +167,10 @@ internal sealed class FakeRepoGit : IGit
             "merge" => Merge(a, wt),
             "reset" => Reset(a, wt),
             "cherry" => Cherry(a, wt),
+            "rebase" => Rebase(a, wt),
+            "config" => Config(a),
+            "ls-remote" => LsRemote(a),
+            "switch" => Switch(a, wt),
             _ => throw new NotSupportedException("verb"),
         };
     }
@@ -308,6 +320,11 @@ internal sealed class FakeRepoGit : IGit
         {
             return Ok(Norm(Path.Combine(RepoPath, ".git")) + "\n");
         }
+        if (a is ["--git-common-dir"])
+        {
+            // Relative to where it is asked: ".git" in the main checkout, absolute in a linked worktree.
+            return Ok((wt == _worktrees[0] ? ".git" : Norm(Path.Combine(RepoPath, ".git"))) + "\n");
+        }
         var quiet = a.Remove("--quiet");
         var verify = a.Remove("--verify");
         if (a.Count != 1 || a[0].StartsWith('-'))
@@ -327,7 +344,7 @@ internal sealed class FakeRepoGit : IGit
         a.Remove("--short");
         if (a is ["refs/remotes/origin/HEAD"])
         {
-            return Ok("origin/main\n");
+            return _originHead ? Ok("origin/main\n") : Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
         }
         if (a is ["HEAD"] && wt is not null)
         {
@@ -336,12 +353,83 @@ internal sealed class FakeRepoGit : IGit
         throw new NotSupportedException("symbolic-ref form");
     }
 
-    private GitRun Remote(List<string> a) => a switch
+    private GitRun Remote(List<string> a)
     {
-        ["get-url", "origin"] => Ok(_originPath + "\n"),
-        ["set-head", "origin", "--auto"] => Ok(""),
-        _ => throw new NotSupportedException("remote form"),
-    };
+        switch (a)
+        {
+            case ["get-url", "origin"]:
+                return Ok(_config.GetValueOrDefault("remote.origin.url", _originPath) + "\n");
+            case ["set-head", "origin", "--auto"]:
+                _originHead = true;
+                return Ok("");
+            case ["set-head", "origin", "--delete"]:
+                _originHead = false;
+                return Ok("");
+            default:
+                throw new NotSupportedException("remote form");
+        }
+    }
+
+    private GitRun Config(List<string> a)
+    {
+        a.Remove("--local");
+        switch (a)
+        {
+            case [var key, var value] when !key.StartsWith('-'):
+                _config[key] = value;
+                return Ok("");
+            case ["--get", var key]:
+                return _config.TryGetValue(key, out var found) ? Ok(found + "\n") : new GitRun(1, "", "");
+            default:
+                throw new NotSupportedException("config form");
+        }
+    }
+
+    /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
+    private GitRun LsRemote(List<string> a)
+    {
+        a.RemoveAll(x => x is "--heads" or "-h" or "--quiet" or "-q");
+        if (a.Count is < 1 or > 2 || a[0] != "origin" || a.Any(x => x.StartsWith('-')))
+        {
+            throw new NotSupportedException("ls-remote form");
+        }
+        var pattern = a.Count == 2 ? a[1] : null;
+        return Ok(string.Concat(_origin.Where(o => o.Key.StartsWith("refs/heads/", StringComparison.Ordinal) && (pattern is null || o.Key == pattern || o.Key.EndsWith("/" + pattern, StringComparison.Ordinal)))
+            .OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => $"{o.Value}\t{o.Key}\n")));
+    }
+
+    /// <summary><c>git switch [-c] &lt;branch&gt;</c>: a branch made at HEAD and moved to, or an existing one moved to.</summary>
+    private GitRun Switch(List<string> a, Worktree? wt)
+    {
+        a.RemoveAll(x => x is "-q" or "--quiet");
+        var create = a.Remove("-c");
+        if (wt is null || a.Count != 1 || a[0].StartsWith('-'))
+        {
+            throw new NotSupportedException("switch form");
+        }
+        var head = HeadId(wt);
+        if (create)
+        {
+            if (_refs.ContainsKey("refs/heads/" + a[0]))
+            {
+                return Fail($"fatal: a branch named '{a[0]}' already exists", 128);
+            }
+            _refs["refs/heads/" + a[0]] = head ?? throw new NotSupportedException("switch -c on an unborn branch");
+            wt.Branch = a[0];
+            wt.Detached = null;
+            return Ok("");
+        }
+        if (!_refs.TryGetValue("refs/heads/" + a[0], out var target))
+        {
+            return Fail($"fatal: invalid reference: {a[0]}", 128);
+        }
+        var before = wt.Index;
+        wt.Branch = a[0];
+        wt.Detached = null;
+        wt.Index = new Dictionary<string, string>(_commits[target].Tree);
+        Materialize(wt, _commits[target].Tree, before);
+        return Ok("");
+    }
 
     private GitRun Fetch(List<string> a)
     {
@@ -644,7 +732,19 @@ internal sealed class FakeRepoGit : IGit
         var noMerges = a.Remove("--no-merges");
         var merges = a.Remove("--merges");
         var leftRight = a.Remove("--left-right");
-        if (a.Any(x => x.StartsWith("--", StringComparison.Ordinal) && x is not ("--not" or "--remotes")))
+        var parents = a.Remove("--parents");
+        // -n N or -nN: the newest N.
+        int? limit = null;
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i] == "-n" && i + 1 < a.Count && int.TryParse(a[i + 1], out var n))
+            {
+                limit = n;
+                a.RemoveRange(i, 2);
+                break;
+            }
+        }
+        if (a.Any(x => x.StartsWith('-') && x is not ("--not" or "--remotes")))
         {
             throw new NotSupportedException("rev-list option");
         }
@@ -667,11 +767,15 @@ internal sealed class FakeRepoGit : IGit
             {
                 return Ok(commits.Count + "\n");
             }
+            if (limit is { } most)
+            {
+                commits = [.. commits.Take(most)];
+            }
             if (reverse)
             {
                 commits.Reverse();
             }
-            return Ok(string.Concat(commits.Select(c => c.Id + "\n")));
+            return Ok(string.Concat(commits.Select(c => (parents ? string.Join(' ', c.Parents.Prepend(c.Id)) : c.Id) + "\n")));
         }
         catch (FakeGitFailure ex)
         {
@@ -780,7 +884,9 @@ internal sealed class FakeRepoGit : IGit
         var stat = a.Remove("--stat");
         var quiet = a.Remove("--quiet");
         var unmerged = a.Remove("--diff-filter=U");
-        a.RemoveAll(x => x is "--no-color" or "--no-ext-diff" or "--src-prefix=a/" or "--dst-prefix=b/");
+        // -b and --ignore-blank-lines: a change of whitespace or blank lines is no change.
+        var ignoreSpace = a.Remove("-b") | a.Remove("--ignore-blank-lines");
+        a.RemoveAll(x => x is "--no-color" or "--no-ext-diff" or "--src-prefix=a/" or "--dst-prefix=b/" or "--no-renames");
         var dash = a.IndexOf("--");
         var pathspec = dash < 0 ? [] : a.Skip(dash + 1).ToList();
         var revs = dash < 0 ? a : a.Take(dash).ToList();
@@ -818,6 +924,10 @@ internal sealed class FakeRepoGit : IGit
                 throw new NotSupportedException("diff against the working tree");
             }
             var changes = Changes(_commits[from].Tree, _commits[to].Tree).Where(c => pathspec.Count == 0 || pathspec.Contains(c.Path)).ToList();
+            if (ignoreSpace)
+            {
+                changes = [.. changes.Where(c => c.Old is null || c.New is null || Squash(c.Old) != Squash(c.New))];
+            }
             if (quiet)
             {
                 return new GitRun(changes.Count == 0 ? 0 : 1, "", "");
@@ -837,6 +947,10 @@ internal sealed class FakeRepoGit : IGit
             return Fail(ex.Message, 128);
         }
     }
+
+    /// <summary>The text with runs of whitespace as one space, trailing space gone and blank lines dropped.</summary>
+    private static string Squash(string text) =>
+        string.Join('\n', text.Split('\n').Select(l => string.Join(' ', l.Split([' ', '\t', '\r'], StringSplitOptions.RemoveEmptyEntries))).Where(l => l.Length > 0));
 
     private static string[] Lines(string? text) => string.IsNullOrEmpty(text) ? [] : text.TrimEnd('\n').Split('\n');
 
@@ -1032,6 +1146,7 @@ internal sealed class FakeRepoGit : IGit
         string? message = null;
         var all = false;
         var allowEmpty = false;
+        var amend = false;
         for (var i = 0; i < a.Count; i++)
         {
             var x = a[i];
@@ -1042,6 +1157,10 @@ internal sealed class FakeRepoGit : IGit
             else if (x == "--allow-empty")
             {
                 allowEmpty = true;
+            }
+            else if (x == "--amend")
+            {
+                amend = true;
             }
             else if (x.StartsWith('-') && !x.StartsWith("--", StringComparison.Ordinal) && x[1..].All(c => c is 'q' or 'a' or 'm'))
             {
@@ -1059,6 +1178,9 @@ internal sealed class FakeRepoGit : IGit
                 throw new NotSupportedException("commit option " + x);
             }
         }
+        var amended = amend ? HeadId(wt) : null;
+        // No -m: a merge that stopped is finished under the name it was given (--no-edit); an amend keeps the message.
+        message ??= amend && amended is not null ? _commits[amended].Message : wt.Merging is not null ? wt.MergeMessage : null;
         if (message is null)
         {
             throw new NotSupportedException("commit without -m");
@@ -1080,7 +1202,13 @@ internal sealed class FakeRepoGit : IGit
         }
         var parent = HeadId(wt);
         var parents = new List<string>();
-        if (parent is not null)
+        if (amended is not null)
+        {
+            // An amend replaces the head: the new commit has the old one's parents.
+            parents.AddRange(_commits[amended].Parents);
+            parent = amended;
+        }
+        else if (parent is not null)
         {
             parents.Add(parent);
         }
@@ -1089,7 +1217,7 @@ internal sealed class FakeRepoGit : IGit
             parents.Add(merging.Target);
         }
         var same = parent is not null && _commits[parent].Tree.Count == wt.Index.Count && _commits[parent].Tree.All(t => wt.Index.TryGetValue(t.Key, out var v) && v == t.Value);
-        if (same && !allowEmpty && wt.Merging is null)
+        if (same && !allowEmpty && !amend && wt.Merging is null)
         {
             return new GitRun(1, $"On branch {wt.Branch}\nnothing to commit, working tree clean\n", "");
         }
@@ -1131,6 +1259,62 @@ internal sealed class FakeRepoGit : IGit
         return Ok("");
     }
 
+    /// <summary>
+    /// A three-way merge path by path, as git decides a file: the side that changed it wins, both changing it differently is a conflict
+    /// (the conflicted path keeps our text), unless <paramref name="favour"/> says whose text a conflict takes (<c>-X ours|theirs</c>) or
+    /// <paramref name="strategyOurs"/> keeps ours whole (<c>-s ours</c>).
+    /// </summary>
+    private static (Dictionary<string, string> Merged, List<string> Conflicts) Merge3(
+        IReadOnlyDictionary<string, string> baseTree, IReadOnlyDictionary<string, string> mine, IReadOnlyDictionary<string, string> theirs, string? favour, bool strategyOurs)
+    {
+        var merged = new Dictionary<string, string>();
+        var conflicts = new List<string>();
+        foreach (var path in baseTree.Keys.Union(mine.Keys).Union(theirs.Keys).Order(StringComparer.Ordinal))
+        {
+            var b = baseTree.GetValueOrDefault(path);
+            var o = mine.GetValueOrDefault(path);
+            var t = theirs.GetValueOrDefault(path);
+            string? result;
+            if (strategyOurs || o == t || t == b)
+            {
+                result = o;
+            }
+            else if (o == b)
+            {
+                result = t;
+            }
+            else if (favour == "theirs")
+            {
+                result = t;
+            }
+            else if (favour == "ours")
+            {
+                result = o;
+            }
+            else
+            {
+                result = o;
+                conflicts.Add(path);
+            }
+            if (result is not null)
+            {
+                merged[path] = result;
+            }
+        }
+        return (merged, conflicts);
+    }
+
+    /// <summary>The conflicted files as git leaves them in the folder: both texts between markers.</summary>
+    private static void WriteConflicts(Worktree wt, List<string> conflicts, IReadOnlyDictionary<string, string> mine, IReadOnlyDictionary<string, string> theirs, string theirName)
+    {
+        foreach (var path in conflicts)
+        {
+            var file = System.IO.Path.Combine(wt.Path, path);
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, $"<<<<<<< HEAD\n{mine.GetValueOrDefault(path)}=======\n{theirs.GetValueOrDefault(path)}>>>>>>> {theirName}\n");
+        }
+    }
+
     private GitRun Merge(List<string> a, Worktree? wt)
     {
         if (wt is null)
@@ -1151,7 +1335,9 @@ internal sealed class FakeRepoGit : IGit
             return Ok("");
         }
         var noFastForward = a.Remove("--no-ff");
-        var ours = false;
+        var noCommit = a.Remove("--no-commit");
+        var strategyOurs = false;
+        string? favour = null;
         string? message = null;
         a.RemoveAll(x => x is "--no-edit" or "--quiet" or "-q");
         for (var i = 0; i < a.Count; i++)
@@ -1164,7 +1350,13 @@ internal sealed class FakeRepoGit : IGit
             }
             else if (a[i] == "-s" && a.ElementAtOrDefault(i + 1) == "ours")
             {
-                ours = true;
+                strategyOurs = true;
+                a.RemoveRange(i, 2);
+                i--;
+            }
+            else if (a[i] == "-X" && a.ElementAtOrDefault(i + 1) is "ours" or "theirs")
+            {
+                favour = a[i + 1];
                 a.RemoveRange(i, 2);
                 i--;
             }
@@ -1183,12 +1375,12 @@ internal sealed class FakeRepoGit : IGit
         {
             return Ok("Already up to date.\n");
         }
-        var before2 = wt.Index;
-        if (IsAncestor(current, target) && !noFastForward && !ours)
+        var previous = wt.Index;
+        if (IsAncestor(current, target) && !noFastForward && !strategyOurs)
         {
             SetHead(wt, target);
             wt.Index = new Dictionary<string, string>(_commits[target].Tree);
-            Materialize(wt, _commits[target].Tree, before2);
+            Materialize(wt, _commits[target].Tree, previous);
             return Ok($"Updating {Short(current)}..{Short(target)}\nFast-forward\n");
         }
         var baseId = MergeBase(current, target);
@@ -1196,56 +1388,98 @@ internal sealed class FakeRepoGit : IGit
         {
             return Fail("fatal: refusing to merge unrelated histories", 128);
         }
-        var baseTree = _commits[baseId].Tree;
         var mine = _commits[current].Tree;
         var theirs = _commits[target].Tree;
-        // Path by path, as git's three-way merge decides a file neither side touched the same way: the side that changed it wins, both
-        // changing it differently is a conflict (the conflicted path keeps our text in the index, and markers in the folder).
-        var merged = new Dictionary<string, string>();
-        var conflicts = new List<string>();
-        foreach (var path in baseTree.Keys.Union(mine.Keys).Union(theirs.Keys).Order(StringComparer.Ordinal))
-        {
-            var b = baseTree.GetValueOrDefault(path);
-            var o = mine.GetValueOrDefault(path);
-            var t = theirs.GetValueOrDefault(path);
-            string? result;
-            if (ours || o == t || t == b)
-            {
-                result = o;
-            }
-            else if (o == b)
-            {
-                result = t;
-            }
-            else
-            {
-                result = o;
-                conflicts.Add(path);
-            }
-            if (result is not null)
-            {
-                merged[path] = result;
-            }
-        }
+        var (merged, conflicts) = Merge3(_commits[baseId].Tree, mine, theirs, favour, strategyOurs);
         var text = message ?? $"Merge {a[0]} into {wt.Branch ?? "HEAD"}";
-        if (conflicts.Count > 0)
+        if (conflicts.Count > 0 || noCommit)
         {
             wt.Merging = (target, conflicts);
+            wt.MergeMessage = text;
             wt.Index = new Dictionary<string, string>(merged);
-            Materialize(wt, merged, before2);
-            foreach (var path in conflicts)
-            {
-                var file = System.IO.Path.Combine(wt.Path, path);
-                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
-                File.WriteAllText(file, $"<<<<<<< HEAD\n{mine.GetValueOrDefault(path)}=======\n{theirs.GetValueOrDefault(path)}>>>>>>> {a[0]}\n");
-            }
-            return new GitRun(1, string.Concat(conflicts.Select(p => $"CONFLICT (content): Merge conflict in {p}\n")) + "Automatic merge failed; fix conflicts and then commit the result.\n", "");
+            Materialize(wt, merged, previous);
+            WriteConflicts(wt, conflicts, mine, theirs, a[0]);
+            return conflicts.Count == 0
+                ? Ok("Automatic merge went well; stopped before committing as requested\n")
+                : new GitRun(1, string.Concat(conflicts.Select(p => $"CONFLICT (content): Merge conflict in {p}\n")) + "Automatic merge failed; fix conflicts and then commit the result.\n", "");
         }
         var commit = MakeCommit([current, target], merged, text);
         SetHead(wt, commit.Id);
         wt.Index = new Dictionary<string, string>(merged);
-        Materialize(wt, merged, before2);
-        return Ok($"Merge made by the 'ort' strategy.\n");
+        Materialize(wt, merged, previous);
+        return Ok("Merge made by the 'ort' strategy.\n");
+    }
+
+    /// <summary>
+    /// <c>git rebase &lt;upstream&gt;</c>: the branch's own commits replayed one by one onto the upstream (merge commits dropped, a commit
+    /// whose change is already there dropped), stopping on the first conflict; <c>--abort</c> goes back to where it began.
+    /// </summary>
+    private GitRun Rebase(List<string> a, Worktree? wt)
+    {
+        if (wt is null)
+        {
+            throw new NotSupportedException("rebase in the origin");
+        }
+        if (a is ["--abort"])
+        {
+            if (wt.Rebasing is not { } began)
+            {
+                return Fail("fatal: No rebase in progress?", 128);
+            }
+            var before = wt.Index;
+            wt.Rebasing = null;
+            wt.Index = new Dictionary<string, string>(_commits[began].Tree);
+            Materialize(wt, _commits[began].Tree, before);
+            return Ok("");
+        }
+        if (a.Count != 1 || a[0].StartsWith('-') || wt.Rebasing is not null)
+        {
+            throw new NotSupportedException("rebase form");
+        }
+        var upstream = Resolve(a[0], wt);
+        if (upstream is null)
+        {
+            return Fail($"fatal: invalid upstream '{a[0]}'", 128);
+        }
+        var head = HeadId(wt)!;
+        if (IsAncestor(upstream, head))
+        {
+            return Ok($"Current branch {wt.Branch ?? "HEAD"} is up to date.\n");
+        }
+        var previous = wt.Index;
+        if (IsAncestor(head, upstream))
+        {
+            SetHead(wt, upstream);
+            wt.Index = new Dictionary<string, string>(_commits[upstream].Tree);
+            Materialize(wt, _commits[upstream].Tree, previous);
+            return Ok("Successfully rebased and updated.\n");
+        }
+        var picks = Select([$"{upstream}..{head}"], wt, firstParent: false).Commits.Where(c => c.Parents.Count < 2).Reverse().ToList();
+        var tip = upstream;
+        IReadOnlyDictionary<string, string> tipTree = _commits[upstream].Tree;
+        foreach (var pick in picks)
+        {
+            var parentTree = pick.Parents.Count > 0 ? _commits[pick.Parents[0]].Tree : new Dictionary<string, string>();
+            var (merged, conflicts) = Merge3(parentTree, tipTree, pick.Tree, null, false);
+            if (conflicts.Count > 0)
+            {
+                wt.Rebasing = head;
+                wt.Index = new Dictionary<string, string>(merged);
+                Materialize(wt, merged, previous);
+                WriteConflicts(wt, conflicts, tipTree, pick.Tree, Short(pick.Id));
+                return new GitRun(1, string.Concat(conflicts.Select(p => $"CONFLICT (content): Merge conflict in {p}\n")), $"error: could not apply {Short(pick.Id)}... {FirstLine(pick.Message)}\n");
+            }
+            if (merged.Count == tipTree.Count && merged.All(m => tipTree.TryGetValue(m.Key, out var v) && v == m.Value))
+            {
+                continue;
+            }
+            tip = MakeCommit([tip], merged, pick.Message).Id;
+            tipTree = merged;
+        }
+        SetHead(wt, tip);
+        wt.Index = new Dictionary<string, string>(tipTree);
+        Materialize(wt, tipTree, previous);
+        return Ok("Successfully rebased and updated.\n");
     }
 
     // ---- the folder ----

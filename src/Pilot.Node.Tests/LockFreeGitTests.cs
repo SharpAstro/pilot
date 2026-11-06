@@ -138,7 +138,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         await Fly(flight, "parser");
         var other = await OtherFlight();
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["push", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["push", ..]);
         var legs = Another(git);
 
         var open = legs.RunAsync(new CommandRequest { Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
@@ -161,7 +161,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var (flight, _) = await Passed("1");
         var other = await OtherFlight();
         var gate = new Gate();
-        var git = new GatedGit(new GitCli(), gate, args => args is ["fetch", ..]);
+        var git = new GatedGit(_git, gate, args => args is ["fetch", ..]);
         var legs = Another(git);
 
         var rebase = legs.BringUpToDateAsync(flight.Code, Ct);
@@ -185,7 +185,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
         var flight = await NewFlight("1", "parser");
         var other = await OtherFlight();
         var gate = new Gate();
-        var flights = new FlightCommander(_state, new Planes(new GatedGit(new GitCli(), gate, args => args is ["worktree", "remove", ..])), TimeProvider.System, _workers);
+        var flights = new FlightCommander(_state, new Planes(new GatedGit(_git, gate, args => args is ["worktree", "remove", ..])), TimeProvider.System, _workers);
 
         var land = flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
         await Within(gate.Reached, "the plane's removal was out");
