@@ -146,7 +146,9 @@ public sealed class CardKindTests
     [Fact]
     public void EveryCatalogKindHasAPinningTestThatExistsAndNamesTheKind()
     {
+        // Build output is no test source: obj holds one generated file of the same name per configuration built (Debug and Release).
         var tests = Directory.EnumerateFiles(Path.Combine(Src.Value, "Pilot.Node.Tests"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .ToDictionary(f => Path.GetFileNameWithoutExtension(f), f => File.ReadAllText(f), StringComparer.Ordinal);
         var tokens = Calls.Value
             .Select(c => (Call: c, Kind: Resolve(c.File, c.KindExpr)))
