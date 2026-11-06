@@ -194,11 +194,12 @@ public sealed class FalseRingTests : ReviewTestsBase
             await watch.LookAsync(Ct);
         }
 
-        Open().ShouldBeEmpty();
+        // The running session of a landed flight has its own stray-session card (a different cause, with a Stop choice): no card is about the leg.
+        Open().ShouldNotContain(c => c.Subject.StartsWith(subject, StringComparison.Ordinal));
         _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle && c.Id != stale.Id);
         // Not a leg card by any other raiser either: the node refuses a ring for a leg of a landed flight.
         _state.RaiseCard(CardBin.Ring, "leg-failed", subject, "late").State.ShouldBe(CardState.Closed);
-        Open().ShouldBeEmpty();
+        Open().ShouldNotContain(c => c.Subject.StartsWith(subject, StringComparison.Ordinal));
     }
 
     [Fact]
