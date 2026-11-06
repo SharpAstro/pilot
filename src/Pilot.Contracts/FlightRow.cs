@@ -321,6 +321,13 @@ public sealed record FlightOnHold
 
     /// <summary>Who put the flight on hold.</summary>
     public required string By { get; init; }
+
+    /// <summary>
+    /// Whether the <c>pilot: hold</c> label is on the flight's issue: true when it is, false when the write failed (the repo sweep retries it),
+    /// null when the tracker has no such label. Optional on the wire.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Labelled { get; init; }
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>

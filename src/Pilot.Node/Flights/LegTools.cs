@@ -340,6 +340,11 @@ public interface IGitHub
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
 
+    /// <summary>The comments of issue <paramref name="number"/>, oldest first; none by default.</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PrComment>>([]);
+
     /// <summary>The conversation comments of PR <paramref name="number"/> (not its review comments), oldest first; none by default.</summary>
     /// <exception cref="FlightException">GitHub refused it.</exception>
     Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
@@ -462,7 +467,16 @@ public static class PilotMarks
     public const string Recheck = LabelPrefix + "recheck";
 
     /// <summary>The labels the node reads from a person; each is made in a repo when the node labels a flight item there. A later one is added here.</summary>
-    public static readonly string[] ReadFromPeople = [Priority, Recheck];
+    public static readonly string[] ReadFromPeople = [Priority, Recheck, Hold];
+
+    /// <summary>
+    /// The owner's hold on a flight (#771), on its issue only: every node reads it from GitHub on its repo sweep. Never put on a PR,
+    /// since a PR's <c>pilot: </c> labels are replaced as a set by a review's label change.
+    /// </summary>
+    public const string Hold = LabelPrefix + "hold";
+
+    /// <summary>What the comment that says a flight was put on hold starts with, so a sweep finds the newest one pilot wrote.</summary>
+    public const string HoldCommentStart = "pilot: on hold";
 
     /// <summary>
     /// The prefix of the label that says which node flies an issue or story. Deliberately not starting with
@@ -499,6 +513,7 @@ public static class PilotMarks
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
+        Hold => ("b60205", "the owner holds this flight: no pilot node acts on it"),
         _ => ("ededed", "set by pilot"),
     };
 }

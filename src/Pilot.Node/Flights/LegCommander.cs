@@ -185,7 +185,7 @@ public sealed partial class LegCommander(
                     made = await HoldAsync(command, cancellationToken);
                     break;
                 case Verbs.Unhold:
-                    made = UnholdAsync(command);
+                    made = await UnholdAsync(command, cancellationToken);
                     break;
                 case Verbs.MoveFlight:
                     moving = FlightOf(command.Target);
@@ -358,9 +358,10 @@ public sealed partial class LegCommander(
         }
 
         // A flight released from its hold goes on to what is due, as a resumed leg does.
-        if (error is null && command.Verb == Verbs.Unhold)
+        // (A code this node has no flight for only had its issue's label taken off.)
+        if (error is null && command.Verb == Verbs.Unhold && FlightNamed(command.Target) is { } released)
         {
-            await AdvanceAsync(FlightOf(command.Target), cancellationToken);
+            await AdvanceAsync(released, cancellationToken);
         }
 
         // A leg taken out: the flight goes on past it the same way, as the leg it was waiting on may have been the last

@@ -51,7 +51,7 @@ internal static class CardKindCatalog
     [
         // Workers, legs and planners.
         new("worker-stopped", "Ring", [Watch], "LegWatchTests.AStopWithNoResetTimeRingsAtOnce"),
-        new("flight-on-hold", "Handled", ["Flights/LegCommander.OnHold.cs"], "FlightHoldTests.HoldNeedsWhyRecordsWhoAndWhenAndARepeatUpdatesTheWhy"),
+        new("flight-on-hold", "Handled", ["Flights/LegCommander.OnHold.cs", "Flights/RepoWatch.cs"], "FlightHoldTests.HoldNeedsWhyRecordsWhoAndWhenAndARepeatUpdatesTheWhy"),
         new("worker-limit-wait", "Handled", [Watch], "LegCardTests.AUsageLimitStopTheNodeResumesItselfIsAHandledLineAndNoCard"),
         new("worker-idle", "Ring", [Watch], "LegWatchTests.ANudgeTheNodeCannotDeliverRings"),
         new("worker-waiting", "Ring", [Watch], "LegWatchTests.AWaitingWorkerRingsWithItsQuestionAndTheCardClosesWhenItWorksAgain"),

@@ -111,8 +111,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The open issues, by number, with their titles.</summary>
     public Dictionary<int, string> Issues { get; } = [];
 
+    /// <summary>When set, IssuesAsync fails with it, as a gh that could not reach GitHub.</summary>
+    public string? OpenIssuesFail { get; set; }
+
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) =>
-        Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
+        OpenIssuesFail is { } why ? Task.FromException<IssueInfo[]>(new FlightException(why)) : Task.FromResult<IssueInfo[]>([.. Issues.Select(i => new IssueInfo { Number = i.Key, Title = i.Value, Labels = IssueLabels.TryGetValue(i.Key, out var labels) ? [.. labels] : [] })]);
 
     /// <summary>Each repo's open PRs, by repo folder path; a repo with none listed has none.</summary>
     public Dictionary<string, PullRequestStatus[]> OpenPrs { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -981,6 +984,9 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>The conversation comments of PRs, by number, as PrCommentsAsync lists them; a comment made through CommentIssueAsync lands here too.</summary>
     public List<(int Number, PrComment Comment)> PrConversation { get; } = [];
+
+    public Task<IReadOnlyList<PrComment>> IssueCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        PrCommentsAsync(repoPath, number, cancellationToken);
 
     public Task<IReadOnlyList<PrComment>> PrCommentsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PrComment>>([.. PrConversation.Where(c => c.Number == number).Select(c => c.Comment)]);
