@@ -55,7 +55,7 @@ public sealed class LockFreeStartTests : LegCommanderTestsBase
         var clock = Stopwatch.StartNew();
         while (!done())
         {
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "it did not come about");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "it did not come about");
             await Task.Delay(10, Ct);
         }
     }

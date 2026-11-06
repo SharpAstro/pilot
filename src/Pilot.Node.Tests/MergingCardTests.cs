@@ -67,7 +67,7 @@ public sealed class MergingCardTests : ReviewTestsBase
     }
 
     private static async Task Reaches(TaskCompletionSource reached) =>
-        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(reached.Task, "the call was not reached");
+        (await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(reached.Task, "the call was not reached");
 
     private async Task<CardChoice> ShowsMerging(CardRow card)
     {

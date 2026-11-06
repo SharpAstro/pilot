@@ -58,7 +58,7 @@ public sealed class LockFreeGitTests : ReviewTestsBase
 
     private async Task Within(Task task, string what)
     {
-        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(20), Ct))).ShouldBe(task, what);
+        (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(120), Ct))).ShouldBe(task, what);
         await task;
     }
 

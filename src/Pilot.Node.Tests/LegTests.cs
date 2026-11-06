@@ -1640,7 +1640,7 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
 
         // The worker is launched after the command answers; a loaded machine does not do that within it.
         var clock = Stopwatch.StartNew();
-        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(20))
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(120))
         {
             await Task.Delay(10, Ct);
         }

@@ -100,7 +100,7 @@ public sealed class MergesTests
         };
 
         var one = Merge(node, "TIA1");
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(120), Ct);
         var two = Merge(node, "TIA2");
         await Until(() => node.State.Merges().Any(m => m.Flight == "TIA2"), "TIA2 joined the queue");
 

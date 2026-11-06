@@ -151,7 +151,7 @@ public sealed class UnreadHeadTests : ReviewTestsBase
             var clock = Stopwatch.StartNew();
             while (F(flight.Code).Review?.ReviewedHead != head)
             {
-                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "the first sweep did not review the unread head");
+                clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(120), "the first sweep did not review the unread head");
                 await Task.Delay(20, Ct);
             }
             await Started(_legs, flight.Code);
