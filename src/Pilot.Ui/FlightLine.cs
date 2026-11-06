@@ -75,9 +75,41 @@ internal sealed record FlightLine
     /// <summary>The node's last priority raise for a stale bound (<c>raised to high: open 19 h</c>), or why it could not be made; null before the first.</summary>
     public string? StaleRaise => Row.StaleRaises is { Length: > 0 } raises ? raises[^1].Note : null;
 
-    /// <summary>The short mark under a stale flight's code: <c>stale · raised to high</c>.</summary>
+    /// <summary>
+    /// The clock this line was built against. The age below is read from it, not from the snapshot: the page rebuilds its lines with
+    /// each frame's clock, so an age ticks while the row does not change. Null for a line built without one.
+    /// </summary>
+    public DateTimeOffset? Now { get; init; }
+
+    /// <summary>
+    /// How long the flight has not really moved (<see cref="FlightRow.LastMovedAt"/> against <see cref="Now"/>); null when the node
+    /// gave no last move (an older node) or the line has no clock. Never negative.
+    /// </summary>
+    public TimeSpan? Idle => Row.LastMovedAt is { } at && Now is { } now ? (now - at is { Ticks: >= 0 } span ? span : TimeSpan.Zero) : null;
+
+    /// <summary>The short mark under a stale flight's code: <c>stale · no progress for 10 h · raised to high</c> (just <c>stale</c> when the node gave no last move).</summary>
     public string? StaleWorkMark => StaleSummary is null ? null
-        : Row.StaleRaises?.LastOrDefault(r => r.Level is not null) is { Level: { } level } ? $"stale · raised to {IssuePriorities.Name(level).ToLowerInvariant()}" : "stale";
+        : string.Join(" · ", new[]
+        {
+            Idle is { } idle ? $"stale · no progress for {Waited.Coarse(idle)}" : "stale",
+            Row.StaleRaises?.LastOrDefault(r => r.Level is not null) is { Level: { } level } ? $"raised to {IssuePriorities.Name(level).ToLowerInvariant()}" : null,
+        }.OfType<string>());
+
+    /// <summary>The last thing that moved the flight with its local time, <c>last: review passed 12:09</c>; null when the node gave none.</summary>
+    public string? LastMoveText => Row is { LastMovedAt: { } at, LastMove: { Length: > 0 } move }
+        ? $"last: {move} {at.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}" : null;
+
+    /// <summary>The whole text of the stale mark on hover: the mark, the last move with its time, and the stale timeline, one to a line.</summary>
+    public string? StaleWorkTip => StaleWorkMark is { } mark
+        ? string.Join('
+', new[] { mark, LastMoveText, StaleSummary }.OfType<string>()) : null;
+
+    /// <summary>
+    /// <c>last activity 25 m ago</c> for a flight in the air that is not stale, for its detail page only (a table row stays clean);
+    /// null for a stale flight (its mark says it), a landed, folded or moved one, or one with no last move.
+    /// </summary>
+    public string? ActivityText => StaleSummary is null && Row is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null } && Idle is { } idle
+        ? $"last activity {Waited.Coarse(idle)} ago" : null;
 
     /// <summary>What says the row is a stale copy, <c>stale (DE1 unreachable)</c>, in words so colour never carries it alone; null while not stale.</summary>
     public string? StaleMark => Stale is { } node ? $"stale ({node} unreachable)" : null;
@@ -162,6 +194,7 @@ internal sealed record FlightLine
         return new FlightLine
         {
             Row = flight,
+            Now = now,
             Code = flight.Code,
             Title = flight.Title ?? flight.Item.Noun,
             Where = $"{flight.Repo} {flight.Item.Display}",

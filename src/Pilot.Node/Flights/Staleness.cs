@@ -225,16 +225,7 @@ public static class Staleness
     }
 
     /// <summary>An age in words: <c>35 m</c>, <c>19 h</c>, <c>2 d 4 h</c>.</summary>
-    public static string Say(TimeSpan span)
-    {
-        if (span < TimeSpan.Zero)
-        {
-            span = TimeSpan.Zero;
-        }
-        return span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
-            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h"
-            : $"{(int)span.TotalDays} d {span.Hours} h";
-    }
+    public static string Say(TimeSpan span) => Waited.Coarse(span);
 
     private static string Hours(int hours) => $"{hours.ToString(CultureInfo.InvariantCulture)} h";
 

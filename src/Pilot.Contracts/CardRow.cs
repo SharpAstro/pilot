@@ -168,6 +168,21 @@ public static class Waited
             : span.TotalDays < 1 ? $"{(int)span.TotalHours} h {span.Minutes} m"
             : $"{(int)span.TotalDays} d {span.Hours} h";
     }
+
+    /// <summary>
+    /// A span at the grain a stale line wants: whole minutes under an hour, whole hours under a day, else days and hours (<c>25 m</c>,
+    /// <c>10 h</c>, <c>2 d 5 h</c>). The node's digest and the UI's mark both say it, so they never disagree on a number.
+    /// </summary>
+    public static string Coarse(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero)
+        {
+            span = TimeSpan.Zero;
+        }
+        return span.TotalHours < 1 ? $"{(int)span.TotalMinutes} m"
+            : span.TotalDays < 1 ? $"{(int)span.TotalHours} h"
+            : $"{(int)span.TotalDays} d {span.Hours} h";
+    }
 }
 
 /// <summary>The <see cref="CardChoice.Status"/> values a merge's checks give.</summary>
