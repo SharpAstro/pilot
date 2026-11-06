@@ -1190,6 +1190,8 @@ using var inspector = DebugInspector.Attach(loop, new DebugInspectorOptions
         state.Set("page", shown.Page);
         state.Set("pages", string.Join(", ", Pilot.Ui.PilotPageNames.Names));
         state.Set("window", shown.WindowText);
+        // So a tool that sizes the window can put it back (pilot gui overlaps): maximised again, or its own size.
+        state.Set("maximized", window.IsMaximized);
         state.Set("pageSize", shown.PageSizeText);
         state.Set("dpi", shown.Dpi);
         state.Set("faultCount", shown.Count);
