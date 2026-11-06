@@ -215,6 +215,117 @@ public sealed class ConnectTests : OverlapTestsBase
         F("TIA2").State.ShouldBe(FlightState.Flying);
     }
 
+    /// <summary>A second wait of TIA2, stored as a flight keeps one it was told of (the node waited for need not be a peer at all).</summary>
+    private void AlsoWaitsOn(string code, string node)
+    {
+        var held = F("TIA2");
+        _state.PutFlight(held with { State = FlightState.Held, PeerConnections = [.. held.PeerConnections, new PeerConnection { Code = code, Node = node, Since = DateTimeOffset.UtcNow }] });
+    }
+
+    private PeerConnection WaitOn(string node) => F("TIA2").PeerConnections.Single(c => c.Node == node);
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWaitOnANodeThatIsNotAPeerIsNotWordedAsOffTheLanWhileAnotherPeerIsUnreachable()
+    {
+        await TwoFlights();
+        var log = new StringWriter();
+        _flights.Error = log;
+        var peer = Peer("DE1", Theirs("PIL294", 294));
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+        AlsoWaitsOn("SE900", "SE9");
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+
+        // DE1 answered once, so it is known by name; it now stops answering. SE9 is no peer of this node.
+        peer.Unreachable = true;
+        (await _flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+
+        var unknown = WaitOn("SE9");
+        unknown.Note.ShouldBe("SE9 is not a node this one holds a grant for");
+        unknown.Note.ShouldNotContain("LAN");
+        unknown.UnreachableSince.ShouldBeNull();
+        FlightWaiting.For(F("TIA2")).ShouldContain("SE900 on SE9 (SE9 is not a node this one holds a grant for)");
+        log.ToString().ShouldNotContain("SE9");
+
+        // The known peer that went quiet is the one that is called off the LAN.
+        var known = WaitOn("DE1");
+        var since = known.UnreachableSince.ShouldNotBeNull();
+        known.Note.ShouldStartWith($"DE1 is not on the LAN since {since.ToLocalTime():HH:mm}");
+        log.ToString().ShouldContain("DE1 could not be asked for PIL294");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APeerNeverAnsweredSinceTheNodeStartedDoesNotMakeAnotherNodeOffTheLan()
+    {
+        await TwoFlights();
+        var log = new StringWriter();
+        _flights.Error = log;
+        // Silent from the start, so it has never given its name: the node waited for cannot be told from it, and is not called off the LAN.
+        Peer("DE2").Unreachable = true;
+        _state.PutFlight(F("TIA2") with { State = FlightState.Held, PeerConnections = [new PeerConnection { Code = "SE900", Node = "SE9", Since = DateTimeOffset.UtcNow }] });
+
+        (await _flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+
+        var wait = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        wait.Note.ShouldBe("SE9 was not among the nodes reached");
+        wait.Note.ShouldNotContain("LAN");
+        wait.UnreachableSince.ShouldBeNull();
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        log.ToString().ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AKnownPeerThatStopsAnsweringKeepsTheNotOnTheLanWordingAmongOtherSilentPeersAndIsLoggedOnce()
+    {
+        await TwoFlights();
+        var log = new StringWriter();
+        _flights.Error = log;
+        var de1 = Peer("DE1", Theirs("PIL294", 294));
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+        Peer("DE2").Unreachable = true;
+
+        de1.Unreachable = true;
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+        var first = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        var since = first.UnreachableSince.ShouldNotBeNull();
+        first.Note.ShouldStartWith($"DE1 is not on the LAN since {since.ToLocalTime():HH:mm}");
+
+        // The since-time and the single log line are kept over later failing looks; the log names DE1's own reason, not DE2's.
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+        F("TIA2").PeerConnections.ShouldHaveSingleItem().UnreachableSince.ShouldBe(since);
+        var lines = log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines.ShouldHaveSingleItem().ShouldContain("DE1 could not be asked for PIL294: de1.local:47731: it did not answer");
+        lines[0].ShouldNotContain("de2.local");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWaitHeldAsUnreachableBeforeARestartStaysSoWhileASilentPeerCannotBeNamed()
+    {
+        await TwoFlights();
+        var peer = Peer("DE1", Theirs("PIL294", 294));
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+        peer.Unreachable = true;
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+        var since = F("TIA2").PeerConnections.ShouldHaveSingleItem().UnreachableSince.ShouldNotBeNull();
+
+        // A node that has just started knows no peer's name: the look that cannot ask DE1 leaves the earlier verdict as it was.
+        var restarted = new FlightCommander(_state, new Planes(new GitCli()), TimeProvider.System, null, null) { Machine = "DU1", Fleet = _fleet };
+        (await restarted.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        var wait = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        wait.UnreachableSince.ShouldBe(since);
+        wait.Note.ShouldStartWith("DE1 is not on the LAN since ");
+
+        // Answering names it again, and the wait is judged by name from then on.
+        peer.Unreachable = false;
+        await restarted.LookAtPeerConnectionsAsync(Ct);
+        var answered = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        answered.UnreachableSince.ShouldBeNull();
+        answered.Note.ShouldBeNull();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task APeerThatListsNoSuchFlightAnymoreKeepsItHeldAndSaysSo()
