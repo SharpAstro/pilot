@@ -64,9 +64,14 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         _github.Issues[3] = "Something else entirely";
         _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
         _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
 
         (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeTrue();
 
+        _checks.Runs.Count.ShouldBe(3);
+        _checks.Runs[2].Command.ShouldContain("--filter 'FullyQualifiedName~BarTests.Breaks'");
+        _checks.Runs[2].Cwd.ShouldNotBe(_state.Flights().Single().Worktree, "the base run is in its own worktree at the base");
+        Directory.Exists(_checks.Runs[2].Cwd).ShouldBeFalse("the base's worktree is removed after");
         var filed = _github.IssuesCreated.ShouldHaveSingleItem();
         filed.Title.ShouldContain("BarTests.Breaks");
         filed.Title.ShouldContain("outside the flight's change");
@@ -75,6 +80,53 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         filed.Body.ShouldContain("boom");
         L("parser").State.ShouldBe(LegState.Done);
         L("parser").Report.ShouldBe("parsed\nnot this flight's: BarTests.Breaks (#4)");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntouchedClassWithNoIssueThatPassesOnTheBaseFailsTheLeg()
+    {
+        await Flying();
+        _checks.Script.Enqueue(new CheckRun(1, Failing("Pilot.Tests.BarTests.Breaks")));
+        _checks.Script.Enqueue(new CheckRun(0, "all green"));
+        _checks.Script.Enqueue(new CheckRun(0, "all green on the base"));
+
+        var finish = await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed");
+
+        finish.Ok.ShouldBeFalse();
+        finish.Error.ShouldNotBeNull();
+        finish.Error.ShouldContain("not shown failing on the base");
+        L("parser").State.ShouldBe(LegState.Flying);
+        _checks.Runs.Count.ShouldBe(3);
+        _github.IssuesCreated.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFailingInvariantGuardTheDiffDoesNotTouchFailsTheLeg()
+    {
+        var flight = await Flying();
+        // The plane's CardKindTests is an invariant guard: a card kind the change forgot to list breaks it without touching it.
+        var tests = Path.Combine(flight.Worktree, "src", "Pilot.Node.Tests");
+        Directory.CreateDirectory(tests);
+        File.WriteAllText(Path.Combine(tests, "CardKindTests.cs"), """
+            public sealed class CardKindTests
+            {
+                [Fact]
+                [Trait("Category", "Invariant")]
+                public void EveryKindIsListed() { }
+            }
+            """);
+        Git(flight.Worktree, "add", ".");
+        Commit(flight.Worktree, "the guard");
+        _github.Issues[5] = "CardKindTests.EveryKindIsListed fails on a loaded machine";
+        _checks.Next = new CheckRun(1, Failing("Pilot.Node.Tests.CardKindTests.EveryKindIsListed"));
+
+        (await Leg(Verbs.FinishLeg, "flight/TIA1/parser", "done", "parsed")).Ok.ShouldBeFalse();
+
+        L("parser").State.ShouldBe(LegState.Flying);
+        _checks.Runs.Count.ShouldBe(1, "an invariant guard's failure is the flight's at once: no rerun without it");
+        _github.IssuesCreated.ShouldBeEmpty();
     }
 
     [Fact]
@@ -142,12 +194,36 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         UnrelatedFailures.IsFlights("LegFinishingTests.Works", classes, names).ShouldBeTrue();
         UnrelatedFailures.IsFlights("LegCommanderTests.Works", classes, names).ShouldBeTrue();
         UnrelatedFailures.IsFlights("BarTests.Works", classes, names).ShouldBeTrue();
-        UnrelatedFailures.IsFlights("CardCatalogTests.EveryKindIsListed", classes, names).ShouldBeFalse();
+        UnrelatedFailures.IsFlights("EphemerisTests.Loads", classes, names).ShouldBeFalse();
 
-        UnrelatedFailures.Excluding(check, ["CardCatalogTests"]).ShouldBe(
-            "cd src && dotnet build X.slnx -c Release && dotnet test T -c Release --no-build --filter '((FullyQualifiedName~UnrelatedFailureTests|FullyQualifiedName~LegFinish)|Category=Invariant)&FullyQualifiedName!~CardCatalogTests'");
+        UnrelatedFailures.Excluding(check, ["EphemerisTests"]).ShouldBe(
+            "cd src && dotnet build X.slnx -c Release && dotnet test T -c Release --no-build --filter '((FullyQualifiedName~UnrelatedFailureTests|FullyQualifiedName~LegFinish)|Category=Invariant)&FullyQualifiedName!~EphemerisTests'");
         UnrelatedFailures.Excluding("dotnet test T -c Release", ["A", "B"]).ShouldBe("dotnet test --filter 'FullyQualifiedName!~A&FullyQualifiedName!~B' T -c Release");
         UnrelatedFailures.Excluding("dotnet build X", ["A"]).ShouldBeNull();
+
+        UnrelatedFailures.Only(check, "EphemerisTests.Loads").ShouldBe(
+            "cd src && dotnet build X.slnx -c Release && dotnet test T -c Release --no-build --filter 'FullyQualifiedName~EphemerisTests.Loads'");
+        UnrelatedFailures.Only("dotnet build X", "A.B").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ThisReposInvariantGuardsAreFoundAndTheirFailuresAreAlwaysTheFlights()
+    {
+        var src = AppContext.BaseDirectory;
+        while (src is not null && !File.Exists(Path.Combine(src, "src", "Pilot.slnx")))
+        {
+            src = Path.GetDirectoryName(src);
+        }
+        src.ShouldNotBeNull();
+        var invariant = UnrelatedFailures.InvariantClasses(Path.Combine(src, "src"));
+
+        invariant.ShouldContain("CardKindTests");
+        invariant.ShouldContain("SplitFileSizeTests");
+        invariant.ShouldNotContain("InvariantTraitTests", "it names the guards but is not one");
+        invariant.ShouldNotContain("InvariantChecks", "a doc comment quoting the trait is not one");
+        invariant.ShouldNotContain("UnrelatedFailures");
+        UnrelatedFailures.IsInvariant("CardKindTests.EveryKindIsListed", invariant).ShouldBeTrue();
+        UnrelatedFailures.IsInvariant("EphemerisTests.Loads", invariant).ShouldBeFalse();
     }
 
     [Fact]

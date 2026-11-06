@@ -186,6 +186,78 @@ public sealed class PushEarlyTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ADoneWhoseRerunFailsPushesEvenWhileTheBranchIsBehindItsBase()
+    {
+        await Flying();
+        _git.Behind = true;
+
+        (await Finish("done", "parsed")).Ok.ShouldBeFalse();
+
+        L("parser").State.ShouldBe(LegState.Flying);
+        _git.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
+        (L("parser").Report ?? "").ShouldNotContain("not pushed early");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFailedFinishPushesEvenWhileTheBranchIsBehindItsBase()
+    {
+        await Flying();
+        _git.Behind = true;
+
+        await Finish("failed", "ran out of road");
+
+        L("parser").State.ShouldBe(LegState.Failed);
+        _git.Pushes.ShouldHaveSingleItem().ShouldBe(["push", "-u", "origin", "flight/tia1"]);
+        _git.Merges.ShouldBe(0, "a failed finish pushes what the plane holds and merges nothing");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ASecondAttemptInTheRoundSkipsTheMergeAndStillPushesAndItsPassingFinalPushGoesThroughWhileBehind()
+    {
+        var flight = await Flying();
+        _git.Behind = true;
+        // The round after a review's changes: the PR is up, so the passing finish pushes and starts a fresh review.
+        _state.PutFlight(flight with
+        {
+            PullRequest = 7,
+            Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+        });
+
+        (await Finish("done", "first try")).Ok.ShouldBeFalse();
+        (await Finish("done", "second try")).Ok.ShouldBeFalse();
+
+        _git.Merges.ShouldBe(1);
+        _git.Pushes.Count.ShouldBe(2,"the attempt whose merge was skipped pushes its commits all the same");
+
+        // The round's last attempt passes: its push after the leg is recorded done is a brought one, so a base that moved on since
+        // the round's one merge does not refuse it.
+        _checks.Next = new CheckRun(0, "all green");
+        (await Finish("done", "third try")).Ok.ShouldBeTrue();
+
+        L("parser").State.ShouldBe(LegState.Done);
+        _git.Merges.ShouldBe(1);
+        _git.Pushes.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFailedFinishOfAPlaneWithNothingPastItsBasePushesNothing()
+    {
+        (await _flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(Repo), Args = ["1", "Planets"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        (await Leg(Verbs.PlanLeg, "flight/tia1", "name=parser", "goal=Parse", "done-when=It parses", $"check={Check}")).Ok.ShouldBeTrue();
+        await Leg(Verbs.StartLeg, "flight/TIA1/parser");
+
+        await Finish("failed", "no ephemeris here");
+
+        L("parser").State.ShouldBe(LegState.Failed);
+        _git.Pushes.ShouldBeEmpty();
+        L("parser").Report.ShouldBe("no ephemeris here");
+    }
+
+    [Fact]
     public void TheWorkerBriefSaysToMergeTheBaseOnceBeforeTheLastCheck()
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "src", "Pilot.Node", "Flights", "Briefs.Worker.cs"));

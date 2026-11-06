@@ -34,9 +34,10 @@ public static class StaleLegs
     /// <summary>
     /// The table of a leg's check jobs, oldest first, one row each: id, start, duration, result, and the failing tests, each marked
     /// <c>the flight's</c> or <c>not this flight's</c> by <see cref="UnrelatedFailures"/>. <paramref name="changed"/> is the flight's
-    /// changed files (null when they could not be read, so a failure is then the flight's, as it is for the finish).
+    /// changed files (null when they could not be read, so a failure is then the flight's, as it is for the finish). With
+    /// <paramref name="readLogs"/> false nothing is read from disk (the stale reading is pure), so a job's failure is its first failed test.
     /// </summary>
-    public static string Table(IEnumerable<JobRow> jobs, IReadOnlyList<string>? changed, string check)
+    public static string Table(IEnumerable<JobRow> jobs, IReadOnlyList<string>? changed, string check, bool readLogs = true)
     {
         var classes = changed is null ? null : UnrelatedFailures.ClassesOf(changed);
         var names = UnrelatedFailures.FilterNames(check);
@@ -52,12 +53,12 @@ public static class StaleLegs
                 JobState.Cancelled => "cancelled",
                 _ => job.State.ToString().ToLowerInvariant(),
             };
-            text.Append(string.Create(inv, $"{job.Id} | {job.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm} | {duration} | {result} | {Failed(job, classes, names)}\n"));
+            text.Append(string.Create(inv, $"{job.Id} | {job.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm} | {duration} | {result} | {Failed(job, classes, names, readLogs)}\n"));
         }
         return text.ToString().TrimEnd();
     }
 
-    private static string Failed(JobRow job, HashSet<string>? classes, IReadOnlyList<string> names)
+    private static string Failed(JobRow job, HashSet<string>? classes, IReadOnlyList<string> names, bool readLogs)
     {
         if (job.State != JobState.Failed)
         {
@@ -66,7 +67,7 @@ public static class StaleLegs
         var tests = new List<string>();
         try
         {
-            if (File.Exists(job.LogPath) && UnrelatedFailures.FailedTests(File.ReadAllText(job.LogPath)) is { } read)
+            if (readLogs && File.Exists(job.LogPath) && UnrelatedFailures.FailedTests(File.ReadAllText(job.LogPath)) is { } read)
             {
                 tests.AddRange(read);
             }

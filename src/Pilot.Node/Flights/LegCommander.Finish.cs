@@ -227,12 +227,18 @@ public sealed partial class LegCommander
     /// <summary>
     /// Pushes the plane's branch plain after disarming auto-merge, off the lock, so CI and the PR see the work of a finish attempt
     /// whose check failed. No PR is opened and no review started. Returns a note for the leg's report when the push failed
-    /// (empty otherwise); a failed push never changes the outcome.
+    /// (empty otherwise); a failed push never changes the outcome. A plane with no commits past its base has nothing to bring, so
+    /// nothing is pushed.
     /// </summary>
     private async Task<string> PushEarlyAsync(FlightRow flight, CancellationToken cancellationToken)
     {
         try
         {
+            var ahead = await OffLockAsync(null, () => git.RunAsync(["rev-list", "--count", $"{flight.Base}..HEAD"], flight.Worktree, cancellationToken));
+            if (ahead.Ok && ahead.Output.Trim() == "0")
+            {
+                return "";
+            }
             await OffLockAsync(flight, () => PushAsync(flight, cancellationToken, brought: true, early: true));
             return "";
         }

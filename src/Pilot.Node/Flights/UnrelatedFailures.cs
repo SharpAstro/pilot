@@ -8,8 +8,10 @@ namespace Pilot.Node.Flights;
 /// it fails only on tests whose classes the flight's diff and the check's filter do not name, each is matched to an open issue or
 /// gets one filed, and the leg is done with them listed as not this flight's. A class is the flight's when its test file is changed,
 /// when it is the test class of a changed source by <see cref="CheckScope"/>'s rule (<c>Foo.cs</c> and <c>Foo.Bar.cs</c> give
-/// <c>FooTests</c>), or when a name in the check's filter matches it. A build error, a timeout, or a failed run with no failing test
-/// read from its output is not this: it fails as before.
+/// <c>FooTests</c>), when a name in the check's filter matches it, or when it is an invariant guard of the plane (a class in a file
+/// carrying <c>Category=Invariant</c>, which a change breaks without touching it). A failure no open issue names is passed only once
+/// it is shown to fail on the base too. A build error, a timeout, or a failed run with no failing test read from its output is not
+/// this: it fails as before.
 /// </summary>
 public static partial class UnrelatedFailures
 {
@@ -91,6 +93,67 @@ public static partial class UnrelatedFailures
     }
 
     /// <summary>
+    /// The test classes declared in a source file of <paramref name="root"/> that carries the invariant trait
+    /// (<c>[Trait("Category", "Invariant")]</c>, or the category given by a constant such as <c>InvariantChecks.Category</c>). A guard
+    /// like that breaks when a change forgets the thing it guards (a card kind left out of the catalog) without touching the guard's
+    /// class, so its failure is always the flight's. <c>bin</c>, <c>obj</c> and dot folders are skipped; an unreadable file is skipped.
+    /// </summary>
+    public static HashSet<string> InvariantClasses(string root)
+    {
+        var classes = new HashSet<string>(StringComparer.Ordinal);
+        if (!Directory.Exists(root))
+        {
+            return classes;
+        }
+        var pending = new Stack<string>([root]);
+        while (pending.Count > 0)
+        {
+            var folder = pending.Pop();
+            try
+            {
+                foreach (var sub in Directory.EnumerateDirectories(folder))
+                {
+                    var name = Path.GetFileName(sub);
+                    if (!name.StartsWith('.') && name is not ("bin" or "obj" or "node_modules"))
+                    {
+                        pending.Push(sub);
+                    }
+                }
+                foreach (var file in Directory.EnumerateFiles(folder, "*.cs"))
+                {
+                    var text = File.ReadAllText(file);
+                    if (InvariantTrait().IsMatch(text))
+                    {
+                        foreach (Match m in ClassName().Matches(text))
+                        {
+                            classes.Add(m.Groups["name"].Value);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+        return classes;
+    }
+
+    /// <summary>Whether a failed test (<c>Class.Method</c>, the class possibly nested as <c>Outer+Inner</c>) is in one of <paramref name="invariant"/>.</summary>
+    public static bool IsInvariant(string test, ISet<string> invariant)
+    {
+        var cls = ClassOf(test);
+        return invariant.Contains(cls) || cls.Split('+', '.').Any(invariant.Contains);
+    }
+
+    /// <summary>
+    /// The check with each <c>dotnet test</c> segment told to run only <paramref name="test"/> (<c>Class.Method</c>): its filter becomes
+    /// <c>'FullyQualifiedName~Class.Method'</c>. The run on the base that shows a failure is not the flight's. Null when no segment could
+    /// be rewritten.
+    /// </summary>
+    public static string? Only(string check, string test) =>
+        test.Contains('\'') ? null : Refilter(check, _ => $"FullyQualifiedName~{test}");
+
+    /// <summary>
     /// The check with each <c>dotnet test</c> segment told to leave out <paramref name="classes"/>: its filter becomes
     /// <c>'(&lt;expr&gt;)&amp;FullyQualifiedName!~A&amp;...'</c>, or a segment with none gets <c>--filter 'FullyQualifiedName!~A&amp;...'</c>.
     /// Null when no segment could be rewritten (a filter holding a single quote, or no <c>dotnet test</c> at all).
@@ -102,6 +165,12 @@ public static partial class UnrelatedFailures
             return check;
         }
         var without = string.Join('&', classes.Order(StringComparer.Ordinal).Select(c => "FullyQualifiedName!~" + c));
+        return Refilter(check, expression => expression is null ? without : $"({expression})&{without}");
+    }
+
+    // Each dotnet test segment's filter replaced by what `filter` makes of it (null: the segment had none); null when none changed.
+    private static string? Refilter(string check, Func<string?, string> filter)
+    {
         var result = check;
         var cursor = 0;
         var changed = false;
@@ -112,7 +181,7 @@ public static partial class UnrelatedFailures
             {
                 continue;
             }
-            var rewritten = Exclude(segment, without);
+            var rewritten = Rewrite(segment, filter);
             changed |= rewritten != segment;
             result = string.Concat(result.AsSpan(0, at), rewritten, result.AsSpan(at + segment.Length));
             cursor = at + rewritten.Length;
@@ -191,7 +260,7 @@ public static partial class UnrelatedFailures
             : -1;
     }
 
-    private static string Exclude(string segment, string without)
+    private static string Rewrite(string segment, Func<string?, string> filter)
     {
         var tokens = CheckPaths.Tokenize(segment);
         var start = DotnetTest(tokens);
@@ -235,14 +304,21 @@ public static partial class UnrelatedFailures
             {
                 return segment;
             }
-            var replacement = $"{prefix}'({expression})&{without}'";
+            var replacement = $"{prefix}'{filter(expression)}'";
             return string.Concat(segment.AsSpan(0, where[index]), replacement, segment.AsSpan(where[index] + tokens[index].Raw.Length));
         }
         // No filter: one goes in right after "dotnet test".
         var after = where[start + 1] + tokens[start + 1].Raw.Length;
-        return string.Concat(segment.AsSpan(0, after), $" --filter '{without}'", segment.AsSpan(after));
+        return string.Concat(segment.AsSpan(0, after), $" --filter '{filter(null)}'", segment.AsSpan(after));
     }
 
     [GeneratedRegex(@"(?<key>FullyQualifiedName|ClassName|DisplayName|Name)\s*(?<op>!?[~=])\s*(?<value>[^|&()'""]+)")]
     private static partial Regex FilterTerm();
+
+    // An attribute line (not a doc comment that quotes one) carrying the trait.
+    [GeneratedRegex(@"(?m)^[ \t]*\[[^\n]*?Trait\(\s*""Category""\s*,\s*(?:""Invariant""|[\w.]*Invariant[\w.]*)\s*\)")]
+    private static partial Regex InvariantTrait();
+
+    [GeneratedRegex(@"\bclass\s+(?<name>\w+)")]
+    private static partial Regex ClassName();
 }

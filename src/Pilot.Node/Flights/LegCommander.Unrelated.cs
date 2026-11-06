@@ -26,12 +26,14 @@ public sealed partial class LegCommander
         }
         var classes = UnrelatedFailures.ClassesOf(diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         var names = UnrelatedFailures.FilterNames(check);
+        var invariant = await OffLockAsync(null, () => Task.Run(() => UnrelatedFailures.InvariantClasses(flight.Worktree), cancellationToken));
 
         var found = new List<(string Test, string? Job, string Output)>();
         var current = run;
         for (var rerun = 0; ; rerun++)
         {
-            if (failed.Any(t => UnrelatedFailures.IsFlights(t, classes, names)))
+            // An invariant guard fails when the change forgets what it guards, without touching the guard: always the flight's.
+            if (failed.Any(t => UnrelatedFailures.IsFlights(t, classes, names) || UnrelatedFailures.IsInvariant(t, invariant)))
             {
                 return (current, null);
             }
@@ -65,6 +67,12 @@ public sealed partial class LegCommander
         try
         {
             var open = await OffLockAsync(null, () => github.IssuesAsync(flight.RepoPath, cancellationToken));
+            // A failure no open issue names is someone else's only when it fails on the base too; else the leg fails as before.
+            var unknown = found.Where(f => UnrelatedFailures.Matching(open, f.Test) is null).Select(f => f.Test).ToList();
+            if (unknown.Count > 0 && await OffLockAsync(null, () => PassingOnBaseAsync(flight, check, unknown, cancellationToken)) is { } passing)
+            {
+                return (run with { Tail = $"{run.Tail}\nIt failed only on tests outside the flight's change, but {passing}, so it is taken as the flight's." }, null);
+            }
             foreach (var (test, job, output) in found)
             {
                 var issue = UnrelatedFailures.Matching(open, test)
@@ -78,6 +86,46 @@ public sealed partial class LegCommander
             return (run with { Tail = $"{run.Tail}\nIt failed only on tests outside the flight's change, but GitHub could not be asked for their issues: {ex.Message}" }, null);
         }
         return (current, UnrelatedFailures.ReportLine(listed));
+    }
+
+    /// <summary>
+    /// Runs the check for each of <paramref name="tests"/> alone in a throwaway detached worktree at the flight's base, which is removed
+    /// whatever happens. Null when every one fails there (so it is not the flight's); else what was not shown, in words.
+    /// </summary>
+    private async Task<string?> PassingOnBaseAsync(FlightRow flight, string check, IReadOnlyList<string> tests, CancellationToken cancellationToken)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "pilot-base-check-" + Guid.NewGuid().ToString("N")[..12]);
+        var added = false;
+        try
+        {
+            var add = await git.RunAsync(["worktree", "add", "--detach", folder, flight.Base], flight.Worktree, cancellationToken);
+            if (!add.Ok)
+            {
+                return $"the base {flight.Base} could not be checked out to try it there ({add.Why})";
+            }
+            added = true;
+            foreach (var test in tests)
+            {
+                if (UnrelatedFailures.Only(check, test) is not { } only)
+                {
+                    return $"{test} could not be run alone on the base";
+                }
+                var onBase = await checks.RunAsync(only, folder, cancellationToken, flight.Code);
+                if (onBase.Passed || UnrelatedFailures.FailedTests(onBase.Tail) is not { } failed || !failed.Contains(test))
+                {
+                    return $"{test} was not shown failing on the base {flight.Base}";
+                }
+            }
+            return null;
+        }
+        finally
+        {
+            if (added)
+            {
+                await git.RunAsync(["worktree", "remove", "--force", folder], flight.Worktree, CancellationToken.None);
+            }
+            await git.RunAsync(["worktree", "prune"], flight.Worktree, CancellationToken.None);
+        }
     }
 
     /// <summary>The id of the leg's latest check job, for an issue to name; null when its checks ran as no job (a test's runner).</summary>
