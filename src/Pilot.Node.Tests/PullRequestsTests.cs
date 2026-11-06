@@ -378,6 +378,23 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void MergeKeepsTheNewestReadStampOfEachRepoAndTheStampsSurviveTheWire()
+    {
+        var old = new PullRequestRepoRead("SharpAstro/pilot", Noon - TimeSpan.FromMinutes(5), "A", false);
+        var newer = new PullRequestRepoRead("sharpastro/pilot", Noon, "B", true);
+        var other = new PullRequestRepoRead("SharpAstro/other", Noon, "A");
+        var mine = new PullRequestsRow { ReadAt = Noon, RepoReads = [old, other] };
+        var theirs = new PullRequestsRow { ReadAt = Noon, RepoReads = [newer] };
+        var merged = PullRequestsRow.Merge([mine, theirs])!;
+        merged.RepoReads.Length.ShouldBe(2);
+        merged.RepoReads.Single(r => r.Repo.EndsWith("/pilot", StringComparison.OrdinalIgnoreCase)).By.ShouldBe("B");
+        // A row without the list (an older node) reads as none.
+        JsonSerializer.Deserialize("{\"readAt\":\"2026-10-28T12:00:00+00:00\"}", PilotJsonContext.Default.PullRequestsRow)!.RepoReads.ShouldBeEmpty();
+        var back = JsonSerializer.Deserialize(JsonSerializer.Serialize(mine, PilotJsonContext.Default.PullRequestsRow), PilotJsonContext.Default.PullRequestsRow)!;
+        back.RepoReads.ShouldBe(mine.RepoReads);
+    }
+
+    [Fact]
     public void RowsOfSeveralNodesMergeIntoOneWithTheNewestReadOfEachPullRequestAndTheFlightEitherKnew()
     {
         var mine = new PullRequestsRow
