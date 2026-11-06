@@ -728,7 +728,30 @@ internal sealed partial class FlightsView<TSurface>
                 return _detailScroll.AtomOffset != before;
             }
         }
-        return false;
+        return StepTowardLeg(leg, arranged);
+    }
+
+    // The layout arranges only what lies within a viewport or two of the view (DIR.Lib 11.46 on), so a leg far down a long page has no
+    // arranged block to measure. Step the page one view toward it, by where the legs that are arranged stand in the page's order, and
+    // paint again: the next frame arranges it, or steps again. Stops where the page ends, so a leg that cannot be found never loops.
+    private bool StepTowardLeg(string leg, ImmutableArray<Layout.ArrangedNode<float>> arranged)
+    {
+        var order = _legBlocks.Keys.ToList();
+        var wanted = order.IndexOf(leg);
+        var seen = order.Select((name, index) => (name, index)).Where(l => arranged.Any(a => ReferenceEquals(a.Node, _legBlocks[l.name]))).Select(l => l.index).ToList();
+        if (wanted < 0 || seen.Count == 0)
+        {
+            return false;
+        }
+        var before = _detailScroll.AtomOffset;
+        var step = MathF.Max(1f, _detailScroll.Viewport.Height);
+        _detailScroll.AtomOffset = (int)MathF.Round(_detailScroll.Offset + (seen.Min() > wanted ? -step : step));
+        if (_detailScroll.AtomOffset == before)
+        {
+            _revealLeg = null;
+            return false;
+        }
+        return true;
     }
 
     private const float DetailLabelWidth = 76f;
