@@ -55,7 +55,7 @@ public sealed class StaleLegTests
         await _watch.LookAsync(Ct);
 
         var card = Stale().ShouldHaveSingleItem();
-        (card.Bin, card.Subject).ShouldBe((CardBin.Handled, "flight/TIA1/parser"));
+        (card.Kind, card.Bin, card.Subject).ShouldBe((LegWatch.LegStale, CardBin.Handled, "flight/TIA1/parser"));
         card.Title.ShouldContain("go-around 3");
         var rows = card.Detail!.Split('\n');
         rows.Length.ShouldBe(4);
