@@ -11,6 +11,7 @@ namespace Pilot.Gui.Tests;
 
 public sealed class TmpDiagTests
 {
+    private readonly List<string> Out = [];
     [Theory]
     [InlineData(1300f, 1.5f)]
     [InlineData(1300f, 1f)]
@@ -36,7 +37,7 @@ public sealed class TmpDiagTests
             foreach (var name in new[] { "_flightHeadScroll", "_detailScroll", "_detailColumnsScroll" })
             {
                 var c = (ListScrollController)typeof(FlightsView<RgbaImage>).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flights)!;
-                System.Console.Error.WriteLine($"DIAG {width}x{dpi} {when} {name}: viewport={c.Viewport} max={c.MaxOffset} off={c.Offset} crossContent={c.ContentCrossExtentPx}");
+                Out.Add($"DIAG {width}x{dpi} {when} {name}: viewport={c.Viewport} max={c.MaxOffset} off={c.Offset} crossContent={c.ContentCrossExtentPx}");
             }
         }
 
@@ -46,9 +47,9 @@ public sealed class TmpDiagTests
         var arranged = Layout.Engine.Arrange(flights.Tree(screen), window, pixels);
         Dump("end");
         var last = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("LASTWORD", StringComparison.Ordinal)).Bounds;
-        System.Console.Error.WriteLine($"DIAG last={last}");
+        Out.Add($"DIAG last={last}");
         var l0 = first.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("LASTWORD", StringComparison.Ordinal)).Bounds;
-        System.Console.Error.WriteLine($"DIAG lastAtTop={l0}");
-        Assert.Fail("diag");
+        Out.Add($"DIAG lastAtTop={l0}");
+        Assert.Fail("diag | " + string.Join(" | ", Out));
     }
 }
