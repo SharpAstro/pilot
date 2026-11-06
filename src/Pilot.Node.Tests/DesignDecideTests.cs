@@ -277,10 +277,14 @@ public sealed class DesignDecideTests : PrFixTestsBase
     public async Task AFixerThatCouldNotStartLeavesTheDecidedAnswerStoredAndAFailedStartCardNotTheDesignCard()
     {
         var row = await Started();
-        // The clone's origin goes dead, so the start fails once the answer is stored.
-        PrOrigins.Git(WidgetClone, "config", "remote.origin.url", Path.Combine(Path.GetTempPath(), "pilot-no-such-origin-" + Guid.NewGuid().ToString("N")));
+        // The reviewer is up; the fixer's start is the one refused, once the answer is stored.
+        _workers.Fail = new FlightException("claude refused to start");
 
         await Verdict(row, "changes", DecidableDesign.OneReaches);
+        for (var i = 0; i < 500 && _reviews.Of(Seven) is { PostedId: not null, State: not PrReviewState.Closed }; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
 
         Fixers.ShouldBeEmpty();
         Row.DesignAnswer.ShouldBe(DecidableDesign.Answer);
@@ -288,10 +292,19 @@ public sealed class DesignDecideTests : PrFixTestsBase
         var failed = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixFailedKind).ShouldHaveSingleItem();
         failed.Bin.ShouldBe(CardBin.ForYou);
         failed.Detail.ShouldNotBeNull().ShouldContain(DecidableDesign.Answer);
-        failed.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.FixPr);
+        var choice = failed.Choices.ShouldHaveSingleItem();
+        choice.Verb.ShouldBe(Verbs.FixPr);
         // Recorded once the start was not refused, so nothing is recorded or posted for a start that failed.
         _state.Decisions(kind: DecisionKinds.Design).ShouldBeEmpty();
         _github.IssueComments.ShouldBeEmpty();
+
+        // The card's choice starts the fixer with the stored answer, without asking again.
+        _workers.Fail = null;
+        (await Run(choice.Verb, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain(DecidableDesign.Answer);
+        _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixFailedKind);
     }
 }
 
