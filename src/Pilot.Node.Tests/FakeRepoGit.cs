@@ -212,32 +212,32 @@ internal sealed class FakeRepoGit : IGit
         {
             throw new NotSupportedException("^{tree}");
         }
-        var steps = 0;
-        var parent = false;
-        // A trailing ~N or ^ walks first parents.
+        // Trailing ^, ^N and ~N walk parents (^N is the Nth parent, ~N is N first parents), applied left to right.
+        var ops = new List<(char Kind, int N)>();
         while (true)
         {
-            if (rev.EndsWith('^') && !rev.EndsWith("^{", StringComparison.Ordinal))
+            var cut = rev.LastIndexOfAny(['^', '~']);
+            if (cut <= 0 || !rev[(cut + 1)..].All(char.IsDigit))
             {
-                rev = rev[..^1];
-                steps++;
-                parent = true;
-                continue;
+                break;
             }
-            var tilde = rev.LastIndexOf('~');
-            if (tilde > 0 && int.TryParse(rev[(tilde + 1)..], out var n))
-            {
-                rev = rev[..tilde];
-                steps += n;
-                parent = true;
-                continue;
-            }
-            break;
+            var digits = rev[(cut + 1)..];
+            ops.Add((rev[cut], digits.Length == 0 ? 1 : int.Parse(digits)));
+            rev = rev[..cut];
         }
         var id = ResolveName(rev, wt);
-        for (var i = 0; id is not null && parent && i < steps; i++)
+        for (var k = ops.Count - 1; k >= 0 && id is not null; k--)
         {
-            id = _commits[id].Parents.Count > 0 ? _commits[id].Parents[0] : null;
+            var (kind, n) = ops[k];
+            if (kind == '^')
+            {
+                id = n == 0 ? id : _commits[id].Parents.Count >= n ? _commits[id].Parents[n - 1] : null;
+                continue;
+            }
+            for (var i = 0; id is not null && i < n; i++)
+            {
+                id = _commits[id].Parents.Count > 0 ? _commits[id].Parents[0] : null;
+            }
         }
         return id;
     }

@@ -1706,6 +1706,8 @@ public sealed class ReviewTests4 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APushStillBehindItsBaseAfterTheUpdateIsRefused()
     {
+        // A post-merge hook is git's own.
+        RealGit();
         var flight = await NewFlight("39", "parser");
         await Fly(flight, "parser");
         MainMoves();
