@@ -1063,7 +1063,7 @@ public sealed class PrReviewCliTests : IAsyncLifetime
         Directory.Exists(review.Worktree).ShouldBeTrue();
 
         // The PR is open, so the node posts it at once: nothing rings, a Handled card says what went out.
-        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted[0].Payload);
+        var (number, payload) = (_node.GitHub.Posted.ShouldHaveSingleItem().Number, _node.GitHub.Posted.ToArray()[0].Payload);
         number.ShouldBe(9);
         payload.ShouldContain("README.md:1");
         _node.State.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.ReadyKind);
