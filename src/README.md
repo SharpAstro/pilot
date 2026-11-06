@@ -1090,12 +1090,24 @@ Control on if it had it.
 pilot tell <text…>                             # to the watchtower, whichever session it is now
 pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
+pilot order <text…>                            # a standing order the node keeps; prints its id (o1)
+pilot orders                                   # the orders that stand now, with their ids
+pilot order done <id>                          # retire one
 pilot ring <subject> <title> [--detail …]      # a card that needs the controller
 pilot flag <subject> <title> [--detail …]      # a card for them, no push
 pilot handled <subject> <line>                 # a Handled line
 ```
 
 `pilot-node --no-watchtower` keeps none.
+
+**Standing orders** (#782) are what the controller tells the watchtower that must outlast it: a hold on a flight or repo, a
+scope rule. The node keeps each as a note with an id (`order node <text>`, kept like any note, so it survives a node restart),
+and every fresh watchtower's brief lists the live ones under `## Standing orders`, ahead of `## Where things stand`, with a line
+telling it to record any such order with `pilot order` and to read them before acting. `pilot order done <id>` retires one
+(`order-done node <id>`); a retired order is gone from the next brief, and its id is never reused. The watchtower and the person
+may both use the three commands (a flight's own planner, worker or reviewer may not: they read repo and PR content), and the MCP tools follow (`order`, `order_done`, `orders`). Orders are not part of the brief's
+fingerprint, so giving one never replaces the live watchtower. The wire adds the optional `Id` and `RetiredAt` to a note and the
+verbs `order`, `order-done` and `orders`; an older client ignores both and shows a retired order as its own note, and an older node answers "knows no verb order". An order whose text starts with the word "done" is quoted (`pilot order "done with TIA2000"`), or it is read as retiring an id. The brief lists each order with who gave it, capped at 500 characters one, 20 and 4000 in all.
 
 **`tell card/<id> <words…>`** (`pilot tell --card <id> <words…>`, #400) says to the watchtower, as the person's message, the
 card's whole context and then the words, so it can act without looking anything up. The node refuses an unknown or closed card.

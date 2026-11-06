@@ -192,6 +192,7 @@ internal static class CardKindCatalog
         new("removal-held", "ForYou", ["Flights/RemovalQueue.cs"], "RemovalQueueTests.AFolderHeldPastThreeStartsRingsOnceNamingTheHolderAndTheCardClosesOnceItIsReleased"),
         new("job-idle", "ForYou", ["Flights/JobRunner.cs"], "JobTests.ANearIdleJobWithAnotherQueuedBehindItRaisesOneCardNamingJobOwnerAndWaiter"),
         new("bench-result", "ForYou", ["Flights/BenchRun.cs"], "BenchRunTests.ASingleRefRunsOnceInADetachedShortNamedWorktreeAndTheCardHoldsItsTableUnderItsRefAndSha"),
+        new("job-told-unanswered", "Ring", ["Flights/JobRunner.cs"], "JobRetellTests.IdleAndSilentIsRetoldOnceThenRings"),
         new("job-bench-busy", "Ring", ["Flights/JobRunner.cs"], "BenchSlotTests.ABenchWaitingPastTheBoundForABusyCpuRingsOnceNamingTheProcessAndClosesWhenItStarts"),
         new("job-untold", "Ring", ["Flights/JobRunner.cs"], "JobTests.AnOwnerThatCannotBeToldRings"),
         new("queued", "Handled", ["Flights/NamedLock.cs"], "LockWaitTests.ALegCommandWaitingPastFiveSecondsIsAnsweredWithWhatHoldsTheLockAndRunsOnceItFrees"),
