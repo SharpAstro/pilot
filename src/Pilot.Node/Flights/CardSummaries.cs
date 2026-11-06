@@ -195,7 +195,7 @@ public static partial class CardSummaries
         first = first.ReplaceLineEndings(" ");
         first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
-        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits only while the watchtower is working on them in the plane; if it does not take them in a few minutes the flight merges with them. Nothing for you to do.";
+        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. It merges unless the watchtower takes them; nothing for you to do.";
     }
 
     /// <summary>The sentence of a review-notes card whose hold the watchtower did not take: the flight merges with the notes, which stay for a follow-up.</summary>
