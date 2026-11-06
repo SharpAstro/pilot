@@ -149,6 +149,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         var time = Get<TimeProvider>();
         var began = time.GetUtcNow();
         var mark = new Mark();
+        // The command's own flow is the foreground of the node's process starts (ProcessGate): a git, gh or claude start made
+        // anywhere in what it awaits goes straight to Process.Start, never behind the background readers' starts. An explicit
+        // scope, not a bare flag: it is switched off when the command ends (a Later: when it settles), so a Task.Run or a
+        // fire-and-forget call that outlives the command finds it off and is background, instead of inheriting the command's
+        // priority for as long as it runs. Work started while the command still runs is handed off with ProcessGate.Run or
+        // ProcessGate.Background (the background readers and the advances a create or a receive starts off its reply).
+        var foreground = ProcessGate.Foreground();
         CommandResult result;
         try
         {
@@ -156,15 +163,17 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         }
         catch
         {
+            foreground.Dispose();
             Note(command, began, mark.HandlerStarted, time.GetUtcNow());
             throw;
         }
         if (result.Later is { } later)
         {
-            _ = NoteWhenSettledAsync(command, began, time.GetUtcNow(), later);
+            _ = NoteWhenSettledAsync(command, began, time.GetUtcNow(), later, foreground);
         }
         else
         {
+            foreground.Dispose();
             Note(command, began, mark.HandlerStarted, time.GetUtcNow());
         }
         return result;
@@ -176,7 +185,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         Get<CommandTimings>().Record(command.Verb, command.Target, command.Who, started - began, ended - started);
     }
 
-    private async Task NoteWhenSettledAsync(CommandRequest command, DateTimeOffset began, DateTimeOffset replied, Task<CommandResult> later)
+    // The queued command is still the person's: its flow keeps the foreground mark until it settles, then the scope ends.
+    private async Task NoteWhenSettledAsync(CommandRequest command, DateTimeOffset began, DateTimeOffset replied, Task<CommandResult> later, IDisposable foreground)
     {
         try
         {
@@ -186,6 +196,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             // Its failure is told elsewhere; it still took the time.
         }
+        foreground.Dispose();
         Note(command, began, replied, Get<TimeProvider>().GetUtcNow());
     }
 
@@ -279,7 +290,11 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             var record = !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss);
             if (result.Later is { } later)
             {
-                _ = HandledWhenDoneAsync(command, later, record);
+                // Not started by the person's command: what it does once the queued one has run is the node's own.
+                using (ProcessGate.Background())
+                {
+                    _ = HandledWhenDoneAsync(command, later, record);
+                }
             }
             else
             {

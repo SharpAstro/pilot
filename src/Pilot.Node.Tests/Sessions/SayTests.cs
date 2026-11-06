@@ -86,14 +86,21 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         return ResumesAs ?? Copy;
     }
 
-    public Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
+    /// <summary>Run inside a relay, in the flow of the command that sent it: a test starts a process there, as the real delivery does.</summary>
+    public Func<Task>? DuringRelay { get; set; }
+
+    public async Task<string> RelayAsync(RelayRequest request, CancellationToken cancellationToken)
     {
         Record($"relay {request.Name}");
         lock (_calls)
         {
             Relays.Add(request);
         }
-        return RelayFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult(RelayRoute);
+        if (DuringRelay is { } during)
+        {
+            await during();
+        }
+        return RelayFailure is { } failure ? throw failure : RelayRoute;
     }
 
     private void Record(string call)

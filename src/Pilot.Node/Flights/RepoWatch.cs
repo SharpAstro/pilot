@@ -43,7 +43,8 @@ public sealed class RepoWatch(NodeState state, RepoCatalog repos, Planes planes,
         Task<RepoStatus[]> run;
         lock (_gate)
         {
-            run = _running ??= Task.Run(ReadAllAsync);
+            // A background read even when a command asked for it: its git starts share the budget (ProcessGate), never the command's priority.
+            run = _running ??= ProcessGate.Run(ReadAllAsync);
         }
         return run.WaitAsync(cancellationToken);
     }

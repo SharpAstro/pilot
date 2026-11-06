@@ -127,7 +127,7 @@ public static class ClaudeCli
         var exe = FindOnPath() ?? throw new FileNotFoundException("claude is not on PATH");
         var start = StartInfo(exe, args, cwd);
 
-        using var process = NodeTraffic.Shared.StartProcess("claude", start);
+        using var process = await NodeTraffic.Shared.StartProcessAsync("claude", start, cancellationToken);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(timeout);
         var output = process.StandardOutput.ReadToEndAsync(limit.Token);

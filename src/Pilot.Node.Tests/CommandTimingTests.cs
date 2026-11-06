@@ -104,7 +104,7 @@ public sealed class CommandTimingTests
     }
 
     [Fact]
-    public void AStartOverASecondIsLoggedAndAFastOneIsNot()
+    public async Task AStartOverASecondIsLoggedAndAFastOneIsNot()
     {
         var clock = new Clock(new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.Zero));
         var log = new StringWriter();
@@ -115,11 +115,11 @@ public sealed class CommandTimingTests
         var start = new ProcessStartInfo("git");
 
         wait = TimeSpan.FromMilliseconds(200);
-        traffic.StartProcess("git", start).Dispose();
+        (await traffic.StartProcessAsync("git", start, Ct)).Dispose();
         log.ToString().ShouldBeEmpty();
 
         wait = TimeSpan.FromMilliseconds(2500);
-        traffic.StartProcess("claude", start).Dispose();
+        (await traffic.StartProcessAsync("claude", start, Ct)).Dispose();
         log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).ShouldHaveSingleItem().ShouldContain("timing: process start claude waited 2500 ms");
 
         // A claude start is not a git or gh run.

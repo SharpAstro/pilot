@@ -169,7 +169,7 @@ public sealed class GitCli(NodeTraffic? traffic = null, TimeSpan? budget = null)
             start.Environment["GIT_LFS_SKIP_PUSH"] = "1";
         }
 
-        var (process, counted) = _traffic.Start("git", start, UsesNetwork(args));
+        var (process, counted) = await _traffic.StartAsync("git", start, UsesNetwork(args), cancellationToken);
         using var _ = process;
         using var __ = counted;
         // Git never waits on a handle it inherited: its stdin is closed at once.

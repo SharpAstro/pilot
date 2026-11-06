@@ -15,7 +15,7 @@ namespace Pilot.Node;
 /// <item>The node's own HTTP (NuGet feed, Shortcut tracker), by <see cref="CountingHandler"/>: the request line and headers
 /// as written plus the body length, and the response status line, headers and body. A response that was compressed on the
 /// wire is counted decompressed, so the figure is an upper bound there.</item>
-/// <item>The git and gh children (<see cref="Start"/>), whose traffic no portable per-process counter gives. On Windows
+/// <item>The git and gh children (<see cref="StartAsync"/>), whose traffic no portable per-process counter gives. On Windows
 /// each child is started into an anonymous job object (so its own children, git-remote-https and git-lfs, are in it) and
 /// the job's <c>OtherTransferCount</c> (JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION) is read once the child ended:
 /// socket I/O is counted there as "other" transfer, but so is any other non-read, non-write I/O, so it is an <b>upper
@@ -37,14 +37,21 @@ public sealed class NodeTraffic
     public Func<ProcessStartInfo, Process?> Starter { get; init; } = Process.Start;
 
     /// <summary>
+    /// The budget of background starts, one per node: a start made outside a command takes a slot of it for the
+    /// <see cref="Starter"/> call, a command's own start does not (see <see cref="ProcessGate"/>).
+    /// </summary>
+    public ProcessGate Gate { get; init; } = new();
+
+    /// <summary>
     /// Starts a child of kind <paramref name="tool"/> (<c>git</c>, <c>gh</c> or <c>claude</c>) and logs <c>timing: process start
     /// &lt;tool&gt; waited &lt;n&gt; ms</c> when the start took over <see cref="SlowStart"/>: Process.Start takes a lock that
-    /// every start in the process queues on, so a long wait is the node starving itself, not the tool being slow.
+    /// every start in the process queues on, so a long wait is the node starving itself, not the tool being slow. The wait counts
+    /// from the ask, so a background start's wait for a slot of the <see cref="Gate"/> is in it with the lock's.
     /// </summary>
-    public Process StartProcess(string tool, ProcessStartInfo start)
+    public async Task<Process> StartProcessAsync(string tool, ProcessStartInfo start, CancellationToken cancellationToken = default)
     {
         var began = Time.GetUtcNow();
-        var process = Starter(start) ?? throw new InvalidOperationException($"{tool} did not start");
+        var process = await Gate.StartAsync(() => Starter(start), cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException($"{tool} did not start");
         var waited = Time.GetUtcNow() - began;
         if (waited > SlowStart)
         {
@@ -260,9 +267,9 @@ public sealed class NodeTraffic
     /// With <paramref name="canUseNetwork"/> false (a local git run: status, log, diff) the run is counted but its bytes are
     /// not, since the job's figure is then local file I/O, which would swamp the network share the figure is for.
     /// </summary>
-    public (Process Process, Child Counted) Start(string tool, ProcessStartInfo start, bool canUseNetwork = true)
+    public async Task<(Process Process, Child Counted)> StartAsync(string tool, ProcessStartInfo start, bool canUseNetwork = true, CancellationToken cancellationToken = default)
     {
-        var process = StartProcess(tool, start);
+        var process = await StartProcessAsync(tool, start, cancellationToken).ConfigureAwait(false);
         if (canUseNetwork && tool == "git")
         {
             Interlocked.Increment(ref _networkGitRuns);
