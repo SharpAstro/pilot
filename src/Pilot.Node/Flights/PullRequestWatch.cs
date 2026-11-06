@@ -30,6 +30,13 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>This node's machine name: the <see cref="PullRequestRepoRead.By"/> of each repo it reads.</summary>
+    public string Machine { get; init; } = "";
+
+    /// <summary>The repos (<c>owner/name</c>) a flight in the flying state is in: the ones this node flies in.</summary>
+    public static HashSet<string> FlyingRepos(FlightRow[] flights) =>
+        new(flights.Where(f => f.State == FlightState.Flying).Select(f => RepoCatalog.GitHubOf(Path.Combine(f.RepoPath, ".git"))).OfType<string>(), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Said after each read that asked GitHub: the repos that read answered (a repo whose batch failed or was stopped is not among them) and their open PRs, labels included. Listeners must not block.</summary>
     public event Action<string[], PullRequestRow[]>? Looked;
 
@@ -263,8 +270,14 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             // Not read this time (its batch failed, or the limit stopped it): what was read of it before stands, under the error or note.
             prs.AddRange(heldPrs.Where(p => !read.Contains(p.Repo)));
 
+            // Each repo read now is stamped by this node; one kept from before keeps its old stamp.
+            var flying = FlyingRepos(flights);
+            var stamps = (held?.RepoReads ?? []).Where(s => scope.Contains(s.Repo) && !read.Contains(s.Repo))
+                .Concat(read.Select(r => new PullRequestRepoRead(r, now, Machine, flying.Contains(r))))
+                .OrderBy(s => s.Repo, StringComparer.OrdinalIgnoreCase).ToArray();
             var row = new PullRequestsRow
             {
+                RepoReads = stamps,
                 Orgs = orgs,
                 PullRequests = [.. prs.Select(p => p with { Flight = FlightOf(p, catalog, flights) })],
                 Errors = [.. errors.Distinct()],

@@ -185,6 +185,9 @@ public sealed record PullRequestsRow
     /// <summary>The GitHub login the node reads as (gh's): whose PRs are <see cref="PullRequestRow.Author"/>'s own, for Mine. Null when gh did not say.</summary>
     public string? Viewer { get; init; }
 
+    /// <summary>When each repo was last read and by which node; empty from a node that does not say (an older one). Optional on the wire.</summary>
+    public PullRequestRepoRead[] RepoReads { get; init => field = value ?? []; } = [];
+
     /// <summary>The counts above the list: <c>7 open · 3 ready · 2 checks running · 1 conflicts</c>, a state with none left out.</summary>
     public string Summary() => Counts(PullRequests);
 
@@ -312,9 +315,18 @@ public sealed record PullRequestsRow
             Note = string.Join(" ", read.Select(r => r.Note).OfType<string>().Distinct()) is { Length: > 0 } notes ? notes : null,
             ReadAt = read[^1].ReadAt,
             Viewer = read.Select(r => r.Viewer).FirstOrDefault(v => v is not null),
+            // The newest read of each repo wins.
+            RepoReads = [.. read.SelectMany(r => r.RepoReads).GroupBy(x => x.Repo, StringComparer.OrdinalIgnoreCase).Select(g => g.OrderByDescending(x => x.ReadAt).First())],
         };
     }
 }
+
+/// <summary>When one repo's PRs were last read, and by which node: what lets a peer take that read instead of searching GitHub again.</summary>
+/// <param name="Repo">The repo, <c>owner/name</c>, as GitHub spells it.</param>
+/// <param name="ReadAt">When the node asked GitHub for this repo's PRs.</param>
+/// <param name="By">The reading node's machine name.</param>
+/// <param name="Flying">Whether that node flies a flight in the repo.</param>
+public sealed record PullRequestRepoRead(string Repo, DateTimeOffset ReadAt, string By, bool Flying = false);
 
 /// <summary>The pull requests were read again and differ from the last read, or the last read is a while old.</summary>
 public sealed record PullRequestsChangedEvent : NodeEvent

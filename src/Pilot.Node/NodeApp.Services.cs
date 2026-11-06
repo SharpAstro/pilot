@@ -153,6 +153,7 @@ public static partial class NodeApp
             var watch = new PullRequestWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>())
             {
                 Views = services.GetRequiredService<PageViews>(),
+                Machine = options.Machine,
                 Idle = () => models.PrWatchIdle,
             };
             watch.Error = logWriter;
