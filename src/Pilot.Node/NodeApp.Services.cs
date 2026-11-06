@@ -313,6 +313,11 @@ public static partial class NodeApp
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
                 StopSession = legs.StopSessionAsync,
+                ChangedFiles = async (flight, ct) =>
+                {
+                    var diff = await services.GetRequiredService<IGit>().RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, ct);
+                    return diff.Ok ? diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+                },
                 TellEndedJobs = (owners, ct) => services.GetRequiredService<JobRunner>().TellUntoldOf(owners, ct),
             };
         });
