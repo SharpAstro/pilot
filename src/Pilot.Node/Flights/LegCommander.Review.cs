@@ -148,6 +148,13 @@ public sealed partial class LegCommander
                 {
                     return $"{flight.Code} changed while {reviewer} was being started";
                 }
+                // A fresh review of a head past the reviewed one is a push that ends a hold (a pass kept over a base that only came in
+                // starts no reviewer and keeps it): the hold's leg, or flight pr, is who pushed.
+                var endsHold = EndHoldPastReview(now, reviewedHead, now.Holding?.By is { } leg && leg != "node" ? $"the {leg} leg" : "a push");
+                if (endsHold)
+                {
+                    now = FlightOf(Verbs.FlightTarget(flight.Code));
+                }
                 state.PutFlight(now with
                 {
                     Review = new ReviewRow
@@ -216,6 +223,8 @@ public sealed partial class LegCommander
         var short8 = (string s) => CommitRefs.Short(s);
         state.RaiseCard(CardBin.Handled, "review-kept", Verbs.FlightTarget(flight.Code),
             $"{flight.Code}: review kept at {short8(head)}; it passed at {short8(old)} and the PR's own diff is the same (only the base came in), so no reviewer started");
+        // No fresh review follows, so the hold (if the leg made one its own) is the watchtower's again.
+        HoldForWatchtower(flight.Code, null);
         await _marks.ApplyAsync(flight.Code, cancellationToken);
         return true;
     }
@@ -338,7 +347,10 @@ public sealed partial class LegCommander
             }
             if (notes is not null)
             {
-                RaiseReviewNotes(flight, notes);
+                // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
+                call.Dispose();
+                var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -462,16 +474,17 @@ public sealed partial class LegCommander
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
         var holding = flight.Holding is not null;
+        var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken))
             ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
-            holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {HoldingReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
+            holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
-                + (holding ? " The merge is held until the watchtower clears it or pushes its fixes." : ""),
+                + (holding ? " The merge is held until the watchtower clears it or the fixes are pushed (a new review then gates it)." : ""),
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
-                ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {HoldingReason}. Merge is refused until it is cleared or the fixes are pushed."
+                ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {holdReason}. Merge is refused until it is cleared or the fixes are pushed."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
     }
 
@@ -532,14 +545,66 @@ public sealed partial class LegCommander
     /// A pass with notes: the not blocking findings go to the watchtower as a card, to make the small ones in the plane and
     /// commit them. No leg goes round, and the merge card stays as it is.
     /// </summary>
-    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes)
+    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes, string? fixerLeg = null)
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
+        var action = fixerLeg is not null
+            ? $"The node planned {flight.Code}/{fixerLeg} to make them (autopilot); it starts as any planned leg and the review runs again on its result. Nothing to do but watch it."
+            : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start), or pilot flight clear {flight.Code} <why> when they are not worth a round, within a few minutes, and say which here. "
+                + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}.";
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
-            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} "
-                + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
             link: flight.PullRequestUrl,
-            summary: CardSummaries.ReviewNotes(flight.Code, notes));
+            summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg));
+    }
+
+    /// <summary>The name a review-notes leg is planned under: <c>review-notes</c>, then <c>review-notes-2</c> and on for a later round.</summary>
+    public const string ReviewNotesLeg = "review-notes";
+
+    /// <summary>
+    /// On autopilot, a pass with notes plans a review-notes leg by the same path as leg plan: one checklist item per note and a
+    /// commit step, the check of the flight's last leg so the rerun covers the same build. The sweep starts it as any planned leg.
+    /// Planned while the review is Passed and a PR is open: plan-leg has no guard against either (more work on a flight whose merge
+    /// is armed takes the merge back), so nothing is bypassed. No second leg is planned while one is planned or flying.
+    /// Returns the leg's name, or null when none was planned (autopilot off, or one is already on its way).
+    /// </summary>
+    private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
+    {
+        // Advances is on for every real node; the owner's autopilot setting is what this waits on.
+        if (!Models.Advances || !Models.Autopilot)
+        {
+            return null;
+        }
+        var legs = state.Legs(flight.Code);
+        if (legs.FirstOrDefault(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State is LegState.Planned or LegState.Flying) is { } onWay)
+        {
+            return onWay.Name;
+        }
+        var taken = legs.Count(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal));
+        var name = taken == 0 ? ReviewNotesLeg : $"{ReviewNotesLeg}-{taken + 1}";
+        var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
+        var args = new List<string>
+        {
+            $"name={name}",
+            "goal=make the review's not-blocking notes",
+            $"done-when=Each of the review's not-blocking notes is made or answered in a commit: {string.Join("; ", clean)}. The check passes.",
+        };
+        if (legs.OrderBy(l => l.Order).LastOrDefault(l => l.Check is not null)?.Check is { } check)
+        {
+            args.Add($"check={check}");
+        }
+        args.AddRange(clean.Select(n => $"item={n}"));
+        args.Add("item=Commit the changes with a message that names the notes");
+        try
+        {
+            await PlanAsync(new CommandRequest { Verb = Verbs.PlanLeg, Target = Verbs.FlightTarget(flight.Code), Who = "node", Args = [.. args] }, cancellationToken);
+            return name;
+        }
+        catch (FlightException ex)
+        {
+            await Error.WriteLineAsync($"review: {flight.Code}'s review-notes leg was not planned, the watchtower is told instead: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>The Handled card kind that says a flight was cleared to land.</summary>
@@ -564,6 +629,69 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to clear");
         }
         ReleaseHolding(flight, command.Who, string.Join(' ', command.Args ?? []).Trim());
+    }
+
+    /// <summary>The hold's reason while a review-notes leg flies on the flight.</summary>
+    internal static string LegHoldingReason(string leg) => $"the {leg} leg is making the review's fixes";
+
+    /// <summary>
+    /// A leg started on a flight in a holding pattern is what the hold waits on: its reason and its <c>By</c> name the leg, so the
+    /// hold says what it really waits on, and its watch covers the wait (no timeout card rings while it flies).
+    /// </summary>
+    private void HoldForLeg(string code, string leg, string? reason = null)
+    {
+        if (FlightOf(Verbs.FlightTarget(code)).Holding is { } hold)
+        {
+            Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+        }
+    }
+
+    /// <summary>A hold whose leg ended with nothing pushed goes back to the watchtower's own reason.</summary>
+    private void HoldForWatchtower(string code, string? leg)
+    {
+        if (FlightOf(Verbs.FlightTarget(code)).Holding is { } hold && hold.By is { } by && by != "node" && (leg is null || string.Equals(by, leg, StringComparison.Ordinal)))
+        {
+            Record(code, f => f with { Holding = hold with { Reason = HoldingReason, By = "node" } });
+        }
+    }
+
+    /// <summary>
+    /// A push of a head past the one the review read ends a flight's hold and closes its review-notes card saying who pushed (the leg,
+    /// flight pr, the PR's open): the fresh review and checks gate the merge as for any push. <paramref name="before"/> is the flight as it
+    /// was before the review moved. True when the hold ended.
+    /// </summary>
+    private bool EndHoldPastReview(FlightRow before, string? pushedHead, string by)
+    {
+        if (before is not { Holding: not null, Review.ReviewedHead: { Length: > 0 } reviewedHead } || string.IsNullOrEmpty(pushedHead)
+            || string.Equals(reviewedHead, pushedHead, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        Record(before.Code, f => f with { Holding = null });
+        state.CloseCardsAbout(Verbs.FlightTarget(before.Code), $"the fixes were pushed by {by}", ReviewNotesKind);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the flight's review reads a head the plane has left: it asked for changes, or it passed (with notes or plainly) at a head
+    /// that is not the plane's now. False with no PR open.
+    /// </summary>
+    private async Task<bool> ReviewBehindPlaneAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.PullRequest is null)
+        {
+            return false;
+        }
+        if (flight.Review is { State: ReviewState.Changes })
+        {
+            return true;
+        }
+        if (flight.Review is not { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } read })
+        {
+            return false;
+        }
+        var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        return head.Ok && head.Output.Trim() is { Length: > 0 } sha && !string.Equals(sha, read, StringComparison.OrdinalIgnoreCase);
     }
 
     private void ReleaseHolding(FlightRow flight, string? who, string why)

@@ -138,12 +138,12 @@ public static partial class CardSummaries
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while the watchtower fixes the small ones in the plane; nothing for you to do.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a review-notes leg makes them (its push ends the hold and a fresh review gates the merge) or the watchtower clears the flight; nothing for you to do.",
             LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
             LegCommander.HumanVerificationRefusedKind => $"GitHub refused some of {what}'s human checks, so they are not filed; the verdict stands. The detail names them; file them by hand.",
             LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
-            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
+            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes with no leg making its fixes and the watchtower not clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session that should not be running: one past its purpose (its leg is done or was redone, or its flight landed), or one the node did not start and no role claims. Stop it ends the session; the card closes by itself when the session ends. A role's current session never rings here.",
@@ -202,13 +202,16 @@ public static partial class CardSummaries
     /// The sentence of a review that passed with notes that do not block: what they are (how many, and the first in its own words)
     /// and that nothing is asked of the person. No word of how the node sends a leg round.
     /// </summary>
-    public static string ReviewNotes(string code, IReadOnlyList<string> notes)
+    public static string ReviewNotes(string code, IReadOnlyList<string> notes, string? fixerLeg = null)
     {
         var first = notes.Select(n => n.Trim().TrimStart('-', '*', ' ')).FirstOrDefault(n => n.Length > 0) ?? "";
         first = first.ReplaceLineEndings(" ");
-        first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
+        first = first.Length > 40 ? first[..37].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
-        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits while the watchtower fixes them in the plane; nothing for you to do.";
+        var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
+        return fixerLeg is not null
+            ? $"{head} The fixer leg {fixerLeg} took them; nothing for you to do."
+            : $"{head} The watchtower delegates them to a fixer leg or clears the flight; nothing for you to do.";
     }
 
     /// <summary>The sentence of the card that names the issues filed for a flight's human checks: what they are and that the controller checks each by hand and closes it.</summary>
