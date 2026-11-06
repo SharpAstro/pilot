@@ -337,7 +337,15 @@ public sealed partial class LegCommander
         var (flight, leg) = LegOf(Verbs.LegTarget(code, legName));
         if (leg.WorkerJob is { } job)
         {
+            DropQueuedJobsOf(job, "its worker was restarted");
             await StopQuietly(job, cancellationToken);
+        }
+        // A ticker of the ticking pass (PIL804) must not outlive the worker it was started for: it could tick or finish the new worker's leg.
+        // StartWorker clears TickerJob on the leg once the new worker is up.
+        if (leg.TickerJob is { } tickerJob)
+        {
+            DropQueuedJobsOf(tickerJob, "its worker was restarted");
+            await StopQuietly(tickerJob, cancellationToken);
         }
         StartWorker(flight, leg, state.Legs(flight.Code));
     }

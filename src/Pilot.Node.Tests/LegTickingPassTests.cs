@@ -151,6 +151,49 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task A_worker_idle_past_its_nudges_with_commits_made_gets_a_ticker_instead_of_the_ring()
+    {
+        await FlyingAsync(commit: true);
+        // Idle, not ended: the worker is still there, so the route is the one past MaxNudges, not the ended one.
+        _state.PutSession(Session(L("parser").WorkerJob!, "du1-tia1-parser", SessionState.Idle, TimeSpan.FromMinutes(10)));
+
+        // Two nudges, then the ticker where the ring would have been.
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        _said.Count.ShouldBe(2);
+        L("parser").TickerJob.ShouldBeNull();
+        _workers.Started.ShouldNotContain(w => w.Name == Ticker);
+
+        await LookUntilTickerAsync();
+
+        _workers.Started.Count(w => w.Name == Ticker).ShouldBe(1);
+        _said.Count.ShouldBe(2);
+        L("parser").State.ShouldBe(LegState.Flying);
+        _state.Cards().ShouldNotContain(c => c.Bin == CardBin.Ring);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegWatch.Idle);
+    }
+
+    [Fact]
+    public async Task A_go_around_while_the_ticker_runs_stops_it_and_clears_the_ticker_job()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var worker = L("parser").WorkerJob!;
+        var ticker = L("parser").TickerJob.ShouldNotBeNull();
+        _state.PutSession(Session(ticker, Ticker, SessionState.Working, TimeSpan.Zero));
+
+        var around = await Leg(Verbs.GoAround, "flight/TIA1/parser", "the commits do not cover the steps");
+
+        around.Ok.ShouldBeTrue(around.Error);
+        _workers.Stopped.ShouldContain(ticker);
+        _workers.Stopped.ShouldContain(worker);
+        await Until(() => L("parser").WorkerJob != worker);
+        L("parser").TickerJob.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
     public async Task A_ticker_that_finishes_failed_leaves_the_leg_failed_ring()
     {
         await FlyingAsync(commit: true);
