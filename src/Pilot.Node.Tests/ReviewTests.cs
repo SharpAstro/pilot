@@ -93,7 +93,7 @@ public abstract class ReviewTestsBase : IDisposable
             fake.Release();
             TestDirs.DeleteTree(_root);
             // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
-            fake.Unsupported.ShouldBeEmpty("this test needs real git: pass realGit: true to ReviewTestsBase");
+            fake.Unsupported.ShouldBeEmpty("this test needs real git: call RealGit() first, or pass realGit: true to ReviewTestsBase");
             return;
         }
         try
@@ -1271,6 +1271,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APlaneBehindItsBranchPushedFromElsewhereWithTheConflictResolvedTakesItAndRaisesNoConflict()
     {
+        // A second clone and a conflict a person resolves: git's own.
+        RealGit();
         var flight = await NewFlight("17", "parser");
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
         await Fly(flight, "parser");
@@ -1521,6 +1523,8 @@ public sealed class ReviewTests3 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ACommitPushedToTheBranchFromElsewhereDuringAGoAroundIsTakenInNotLost(string number)
     {
+        // A second clone pushing to the branch: git's own.
+        RealGit();
         var flight = await NewFlight(number, "parser");
         var code = $"TIA{number}";
         var branch = $"flight/tia{number}";

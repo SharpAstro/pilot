@@ -66,6 +66,7 @@ internal sealed class FakeRepoGit : IGit
         _originPath = Path.Combine(root, "origin.git");
         Directory.CreateDirectory(Path.Combine(RepoPath, ".git"));
         Directory.CreateDirectory(_originPath);
+        WriteConfigFile();
         var tree = new Dictionary<string, string> { ["README.md"] = "hello\n", ["Tianwen.slnx"] = "<Solution />\n" };
         var first = MakeCommit([], tree, "first");
         _origin["refs/heads/main"] = first.Id;
@@ -167,6 +168,7 @@ internal sealed class FakeRepoGit : IGit
             "merge" => Merge(a, wt),
             "reset" => Reset(a, wt),
             "cherry" => Cherry(a, wt),
+            "cherry-pick" => CherryPick(a, wt),
             "rebase" => Rebase(a, wt),
             "config" => Config(a),
             "ls-remote" => LsRemote(a),
@@ -254,15 +256,15 @@ internal sealed class FakeRepoGit : IGit
         {
             throw new NotSupportedException("@ revision");
         }
-        if (wt is null)
+        if (wt is null && Origin("refs/heads/" + name) is { } pushed)
         {
-            return Origin("refs/heads/" + name);
+            return pushed;
         }
-        if (_refs.TryGetValue("refs/heads/" + name, out var local))
+        if (wt is not null && _refs.TryGetValue("refs/heads/" + name, out var local))
         {
             return local;
         }
-        if (_refs.TryGetValue("refs/remotes/" + name, out var remote))
+        if (wt is not null && _refs.TryGetValue("refs/remotes/" + name, out var remote))
         {
             return remote;
         }
@@ -377,6 +379,10 @@ internal sealed class FakeRepoGit : IGit
         {
             case [var key, var value] when !key.StartsWith('-'):
                 _config[key] = value;
+                if (key == "remote.origin.url")
+                {
+                    WriteConfigFile();
+                }
                 return Ok("");
             case ["--get", var key]:
                 return _config.TryGetValue(key, out var found) ? Ok(found + "\n") : new GitRun(1, "", "");
@@ -384,6 +390,11 @@ internal sealed class FakeRepoGit : IGit
                 throw new NotSupportedException("config form");
         }
     }
+
+    /// <summary>The clone's <c>.git/config</c> as the repo catalog reads it from the folder, without asking git (it names the clone by its origin's URL).</summary>
+    private void WriteConfigFile() =>
+        File.WriteAllText(Path.Combine(RepoPath, ".git", "config"),
+            $"[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _originPath)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
 
     /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
     private GitRun LsRemote(List<string> a)
@@ -791,7 +802,7 @@ internal sealed class FakeRepoGit : IGit
         a.Remove(format ?? "");
         var limit = a.FirstOrDefault(x => x.Length > 1 && x[0] == '-' && x[1..].All(char.IsDigit));
         a.Remove(limit ?? "");
-        if (!oneline && format != "--format=%h %s" || a.Any(x => x.StartsWith('-')))
+        if (!oneline && format is not ("--format=%h %s" or "--format=%P\t%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
         {
             throw new NotSupportedException("log form");
         }
@@ -806,7 +817,9 @@ internal sealed class FakeRepoGit : IGit
             {
                 commits = [.. commits.Take(int.Parse(limit[1..]))];
             }
-            return Ok(string.Concat(commits.Select(c => $"{Short(c.Id)} {FirstLine(c.Message)}\n")));
+            return Ok(string.Concat(commits.Select(c => format == "--format=%P\t%s"
+                ? $"{string.Join(' ', c.Parents)}\t{FirstLine(c.Message)}\n"
+                : $"{Short(c.Id)} {FirstLine(c.Message)}\n")));
         }
         catch (FakeGitFailure ex)
         {
@@ -864,6 +877,34 @@ internal sealed class FakeRepoGit : IGit
         {
             return Fail(ex.Message, 128);
         }
+    }
+
+    /// <summary><c>git cherry-pick &lt;commit&gt;</c>: one commit's change laid on HEAD as a new commit of the same message (a conflict is git's to show: not modelled).</summary>
+    private GitRun CherryPick(List<string> a, Worktree? wt)
+    {
+        if (wt is null || a.Count != 1 || a[0].StartsWith('-'))
+        {
+            throw new NotSupportedException("cherry-pick form");
+        }
+        var id = Resolve(a[0], wt);
+        if (id is null)
+        {
+            return Fail($"fatal: bad revision '{a[0]}'", 128);
+        }
+        var pick = _commits[id];
+        var current = HeadId(wt)!;
+        var parentTree = pick.Parents.Count > 0 ? _commits[pick.Parents[0]].Tree : new Dictionary<string, string>();
+        var (merged, conflicts) = Merge3(parentTree, _commits[current].Tree, pick.Tree, null, false);
+        if (conflicts.Count > 0)
+        {
+            throw new NotSupportedException("cherry-pick that conflicts");
+        }
+        var previous = wt.Index;
+        var commit = MakeCommit([current], merged, pick.Message);
+        SetHead(wt, commit.Id);
+        wt.Index = new Dictionary<string, string>(merged);
+        Materialize(wt, merged, previous);
+        return Ok($"[{wt.Branch ?? "detached HEAD"} {Short(commit.Id)}] {FirstLine(pick.Message)}\n");
     }
 
     // ---- commands: diff ----

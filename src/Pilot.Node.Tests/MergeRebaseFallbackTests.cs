@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 /// after another landed goes to its own flight's base merge. Real git over the seed's bare origin; FakeGitHub answers for GitHub.
 /// </summary>
 [Trait("Category", "Slow")]
-public sealed class MergeRebaseFallbackGitTests : ReviewTestsBase
+public sealed class MergeRebaseFallbackGitTests() : ReviewTestsBase(realGit: true)
 {
     // A passed flight whose branch has taken main by a clean merge (main moved after the plane was cut), pushed, reviewed at that head.
     private async Task<(FlightRow Flight, string Head)> FlightWithMergeOfMain()
