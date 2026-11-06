@@ -7,6 +7,9 @@ namespace Pilot.Contracts;
 /// </summary>
 public sealed record AdmissionRow
 {
+    // The arrays read null as empty: the JSON source generator sets every init-only property it builds, so a row an older node
+    // wrote, without a newer array, came back with that array null and then failed to serialize ("doesn't allow getting null
+    // values"), which stopped every node that updated over such a row at start (PIL787's WaitingOnPerson, 2026-11-07).
     /// <summary>The Opus sessions counted now (the fleet's, when peers were counted).</summary>
     public int OpusCount { get; init; }
 
@@ -17,16 +20,16 @@ public sealed record AdmissionRow
     public bool OneFlightPerRepo { get; init; }
 
     /// <summary>The Opus sessions counted, as <c>label</c> or <c>label on node</c>.</summary>
-    public string[] Counted { get; init; } = [];
+    public string[] Counted { get; init => field = value ?? []; } = [];
 
     /// <summary>Flight codes marked <c>pilot: priority</c>: they bypass the cap and the repo hold.</summary>
-    public string[] Priority { get; init; } = [];
+    public string[] Priority { get; init => field = value ?? []; } = [];
 
     /// <summary>Why peers were not counted (<c>peers not counted: ...</c>); null when every peer was read or there is none.</summary>
     public string? PeersNotCounted { get; init; }
 
     /// <summary>Idle sessions left out of the count because they wait on a person or a job, as <c>label (idle, card c12 open)</c>. Optional: absent from an older node.</summary>
-    public string[] WaitingOnPerson { get; init; } = [];
+    public string[] WaitingOnPerson { get; init => field = value ?? []; } = [];
 
     /// <summary>The line the clients show: <c>Opus 2/3</c>, or <c>Opus 2 (no cap)</c>, with <c>, peers not counted</c> when so.</summary>
     public string Line() =>
