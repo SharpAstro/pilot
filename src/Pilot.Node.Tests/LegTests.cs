@@ -1154,8 +1154,21 @@ public abstract class LegCommanderTestsBase : IDisposable
         return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
     }
 
-    private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
-        _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+    private protected async Task<CommandResult> Leg(string verb, string target, params string[] args)
+    {
+        var result = await _legs.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+        // A started leg's worker is launched after the command answers, and a loaded machine does not do that within it: every test
+        // that reads what was started after a start waits here for the launch, not each one on its own.
+        if (verb == Verbs.StartLeg && result.Ok && target.Split('/') is [_, var code, ..])
+        {
+            var clock = Stopwatch.StartNew();
+            while (_legs.Starting(code) && clock.Elapsed < TimeSpan.FromSeconds(120))
+            {
+                await Task.Delay(10, Ct);
+            }
+        }
+        return result;
+    }
 
     private protected LegRow L(string name) => _state.Legs("TIA1").Single(l => l.Name == name);
 
