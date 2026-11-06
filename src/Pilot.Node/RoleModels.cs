@@ -53,6 +53,35 @@ public sealed partial class RoleModels
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 
+    /// <summary>The model the summary runs on unless the settings say otherwise (<see cref="NodeSettings.SummaryModelKey"/>).</summary>
+    public const string BuiltInSummaryModel = "sonnet";
+
+    /// <summary>Why the summary's built-in model is what it is, for the setting's detail.</summary>
+    public const string SummaryModelWhy = "sonnet by default: the summary is what the person reads first, and Haiku's summaries relayed stale cards and internal words";
+
+    /// <summary>Whether <paramref name="text"/> names a model Claude Code takes: an alias (sonnet, opus, haiku) or a full id (<c>claude-sonnet-5-5</c>, with an optional <c>[1m]</c>).</summary>
+    public static bool IsModelName(string text) =>
+        text is "sonnet" or "opus" or "haiku"
+        || (text.StartsWith("claude-", StringComparison.Ordinal) && text.Length > "claude-".Length
+            && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '[' or ']'));
+
+    /// <summary>The model the summary's call runs on: this node's own setting, else the fleet's, else <see cref="BuiltInSummaryModel"/>. Read at each call, so a set applies with no restart.</summary>
+    public string SummaryModel => SummaryModelWithSource().Model;
+
+    /// <summary>The summary's model and where it comes from (<see cref="SettingSources.ThisNode"/>, <see cref="SettingSources.Fleet"/> or <see cref="SettingSources.BuiltIn"/>).</summary>
+    public (string Model, string Source) SummaryModelWithSource()
+    {
+        if (Raw(NodeSettings.SummaryModelKey) is { } own && IsModelName(own))
+        {
+            return (own, SettingSources.ThisNode);
+        }
+        if (FleetRaw(NodeSettings.SummaryModelKey) is { } fleet && IsModelName(fleet))
+        {
+            return (fleet, SettingSources.Fleet);
+        }
+        return (BuiltInSummaryModel, SettingSources.BuiltIn);
+    }
+
     /// <summary>The role's range: this node's own, else the fleet's, else the built-in.</summary>
     public RoleRange Range(string role) => RangeWithSource(role).Range;
 

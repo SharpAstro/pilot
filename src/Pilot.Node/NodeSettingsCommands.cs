@@ -80,7 +80,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's range is read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsRoleKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey
+        if (NodeSettings.IsLayeredKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key))
         {
             roles.Apply(updated);
@@ -91,6 +91,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
                 return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}, and in force now; {held}");
             }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
+                : key == NodeSettings.SummaryModelKey ? $"{key} saved as {value}, and in force now; the next summary runs on it"
                 : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key) ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
@@ -216,6 +217,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             // A live setting runs with what the file says now; any other with what it said at the start.
             Source = pinned ? SettingSources.CommandLine
                 : role is not null ? roles.RangeWithSource(role).Source
+                : key == NodeSettings.SummaryModelKey ? roles.SummaryModelWithSource().Source
                 : (Live(key) ? file : started) is not null ? SettingSources.File : SettingSources.Default,
             Choices = choices,
             Many = key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey,
@@ -264,6 +266,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.RepoTrackersKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).RepoTrackers ?? []),
         NodeSettings.NoAutoMergeReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).NoAutoMergeRepos ?? []),
         NodeSettings.SubTaskReposKey => string.Join('\n', NodeSettings.Read(options.SettingsFile).SubTaskRepos ?? []),
+        NodeSettings.SummaryModelKey => roles.SummaryModel,
         _ when RoleOf(key) is { } role => roles.Range(role).ToString(),
         _ => "",
     };
@@ -273,7 +276,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
 
     /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's range, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
-    private static bool Live(string key) => NodeSettings.IsRoleKey(key)
+    private static bool Live(string key) => NodeSettings.IsLayeredKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
             or NodeSettings.MaxJobsKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DiskAlertGbKey || NodeSettings.StaleKeys.Contains(key);
 
@@ -319,6 +322,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.RepoTrackersKey => "",
         NodeSettings.NoAutoMergeReposKey => "",
         NodeSettings.SubTaskReposKey => "",
+        NodeSettings.SummaryModelKey => RoleModels.BuiltInSummaryModel,
         _ when RoleOf(key) is { } role => RoleModels.BuiltIn(role).ToString(),
         _ => "",
     };
@@ -366,6 +370,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.WatchtowerCompactShareKey => ("Watchtower compaction share", "A live watchtower that is idle with more than this share of its context window, in percent, is compacted, once until its context has grown past the share again", ["40", "60", "70", "80"]),
         NodeSettings.WatchtowerChatMessagesKey => ("Watchtower chat length", "A watchtower chat of this many person messages since the last compaction is compacted at the next idle look; 0 is off", ["0", "20", "40", "80"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
+        NodeSettings.SummaryModelKey => ("Summary model", $"The model of the one call that writes the summary (pilot summary, the Summary card), read at each call. Sonnet, opus or haiku, or a full model id; set for the fleet with --fleet, and this node's own value wins. Built in: {RoleModels.BuiltInSummaryModel}, {RoleModels.SummaryModelWhy}", ["sonnet", "opus", "haiku"]),
         _ when RoleOf(key) is { } role => ($"{Title(role)} range", RangeDetail(role), [.. RoleRange.Line]),
         _ => (key, "", []),
     };

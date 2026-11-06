@@ -34,7 +34,7 @@ internal sealed class FakeSummaryModel : ISummaryModel
 }
 
 /// <summary>
-/// The summary (#221): records built only from what the node holds, under a fixed prompt, one Haiku call that only runs when asked,
+/// The summary (#221): records built only from what the node holds, under a fixed prompt, one summary call that only runs when asked,
 /// and the answer kept per scope with its time, tokens and cost where every client sees it.
 /// </summary>
 public sealed class SummaryTests
@@ -475,12 +475,12 @@ public sealed class SummaryTests
         Should.Throw<InvalidOperationException>(() => SummaryAnswer.Parse(output)).Message.ShouldBe(why);
 
     [Fact]
-    public void TheCallIsOneHaikuPromptWithNoToolsNoMcpAndNoSavedSession()
+    public void TheCallIsOneSummaryPromptWithNoToolsNoMcpAndNoSavedSession()
     {
-        var args = ClaudeSummaryModel.Arguments;
+        var args = new ClaudeSummaryModel(Path.GetTempPath(), new RoleModels(null)).Arguments;
 
         args.ShouldContain("-p");
-        args[(args.ToList().IndexOf("--model") + 1)].ShouldBe("haiku");
+        args[(args.ToList().IndexOf("--model") + 1)].ShouldBe("sonnet");
         args[(args.ToList().IndexOf("--tools") + 1)].ShouldBe("");
         args.ShouldContain("--strict-mcp-config");
         args.ShouldNotContain("--mcp-config");

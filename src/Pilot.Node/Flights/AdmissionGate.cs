@@ -376,9 +376,9 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             case Verbs.AdmissionSync when args.Length >= 1:
                 Fleet.Sync(args[0], args.Skip(1).Select(a => a.Split('|')).Where(p => p.Length >= 2).Select(p => (p[0], p[1], p.Length > 2 && p[2].Length > 0 ? p[2] : null)));
                 break;
-            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsRoleKey(args[0])):
+            case Verbs.AdmissionSetting when args.Length >= 2 && (args[0] is NodeSettings.OpusCapKey or NodeSettings.OneFlightPerRepoKey || NodeSettings.IsLayeredKey(args[0])):
                 // A peer may only set the fleet layer of a role range, never this node's own range.
-                error = NodeSettings.IsRoleKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
+                error = NodeSettings.IsLayeredKey(args[0]) && !args.Skip(1).Contains("--fleet", StringComparer.OrdinalIgnoreCase)
                     ? $"a peer may only set the fleet layer of {args[0]}; send it with --fleet"
                     : SettingApplier is null ? "this node cannot apply settings" : SettingApplier(args);
                 break;

@@ -2,7 +2,7 @@ namespace Pilot.Contracts;
 
 /// <summary>
 /// The summary the node last made of one scope, kept in its state and sent on the feed so every client shows the same one:
-/// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). One Haiku call makes it, only when someone asks
+/// this node's flights (<see cref="FleetScope"/>), every node's (<see cref="AllNodesScope"/>) or one flight's (its code). One summary call makes it, only when someone asks
 /// (<see cref="Verbs.Summarise"/>); a newer one replaces the older of its scope, whole.
 /// </summary>
 public sealed record SummaryRow

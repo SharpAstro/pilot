@@ -54,7 +54,7 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <summary>Leg checks: what they say is the test's.</summary>
     public FakeChecks Checks { get; private init; } = new();
 
-    /// <summary>The summary's Haiku call: what it answers is the test's; never run.</summary>
+    /// <summary>The summary's model call: what it answers is the test's; never run.</summary>
     public FakeSummaryModel Summary { get; private init; } = new();
 
     /// <summary>GitHub: what it says is the test's.</summary>

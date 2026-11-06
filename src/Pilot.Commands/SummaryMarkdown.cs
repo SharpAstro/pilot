@@ -5,7 +5,7 @@ using Pilot.Contracts;
 namespace Pilot.Commands;
 
 /// <summary>
-/// <c>pilot summary</c> as text: the summary the node kept (both sections, as the one Haiku call wrote them), then when it was
+/// <c>pilot summary</c> as text: the summary the node kept (both sections, as the one summary call wrote them), then when it was
 /// made, how many tokens it took and what it cost, so whoever reads it can tell how far to trust it. The same words for the
 /// CLI and, as a tool, the MCP server.
 /// </summary>

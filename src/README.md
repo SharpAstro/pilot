@@ -700,7 +700,7 @@ pilot say-all <text…> [--all] [--role worker|planner|reviewer|pilot|adHoc|watc
 pilot compact <session> [focus…]               # an idle background session's /compact, as its next turn (see Compaction)
 pilot note <text…>
 pilot summary [<code>] [--fresh] [--fleet]     # the kept summary (Needs you, Where it is) with its age, tokens and cost; made when none or --fresh (see The summary)
-pilot summarise [<code>]                       # one Haiku call now over the flights in play (or one flight); keeps and prints the answer
+pilot summarise [<code>]                       # one summary call now over the flights in play (or one flight); keeps and prints the answer
 pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per landed flight: its reviewer sessions (round, model, head) and their tokens, with totals and an average; pilot-node review-cost reads the data folder with no node
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
@@ -723,7 +723,7 @@ when its node is not on the default socket. Exit codes: 0 done, 1 refused by the
 
 `pilot summary` answers "where are we" in two sections: `## Needs you` (what stays stuck unless the person acts, or the
 word *Nothing*) and `## Where it is`. The node makes it from what it holds, as plain records of each flight (legs with
-state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one Haiku call (no tools,
+state, checklist and go-arounds, its PR and review, its open cards, the sessions on it), with one call of the summary model (sonnet unless `set node summary-model` says otherwise; no tools,
 no MCP, no saved session; never run by itself), and keeps the latest per scope with when it was made, its tokens and its
 cost, on the feed for every client. So `pilot summary` costs nothing when a summary is kept: it prints that one and
 says its age (`made 5 min ago (2026-10-28 09:00 UTC) · 1,234 tokens · $0.0021`), and it makes one, as `pilot summarise`

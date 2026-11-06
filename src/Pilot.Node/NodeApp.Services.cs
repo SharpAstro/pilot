@@ -492,7 +492,7 @@ public static partial class NodeApp
     /// <summary>The summaries and the digest.</summary>
     private static void AddSummaries(WebApplicationBuilder builder, NodeOptions options)
     {
-        builder.Services.AddSingleton<ISummaryModel>(_ => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary")));
+        builder.Services.AddSingleton<ISummaryModel>(services => new ClaudeSummaryModel(Path.Combine(options.DataFolder, "summary"), services.GetRequiredService<RoleModels>()));
         builder.Services.AddSingleton(services => new Summaries(services.GetRequiredService<NodeState>(), services.GetRequiredService<ISummaryModel>(), services.GetRequiredService<TimeProvider>())
         {
             Machine = options.Machine,

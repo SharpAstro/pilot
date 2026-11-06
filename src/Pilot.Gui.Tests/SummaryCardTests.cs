@@ -190,7 +190,7 @@ public sealed class SummaryCardTests
 
         words.ShouldContain("none yet");
         words.ShouldContain("Press Summarise");
-        words.ShouldContain("Summarise · one Haiku call");
+        words.ShouldContain("Summarise · one summary call");
         words.ShouldNotContain("Where it is");
     }
 
@@ -202,7 +202,7 @@ public sealed class SummaryCardTests
     public void TheButtonSaysWhatThePressCostFromTheLastRun(long tokens, double? cost, string label)
     {
         SummaryCard.CostLabel(Row("*", tokens: tokens, cost: cost)).ShouldBe(label);
-        SummaryCard.CostLabel(null).ShouldBe(" · one Haiku call");
+        SummaryCard.CostLabel(null).ShouldBe(" · one summary call");
     }
 
     [Fact]

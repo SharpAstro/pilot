@@ -154,7 +154,7 @@ internal sealed class SummaryCard
     /// <summary>What a press costs, said in the button's label: the last run's dollars, else its tokens, else a call's worth.</summary>
     internal static string CostLabel(SummaryRow? row) => row switch
     {
-        null => " · one Haiku call",
+        null => " · one summary call",
         { Cost: { } usd } => $" · ~${Money(usd)}",
         { Tokens: > 0 and var tokens } => $" · ~{SessionLine.Tokens(tokens)} tokens",
         _ => "",
@@ -227,7 +227,7 @@ internal sealed class SummaryCard
             Layout.Builder.HStack([.. head]).WithGap(10f).RowH(HeaderHeight),
             Layout.Builder.HStack(statusLine.WStar().HStar()).RowH(StatusHeight),
             AtReadingWidth(row is null
-                ? WrappedProse.Of("Press Summarise and the node asks one Haiku call what needs you and where each flight is.", 13f, p.Body)
+                ? WrappedProse.Of("Press Summarise and the node asks one summary call what needs you and where each flight is.", 13f, p.Body)
                 : Parsed(row.Markdown, p)),
         };
         return Layout.Builder.VStack([.. rows]).WithGap(Gap).Pad(PadX, PadY).Bg(p.PanelBg).WStar().HAuto();
@@ -255,7 +255,7 @@ internal sealed class SummaryCard
                 ? "A summary is being made; the card shows it when the node has it."
                 : row switch
                 {
-                    null => "Asks the node for one Haiku call over what it holds. What it cost shows here once one has been made.",
+                    null => "Asks the node for one summary call over what it holds. What it cost shows here once one has been made.",
                     { Tokens: 0, Cost: null } => "The last run made no call, as nothing was in play. A press makes one when something is.",
                     _ => $"The last run used {Used(row)}. A press makes a new one, which replaces it for everyone.",
                 };

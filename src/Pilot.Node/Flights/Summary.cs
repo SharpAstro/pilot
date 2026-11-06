@@ -7,7 +7,7 @@ using Pilot.Node.Sessions;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// What the summary's one Haiku call is shown: the node's flights as plain records, built only from what the node holds (each
+/// What the summary's one model call is shown: the node's flights as plain records, built only from what the node holds (each
 /// flight's legs with state, checklist, go-arounds and report; its PR and review; its open cards; the sessions working on it)
 /// and nothing it would have to look up or guess. Port of v1's <c>worker_records</c>. The call is told to quote hashes, test
 /// names and results only from here, so a hash appears in these records only where the node holds it (a flight's PR head, its
@@ -310,7 +310,7 @@ public static class SummaryPrompt
     public static string Flight(string code, string records) => Build($"the flight {code}", FlightWords, records);
 }
 
-/// <summary>What one Haiku call answered, and what it used.</summary>
+/// <summary>What one call of the summary model answered, and what it used.</summary>
 /// <param name="Text">The answer, markdown.</param>
 /// <param name="Tokens">Its input, cache and output tokens added up.</param>
 /// <param name="Cost">US dollars, as Claude Code reported it; null when it did not.</param>
@@ -372,19 +372,23 @@ public interface ISummaryModel
 }
 
 /// <summary>
-/// One <c>claude -p</c> on Haiku, as v1's <c>haiku()</c> ran it: no tools, no MCP servers, no saved session, none of the user's
+/// One <c>claude -p</c> on the summary's model (<see cref="RoleModels.SummaryModel"/>, Sonnet unless the settings say otherwise; read at each
+/// call, so a set applies with no restart), as v1's <c>haiku()</c> ran it: no tools, no MCP servers, no saved session, none of the user's
 /// settings, its prompt on standard input and its answer as JSON; in a folder of its own, so no project's <c>CLAUDE.md</c> is read.
 /// </summary>
-public sealed class ClaudeSummaryModel(string folder) : ISummaryModel
+public sealed class ClaudeSummaryModel(string folder, RoleModels models) : ISummaryModel
 {
     /// <summary>How long the call may take before it is given up.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(150);
 
-    /// <summary>The arguments of the call.</summary>
-    public static readonly IReadOnlyList<string> Arguments =
+    /// <summary>The arguments of a call on <paramref name="model"/>.</summary>
+    public static IReadOnlyList<string> ArgumentsFor(string model) =>
     [
-        "-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--restricted", "--output-format", "json",
+        "-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--restricted", "--output-format", "json",
     ];
+
+    /// <summary>The arguments of the call as it runs now: on the model <see cref="RoleModels.SummaryModel"/> gives.</summary>
+    public IReadOnlyList<string> Arguments => ArgumentsFor(models.SummaryModel);
 
     public async Task<SummaryAnswer> AskAsync(string prompt, CancellationToken cancellationToken)
     {
