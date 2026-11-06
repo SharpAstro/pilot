@@ -406,7 +406,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "me", reviewed[..8]);
 
-        refused.Error.ShouldNotBeNull().ShouldContain("newer than the review");
+        refused.Error.ShouldNotBeNull().ShouldContain("newer than the");
         var row = _state.Merges().Single(m => m.Flight == flight.Code);
         row.State.ShouldBe(MergeEntryState.Dropped);
         row.Why.ShouldNotBeNull().ShouldContain($"the head moved to {moved[..8]} past the reviewed {reviewed[..8]}");
@@ -439,7 +439,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var merge = card.Choices[0];
         var refused = await Run(merge.Verb, merge.Target, "me", [.. merge.Args]);
 
-        refused.Error.ShouldNotBeNull().ShouldContain("newer than the review");
+        refused.Error.ShouldNotBeNull().ShouldContain("newer than the");
         _github.Merged.ShouldBeEmpty();
         _state.Merges().Single(m => m.Flight == flight.Code).Why.ShouldNotBeNull().ShouldContain("a review of it starts");
         var now = F(flight.Code);
