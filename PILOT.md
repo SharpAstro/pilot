@@ -100,6 +100,14 @@ dotnet test Pilot.Gui.Tests -c Release --no-build
 - **Docs only** (`README.md`, `src/README.md`, this file): the Release build still runs, since CI does for any change
   under `src`, and a PR touching nothing of `src` skips the build and passes the gate.
 
+## Human verification
+
+- Checks only a person can make (hardware, UI, real-window feel: what tests and CPU captures cannot settle) are filed as
+  issues in the milestone `Human verification: UI that needs eyes` (milestone 12 in pilot).
+- Only a flight whose issue carries the `pilot: human verification` label files them, from the `## Human verification`
+  heading of the reviewer's report. Without the label nothing is filed.
+- Each issue says what to do and what to look for. The controller closes it once checked; a worker never does.
+
 ## Writing
 
 No em-dashes, and no `--` in their place: a full stop, a comma, a semicolon or parentheses. This holds for prose,
