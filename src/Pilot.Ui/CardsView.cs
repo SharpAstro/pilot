@@ -115,7 +115,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             handled.AddRange(screen.Handled);
             merged.AddRange(screen.Merged);
         }
-        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.At)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower)
+        return new CardsScreen([.. open.OrderBy(c => c.Bin).ThenByDescending(c => c.RungAt)], [.. handled.OrderByDescending(c => c.At).Take(5)], watchtower)
         {
             _nodes = nodes,
             Merged = [.. merged.OrderByDescending(c => c.ClosedAt)],
@@ -135,7 +135,7 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
             .ThenByDescending(s => s.StartedAt)
             .FirstOrDefault();
         return new CardsScreen(
-            [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.At)],
+            [.. all.Where(c => c.State == CardState.Open).OrderBy(c => c.Bin).ThenByDescending(c => c.RungAt)],
             [.. all.Where(c => c.Bin == CardBin.Handled).OrderByDescending(c => c.At).Take(5)],
             watchtower)
         {

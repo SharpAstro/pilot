@@ -53,7 +53,8 @@ public static class SessionRowBuilder
     /// <param name="hook">The session's latest hook, which has the last word on a running session's state: it fired on
     /// the transition itself, where the listing is read every few seconds.</param>
     /// <param name="report">What the session reported of itself: applied only while its process lives and it is newer than the hook.</param>
-    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null, SessionReport? report = null)
+    /// <param name="job">Claude Code's record of the job (its state.json): one whose turn finished and whose process is gone says it ended by design.</param>
+    public static SessionRow Build(ClaudeAgentRow agent, TranscriptFacts transcripts, SessionRecord? record, string? repo, SessionRoleInfo role, HookState? hook = null, SessionReport? report = null, ClaudeJobRecord? job = null)
     {
         var state = SessionStates.Map(agent.Status ?? record?.Status, agent.State, agent.Pid is not null);
         string? hookWaiting = null;
@@ -96,7 +97,7 @@ public static class SessionRowBuilder
             }
         }
         var waiting = state == SessionState.Waiting;
-        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook) : null;
+        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook, job) : null;
         var pending = waiting ? transcripts.PendingTool : null;
         // A question is no call it asks leave to run: what it waits on (WaitingFor) is the question already.
         var asking = pending is { Name: not "AskUserQuestion" } ? pending.Summary is { Length: > 0 } summary ? $"{pending.Name}: {summary}" : pending.Name : null;
@@ -141,12 +142,19 @@ public static class SessionRowBuilder
         };
     }
 
-    /// <summary>Why a row the listing and hooks say ended did: its SessionEnd hook's word, else the listing's state with no process.</summary>
-    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook)
+    /// <summary>
+    /// Why a row the listing and hooks say ended did: its SessionEnd hook's word, else (for a background job whose record reads a
+    /// finished turn) that Claude Code ended it after the turn, which it does by design (PIL815), else the listing's state with no process.
+    /// </summary>
+    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook, ClaudeJobRecord? job)
     {
         if (hook is { State: SessionState.Ended } ended && agent.Pid is null)
         {
             return ended.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended";
+        }
+        if (agent.Pid is null && state == SessionState.Ended && job is { TurnFinished: true })
+        {
+            return $"Claude Code ended the job after its turn finished ({job.State.ToLowerInvariant()})";
         }
         if (agent.Pid is null)
         {

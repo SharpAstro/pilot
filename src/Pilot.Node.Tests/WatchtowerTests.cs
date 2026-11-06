@@ -220,7 +220,7 @@ public sealed class WatchtowerTests : IDisposable
 
         // The next thing to watch starts a fresh one, and says why.
         Row("job00007", SessionState.Ended);
-        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9/parser", "TIA9/parser failed");
+        _state.RaiseCard(CardBin.Ring, "leg-failed", "flight/TIA9", "TIA9/parser failed");
         await _tower.LookAsync(Ct);
         _workers.Started.ShouldHaveSingleItem();
         _state.Cards().ShouldContain(c => c.Title == "Started a fresh watchtower: c2 rings, and the last one ended");
