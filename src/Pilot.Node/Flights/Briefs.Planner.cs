@@ -87,9 +87,10 @@ public static partial class Briefs
         text.AppendLine("Before you plan any leg, look for a flight already doing this, on any node, or a PR open on the same code.");
         text.AppendLine("First read the issue and the code and list the files your legs will change (repo-relative paths, as many as you can name).");
         text.AppendLine($"Then run `{run} flight touches {flight.Code} <file> <file> ...` with them. It fetches the repo and compares them with every other flight not");
-        text.AppendLine("landed on this node and on each reachable node (the files its pushed branch changes against its base) and with every open PR, and");
-        text.AppendLine("answers a line each, in the form `PIL294 (DE1): connect, both change DetachedShell.cs, JobRunner.cs`. A line says unknown when that");
-        text.AppendLine("flight's branch is not pushed, its node did not answer or gh would not list the PR's files: it is not \"no overlap\", so say it in your");
+        text.AppendLine("landed on this node and on each reachable node (the files its plane changes against its base, committed or not, pushed or not; each node");
+        text.AppendLine("says that for its own flights) and with every open PR, and answers a line each, in the form `PIL294 (DE1): connect, both change");
+        text.AppendLine("DetachedShell.cs, JobRunner.cs`. A line says unknown when that flight's node did not answer or gh would not list the PR's files:");
+        text.AppendLine("it is not \"no overlap\", so say it in your");
         text.AppendLine($"planned summary. To confirm that a flight has the same goal, read its {words.Noun} ({words.ReadOther}) and its legs' goals (`{run} status` lists");
         text.AppendLine("this node's flights with their issues and legs).");
         text.AppendLine($"- `{run} nodes` lists the other pilot nodes on the LAN; `{run} summary --fleet` is the node's kept summary of the flights in play on every node it holds a grant for (what needs the controller, where it is), with its age.");

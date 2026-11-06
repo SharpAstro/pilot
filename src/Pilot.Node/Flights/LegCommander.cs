@@ -94,20 +94,23 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.Clear
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
+            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
-        command.Verb == Verbs.Touches
+        command.Verb is Verbs.Touches or Verbs.FlightChanges
             ? RunTouchesAsync(command, cancellationToken)
             : LockWait.RunAsync(_one, state, time, command, token => RunQueuedAsync(command, token), cancellationToken);
 
     // A read of git, the peers and GitHub that changes nothing: it takes no lock, so a busy node answers it, and it holds none while it waits.
+    // flight-changes is the same kind of read, of one flight's plane.
     private async Task<CommandResult> RunTouchesAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         try
         {
-            return state.Complete(command, null, made: await TouchesAsync(command, cancellationToken));
+            return state.Complete(command, null, made: command.Verb == Verbs.FlightChanges
+                ? await FlightChangesAsync(command, cancellationToken)
+                : await TouchesAsync(command, cancellationToken));
         }
         catch (FlightException ex)
         {
