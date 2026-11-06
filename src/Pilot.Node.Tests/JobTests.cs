@@ -1475,6 +1475,74 @@ public sealed class JobTests2 : JobTestsBase
 
         (_state.Jobs().Single().State, _state.Jobs().Single().Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
     }
+
+    // Pilot #810: a recovered job's owner is judged only once the tracker's first poll has listed the sessions (Ready).
+    private void PutDeadJob() => _state.PutJob(new JobRow
+    {
+        Id = "j1", Command = "dotnet test", Cwd = _root, Owner = "a1b2c3d4", OwnerName = "se1-tia1-parser", State = JobState.Running,
+        LogPath = Path.Combine(_root, "j1.log"), Timeout = JobRunner.DefaultTimeout, StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+    });
+
+    private JobRunner RunnerWaitingFor(Func<Task> ready, TimeSpan? budget = null) =>
+        new(_state, new NodeOptions(Path.Combine(_root, "n4.sock"), Path.Combine(_root, "data4")), TimeProvider.System)
+        {
+            Ready = ready,
+            ReadyBudget = budget ?? TimeSpan.FromSeconds(10),
+            Say = (command, _) =>
+            {
+                _said.Enqueue(command);
+                return Task.FromResult(_state.Complete(command, _refuse));
+            },
+        };
+
+    [Fact]
+    public async Task ADeadJobIsNotToldUntilTheTrackersFirstPollIsDone()
+    {
+        PutDeadJob();
+        var firstPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runner = RunnerWaitingFor(() => firstPoll.Task);
+
+        var recovery = runner.RecoverAsync(Ct);
+        await Task.Delay(300, Ct);
+        // Ended from its missing exit file, as ever; but not told, nor judged, while the poll is out.
+        var waiting = _state.Jobs().Single();
+        (waiting.State, waiting.EndedAt is not null, waiting.Told, _said.Count).ShouldBe((JobState.Failed, true, false, 0));
+        recovery.IsCompleted.ShouldBeFalse();
+
+        firstPoll.SetResult();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ADeadJobIsToldAfterTheBudgetWhenTheFirstPollNeverEnds()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task, TimeSpan.FromMilliseconds(200));
+
+        await runner.RecoverAsync(Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _state.Jobs().Single().Told.ShouldBeTrue();
+        _said.Single().Args[0].ShouldContain("Your job j1");
+    }
+
+    [Fact]
+    public async Task ANodeThatStopsBeforeTheFirstPollLeavesTheDeadJobUntold()
+    {
+        PutDeadJob();
+        var runner = RunnerWaitingFor(() => new TaskCompletionSource().Task);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        var recovery = runner.RecoverAsync(stopping.Token);
+        await Task.Delay(100, Ct);
+        await stopping.CancelAsync();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // Left for the next node's sweep, which tells it: nothing was said and the row is not marked told.
+        (_state.Jobs().Single().Told, _said.Count).ShouldBe((false, 0));
+    }
 }
 
 /// <summary>Part 3 of JobTests: the class is split so its tests run side by side, not one after another.</summary>

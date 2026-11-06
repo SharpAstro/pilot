@@ -27,15 +27,32 @@ public sealed class RestartTests
             ? $"while (-not (Test-Path -LiteralPath '{gate}')) {{ Start-Sleep -Milliseconds 100 }}; echo 'finished'; exit {exit}"
             : $"while [ ! -e '{gate}' ]; do sleep 0.1; done; echo 'finished'; exit {exit}";
 
-    private static async Task<NodeHarness> StartAsync(string? folder = null, Func<IServiceProvider, Task>? beforeStart = null)
+    /// <summary>
+    /// Starts a node whose tracker lists the owner from its first poll on: the first listing is held until the test has set it
+    /// (pilot #810). Set after the start, as it was, the listing raced the tracker's polls (100 ms apart here): a slow runner let
+    /// two empty ones end the owner's restored row for good before the test said it lived, and a restarted node then judged its
+    /// owner ended. <paramref name="duringFirstPoll"/> runs while that first poll is still held, the recovery waiting for it.
+    /// </summary>
+    private static async Task<NodeHarness> StartAsync(string? folder = null, Func<NodeHarness, Task>? duringFirstPoll = null, INodeJournal? journal = null)
     {
-        var node = await NodeHarness.StartAsync(Ct, folder: folder, beforeStart: beforeStart);
-        node.Agents.Json = Listing;
-        for (var i = 0; i < 200 && !node.State.Sessions().Any(s => s.Id == Owner); i++)
+        var node = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true, journal: journal);
+        try
         {
-            await Task.Delay(50, Ct);
+            node.Agents.Json = Listing;
+            if (duringFirstPoll is not null)
+            {
+                await duringFirstPoll(node);
+            }
+            node.Agents.ReleaseFirstListing();
+            // The first poll done: the owner's row is the one it listed, not only one a restarted node's journal restored.
+            await node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>().FirstPoll.WaitAsync(Ct);
+            node.State.Sessions().ShouldContain(s => s.Id == Owner);
         }
-        node.State.Sessions().ShouldContain(s => s.Id == Owner);
+        catch
+        {
+            await node.DisposeAsync();
+            throw;
+        }
         return node;
     }
 
@@ -183,9 +200,9 @@ public sealed class RestartTests
     }
 
     /// <summary>A job the first node started and then stopped over, killed while no node ran and with no exit file: its data folder and its id.</summary>
-    private static async Task<(string Folder, string Id)> JobThatDiedWhileNoNodeRanAsync()
+    private static async Task<(string Folder, string Id)> JobThatDiedWhileNoNodeRanAsync(INodeJournal? journal = null)
     {
-        var first = await StartAsync();
+        var first = await StartAsync(journal: journal);
         var id = Run(first, Sleeping(60, 0));
         var running = await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
@@ -209,30 +226,61 @@ public sealed class RestartTests
         Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
-    // The test above, with the order its Windows run took (pilot #810) made certain instead of left to the runner. A started host runs
+    // The test above, in the order its Windows run raced (pilot #810), made certain instead of left to the runner. A started host runs
     // each BackgroundService's ExecuteAsync on the thread pool (.NET 10's BackgroundService.StartAsync wraps it in Task.Run), so the
-    // job runner's recovery of the dead job races the session tracker's first polls. The test node polls every 100 ms and its
-    // listing shows nothing until the test sets it after the start; the first empty poll ends the owner's restored row, the second
-    // holds that end ("ended for good"), and a recovery that reaches its tell after that marks the job told "owner-ended" with
-    // no say (JobRunner.TellAsync, the EndedForGood branch). Here the tracker looks twice before the host starts, so the recovery
-    // always comes after: the restarted node judges the owner before it has seen one fresh listing, and the owner is not told.
-    // Unskipped it fails with: ToldWay=owner-ended, State=Failed, Error=ended while the node was down, no exit recorded; deliveries [].
-    [Fact(Skip = "PIL810: the restarted node marks the job told \"owner-ended\" with no say, from two empty polls of the restored owner row (EndedForGood); the fix is leg node-waits-for-fresh-rows")]
-    public async Task AJobThatDiedWhileNoNodeRanIsToldToItsOwnerWhateverTheTrackerSawBeforeTheRecovery()
+    // job runner's recovery of the dead job, which tells its owner at once, races the session tracker's first poll. On the Windows
+    // runner the tracker's own polls ended the owner's restored row for good (two listings that did not show it yet, because this
+    // fixture set the listing after the start, which StartAsync no longer does) and the job was marked told "owner-ended" with no
+    // say (ToldWay=owner-ended, State=Failed, Error=ended while the node was down, no exit recorded; deliveries []). That order is
+    // not forced here: two empty listings before the recovery do end an owner for good, whatever the recovery waits for.
+    // What the node owes a restart is this: before the first poll the session rows are only the journal's. The journal this node
+    // restores holds no row for the owner (one it had dropped, or never saved) and the first poll is held, so the job has ended and
+    // is not told however long the poll takes, and is told once, as to a live worker, when the poll lists the owner. Its say would
+    // wait for the poll in any case, as the messenger looks afresh first; the wait before the say is what keeps the judgements made
+    // ahead of it (replaced, ended) off rows nothing had listed, which JobTests holds directly and the test below holds for the wiring.
+    [Fact]
+    public async Task AJobThatDiedWhileNoNodeRanIsToldToItsLiveOwnerOnlyOnceTheTrackerHasListedIt()
     {
-        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync();
+        var journal = new InMemoryJournal();
+        var (folder, id) = await JobThatDiedWhileNoNodeRanAsync(journal);
+        var kept = new NodeState(journal, TimeProvider.System).Snapshot();
+        kept.Sessions.ShouldContain(s => s.Id == Owner);
+        var restored = new RestoredJournal(kept with { Sessions = [.. kept.Sessions.Where(s => s.Id != Owner)] });
 
-        await using var second = await StartAsync(folder, beforeStart: async services =>
+        await using var second = await StartAsync(folder, journal: restored, duringFirstPoll: async node =>
         {
-            var tracker = services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>();
-            await tracker.PollAsync(Ct);
-            await tracker.PollAsync(Ct);
+            // The recovery has read the exit file and ended the row; its tell waits for the first poll the test holds.
+            await Until(node, id, j => j.EndedAt is not null);
+            await Task.Delay(300, Ct);
+            node.State.Sessions().ShouldNotContain(s => s.Id == Owner, "the owner has a row before the first poll");
+            node.State.Jobs().Single(j => j.Id == id).Told.ShouldBeFalse($"told before the first poll: {Why(node, id)}");
+            Deliveries(node).ShouldBe(0, $"told before the first poll: {Why(node, id)}");
         });
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
         (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, id));
         new[] { SayWays.Relayed, SayWays.Resumed }.ShouldContain(ended.ToldWay ?? "none", Why(second, id));
         Deliveries(second).ShouldBe(1, Why(second, id));
+    }
+
+    [Fact]
+    public async Task TheNodesJobRunnerTellsOnlyAfterTheSessionTrackersFirstPoll()
+    {
+        await using var node = await StartAsync();
+
+        var jobs = node.App.Services.GetRequiredService<JobRunner>();
+        jobs.Ready.ShouldNotBeNull("the node never set the runner's Ready (pilot #810)");
+        jobs.Ready().ShouldBeSameAs(node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>().FirstPoll);
+    }
+
+    /// <summary>A journal that hands a node the state it is given, and keeps nothing.</summary>
+    private sealed class RestoredJournal(SnapshotEvent snapshot) : INodeJournal
+    {
+        public NodeHistory Load() => new(snapshot.Stream, snapshot, []);
+
+        public void Append(NodeEvent nodeEvent, ReadOnlyMemory<byte> json)
+        {
+        }
     }
 
     [Fact]
