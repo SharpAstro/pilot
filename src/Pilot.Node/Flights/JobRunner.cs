@@ -1279,7 +1279,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             : null;
     }
 
-    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); off unless set, live.</summary>
+    /// <summary>Whether a job in a plane builds into the plane's own artifacts (<see cref="NodeSettings.JobPlaneOutputKey"/>); on unless set off, live.</summary>
     public bool PlaneOutput
     {
         get => _planeOutput;
@@ -1299,7 +1299,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         }
     }
 
-    private bool _planeOutput;
+    private bool _planeOutput = NodeSettings.JobPlaneOutputDefault;
 
     /// <summary>The clones a job's build compiles; settable so a test can give fixed sets. Answered once per job, kept until it ends.</summary>
     public Func<JobRow, IReadOnlyCollection<string>> SiblingsOf { get; set; } = job => SiblingSet.Of(job.Command, job.Cwd);
@@ -1502,7 +1502,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         {
             // An exit file of an earlier run of this id would end the job at once: there is none.
             File.Delete(exitPath);
-            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd));
+            shell = DetachedShell.For(job.Id, job.Command, job.Cwd, job.LogPath, exitPath, Priority, Flights.PlaneOutput.Variables(PlaneOutput, job.Cwd),
+                Flights.PlaneOutput.NoBuildNotice(PlaneOutput, job.Command, job.Cwd));
             var started = shell.Start();
             process = new JobProcess(started.Id, StartOf(started), started);
         }

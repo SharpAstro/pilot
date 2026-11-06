@@ -166,6 +166,31 @@ public sealed class SettingsTests : IDisposable
             o => o.CommandLineKeys.ShouldNotBeNull().ShouldContain(NodeSettings.MachineKey));
     }
 
+    /// <summary>PIL802: a node with nothing saved builds plane jobs into the planes' own artifacts, the page says on (default), and off still works at once.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task JobPlaneOutputIsOnByDefaultAndSetOffIsInForceAtOnce()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var runner = node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+
+        runner.PlaneOutput.ShouldBeTrue();
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPlaneOutputKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("on"), s => s.Saved.ShouldBeNull(), s => s.Source.ShouldBe(SettingSources.Default), s => s.Pending.ShouldBeFalse(),
+            s => s.Choices.ShouldBe(["on", "off"]), s => s.Detail.ShouldContain("the default"), s => s.Detail.ShouldNotContain("Off by default"));
+
+        var off = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "off"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        off.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as off, and in force now");
+        runner.PlaneOutput.ShouldBeFalse();
+        NodeSettings.Read(node.Options.SettingsFile).JobPlaneOutput.ShouldBe(false);
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == NodeSettings.JobPlaneOutputKey).ShouldSatisfyAllConditions(
+            s => s.Value.ShouldBe("off"), s => s.Saved.ShouldBe("off"), s => s.Source.ShouldBe(SettingSources.File), s => s.Pending.ShouldBeFalse());
+
+        var on = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["job-plane-output", "on"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        on.Way.ShouldNotBeNull().ShouldStartWith("job-plane-output saved as on, and in force now");
+        runner.PlaneOutput.ShouldBeTrue();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()

@@ -26,8 +26,10 @@ public sealed record NodeSettings
     public const string MaxJobsKey = "max-jobs";
     public const string JobMemoryKey = "job-memory";
     public const string JobPriorityKey = "job-priority";
-    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; off unless set.</summary>
+    /// <summary>Whether a job in a plane builds into output under the plane (MSBuild artifacts output), so two planes never share a sibling clone's obj and the sibling lock is skipped for it; on unless set off.</summary>
     public const string JobPlaneOutputKey = "job-plane-output";
+    /// <summary>What <see cref="JobPlaneOutputKey"/> is when the settings file does not say (PIL802): on, so four slots can build at once.</summary>
+    public const bool JobPlaneOutputDefault = true;
     public const string MergeMethodKey = "merge-method";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
@@ -158,7 +160,7 @@ public sealed record NodeSettings
     /// <summary>Whether a leg's fresh worker steps up the model ladder by attempt (<see cref="WorkerLadderKey"/>); on unless set off.</summary>
     public bool? WorkerLadder { get; init; }
 
-    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); off unless set.</summary>
+    /// <summary>Whether the node's jobs in a plane build into <c>&lt;plane&gt;/artifacts</c> (<see cref="JobPlaneOutputKey"/>); <see cref="JobPlaneOutputDefault"/> unless set.</summary>
     public bool? JobPlaneOutput { get; init; }
 
     /// <summary>The Shortcut API token (<see cref="ShortcutTokenKey"/>) that reads a story's title; the <c>SHORTCUT_API_TOKEN</c> variable wins over it. Never shown by the settings output beyond set or not.</summary>

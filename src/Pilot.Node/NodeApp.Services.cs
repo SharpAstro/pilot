@@ -442,7 +442,7 @@ public static partial class NodeApp
                 MaxRunning = Math.Max(1, nodeOptions.MaxJobs),
                 MinFreeMemory = (long)(Math.Max(0, nodeOptions.JobMemoryGigabytes) * (1L << 30)),
                 Priority = nodeOptions.JobPriority,
-                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? false,
+                PlaneOutput = nodeOptions.Saved?.JobPlaneOutput ?? NodeSettings.JobPlaneOutputDefault,
                 EndedForGood = id => services.GetRequiredService<SessionTracker>().IsEndedForGood(id),
                 Lifetime = services.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             };
