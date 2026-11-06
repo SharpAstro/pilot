@@ -132,12 +132,8 @@ public sealed partial class LegCommander
             await StopQuietly(job, cancellationToken);
         }
         // A ticker of the ticking pass (PIL804) goes with the worker it was started for: left running, it could tick or finish the new
-        // worker's leg. The new worker's row below clears TickerJob.
-        if (leg.TickerJob is { } tickerJob)
-        {
-            DropQueuedJobsOf(tickerJob, "its worker went around");
-            await StopQuietly(tickerJob, cancellationToken);
-        }
+        // worker's leg. TickerJob is cleared as it is stopped, so a go-around whose start then fails does not leave the leg pointing at it.
+        leg = await StopTickerAsync(leg, "its worker went around", cancellationToken);
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var by = command.PersonsWord is not null ? "the person" : command.Who ?? "unknown";
         var next = leg with { GoArounds = leg.GoArounds + 1, GoAroundReasons = [.. leg.GoAroundReasons, new GoAroundReason { Why = why, By = by, At = time.GetUtcNow() }], ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done && !forConflict ? 1 : 0) };

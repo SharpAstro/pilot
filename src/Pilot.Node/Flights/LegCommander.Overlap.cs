@@ -341,13 +341,29 @@ public sealed partial class LegCommander
             await StopQuietly(job, cancellationToken);
         }
         // A ticker of the ticking pass (PIL804) must not outlive the worker it was started for: it could tick or finish the new worker's leg.
-        // StartWorker clears TickerJob on the leg once the new worker is up.
-        if (leg.TickerJob is { } tickerJob)
-        {
-            DropQueuedJobsOf(tickerJob, "its worker was restarted");
-            await StopQuietly(tickerJob, cancellationToken);
-        }
+        // TickerJob is cleared as it is stopped, so a restart whose start fails does not leave the leg pointing at it.
+        leg = await StopTickerAsync(leg, "its worker was restarted", cancellationToken);
         StartWorker(flight, leg, state.Legs(flight.Code));
+    }
+
+    /// <summary>
+    /// Stops the leg's ticker of the ticking pass (PIL804), if it has one, and clears <see cref="LegRow.TickerJob"/> on the stored row
+    /// at once; returns the leg as it is now. Left set, a replacement worker whose start fails would leave the leg looking as if the
+    /// ticker we just stopped still worked, and the watch would ring for it ending.
+    /// </summary>
+    private async Task<LegRow> StopTickerAsync(LegRow leg, string why, CancellationToken cancellationToken)
+    {
+        if (leg.TickerJob is not { } tickerJob)
+        {
+            return leg;
+        }
+        DropQueuedJobsOf(tickerJob, why);
+        await StopQuietly(tickerJob, cancellationToken);
+        if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is { } stored)
+        {
+            state.PutLeg(stored with { TickerJob = null });
+        }
+        return leg with { TickerJob = null };
     }
 
     /// <summary>Stops a leg's validator that took no first turn and starts a fresh one in its place.</summary>

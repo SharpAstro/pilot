@@ -194,6 +194,78 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task A_go_around_whose_start_fails_still_clears_the_ticker_job_it_stopped()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var ticker = L("parser").TickerJob.ShouldNotBeNull();
+        _state.PutSession(Session(ticker, Ticker, SessionState.Working, TimeSpan.Zero));
+
+        _workers.Fail = new InvalidOperationException("claude refused to start");
+        await Leg(Verbs.GoAround, "flight/TIA1/parser", "the commits do not cover the steps");
+
+        _workers.Stopped.ShouldContain(ticker);
+        L("parser").TickerJob.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RestartWorker_stops_the_ticker_and_clears_the_ticker_job()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var worker = L("parser").WorkerJob!;
+        var ticker = L("parser").TickerJob.ShouldNotBeNull();
+
+        await _legs.RestartWorkerAsync("TIA1", "parser", Ct);
+
+        _workers.Stopped.ShouldContain(ticker);
+        _workers.Stopped.ShouldContain(worker);
+        await Until(() => L("parser").WorkerJob != worker);
+        L("parser").TickerJob.ShouldBeNull();
+        L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    public async Task RestartWorker_whose_start_fails_still_clears_the_ticker_job_it_stopped()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        await LookUntilTickerAsync();
+        var ticker = L("parser").TickerJob.ShouldNotBeNull();
+
+        _workers.Fail = new InvalidOperationException("claude refused to start");
+        await _legs.RestartWorkerAsync("TIA1", "parser", Ct);
+
+        _workers.Stopped.ShouldContain(ticker);
+        L("parser").TickerJob.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_ticker_whose_start_fails_leaves_one_ring_not_two()
+    {
+        await FlyingAsync(commit: true);
+        WorkerEnded();
+        _workers.Fail = new InvalidOperationException("claude refused to start");
+
+        await _watch.LookAsync(Ct);
+        await Until(() => _state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind));
+        _workers.Fail = null;
+
+        // Past the show-up grace the ordinary ladder would take the leg back and ring worker-idle on top of start-failed.
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            _clock.Advance(TimeSpan.FromMinutes(10));
+            await _watch.LookAsync(Ct);
+        }
+
+        _state.Cards(openOnly: true).Count(c => c.Bin == CardBin.Ring).ShouldBe(1);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegWatch.Idle);
+        _workers.Started.ShouldNotContain(w => w.Name == Ticker);
+    }
+
+    [Fact]
     public async Task A_ticker_that_finishes_failed_leaves_the_leg_failed_ring()
     {
         await FlyingAsync(commit: true);

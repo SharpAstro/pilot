@@ -196,6 +196,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var subject = Verbs.LegTarget(leg.Flight, leg.Name);
             var worker = sessions.FirstOrDefault(s => s.Id == leg.WorkerJob);
             // A leg in its ticking pass is its ticker's: the worker ended, and the ticker ticks what its commits cover and finishes.
+            // An idle worker is left alive while its ticker works, on purpose: it costs nothing idle, ticks are idempotent should it be
+            // woken, and the finish (StopWorkerAfterFinishAsync) or a go-around (StopTickerAsync) stops both sessions.
             if (leg.TickerJob is not null)
             {
                 await LookAtTickerAsync(leg, sessions, now);
@@ -479,7 +481,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
         }
         // A worker whose context is near full is never nudged: a nudge is a turn it has no room for. It is compacted once, then
-        // the leg goes round with a fresh worker (pilot #578).
+        // the leg goes round with a fresh worker (pilot #578). This holds when it has commits too, on purpose: a worker that ran out of
+        // room is almost always mid-task, so work remains that a ticker (which only ticks what commits cover) cannot do, and the fresh
+        // worker's brief carries the commits so far. An ended worker is the ticking pass's, above, before this.
         if (cause == IdleCause.Full)
         {
             await FullAsync(leg, worker, since, now, cancellationToken);
@@ -548,7 +552,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         // Asked for already: given the show-up grace to appear on the leg, then the ordinary ladder takes it back.
         if (_tickerTried.TryGetValue(workerJob, out var tried))
         {
-            return now - tried < ShowUpGrace;
+            // A start that failed has rung start-failed (with the go-around as its choice): the ordinary ladder going on would ring
+            // worker-idle for the same leg once the grace passed. The one ring stands until the person answers it.
+            return now - tried < ShowUpGrace
+                || state.Cards(openOnly: true).Any(c => c.Kind == LegCommander.StartFailedKind && string.Equals(c.Subject, Subject(leg), StringComparison.Ordinal));
         }
         string? head;
         try
