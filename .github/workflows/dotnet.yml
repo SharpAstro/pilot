@@ -59,14 +59,59 @@ jobs:
     # Both: the node, CLI and GUI run on Windows (the controller's win-arm64 machine) as much as on Linux, and much of
     # what can break is Windows-only: the socket's owner-only lock, case-insensitive paths, worktree locks, .exe names.
     # x64 Windows, not Arm: hosted Arm runners are limited on private repos, and the platform code is the same.
+    #
+    # Ubuntu is one job that runs everything. Windows is four jobs, each restoring and building once, because one Windows
+    # job took 26 minutes and the merge queue gives up on a check at 20 (#813). Measured on queue run 42246117261: restore
+    # 46 s, build 121 s, the fast tests 148 s, the Slow tests 1136 s, the GUI tests 94 s, where Ubuntu runs the same 1128
+    # Slow tests in 184 s. Those tests are git-backed, and on Windows they contend on Process.Start's lock (#794), which more
+    # tests in one process do not relieve and more runners do. So 'fast' runs every test but the Slow ones, then the GUI
+    # tests, and three shards split the Slow tests by class, about 1150 s of per-class test time each (the seconds are that
+    # run's, summed per class). Shards 1 and 2 name their classes; shard 3 is Slow minus every class named in 1 and 2, so a
+    # new Slow class lands in a shard without this file being edited. CiWorkflowTests holds all of that: every Slow test in
+    # Pilot.Node.Tests matches exactly one shard, and gate needs this whole matrix (see below).
+    name: build (${{ matrix.os }}, ${{ matrix.rid }}, ${{ matrix.shard }})
+    # Past the 15 minutes the Windows path is meant to take, and short of the merge queue's 20 minutes, a hung job is
+    # stopped here, not by the queue.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
+          # tests: all runs the fast tests, the Slow tests and the GUI tests; fast, the fast tests and the GUI tests;
+          # slow, only the Slow tests that slow_filter selects.
           - os: ubuntu-latest
             rid: linux-x64
+            shard: all
+            tests: all
+            slow_filter: "Category=Slow"
           - os: windows-latest
             rid: win-x64
+            shard: fast
+            tests: fast
+          # Shard 1, 1160 s: LandingPathTests 405, ReviewTests1 253, HumanVerificationFilingTests 193, HoldingPatternTests 153,
+          # OverlapTests1 126, JobTests1 30.
+          - os: windows-latest
+            rid: win-x64
+            shard: slow-1
+            tests: slow
+            slow_filter: "Category=Slow&(FullyQualifiedName~Pilot.Node.Tests.LandingPathTests|FullyQualifiedName~Pilot.Node.Tests.ReviewTests1|FullyQualifiedName~Pilot.Node.Tests.HumanVerificationFilingTests|FullyQualifiedName~Pilot.Node.Tests.HoldingPatternTests|FullyQualifiedName~Pilot.Node.Tests.OverlapTests1|FullyQualifiedName~Pilot.Node.Tests.JobTests1)"
+          # Shard 2, 1145 s: JobTests3 88, LegEndOverlapTests 83, ReviewTests3 71, RebaseLayFlightTests 70, ReviewTests2 63,
+          # LegSelfFinishTests 61, ReviewLoopTests 58, ReviewTests4 53, LandingRecheckPathTests 51, PrRecheckTests2 50,
+          # ConnectTests 49, LfsTests 47, LegCommanderTests2 47, ReviewTests5 46, PrRecheckTests3 45, ReviewModelTests 45,
+          # BranchShapeTests 44, UnreadHeadTests 43, MergedUnderLegTests 35, FixFollowUpTests 34, PackageWaitTests1 31,
+          # LegCommanderTests1 31.
+          - os: windows-latest
+            rid: win-x64
+            shard: slow-2
+            tests: slow
+            slow_filter: "Category=Slow&(FullyQualifiedName~Pilot.Node.Tests.JobTests3|FullyQualifiedName~Pilot.Node.Tests.LegEndOverlapTests|FullyQualifiedName~Pilot.Node.Tests.ReviewTests3|FullyQualifiedName~Pilot.Node.Tests.RebaseLayFlightTests|FullyQualifiedName~Pilot.Node.Tests.ReviewTests2|FullyQualifiedName~Pilot.Node.Tests.LegSelfFinishTests|FullyQualifiedName~Pilot.Node.Tests.ReviewLoopTests|FullyQualifiedName~Pilot.Node.Tests.ReviewTests4|FullyQualifiedName~Pilot.Node.Tests.LandingRecheckPathTests|FullyQualifiedName~Pilot.Node.Tests.PrRecheckTests2|FullyQualifiedName~Pilot.Node.Tests.ConnectTests|FullyQualifiedName~Pilot.Node.Tests.LfsTests|FullyQualifiedName~Pilot.Node.Tests.LegCommanderTests2|FullyQualifiedName~Pilot.Node.Tests.ReviewTests5|FullyQualifiedName~Pilot.Node.Tests.PrRecheckTests3|FullyQualifiedName~Pilot.Node.Tests.ReviewModelTests|FullyQualifiedName~Pilot.Node.Tests.BranchShapeTests|FullyQualifiedName~Pilot.Node.Tests.UnreadHeadTests|FullyQualifiedName~Pilot.Node.Tests.MergedUnderLegTests|FullyQualifiedName~Pilot.Node.Tests.FixFollowUpTests|FullyQualifiedName~Pilot.Node.Tests.PackageWaitTests1|FullyQualifiedName~Pilot.Node.Tests.LegCommanderTests1)"
+          # Shard 3, about 1150 s: every other Slow class, and any Slow class added later. The filter is the complement of
+          # the two above: when a class moves between shards 1 and 2 it is added to the other list and left out of this one.
+          - os: windows-latest
+            rid: win-x64
+            shard: slow-3
+            tests: slow
+            slow_filter: "Category=Slow&FullyQualifiedName!~Pilot.Node.Tests.LandingPathTests&FullyQualifiedName!~Pilot.Node.Tests.ReviewTests1&FullyQualifiedName!~Pilot.Node.Tests.HumanVerificationFilingTests&FullyQualifiedName!~Pilot.Node.Tests.HoldingPatternTests&FullyQualifiedName!~Pilot.Node.Tests.OverlapTests1&FullyQualifiedName!~Pilot.Node.Tests.JobTests1&FullyQualifiedName!~Pilot.Node.Tests.JobTests3&FullyQualifiedName!~Pilot.Node.Tests.LegEndOverlapTests&FullyQualifiedName!~Pilot.Node.Tests.ReviewTests3&FullyQualifiedName!~Pilot.Node.Tests.RebaseLayFlightTests&FullyQualifiedName!~Pilot.Node.Tests.ReviewTests2&FullyQualifiedName!~Pilot.Node.Tests.LegSelfFinishTests&FullyQualifiedName!~Pilot.Node.Tests.ReviewLoopTests&FullyQualifiedName!~Pilot.Node.Tests.ReviewTests4&FullyQualifiedName!~Pilot.Node.Tests.LandingRecheckPathTests&FullyQualifiedName!~Pilot.Node.Tests.PrRecheckTests2&FullyQualifiedName!~Pilot.Node.Tests.ConnectTests&FullyQualifiedName!~Pilot.Node.Tests.LfsTests&FullyQualifiedName!~Pilot.Node.Tests.LegCommanderTests2&FullyQualifiedName!~Pilot.Node.Tests.ReviewTests5&FullyQualifiedName!~Pilot.Node.Tests.PrRecheckTests3&FullyQualifiedName!~Pilot.Node.Tests.ReviewModelTests&FullyQualifiedName!~Pilot.Node.Tests.BranchShapeTests&FullyQualifiedName!~Pilot.Node.Tests.UnreadHeadTests&FullyQualifiedName!~Pilot.Node.Tests.MergedUnderLegTests&FullyQualifiedName!~Pilot.Node.Tests.FixFollowUpTests&FullyQualifiedName!~Pilot.Node.Tests.PackageWaitTests1&FullyQualifiedName!~Pilot.Node.Tests.LegCommanderTests1"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -74,10 +119,27 @@ jobs:
         # Git Bash on Windows, so the version step's shell script runs on both.
         shell: bash
     steps:
+    - name: Turn off Defender's real-time scanning
+      # Windows only: the tests start thousands of git processes and write many small files, which Defender scans one by
+      # one. Best effort (tamper protection can refuse it), so a refusal costs nothing. The repo root, since src is not
+      # there before the checkout.
+      if: runner.os == 'Windows'
+      shell: pwsh
+      working-directory: .
+      continue-on-error: true
+      run: Set-MpPreference -DisableRealtimeMonitoring $true
     - uses: actions/checkout@v7
     - uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
+    - name: Cache NuGet packages
+      # Keyed on what decides the packages: the central versions and each project's own references. A change to either gets
+      # a fresh cache, seeded from the nearest older one by the restore key, so restore fetches only what changed.
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('src/Directory.Packages.props', 'src/**/*.csproj') }}
+        restore-keys: nuget-${{ runner.os }}-
     - name: Resolve version prefix
       # Read the major.minor back from the one place it is written instead of restating it here. -getProperty only
       # EVALUATES the file, so this can run before restore. The value is CAPTURED, so nothing else may print to
@@ -94,27 +156,38 @@ jobs:
     - name: Build
       run: dotnet build Pilot.slnx -c $BUILD_CONF --no-restore -p:Version=${VERSION_PREFIX}${VERSION_REV}${VERSION_HASH} -p:FileVersion=${VERSION_PREFIX}.${VERSION_REV} -p:ContinuousIntegrationBuild=true
     - name: Test
-      # --blame-hang-timeout: one test that runs 5 minutes (the slowest takes ~16 s) is a hang; the run is stopped with a
-      # mini dump and the hung test is named in the log, instead of the job running to its 20 minute limit with no name
-      # (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
+      # Every job but a Windows slow shard. --blame-hang-timeout: one test that runs 5 minutes (the slowest takes ~16 s) is a
+      # hang; the run is stopped with a mini dump and the hung test is named in the log, instead of the job running to its
+      # job limit with no name (the windows hang of flight/pil461 named no test). A diagnostic, not a raised test timeout.
+      if: matrix.tests != 'slow'
       run: dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category!=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini
     - name: Test (slow)
-      # Tests tagged [Trait("Category", "Slow")] are exempt from the 5 s guard and run here. Exit code 8 means none matched.
+      # Every job but the Windows fast one. Tests tagged [Trait("Category", "Slow")] are exempt from the 5 s guard and run
+      # here, all of them on Ubuntu and a shard's share of them on Windows (matrix.slow_filter). Exit code 8 means none
+      # matched, which a shard's share may come to.
+      if: matrix.tests != 'fast'
+      env:
+        SLOW_FILTER: ${{ matrix.slow_filter }}
       run: |
-        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter 'Category=Slow' --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini || [ $? -eq 8 ]
+        dotnet test Pilot.Node.Tests -c $BUILD_CONF --no-build --filter "$SLOW_FILTER" --logger "console;verbosity=detailed" --blame-hang-timeout 5m --blame-hang-dump-type mini || [ $? -eq 8 ]
     - name: Upload the hang dump
+      # One artifact per job: a shard's name carries the shard, since two jobs of one run cannot upload under one name.
       if: failure()
       uses: actions/upload-artifact@v7
       with:
-        name: node-tests-hang-${{ matrix.os }}
+        name: node-tests-hang-${{ matrix.os }}-${{ matrix.shard }}
         path: src/Pilot.Node.Tests/TestResults/**/*.dmp
         if-no-files-found: ignore
     - name: Test the GUI
-      # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed.
+      # The sessions view rendered on the CPU from the sample snapshot: no display and no GPU needed. Not in a slow shard.
+      if: matrix.tests != 'slow'
       run: dotnet test Pilot.Gui.Tests -c $BUILD_CONF --no-build --logger "console;verbosity=detailed"
 
   # The one check main's ruleset requires, for a PR and for the merge queue: it reports whatever ran, so a PR whose
-  # build was skipped (nothing of v2 changed) passes, and one whose build failed or was cancelled does not.
+  # build was skipped (nothing of v2 changed) passes, and one whose build failed or was cancelled does not. build is the
+  # whole matrix (Ubuntu, and Windows' fast job and three slow shards): its result is a failure when any of them failed, so
+  # needing it is needing every test job. A test job that becomes a job of its own must be added to needs here;
+  # CiWorkflowTests fails until it is.
   gate:
     needs: [changes, build]
     if: always()
