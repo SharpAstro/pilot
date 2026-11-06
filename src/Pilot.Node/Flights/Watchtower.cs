@@ -169,7 +169,19 @@ public sealed class Watchtower(
             // Kept in memory all the same; a restarted node then tells those cards once more.
         }
     }
-    private string? _job;
+    private string? _jobId;
+
+    // The one record of which row is the role's watchtower: set here, published on NodeState so the messenger reads the same one.
+    private string? _job
+    {
+        get => _jobId;
+        set
+        {
+            _jobId = value;
+            state.CurrentWatchtower = value;
+        }
+    }
+
     private DateTimeOffset? _startedAt;
     private DateTimeOffset _nextTry = DateTimeOffset.MinValue;
     private DateTimeOffset? _resumedAfter;
@@ -280,6 +292,15 @@ public sealed class Watchtower(
         var rows = state.Sessions().Where(IsWatchtower).ToList();
         if (rows.FirstOrDefault(r => r.Id == _job) is { } own)
         {
+            if (!Live(own) || _stopped.Contains(own.Id) || _replaced.Contains(own.Id))
+            {
+                // The record never points at an ended or ending session while another watchtower row of this node is live.
+                if (rows.Where(r => r.Id != own.Id && r.Kind == SessionKind.Background && Live(r) && !_stopped.Contains(r.Id) && !_replaced.Contains(r.Id))
+                        .OrderByDescending(r => r.StartedAt).FirstOrDefault() is { } live)
+                {
+                    return live;
+                }
+            }
             return own;
         }
         // The session the node started has vanished from the list: an older ended one is never adopted in its place (pilot #542,
@@ -661,6 +682,13 @@ public sealed class Watchtower(
                     _job = row.Id;
                     TellAllOpen();
                 }
+            }
+            if (row is not null && Live(row) && _job is not null && row.Id != _job && !StartInFlight())
+            {
+                // The recorded row ended or is being stopped and another one is live: the role moves to the live one.
+                await Error.WriteLineAsync($"watchtower: the role moved to session {row.Id} from {_job}: the recorded one is no longer live");
+                _job = row.Id;
+                TellAllOpen();
             }
             // Every look: a watchtower of this node but the current, renamed or not, is stopped.
             await StopOthersAsync(row?.Id, cancellationToken);

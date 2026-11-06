@@ -80,6 +80,8 @@ public sealed class WatchtowerStartTests : IDisposable
         _workers.Started.ShouldHaveSingleItem();
         Row(_tower.Generations().Single().Job);
         Live().ShouldBe(1);
+        _tower.Current()!.Id.ShouldBe(_tower.Generations().Single().Job);
+        _state.CurrentWatchtower.ShouldBe(_tower.Generations().Single().Job);
     }
 
     [Fact]
