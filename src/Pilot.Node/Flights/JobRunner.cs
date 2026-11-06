@@ -36,8 +36,14 @@ namespace Pilot.Node.Flights;
 /// any job. Its timeout does not run while it is paused (<see cref="JobRow.PausedFor"/> and the open span are added back), and
 /// the idle check skips it. Cancel and a timeout thaw the tree before they kill it, so nothing is left frozen behind.</para>
 /// </remarks>
-public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time) : BackgroundService
+public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider time, IGit? git = null) : BackgroundService
 {
+    // The node builds this runner by hand (NodeApp.Services), without a git: the CLI is what DI gives everything else, so it is the default.
+    private readonly IGit _git = git ?? new GitCli();
+
+    /// <summary>The longest <c>run</c> waits for the git diff that suggests a filter; past it the refusal gives the generic hint.</summary>
+    private static readonly TimeSpan SuggestBudget = TimeSpan.FromSeconds(10);
+
     public const string UntoldKind = "job-untold";
 
     /// <summary>The Ring card for a job whose owner was told twice and still did not act (#756).</summary>
@@ -539,6 +545,52 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         return time.GetUtcNow();
     }
 
+    /// <summary>
+    /// The refusal for a run of a whole test suite (a <c>dotnet test</c> with no <c>--filter</c>, or only <c>Category!=</c> ones) from
+    /// a worker, reviewer or planner, or null: the watchtower and a terminal run (no owner) are not held to it, and neither is a
+    /// run that is one of the flight's own planned checks (a leg planned with <c>--whole-suite</c>, or a command of it).
+    /// </summary>
+    private string? WholeSuiteRefusal(SessionRow owner, string line)
+    {
+        if (owner.Role is not (SessionRole.Worker or SessionRole.Reviewer or SessionRole.Planner) || CheckScope.WholeSuite(line) is not { } whole)
+        {
+            return null;
+        }
+        // As IsLegCheckOfReviewerOrFixer reads them: the flight's legs, or every leg's when the session names no flight (a PR review).
+        if (state.Legs(owner.Flight).Any(l => l.Check is { } check && IsPartOf(line, check)))
+        {
+            return null;
+        }
+        var flight = owner.Flight is { Length: > 0 } code ? state.Flights().FirstOrDefault(f => f.Code == code) : null;
+        return CheckScope.RunRefusal(whole, flight is null ? null : SuggestedFilter(flight));
+    }
+
+    /// <summary>Whether a run is the leg's check, or one command of it (a check is often <c>cd src &amp;&amp; …</c>, and a run takes its folder separately).</summary>
+    private static bool IsPartOf(string line, string check) =>
+        line.Trim() == check.Trim() || CheckPaths.Segments(check).Any(s => s.Trim() == line.Trim());
+
+    /// <summary>A <c>--filter</c> from the test classes the flight's diff touches; null when git says nothing useful (no plane, a failed or slow diff, no class found).</summary>
+    private string? SuggestedFilter(FlightRow flight)
+    {
+        if (flight.Worktree.Length == 0 || !Directory.Exists(flight.Worktree))
+        {
+            return null;
+        }
+        try
+        {
+            using var budget = new CancellationTokenSource(SuggestBudget);
+            // Run is synchronous (its caller is); a node has no sync context, so waiting on the diff cannot deadlock.
+            var diff = _git.RunAsync(["diff", "--name-only", $"{flight.Base}...HEAD"], flight.Worktree, budget.Token).GetAwaiter().GetResult();
+            return diff.Ok
+                ? CheckScope.Suggest(diff.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), flight.Worktree)
+                : null;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     /// <summary><c>run session/&lt;id&gt;|node &lt;cwd&gt; &lt;timeout seconds&gt; &lt;command…&gt;</c>: starts the job; its id is the result's <c>Made</c>.</summary>
     public CommandResult Run(CommandRequest command)
     {
@@ -600,6 +652,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
         else if (command.Target != Verbs.NodeTarget)
         {
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
+        }
+
+        // A flight's own session (worker, reviewer, planner) does not run a whole test suite: it is CI's, on the PR (pilot #752).
+        if (owner is not null && WholeSuiteRefusal(owner, line) is { } wholeSuite)
+        {
+            return state.Complete(command, wholeSuite);
         }
 
         // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the

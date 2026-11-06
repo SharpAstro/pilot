@@ -15,7 +15,9 @@ public static class CheckScope
 
     /// <summary>
     /// The first <c>dotnet test</c> segment of a check that has no <c>--filter</c> (so runs every test of what it names), or null
-    /// when every one is filtered or the check runs none.
+    /// when every one is filtered or the check runs none. A <c>--filter</c> made only of negated <c>Category</c> clauses
+    /// (<c>Category!=Heavy</c>, <c>Category!=Slow&amp;Category!=Heavy</c>) leaves out a few tests and runs every other, so it
+    /// counts as no filter (PIL821: a worker's <c>Category!=Heavy</c> run took 10,892 tests for 83 minutes).
     /// </summary>
     public static string? WholeSuite(string check)
     {
@@ -32,11 +34,19 @@ public static class CheckScope
 
             var filtered = false;
             var help = false;
-            foreach (var token in tokens.Skip(start + 2).TakeWhile(t => t.Value != "--"))
+            var words = tokens.Skip(start + 2).TakeWhile(t => t.Value != "--").Select(t => t.Value).ToList();
+            for (var i = 0; i < words.Count; i++)
             {
-                filtered |= token.Value.Equals("--filter", StringComparison.OrdinalIgnoreCase)
-                    || token.Value.StartsWith("--filter=", StringComparison.OrdinalIgnoreCase);
-                help |= token.Value is "-h" or "--help" or "-?";
+                if (words[i].Equals("--filter", StringComparison.OrdinalIgnoreCase))
+                {
+                    // `--filter X`: X is the next word; a filter with nothing after it is still a filter.
+                    filtered |= i + 1 >= words.Count || !OnlyNegatedCategories(words[i + 1]);
+                }
+                else if (words[i].StartsWith(FilterEquals, StringComparison.OrdinalIgnoreCase))
+                {
+                    filtered |= !OnlyNegatedCategories(words[i][FilterEquals.Length..]);
+                }
+                help |= words[i] is "-h" or "--help" or "-?";
             }
             if (!filtered && !help)
             {
@@ -44,6 +54,27 @@ public static class CheckScope
             }
         }
         return null;
+    }
+
+    private const string FilterEquals = "--filter=";
+
+    /// <summary>Whether a <c>--filter</c> value is only negated <c>Category</c> clauses joined by <c>&amp;</c> (at least one, parentheses allowed).</summary>
+    private static bool OnlyNegatedCategories(string filter)
+    {
+        var clauses = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return clauses.Length > 0 && clauses.All(c => IsNegatedCategory(c.Trim('(', ')', ' ')));
+    }
+
+    private static bool IsNegatedCategory(string clause)
+    {
+        var at = clause.IndexOf("!=", StringComparison.Ordinal);
+        if (at <= 0 || !clause[..at].Trim().Equals("Category", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        // A plain trait value: anything with another operator in it (A|Category!=B, Name~X) is a different filter.
+        var value = clause[(at + 2)..].Trim();
+        return value.Length > 0 && value.All(c => char.IsLetterOrDigit(c) || c is '_' or '.' or '-' or ' ');
     }
 
     /// <summary>
@@ -78,14 +109,27 @@ public static class CheckScope
     }
 
     /// <summary>The refusal for a check that runs a whole suite: what it is, the suggested filter and where the suite runs.</summary>
-    public static string Refusal(string segment, string? suggestion)
+    public static string Refusal(string segment, string? suggestion) =>
+        $"the check `{segment}` runs a whole test project or solution with no --filter (a filter of only Category!= clauses is none), and the whole suite is CI's, on the PR: " +
+        $"a leg's check runs the tests of what it changes. {Advice(suggestion)}. " +
+        $"If this leg really needs the whole suite, say why with {WholeSuiteKey}=<why> (--whole-suite \"<why>\")";
+
+    /// <summary>
+    /// The refusal for a <c>pilot run</c> of a whole test suite from a flight's own session (a worker, reviewer or planner). A run
+    /// has no <c>--whole-suite</c> to say why (only <c>leg plan</c> does), so the way out named is the filter alone; a run that is
+    /// one of the flight's planned checks is not refused, so it needs no word here.
+    /// </summary>
+    public static string RunRefusal(string segment, string? suggestion) =>
+        $"the run `{segment}` is a whole test suite (no --filter, or only Category!= clauses), and the whole suite is CI's, on the PR (pilot #752, standing order o2): " +
+        $"a flight's own run takes the tests of what the flight touches. {Advice(suggestion)}";
+
+    /// <summary>What to do instead of a whole suite: the suggested filter, or how to name the classes.</summary>
+    private static string Advice(string? suggestion)
     {
         var how = suggestion is null
             ? "name the test classes the leg touches, as in --filter 'FullyQualifiedName~FooTests'"
             : $"filter it to the classes the flight touches: add --filter {suggestion}";
-        return $"the check `{segment}` runs a whole test project or solution with no --filter, and the whole suite is CI's, on the PR: " +
-            $"a leg's check runs the tests of what it changes. {how[..1].ToUpperInvariant()}{how[1..]}. " +
-            $"If this leg really needs the whole suite, say why with {WholeSuiteKey}=<why> (--whole-suite \"<why>\")";
+        return $"{how[..1].ToUpperInvariant()}{how[1..]}";
     }
 
     private static HashSet<string> TestFiles(string plane)

@@ -97,9 +97,41 @@ public sealed class CheckScopeTests : IDisposable
     [InlineData("dotnet test src/Pilot.Node.Tests -- --filter", true)]
     [InlineData("dotnet test --help", false)]
     [InlineData("python -m unittest discover tests", false)]
+    // PIL821: a filter of only negated Category clauses leaves out a few tests and runs every other: still the whole suite.
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter Category!=Heavy", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'Category!=Heavy'", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter \"Category!=Heavy\"", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter=Category!=Heavy", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter='Category!=Heavy'", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'Category!=Slow&Category!=Heavy'", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter Category!=Slow&Category!=Heavy", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter '(Category!=Slow)&(Category!=Heavy)'", true)]
+    [InlineData("dotnet test src/Pilot.Node.Tests -c Release --no-build --filter 'category != Heavy'", true)]
+    [InlineData("cd src && dotnet build -c Release && dotnet test Pilot.Node.Tests --filter 'Category!=Heavy'", true)]
+    // A positive clause, anywhere in the filter, is a filter: the run is narrowed to what it names.
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter FullyQualifiedName~FooTests", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'FullyQualifiedName~FooTests'", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter Category=Invariant", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'Category=Invariant&Category!=Slow'", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'FullyQualifiedName~FooTests&Category!=Heavy'", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'Category!=Heavy|Category=Invariant'", false)]
+    [InlineData("dotnet test src/Pilot.Node.Tests --filter 'Name!=Heavy'", false)]
     public void OnlyADotnetTestWithNoFilterIsTheWholeSuite(string check, bool whole)
     {
         (CheckScope.WholeSuite(check) is not null).ShouldBe(whole);
+    }
+
+    [Fact]
+    public async Task ACategoryNotFilterIsRefusedAtPlanningToo()
+    {
+        _git.Changed = "src/Pilot.Node/Foo.cs\n";
+
+        var result = await PlanLeg("cd src && dotnet test Pilot.Node.Tests -c Release --filter 'Category!=Slow&Category!=Heavy'");
+
+        var error = result.Error.ShouldNotBeNull();
+        error.ShouldContain("--filter 'FullyQualifiedName~FooTests'");
+        error.ShouldContain("whole-suite=<why>");
+        _state.Legs("TIA1").ShouldBeEmpty();
     }
 
     [Fact]

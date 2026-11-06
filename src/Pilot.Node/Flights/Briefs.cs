@@ -169,9 +169,10 @@ public static partial class Briefs
         "A leg's check filters `dotnet test` over the test classes of the files the flight touches plus the classes the leg names (`--filter 'FullyQualifiedName~FooTests|FullyQualifiedName~BarTests'`). " +
         "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no --filter, suggesting one, unless it is given `--whole-suite \"<why>\"`.";
 
-    /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
+    /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR and <c>pilot run</c> refuses (PIL821).</summary>
     internal const string WorkerScopeRule =
         "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's. " +
+        "`pilot run` refuses a whole-suite `dotnet test` (one with no --filter, or only `Category!=` ones) and suggests the --filter from the test classes your flight touches; the check the leg was planned with still runs as planned. " +
         "A check that fails only in tests your change does not touch (their test file, the class of a source you changed, or a name in the check's filter) is passed by the node, which matches each to an open issue or files one and reports it as not this flight's: do not chase it.";
 
     /// <summary>The line the planner is told: a check runs in the plane's root, so write it as CI runs it, working-directory included.</summary>
