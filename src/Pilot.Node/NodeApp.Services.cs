@@ -570,6 +570,7 @@ public static partial class NodeApp
             JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
+            IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.

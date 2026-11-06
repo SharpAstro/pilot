@@ -46,14 +46,23 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         _ => IssuePriority.High,
     };
 
+    /// <summary>
+    /// How often every in-air flight's last move is read between ticks. A pure read of what the node holds that writes only when a
+    /// move changed, so a row's last move (and the age the UI counts from it) is never as old as a whole <see cref="Every"/>.
+    /// </summary>
+    public TimeSpan MovesEvery { get; init; } = TimeSpan.FromSeconds(20);
+
+    // When the next whole tick is due; unset until the first wake, which starts the clock for it.
+    private DateTimeOffset? _nextTick;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         while (!stopping.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(Every, time, stopping);
-                await TickAsync(stopping);
+                await Task.Delay(MovesEvery < Every ? MovesEvery : Every, time, stopping);
+                await StepAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -63,6 +72,26 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             {
                 Error?.WriteLine($"stale watch: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// One wake of the loop: a whole tick once <see cref="Every"/> has passed since the last one began, otherwise only a refresh of the
+    /// last moves. The next tick is set before this one runs, so a tick that throws is tried again after <see cref="Every"/> and not on
+    /// the very next wake, which would repeat a failing tick (and its tracker calls) every <see cref="MovesEvery"/>.
+    /// </summary>
+    public async Task StepAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        var due = _nextTick ??= now + Every;
+        if (now >= due)
+        {
+            _nextTick = now + Every;
+            await TickAsync(cancellationToken);
+        }
+        else
+        {
+            RefreshLastMoves();
         }
     }
 
@@ -77,14 +106,19 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         {
             await ActAsync(item, cancellationToken);
         }
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
         foreach (var flight in state.Flights())
         {
-            if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
+            if (!Staleness.InAir(flight))
             {
                 // A flight that landed, folded or moved is done here: it keeps no stale summary.
                 Attach(flight.Code, null, now);
                 continue;
             }
+            // Every in-air flight carries its last real activity, stale or not, read the same way the stale items read it.
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
             var mine = reading.Stale.Where(i => i.Flight == flight.Code).ToList();
             if (mine.Count > 0)
             {
@@ -92,6 +126,28 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             }
             Attach(flight.Code, mine.FirstOrDefault(), now);
         }
+    }
+
+    /// <summary>Reads every in-air flight's last move now, without the rest of a tick (no action, no raise, no summary).</summary>
+    public void RefreshLastMoves()
+    {
+        var legs = state.Legs();
+        var cards = state.Cards();
+        var pullRequests = state.PullRequests();
+        foreach (var flight in state.Flights().Where(Staleness.InAir))
+        {
+            RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
+        }
+    }
+
+    // The row is rewritten only when the last move or its words changed, so a quiet flight causes no churn on the wire.
+    private void RecordLastMove(FlightRow flight, (DateTimeOffset At, string Text)? last)
+    {
+        if (last is not { } move || (flight.LastMovedAt == move.At && flight.LastMove == move.Text))
+        {
+            return;
+        }
+        state.UpdateFlight(flight.Code, f => f.LastMovedAt == move.At && f.LastMove == move.Text ? f : f with { LastMovedAt = move.At, LastMove = move.Text });
     }
 
     // A reminder about a card is closed once that card is: its choices would answer a card that is no longer asked.
