@@ -641,6 +641,23 @@ public sealed partial class LegCommander(
     /// <summary>A leg's worker name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;</c> in lower case: <c>du1-tia1611-parser</c>.</summary>
     private string ValidatorName(FlightRow flight, LegRow leg) => $"{WorkerName(flight, leg)}-validator";
 
+    /// <summary>The ticking pass's session name, <c>&lt;machine&gt;-&lt;flight&gt;-&lt;leg&gt;-ticker</c> in lower case.</summary>
+    internal string TickerName(FlightRow flight, LegRow leg) => $"{WorkerName(flight, leg)}-ticker";
+
+    // The plane's HEAD sha, or null when it cannot be read (no plane yet, git failed). Run off the lock, as the code around does.
+    private async Task<string?> PlaneHeadAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var head = await git.RunAsync(["rev-parse", "--verify", "--quiet", "HEAD"], flight.Worktree, cancellationToken);
+            return head.Ok && head.Output.Trim() is { Length: > 0 } sha ? sha : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     private string WorkerName(FlightRow flight, LegRow leg) => $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{leg.Name}";
 
     private FlightRow FlightOf(string target)

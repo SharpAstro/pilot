@@ -312,6 +312,8 @@ public static partial class NodeApp
                 StopPlanner = legs.StopPlannerAsync,
                 RestartWorker = legs.RestartWorkerAsync,
                 RestartValidator = legs.RestartValidatorAsync,
+                PlaneHead = legs.PlaneHeadOfAsync,
+                StartTicker = legs.StartTickerAsync,
                 StopSession = legs.StopSessionAsync,
                 ChangedFiles = async (flight, ct) =>
                 {
