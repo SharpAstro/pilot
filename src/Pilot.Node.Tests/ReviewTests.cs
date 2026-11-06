@@ -1424,7 +1424,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         (await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "controller", "20", "Flight 20")).Ok.ShouldBeTrue();
         var flight = _state.Flights().OrderByDescending(f => f.CreatedAt).First();
         (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=parser", "goal=Do it", "done-when=Its check passes",
-            "check=dotnet test", "item=The step")).Ok.ShouldBeTrue();
+            "check=dotnet test --filter A", "item=The step")).Ok.ShouldBeTrue();
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();
