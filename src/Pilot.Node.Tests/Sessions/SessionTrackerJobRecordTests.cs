@@ -34,6 +34,9 @@ public sealed class SessionTrackerJobRecordTests : IDisposable
                 return _record;
             },
         };
+        // A listed session with no transcript is not given a row.
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Lines.Assistant("m1", input: 1));
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m2", input: 1));
     }
 
     public void Dispose() => _profile.Dispose();
