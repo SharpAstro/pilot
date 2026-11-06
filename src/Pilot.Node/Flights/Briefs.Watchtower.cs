@@ -229,9 +229,11 @@ public static partial class Briefs
         text.AppendLine("  yourself in the plane. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
         text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
         text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
-        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern: autopilot's merge and the card's Merge are held. Make the small");
-        text.AppendLine($"  fixes in the plane, commit them, then either `{pilot} flight clear <code> [why]` (the flight may land as it is) or push them with");
-        text.AppendLine($"  `{pilot} flight pr <code>` (the push ends the hold, and its CI and review gate the merge as for any push). The flight holds until you do.");
+        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern for a few minutes (about 10): autopilot's merge and the card's Merge are held");
+        text.AppendLine($"  only while you work on it. Take the hold with `{pilot} flight hold <code> [why]`, or by committing in the plane, and make the small fixes, then");
+        text.AppendLine($"  either `{pilot} flight clear <code> [why]` (the flight may land as it is) or push them with `{pilot} flight pr <code>` (the push ends the hold,");
+        text.AppendLine("  and its CI and review gate the merge as for any push). A hold you took is kept, and rings the person after 30 minutes. Leave it alone and");
+        text.AppendLine("  the node releases it: the flight merges at the reviewed head with the notes on a For-you card, to be done in a follow-up.");
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");

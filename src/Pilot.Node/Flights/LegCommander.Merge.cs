@@ -341,7 +341,7 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is { } holding)
         {
-            throw new FlightException($"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`)");
+            throw new FlightException($"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); a hold the watchtower does not take (`flight hold {flight.Code}`, or a commit in the plane) is released by the node and merges with its notes");
         }
         // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
         if (PrRef.Parse(flight.PullRequestUrl) is { } own

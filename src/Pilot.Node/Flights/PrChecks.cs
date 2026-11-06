@@ -637,8 +637,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private CardRow? ShowingMerge(string subject) =>
         state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge));
 
-    /// <summary>How long a flight circles in a holding pattern before a card asks the person to merge as it is or wait.</summary>
+    /// <summary>How long a hold the watchtower took circles before a card asks the person to merge as it is or wait.</summary>
     public TimeSpan HoldingBound { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>How long a hold may wait for the watchtower to take it (<c>flight hold</c>, or a commit in the plane) before the node releases it and the flight merges with its notes.</summary>
+    public TimeSpan HoldingTakeBound { get; init; } = TimeSpan.FromMinutes(10);
 
     /// <summary>Whether the watchtower is live now; null reads as live (a node built without one is not asked).</summary>
     public Func<bool>? WatchtowerLive { get; set; }
@@ -647,10 +650,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     private readonly Dictionary<string, DateTimeOffset> _holdingRung = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A flight in a holding pattern never circles forever: with no live watchtower, or once the hold is older than
-    /// <see cref="HoldingBound"/>, a Ring card asks the person to merge as it is or wait. Closed when the hold ends.
+    /// A flight in a holding pattern holds only while the watchtower is working in the plane. A hold nobody took (no
+    /// <c>flight hold</c>, no commit in the plane past the reviewed head) within <see cref="HoldingTakeBound"/>, or with no live
+    /// watchtower, is released at once by the node, and the flight merges as for any passed review. A hold the watchtower took and
+    /// left rings once it is older than <see cref="HoldingBound"/> (or at once when the watchtower is not live): a Ring card asks
+    /// the person to merge as it is or wait. Closed when the hold ends.
     /// </summary>
-    private void LookAtHolds()
+    private async Task LookAtHoldsAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var cards = state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.HoldingTimeoutKind).ToList();
@@ -669,7 +675,22 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
             var subject = Verbs.FlightTarget(flight.Code);
             var live = WatchtowerLive?.Invoke() ?? true;
-            if ((live && now - holding.Since < HoldingBound)
+            if (holding.TakenAt is null && legs is not null)
+            {
+                // A commit in the plane past the reviewed head is the watchtower at work: the hold is taken.
+                holding = await legs.NoteHoldTakenAsync(flight.Code, cancellationToken) ?? holding;
+            }
+            if (holding.TakenAt is null)
+            {
+                if (legs is not null && (!live || now - holding.Since >= HoldingTakeBound))
+                {
+                    var released = live ? $"the watchtower did not take it within {(int)HoldingTakeBound.TotalMinutes} minutes" : "there is no live watchtower to take it";
+                    await legs.ReleaseUntakenHoldAsync(flight.Code, holding.Since, released, cancellationToken);
+                }
+                continue;
+            }
+            // Taken: the bound counts from when the watchtower took it, not from the review.
+            if ((live && now - holding.TakenAt.Value < HoldingBound)
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
                 || state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { Args: [{ } head, ..] })
@@ -736,7 +757,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         await RestorePassedWithoutCardAsync(cancellationToken);
-        LookAtHolds();
+        await LookAtHoldsAsync(cancellationToken);
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
         {

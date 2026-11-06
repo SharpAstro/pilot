@@ -131,10 +131,10 @@ public static partial class CardSummaries
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",
             LegCommander.GoAroundCapKind => "A leg has gone around as many times as the cap allows, whatever the reasons, and the node and the watchtower send it round no more. Go around sends one more; Accept takes the leg as it stands.",
-            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while the watchtower fixes the small ones in the plane; nothing for you to do.",
-            LegCommander.HoldingClearedKind => "The watchtower or the person cleared a flight held in a holding pattern to land: its merge is no longer held, and autopilot merges it as for any passed review.",
+            LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits only while the watchtower is working on them in the plane; if it does not take them in a few minutes the flight merges with them. Nothing for you to do.",
+            LegCommander.HoldingClearedKind => "A flight held in a holding pattern was cleared to land, by the watchtower or the person, or released by the node because the watchtower did not take the hold: its merge is no longer held, and autopilot merges it as for any passed review.",
             LegCommander.PrReadyRestoredKind => "A flight's review had passed but no merge card was open (the node restarted between the verdict and the card), so the node raised its PR-ready card again. Nothing to do.",
-            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes without the watchtower clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
+            LegCommander.HoldingTimeoutKind => $"{what} has circled in a holding pattern for 30 minutes after the watchtower took it, without clearing it, or the watchtower is not live. Merge as it is lands it at the reviewed head; Wait keeps it holding and asks again later.",
             LegCommander.ReviewLoopKind => "The review of a flight has asked for changes in three rounds. Pass with notes ends the loop; Allow one more round lets a fourth start.",
             "review-kept" => "A flight's base was merged into its branch and its own diff is unchanged, so its passed review stands and no reviewer started. Nothing to do.",
             LegWatch.StraySession => "A live session that should not be running: one past its purpose (its leg is done or was redone, or its flight landed), or one the node did not start and no role claims. Stop it ends the session; the card closes by itself when the session ends. A role's current session never rings here.",
@@ -195,8 +195,12 @@ public static partial class CardSummaries
         first = first.ReplaceLineEndings(" ");
         first = first.Length > 60 ? first[..57].TrimEnd() + "..." : first;
         var example = first.Length > 0 ? $", for example: {first}" : "";
-        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits while the watchtower fixes them in the plane; nothing for you to do.";
+        return $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}. The merge waits only while the watchtower is working on them in the plane; if it does not take them in a few minutes the flight merges with them. Nothing for you to do.";
     }
+
+    /// <summary>The sentence of a review-notes card whose hold the watchtower did not take: the flight merges with the notes, which stay for a follow-up.</summary>
+    public static string ReviewNotesLeft(string code) =>
+        $"The review of {code} passed with notes that do not block the merge. The watchtower did not take them in time, so the flight merges at the reviewed head; the notes stay here for a follow-up.";
 
     private static string Fallback(string title, IReadOnlyList<CardChoice> choices)
     {

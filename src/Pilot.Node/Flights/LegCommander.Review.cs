@@ -455,10 +455,10 @@ public sealed partial class LegCommander
         state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {HoldingReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {pr.Head[..Math.Min(8, pr.Head.Length)]}. {reviewed}: {review}."
-                + (holding ? " The merge is held until the watchtower clears it or pushes its fixes." : ""),
+                + (holding ? HeldDetailTail : ""),
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
-                ? $"{flight.Code} passed its review with notes and circles in a holding pattern: {HoldingReason}. Merge is refused until it is cleared or the fixes are pushed."
+                ? $"{flight.Code} passed its review with notes and holds for a few minutes. Unless the watchtower takes the hold or commits in the plane, it merges with the notes; Merge is refused until then."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.");
     }
 
@@ -524,7 +524,7 @@ public sealed partial class LegCommander
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? head[..Math.Min(8, head.Length)] : "unknown")}. Notes: {string.Join("; ", notes)} "
-                + $"Make the small ones in the plane ({flight.Worktree}), then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
+                + $"To make the small ones, take the hold with pilot flight hold {flight.Code} (or commit in the plane, {flight.Worktree}) before the grace ends, or the flight merges with these notes. Then pilot flight clear {flight.Code} <why>, or push them with pilot flight pr {flight.Code}",
             link: flight.PullRequestUrl,
             summary: CardSummaries.ReviewNotes(flight.Code, notes));
     }
@@ -560,6 +560,117 @@ public sealed partial class LegCommander
         state.RaiseCard(CardBin.Handled, HoldingClearedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} is cleared to land",
             why.Length > 0 ? $"{who}: {why}" : $"cleared by {who}");
     }
+
+    /// <summary>
+    /// The watchtower's word, or the person's, that it is working on a held flight's notes in the plane: the hold is taken, so the
+    /// merge stays held (and rings after the holding bound) instead of being released by the node after its grace.
+    /// </summary>
+    private void TakeHolding(CommandRequest command)
+    {
+        var flight = FlightOf(command.Target);
+        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
+        {
+            throw new FlightException("only the watchtower or the person may take a flight in a holding pattern");
+        }
+        if (flight.Holding is null)
+        {
+            throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to take (it was cleared, or released to merge)");
+        }
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        Record(flight.Code, f => f with
+        {
+            Holding = f.Holding is { } held ? held with { TakenAt = time.GetUtcNow(), Reason = why.Length > 0 ? $"{HoldingReason}: {why}" : held.Reason } : null,
+        });
+    }
+
+    /// <summary>
+    /// Whether the plane holds a commit the review did not read (past the reviewed head; or, with no reviewed head to compare, newer
+    /// than <paramref name="since"/>): the watchtower is making the notes' fixes. Asks git, so never under the lock.
+    /// </summary>
+    private async Task<bool> PlaneCommittedSinceAsync(FlightRow flight, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(flight.Worktree))
+        {
+            return false;
+        }
+        if (flight.Review?.ReviewedHead is { Length: > 0 } reviewed
+            && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{reviewed}^{{commit}}"], flight.Worktree, cancellationToken)).Ok)
+        {
+            var past = await git.RunAsync(["rev-list", "--count", $"{reviewed}..HEAD"], flight.Worktree, cancellationToken);
+            return past.Ok && int.TryParse(past.Output.Trim(), out var count) && count > 0;
+        }
+        var last = await git.RunAsync(["log", "-1", "--format=%ct", "HEAD"], flight.Worktree, cancellationToken);
+        return last.Ok && long.TryParse(last.Output.Trim(), out var seconds) && seconds > since.ToUnixTimeSeconds();
+    }
+
+    /// <summary>
+    /// A hold not yet taken whose plane holds a commit past the reviewed head is taken now (<see cref="FlightHolding.TakenAt"/>).
+    /// Returns the hold as it stands then, or null when it is not held, was taken already, or the plane holds nothing new.
+    /// </summary>
+    internal async Task<FlightHolding?> NoteHoldTakenAsync(string code, CancellationToken cancellationToken)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } first } seen
+            || !await PlaneCommittedSinceAsync(seen, first.Since, cancellationToken))
+        {
+            return null;
+        }
+        var call = await EnterAsync(code, "having its hold noted as taken", cancellationToken);
+        try
+        {
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } now } || now.Since != first.Since)
+            {
+                return null;
+            }
+            return Record(code, f => f with { Holding = f.Holding is { } held ? held with { TakenAt = time.GetUtcNow() } : null })?.Holding;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
+    }
+
+    /// <summary>
+    /// A hold the watchtower did not take (<paramref name="why"/> says so) is released by the node: the flight merges at the reviewed
+    /// head as for any passed review (autopilot's merge, through the landing routine), or with autopilot off gets its ordinary
+    /// PR-ready card. The review-notes card stays open, saying the flight merges with them. A Handled line names why. False when the
+    /// hold is gone, taken, or another hold than the one looked at (<paramref name="since"/>).
+    /// </summary>
+    internal async Task<bool> ReleaseUntakenHoldAsync(string code, DateTimeOffset since, string why, CancellationToken cancellationToken)
+    {
+        var call = await EnterAsync(code, "having its untaken hold released", cancellationToken);
+        try
+        {
+            var subject = Verbs.FlightTarget(code);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } held } flight || held.Since != since)
+            {
+                return false;
+            }
+            Record(code, f => f with { Holding = null });
+            state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released: {why}",
+                $"{why}, so the node released the hold and the flight merges at the reviewed head with the review's notes, which stay on a card for you");
+            // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
+            if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
+            {
+                state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
+                    $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin());
+            }
+            if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == ReviewNotesKind && c.Subject == subject) is { } notes)
+            {
+                state.UpdateCard(notes.Id, notes.Title, $"{notes.Detail} The watchtower did not take the hold ({why}), so {code} merges with these notes: they are for a follow-up.",
+                    notes.Choices, notes.Link, ReviewNotesKind, CardSummaries.ReviewNotesLeft(code), notes.Bin);
+            }
+            return true;
+        }
+        finally
+        {
+            call.Dispose();
+            _one.Release();
+        }
+    }
+
+    // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.
+    private const string HeldDetailTail = " The merge is held for a few minutes: unless the watchtower takes the hold (flight hold, or a commit in the plane) it merges with the notes.";
 
     /// <summary>The Ring card kind of a holding flight the watchtower has not cleared in time, or whose watchtower is not live.</summary>
     public const string HoldingTimeoutKind = "holding-timeout";
