@@ -62,6 +62,17 @@ public sealed class RestartTests
     // next polled: what counts is that it is woken once.
     private static int Deliveries(NodeHarness node) => node.Delivery.Calls.Count(c => c.StartsWith("relay", StringComparison.Ordinal) || c.StartsWith("resume", StringComparison.Ordinal));
 
+    // What a red run says about a told job (pilot #810): the row's ToldWay, State and Error, then the delivery calls. A count of
+    // deliveries alone cannot tell a job told by a relay or a resume from one marked told quietly ("owner-ended", "gone").
+    private static string Row(JobRow? row) =>
+        row is null ? "no job row" : $"job {row.Id}: ToldWay={row.ToldWay ?? "none"}, State={row.State}, Error={row.Error ?? "none"}";
+
+    private static string Calls(NodeHarness node) => $"deliveries [{string.Join(", ", node.Delivery.Calls)}]";
+
+    /// <summary>The message for an assertion on <paramref name="ids"/> as <paramref name="node"/> holds them now. Not for a node already stopped: its state is disposed with it.</summary>
+    private static string Why(NodeHarness node, params string[] ids) =>
+        $"{string.Join("; ", ids.Select(id => Row(node.State.Jobs().FirstOrDefault(j => j.Id == id))))}; {Calls(node)}";
+
     private static bool Alive(int pid)
     {
         try
@@ -97,7 +108,7 @@ public sealed class RestartTests
         var id = Run(first, WaitingFor(gate, 7));
         var running = await Until(first, id, j => j.State == JobState.Running);
         await first.StopKeepingFolderAsync();
-        Deliveries(first).ShouldBe(0);
+        Deliveries(first).ShouldBe(0, $"{Row(running)} when the first node stopped; {Calls(first)}");
 
         await using var second = await StartAsync(first.Folder);
         // Followed again, not read from an exit file: the second node holds the job, and its process is alive, before it ends.
@@ -112,11 +123,11 @@ public sealed class RestartTests
         await File.WriteAllTextAsync(gate, "go", Ct);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
-        (ended.State, ended.ExitCode, ended.Pid).ShouldBe((JobState.Failed, 7, running.Pid));
-        Deliveries(second).ShouldBe(1);
+        (ended.State, ended.ExitCode, ended.Pid).ShouldBe((JobState.Failed, 7, running.Pid), Why(second, id));
+        Deliveries(second).ShouldBe(1, Why(second, id));
         // Nothing tells it a second time later.
         await Task.Delay(500, Ct);
-        Deliveries(second).ShouldBe(1);
+        Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
     [Fact]
@@ -142,8 +153,8 @@ public sealed class RestartTests
 
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told, seconds: 60);
 
-        ended.State.ShouldBe(JobState.Succeeded);
-        Deliveries(second).ShouldBe(1);
+        ended.State.ShouldBe(JobState.Succeeded, Why(second, id));
+        Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
     [Fact]
@@ -167,8 +178,8 @@ public sealed class RestartTests
         await using var second = await StartAsync(first.Folder);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
-        (ended.State, ended.ExitCode, ended.Error).ShouldBe((JobState.Failed, 3, "exit 3"));
-        Deliveries(second).ShouldBe(1);
+        (ended.State, ended.ExitCode, ended.Error).ShouldBe((JobState.Failed, 3, "exit 3"), Why(second, id));
+        Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
     [Fact]
@@ -187,8 +198,8 @@ public sealed class RestartTests
         await using var second = await StartAsync(first.Folder);
         var ended = await Until(second, id, j => j.EndedAt is not null && j.Told);
 
-        (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
-        Deliveries(second).ShouldBe(1);
+        (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, id));
+        Deliveries(second).ShouldBe(1, Why(second, id));
     }
 
     [Fact]
@@ -222,7 +233,7 @@ public sealed class RestartTests
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "tester" }).Error.ShouldBeNull();
         var ended = await Until(second, id, j => j.EndedAt is not null);
 
-        ended.State.ShouldBe(JobState.Cancelled);
+        ended.State.ShouldBe(JobState.Cancelled, Why(second, id));
         for (var i = 0; i < 100 && (Alive(running.Pid.Value) || Alive(childPid.Value)); i++)
         {
             await Task.Delay(100, Ct);
@@ -253,11 +264,11 @@ public sealed class RestartTests
         var endedB = await Until(second, b, j => j.EndedAt is not null && j.Told);
         var endedC = await Until(second, c, j => j.EndedAt is not null && j.Told);
 
-        new[] { endedA, endedB, endedC }.ShouldAllBe(j => j.State == JobState.Succeeded);
+        new[] { endedA, endedB, endedC }.ShouldAllBe(j => j.State == JobState.Succeeded, Why(second, a, b, c));
         // MaxRunning is 1: they ran one after the other, in the order queued.
         endedB.StartedAt.ShouldBeGreaterThanOrEqualTo(endedA.StartedAt);
         endedC.StartedAt.ShouldBeGreaterThanOrEqualTo(endedB.StartedAt);
-        Deliveries(second).ShouldBe(3);
+        Deliveries(second).ShouldBe(3, Why(second, a, b, c));
     }
 
     [Fact]
@@ -278,9 +289,82 @@ public sealed class RestartTests
         await using var second = await StartAsync(first.Folder);
         var ended = await Until(second, "j99", j => j.EndedAt is not null);
 
-        (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"));
+        (ended.State, ended.Error).ShouldBe((JobState.Failed, "ended while the node was down, no exit recorded"), Why(second, "j99"));
         second.App.Services.GetRequiredService<JobRunner>().IsRunning("j99").ShouldBeFalse();
         Alive(Environment.ProcessId).ShouldBeTrue();
+    }
+
+    // PROBE (temporary, removed before the commit): what the tell decision of a restarted node rests on.
+    private static string Diagnose(NodeHarness node, string id)
+    {
+        var owner = node.State.Sessions().FirstOrDefault(s => s.Id == Owner);
+        var tracker = node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionTracker>();
+        var ledger = node.App.Services.GetRequiredService<Pilot.Node.Sessions.SessionLedger>();
+        string[] ids = owner is null ? [Owner] : [Owner, owner.SessionId];
+        var entry = ledger.Find(ids);
+        var logs = Path.Combine(node.Options.DataFolder, "logs");
+        var lines = Directory.Exists(logs)
+            ? Directory.GetFiles(logs).SelectMany(f => ReadShared(f).Split('\n')).Where(l => l.Contains("job tell") || l.Contains("say:") || l.Contains("stop:")).ToArray()
+            : [];
+        return $"{Why(node, id)}\n  owner row: {(owner is null ? "NONE" : $"{owner.State} role={owner.Role} flight={owner.Flight} leg={owner.Leg} endedBecause={owner.EndedBecause}")}"
+            + $"\n  tracker.IsEndedForGood={tracker.IsEndedForGood(Owner)}; ledger entry: {(entry is null ? "none" : $"{entry.StartReason} endReason={entry.EndReason} endedAt={entry.EndedAt}")}"
+            + $"\n  cards: {string.Join(" | ", node.State.Cards().Select(c => $"{c.Kind}:{c.Title}"))}"
+            + $"\n  log: {string.Join("\n       ", lines)}";
+    }
+
+    private static async Task<(string Folder, string Id, JobRow Running)> DiedWhileDownAsync()
+    {
+        var first = await StartAsync();
+        var id = Run(first, Sleeping(60, 0));
+        var running = await Until(first, id, j => j.State == JobState.Running);
+        await first.StopKeepingFolderAsync();
+        KillProcess(running.Pid!.Value);
+        for (var i = 0; i < 100 && Alive(running.Pid.Value); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        return (first.Folder, id, running);
+    }
+
+    private static async Task<string> WaitToldAsync(NodeHarness node, string id, int seconds)
+    {
+        for (var i = 0; i < seconds * 20 && !(node.State.Jobs().FirstOrDefault(j => j.Id == id) is { Told: true }); i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+        return Diagnose(node, id);
+    }
+
+    [Fact]
+    public async Task ProbeA_FirstListingHeldThenReleasedEmpty()
+    {
+        var (folder, id, _) = await DiedWhileDownAsync();
+        await using var second = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true);
+        var before = Diagnose(second, id);
+        second.Agents.ReleaseFirstListing();
+        var after = await WaitToldAsync(second, id, 10);
+        Assert.Fail($"PROBE A\nbefore release: {before}\nafter release (listing empty): {after}");
+    }
+
+    [Fact]
+    public async Task ProbeB_ListingNeverSet()
+    {
+        var (folder, id, _) = await DiedWhileDownAsync();
+        await using var second = await NodeHarness.StartAsync(Ct, folder: folder);
+        var after = await WaitToldAsync(second, id, 10);
+        Assert.Fail($"PROBE B (listing stays empty)\n{after}");
+    }
+
+    [Fact]
+    public async Task ProbeC_FirstListingHeldThenReleasedWithTheOwner()
+    {
+        var (folder, id, _) = await DiedWhileDownAsync();
+        await using var second = await NodeHarness.StartAsync(Ct, folder: folder, holdFirstListing: true);
+        var before = Diagnose(second, id);
+        second.Agents.Json = Listing;
+        second.Agents.ReleaseFirstListing();
+        var after = await WaitToldAsync(second, id, 10);
+        Assert.Fail($"PROBE C\nbefore release: {before}\nafter release (owner listed): {after}");
     }
 
     // The log is open for writing in the job's process while it runs.
