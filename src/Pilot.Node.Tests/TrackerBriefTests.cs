@@ -107,6 +107,8 @@ public class TrackerBriefTests
         var brief = Briefs.Review(Row(TrackerKind.GitHub), [Leg()], Plane, "pilot");
         brief.ShouldContain("Do not run the whole test suite");
         brief.ShouldContain("`gh pr checks`");
-        brief.ShouldContain("`pilot run -- <check>`");
+        brief.ShouldContain("`pilot run -- <command>`");
+        brief.ShouldContain("Category=Invariant");
+        brief.ShouldContain("the full suite is CI's");
     }
 }
