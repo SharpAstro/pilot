@@ -25,38 +25,17 @@ public abstract class ReviewTestsBase : IDisposable
     /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or <see cref="GitCli"/> for a class that is about git itself.</summary>
     private protected readonly IGit _git;
 
-    private readonly SwitchGit _switch = new();
-    private FakeRepoGit? _fake;
-
-    /// <summary>The git a test runs on, which <see cref="RealGit"/> moves from the model to git itself before the test has used it.</summary>
-    private sealed class SwitchGit : IGit
-    {
-        public IGit Inner { get; set; } = null!;
-
-        public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => Inner.RunAsync(args, cwd, cancellationToken);
-
-        public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => Inner.RunSmudgingAsync(args, cwd, cancellationToken);
-    }
+    private readonly TestGit _testGit;
 
     /// <summary>
     /// Real git's cost is the reason these tests were slow (#813): a git run is 100 to 400 ms on Windows and a flight's lifecycle makes
     /// about 50, so a class of a few dozen flights took minutes there. Tests that check what the node decides run on <see cref="FakeRepoGit"/>;
-    /// a class that checks what git does (a rebase, a conflict a person resolves) passes <paramref name="realGit"/>. Setting
-    /// <c>PILOT_TEST_REAL_GIT=1</c> runs every class on real git: the fidelity check, and the "before" of a timing.
+    /// a class that checks what git does (a rebase, a conflict a person resolves) passes <paramref name="realGit"/>. See <see cref="TestGit"/>.
     /// </summary>
     protected ReviewTestsBase(bool realGit = false)
     {
-        if (realGit || Environment.GetEnvironmentVariable("PILOT_TEST_REAL_GIT") == "1")
-        {
-            // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
-            SeedRepo.Make(_root);
-            _switch.Inner = new GitCli();
-        }
-        else
-        {
-            _switch.Inner = _fake = new FakeRepoGit(_root);
-        }
-        _git = _switch;
+        // Real: a repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
+        _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
         _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
         _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights, options, TimeProvider.System)
@@ -72,46 +51,31 @@ public abstract class ReviewTestsBase : IDisposable
     /// class that otherwise checks what the node decides. Called first, before the test has used the repo: the model's folders are
     /// replaced by the seed repo and its origin.
     /// </summary>
-    private protected void RealGit()
-    {
-        if (_fake is not { } fake)
-        {
-            return;
-        }
-        fake.Release();
-        Directory.Delete(Repo, recursive: true);
-        Directory.Delete(Path.Combine(_root, "origin.git"), recursive: true);
-        SeedRepo.Make(_root);
-        _switch.Inner = new GitCli();
-        _fake = null;
-    }
+    private protected void RealGit() => _testGit.UseReal();
 
     public void Dispose()
     {
-        if (_fake is { } fake)
+        if (_testGit.IsReal)
         {
-            fake.Release();
-            TestDirs.DeleteTree(_root);
-            // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
-            fake.Unsupported.ShouldBeEmpty("this test needs real git: call RealGit() first, or pass realGit: true to ReviewTestsBase");
-            return;
+            try
+            {
+                Git(Repo, "worktree", "prune");
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
-        try
-        {
-            Git(Repo, "worktree", "prune");
-        }
-        catch (InvalidOperationException)
-        {
-        }
+        _testGit.Release();
         TestDirs.DeleteTree(_root);
+        // A command the model could not answer may have been swallowed by the node's own catch: the test still fails.
+        _testGit.Verify();
     }
 
     private protected static string Git(string cwd, params string[] args)
     {
-        if (FakeRepoGit.Owning(cwd) is { } fake)
+        if (TestGit.Answer(cwd, args) is { } answered)
         {
-            var run = fake.Run(args, cwd);
-            return run.Ok ? run.Output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {run.Error}{run.Output}");
+            return answered;
         }
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in args)

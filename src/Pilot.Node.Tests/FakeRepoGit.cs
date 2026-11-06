@@ -58,20 +58,37 @@ internal sealed class FakeRepoGit : IGit
     private readonly Dictionary<string, string> _config = [];
     private bool _originHead = true;
 
-    /// <summary>A repo <c>tianwen</c> with a bare origin, both under <paramref name="root"/>, as <see cref="SeedRepo"/> makes them: one commit on main, pushed.</summary>
-    public FakeRepoGit(string root)
+    private readonly bool _hasOrigin;
+
+    /// <summary>
+    /// A repo <c>tianwen</c> under <paramref name="root"/>, with one commit on main. With <paramref name="withOrigin"/> it has a bare origin beside it
+    /// holding that commit, as <see cref="SeedRepo"/> makes them; without, it is a <c>git init</c> repo with no remote, as the leg and overlap tests build.
+    /// <paramref name="withSolution"/> adds the stub solution a check that builds or tests needs in the plane's root (leg plan refuses a repo without one).
+    /// </summary>
+    public FakeRepoGit(string root, bool withOrigin = true, bool withSolution = true)
     {
         _root = Norm(root);
+        _hasOrigin = withOrigin;
         RepoPath = Path.Combine(root, "tianwen");
         _originPath = Path.Combine(root, "origin.git");
         Directory.CreateDirectory(Path.Combine(RepoPath, ".git"));
-        Directory.CreateDirectory(_originPath);
+        if (withOrigin)
+        {
+            Directory.CreateDirectory(_originPath);
+        }
         WriteConfigFile();
-        var tree = new Dictionary<string, string> { ["README.md"] = "hello\n", ["Tianwen.slnx"] = "<Solution />\n" };
+        var tree = new Dictionary<string, string> { ["README.md"] = "hello\n" };
+        if (withSolution)
+        {
+            tree["Tianwen.slnx"] = "<Solution />\n";
+        }
         var first = MakeCommit([], tree, "first");
-        _origin["refs/heads/main"] = first.Id;
         _refs["refs/heads/main"] = first.Id;
-        _refs["refs/remotes/origin/main"] = first.Id;
+        if (withOrigin)
+        {
+            _origin["refs/heads/main"] = first.Id;
+            _refs["refs/remotes/origin/main"] = first.Id;
+        }
         var main = new Worktree(Norm(RepoPath), "main", null, new Dictionary<string, string>(tree));
         _worktrees.Add(main);
         Materialize(main, tree, new Dictionary<string, string>());
@@ -112,6 +129,17 @@ internal sealed class FakeRepoGit : IGit
     /// <summary>Forgets the model; its folders are the test's to delete.</summary>
     public void Release() => Roots.TryRemove(_root, out _);
 
+    /// <summary>Removes the model's folders (the repo, its planes and the origin), for a test that moves to real git before it has used any.</summary>
+    public void DeleteFolders()
+    {
+        Release();
+        Directory.Delete(RepoPath, recursive: true);
+        if (Directory.Exists(_originPath))
+        {
+            Directory.Delete(_originPath, recursive: true);
+        }
+    }
+
     public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
         Task.FromResult(Run(args, cwd));
 
@@ -147,6 +175,19 @@ internal sealed class FakeRepoGit : IGit
         if (wt is null && !Under(Norm(cwd), Norm(_originPath)))
         {
             return Fail($"fatal: not a git repository (or any of the parent directories): .git", 128);
+        }
+        if (!_hasOrigin && a.Any(x => x is "origin" or "refs/remotes/origin/HEAD"))
+        {
+            // A repo made by git init has no remote: what asks for one fails as git says.
+            switch (verb)
+            {
+                case "remote":
+                    return Fail("error: No such remote 'origin'", 2);
+                case "fetch" or "push" or "ls-remote":
+                    return Fail("fatal: 'origin' does not appear to be a git repository\nfatal: Could not read from remote repository.", 128);
+                case "symbolic-ref":
+                    return Fail("fatal: ref refs/remotes/origin/HEAD is not a symbolic ref", 128);
+            }
         }
         return verb switch
         {
@@ -394,7 +435,9 @@ internal sealed class FakeRepoGit : IGit
     /// <summary>The clone's <c>.git/config</c> as the repo catalog reads it from the folder, without asking git (it names the clone by its origin's URL).</summary>
     private void WriteConfigFile() =>
         File.WriteAllText(Path.Combine(RepoPath, ".git", "config"),
-            $"[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _originPath)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
+            "[core]\n\trepositoryformatversion = 0\n" + (_hasOrigin
+                ? $"[remote \"origin\"]\n\turl = {_config.GetValueOrDefault("remote.origin.url", _originPath)}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+                : ""));
 
     /// <summary><c>git ls-remote origin &lt;pattern&gt;</c>: the origin's branches whose name ends with the pattern.</summary>
     private GitRun LsRemote(List<string> a)
