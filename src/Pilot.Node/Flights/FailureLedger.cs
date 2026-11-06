@@ -78,6 +78,30 @@ public sealed class FailureLedger(string? file = null)
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="signature"/> in <paramref name="repo"/> was recorded for a flight or PR other than this one: a flight is itself by its
+    /// code, a hand PR by its number.
+    /// </summary>
+    public bool OnAnother(string repo, string signature, string? flight, int? pr)
+    {
+        lock (_lock)
+        {
+            return Load().Any(r => string.Equals(r.Repo, repo, StringComparison.OrdinalIgnoreCase) && r.Signature == signature && IdentityOf(r.Flight, r.Pr) != IdentityOf(flight, pr));
+        }
+    }
+
+    /// <summary>The records of <paramref name="signature"/> in <paramref name="repo"/>, oldest first.</summary>
+    public FailureRecord[] Of(string repo, string signature)
+    {
+        lock (_lock)
+        {
+            return [.. Load().Where(r => string.Equals(r.Repo, repo, StringComparison.OrdinalIgnoreCase) && r.Signature == signature)];
+        }
+    }
+
+    /// <summary>What a failure's place is called when two are compared: the flight's code, else the PR's number.</summary>
+    public static string IdentityOf(string? flight, int? pr) => flight is { Length: > 0 } ? flight : $"#{pr}";
+
     /// <summary>Keeps a record.</summary>
     public void Add(FailureRecord record)
     {

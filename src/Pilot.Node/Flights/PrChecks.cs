@@ -48,16 +48,29 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>The failures looked into: a failure in a test the PR does not touch is filed as an investigation. Null for one built without.</summary>
     public FailureInvestigations? Investigations { get; set; }
 
+    /// <summary>
+    /// What a failure under investigation does to its PR (PIL716): a first failure in a test the PR does not touch is retried once, a repeat
+    /// puts the tower on alert and holds the flight. Null for one built without; the failure is then only filed (<see cref="Investigations"/>).
+    /// </summary>
+    public FailureAlerts? Alerts { get; set; }
+
     // The failures already looked into, by flight, head and place: once, not every look.
     private readonly HashSet<string> _investigated = new(StringComparer.Ordinal);
 
-    // A failed run read and looked into before it is run again (which replaces its logs): once a head and place.
-    private async Task InvestigateAsync(FlightRow flight, int number, string head, string where, bool mergeGroup, CancellationToken cancellationToken)
+    // A failed run read and looked into before it is run again (which replaces its logs): once a head and place, and once more after the
+    // retry, when its own result is read. A flight already held is not looked at.
+    private async Task<FailureDecision> InvestigateAsync(FlightRow flight, int number, string head, string where, bool mergeGroup, CancellationToken cancellationToken, DateTimeOffset? removedAt = null)
     {
+        var site = new FailureSite(flight.Repo, flight.RepoPath, number, flight.Code, head, where, flight.PullRequestUrl);
+        if (Alerts is { } alerts)
+        {
+            return await alerts.LookAtRunAsync(site, mergeGroup, cancellationToken, removedAt);
+        }
         if (Investigations is not null && _investigated.Add($"{flight.Code} {head} {where}"))
         {
-            await Investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, number, flight.Code, head, where, flight.PullRequestUrl), mergeGroup, cancellationToken);
+            await Investigations.LookAtRunAsync(site, mergeGroup, cancellationToken);
         }
+        return new FailureDecision(FailureAnswer.Unknown);
     }
 
     // A flight and head the autopilot has asked to merge: once, not every look.
@@ -264,10 +277,21 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 legs?.EndLeftQueue(flight.Code, $"GitHub took #{number} out of the merge queue unmerged: {(queue.RemovedReason is { Length: > 0 } removed ? removed : "no reason given")}");
             }
             // Taken out on a failed queue run: a failing test the PR does not touch is an investigation, filed whether or not a card says so.
+            var failure = new FailureDecision(FailureAnswer.Unknown);
             if (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase)
                 && queue.RemovedReason?.Contains("conflict", StringComparison.OrdinalIgnoreCase) != true)
             {
-                await InvestigateAsync(flight, number, queue.Head, FailureWhere.Queue, mergeGroup: true, cancellationToken);
+                failure = await InvestigateAsync(flight, number, queue.Head, FailureWhere.Queue, mergeGroup: true, cancellationToken, queue.RemovedAt);
+            }
+            // The tower is on alert for this failure and the flight is held for it: it is not queued again and no card asks for that.
+            if (failure.Held)
+            {
+                continue;
+            }
+            // A first failure in a test the PR does not touch is queued again once at the same head, so the PR is not blocked.
+            if (failure is { Answer: FailureAnswer.Retry, Finding: { } retry } && Alerts is { } alerts && await RequeueOnceAsync(alerts, flight, number, queue.Head, retry, cancellationToken))
+            {
+                continue;
             }
             // Its PR-ready card offers the merge already; a removal it has been carded for is not carded again.
             if (queue.RemovedAt is not { } removedAt || string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase) || carded.Contains(subject)
@@ -304,6 +328,30 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 $"GitHub took it out of the queue ({why}) after the node queued it. The PR page says which check failed, or what the queue met.",
                 [new CardChoice { Label = $"Queue {flight.Code}'s PR #{number} for merging again", Verb = Verbs.Merge, Target = subject, Args = [queue.Head] }], link: flight.PullRequestUrl);
         }
+    }
+
+    // A queue removal queued again through the landing routine, once, with a line naming the investigation. False when GitHub refused (the
+    // card of the removal is raised as before) or did not answer (asked again at the next look).
+    private async Task<bool> RequeueOnceAsync(FailureAlerts alerts, FlightRow flight, int number, string head, FailureFinding finding, CancellationToken cancellationToken)
+    {
+        var site = new FailureSite(flight.Repo, flight.RepoPath, number, flight.Code, head, FailureWhere.Queue, flight.PullRequestUrl);
+        var outcome = await alerts.RequeueAsync(flight.RepoPath, number, head, cancellationToken);
+        if (outcome.Kind == LandKind.RetryLater)
+        {
+            return true;
+        }
+        alerts.MarkRetried(site, finding);
+        if (!outcome.Done)
+        {
+            return false;
+        }
+        alerts.SayRetried(site, finding, outcome.Kind switch
+        {
+            LandKind.Merged => $"merged at {CommitRefs.Short(head)}",
+            LandKind.Armed => $"merge armed at {CommitRefs.Short(head)}",
+            _ => $"queued again at {CommitRefs.Short(head)}",
+        });
+        return true;
     }
 
     /// <summary>
@@ -380,9 +428,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// started less than <see cref="RerunGrace"/> ago. False when <see cref="RerunFirst"/> is off, GitHub ran none again, or
     /// the grace has passed and they still fail.
     /// </summary>
-    private async Task<bool> RerunningAsync(FlightRow flight, int number, string head, CancellationToken cancellationToken)
+    private async Task<bool> RerunningAsync(FlightRow flight, int number, string head, FailureDecision failure, CancellationToken cancellationToken)
     {
-        if (!RerunFirst)
+        // Narrowed to the rule that a failure in a test the PR does not touch is retried once: a failure in a test it does touch is the PR's
+        // own to fix, so it is not run again and its leg goes around.
+        if (!RerunFirst || failure.Answer == FailureAnswer.Touched)
         {
             return false;
         }
@@ -392,6 +442,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             return now - at < RerunGrace;
         }
+        // Run again by an earlier node, and its result is not in yet: not run a second time.
+        if (failure.Answer == FailureAnswer.Retrying)
+        {
+            return true;
+        }
         _rerunAt[key] = now;
         try
         {
@@ -399,6 +454,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (runs == 0)
             {
                 return false;
+            }
+            if (failure is { Answer: FailureAnswer.Retry, Finding: { } finding } && Alerts is { } alerts)
+            {
+                // The line names the investigation and the test; a second failure of it at this head is the repeat that puts the tower on alert.
+                var site = new FailureSite(flight.Repo, flight.RepoPath, number, flight.Code, head, FailureWhere.Ci, flight.PullRequestUrl);
+                alerts.MarkRetried(site, finding);
+                alerts.SayRetried(site, finding, $"{runs} failed {(runs == 1 ? "run" : "runs")} running again");
+                return true;
             }
             state.RaiseCard(CardBin.Handled, "checks-rerun", Verbs.FlightTarget(flight.Code), $"{flight.Code}'s PR #{number}: {runs} failed {(runs == 1 ? "run" : "runs")} running again",
                 $"once at {CommitRefs.Short(head)}, before its leg is sent round: a failure in a test the PR does not touch is a bug with a cause to find, filed as an investigation, and is no go-around");
@@ -488,11 +551,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             // The node's own rerun of a failed check comes before anything is let go: the merge stays armed for it, GitHub's
             // auto-merge included, so a check that goes green on its second run merges as armed.
+            var failedChecks = new FailureDecision(FailureAnswer.Unknown);
             if (checksFailed)
             {
-                await InvestigateAsync(flight, number, head, FailureWhere.Ci, mergeGroup: false, cancellationToken);
+                failedChecks = await InvestigateAsync(flight, number, head, FailureWhere.Ci, mergeGroup: false, cancellationToken);
             }
-            if (checksFailed && byAutopilot && legs is not null && await RerunningAsync(flight, number, head, cancellationToken))
+            // Held for an investigation: no rerun and no go-around, and the merge stays armed as it is.
+            if (failedChecks.Held)
+            {
+                continue;
+            }
+            if (checksFailed && byAutopilot && legs is not null && await RerunningAsync(flight, number, head, failedChecks, cancellationToken))
             {
                 continue;
             }
@@ -784,6 +853,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     {
         await RestorePassedWithoutCardAsync(cancellationToken);
         await LookAtHoldsAsync(cancellationToken);
+        // A failure's investigation that landed lets the flights held for it go: re-queued, rerun, or their leg check run again.
+        if (Alerts is { } alerts)
+        {
+            await alerts.ReleaseLandedAsync(cancellationToken);
+        }
         await MergeWhenGreenAsync(cancellationToken);
         if (legs is not null)
         {
@@ -913,12 +987,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             // Reviewed and passed, but its checks failed: run again once, then sent back as changes, once a head, so the leg goes around.
+            var reviewedFailure = new FailureDecision(FailureAnswer.Unknown);
             if (status == ChoiceStatus.Failing && pr is { Number: var seenNumber, Head: var seenHead } && seenNumber == number)
             {
-                await InvestigateAsync(flight, number, seenHead, FailureWhere.Ci, mergeGroup: false, cancellationToken);
+                reviewedFailure = await InvestigateAsync(flight, number, seenHead, FailureWhere.Ci, mergeGroup: false, cancellationToken);
+            }
+            // Held for an investigation: its leg is not sent round and its checks are not run again until that lands.
+            if (reviewedFailure.Held)
+            {
+                continue;
             }
             if (legs is not null && status == ChoiceStatus.Failing && pr is { Number: var rerunNumber, Head: var rerunHead } && rerunNumber == number
-                && await RerunningAsync(flight, number, rerunHead, cancellationToken))
+                && await RerunningAsync(flight, number, rerunHead, reviewedFailure, cancellationToken))
             {
                 continue;
             }

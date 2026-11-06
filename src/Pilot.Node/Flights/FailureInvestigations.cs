@@ -19,6 +19,27 @@ public sealed record FailureSite(string Repo, string RepoPath, int? Pr, string? 
     public string Name => Repo[(Repo.LastIndexOfAny(['/', '\\']) + 1)..];
 }
 
+/// <summary>One failure of a test the PR does not touch, as a look found it: its investigation, and whether another PR or flight hit it before.</summary>
+/// <param name="Test">The full name of the failed test; empty for an error with no test in it.</param>
+/// <param name="Message">The assertion message, or the error line.</param>
+/// <param name="Signature">What makes it the same failure as another (<see cref="FailureSignature"/>).</param>
+/// <param name="Investigation">The code of the flight made to find its cause; empty when none could be made.</param>
+/// <param name="Issue">The issue that carries the investigation.</param>
+/// <param name="RunId">The run it was read from; 0 for a leg check.</param>
+/// <param name="Others">Whether a PR or flight other than this site's has hit the same signature before this look.</param>
+public sealed record FailureFinding(string Test, string Message, string Signature, string Investigation, int Issue, long RunId, bool Others);
+
+/// <summary>
+/// What one look into a failure found. <see cref="Read"/> is false when no failure could be read (no failed run, a build the PR broke,
+/// the changed files unreadable). With it, <see cref="Untouched"/> are the failures in tests the PR does not touch, and when there
+/// are none the failed tests are the PR's own to fix.
+/// </summary>
+public sealed record FailureLook(bool Read, IReadOnlyList<FailureFinding> Untouched)
+{
+    /// <summary>A look that read nothing.</summary>
+    public static FailureLook Nothing { get; } = new(false, []);
+}
+
 /// <summary>
 /// A failure in a test the PR does not touch is a bug with a cause to find, never chance: filed at once, from its first occurrence,
 /// as an investigation (an issue of priority high carrying the run, the test, its assertion message and the PRs it hit, and a flight
@@ -47,39 +68,41 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     /// A PR's failed run, read now (a PR's own checks, or with <paramref name="mergeGroup"/> its merge queue run) and looked into. Called
     /// before the failed jobs are run again, which replaces their logs.
     /// </summary>
-    public async Task LookAtRunAsync(FailureSite site, bool mergeGroup, CancellationToken cancellationToken)
+    public async Task<FailureLook> LookAtRunAsync(FailureSite site, bool mergeGroup, CancellationToken cancellationToken)
     {
         try
         {
             if (site.Pr is not { } number || await github.FailedRunAsync(site.RepoPath, number, mergeGroup, cancellationToken) is not { } run)
             {
-                return;
+                return FailureLook.Nothing;
             }
-            await LookAsync(site, run.Id, run.Url, run.FailedJobs, run.Log, () => github.PullRequestFilesAsync(site.RepoPath, number, cancellationToken), cancellationToken);
+            return await LookAsync(site, run.Id, run.Url, run.FailedJobs, run.Log, () => github.PullRequestFilesAsync(site.RepoPath, number, cancellationToken), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await Error.WriteLineAsync($"failures: {site.Name} #{site.Pr}: could not look into the failed run: {ex.Message}");
+            return FailureLook.Nothing;
         }
     }
 
     /// <summary>A leg's check that failed, looked into from its output; <paramref name="changedFiles"/> says what the leg's work changes.</summary>
-    public async Task LookAtCheckAsync(FailureSite site, string output, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
+    public async Task<FailureLook> LookAtCheckAsync(FailureSite site, string output, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
     {
         try
         {
-            await LookAsync(site, 0, null, [], output, changedFiles, cancellationToken);
+            return await LookAsync(site, 0, null, [], output, changedFiles, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await Error.WriteLineAsync($"failures: {site.Name}: could not look into the failed check: {ex.Message}");
+            return FailureLook.Nothing;
         }
     }
 
     /// <summary>One failure found in a log, ready to be filed.</summary>
     private sealed record Found(string Test, string Message, string Signature);
 
-    private async Task LookAsync(FailureSite site, long runId, string? runUrl, string[] jobs, string log, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
+    private async Task<FailureLook> LookAsync(FailureSite site, long runId, string? runUrl, string[] jobs, string log, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
     {
         var tests = FailureSignature.Tests(log);
         var found = new List<Found>();
@@ -92,7 +115,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             // No failed test: a build the PR broke is its own to fix; any other error is the same failure when its line reads the same.
             if (FailureSignature.IsBuildError(log) || FailureSignature.ForError(log) is not { } signature)
             {
-                return;
+                return FailureLook.Nothing;
             }
             found.Add(new Found("", FailureSignature.ErrorText(log) ?? signature, signature));
         }
@@ -105,21 +128,32 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         {
             // Which files the PR changes is not known: nothing says the test is not the PR's.
             await Error.WriteLineAsync($"failures: {site.Name}: the changed files could not be read, so nothing was filed: {ex.Message}");
-            return;
+            return FailureLook.Nothing;
         }
         var untouched = found.Where(f => f.Test.Length == 0 || !FailureSignature.Touches(f.Test, files))
             .GroupBy(f => f.Signature, StringComparer.Ordinal).Select(g => g.First()).Take(MostPerRun).ToList();
+        var findings = new List<FailureFinding>();
         foreach (var failure in untouched)
         {
+            var others = ledger.OnAnother(site.Name, failure.Signature, site.Flight, site.Pr);
             if (ledger.Has(site.Name, site.Pr, site.Flight, site.Head, site.Where, failure.Signature))
             {
+                // Seen at this place already: nothing more to file, but the look still says what it found.
+                if (ledger.InvestigationOf(site.Name, failure.Signature) is { } known)
+                {
+                    findings.Add(new FailureFinding(failure.Test, failure.Message, failure.Signature, known.Investigation, known.Issue, runId, others));
+                }
                 continue;
             }
-            await FileAsync(site, runId, runUrl, jobs, failure, cancellationToken);
+            if (await FileAsync(site, runId, runUrl, jobs, failure, cancellationToken) is { } filed)
+            {
+                findings.Add(new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, runId, others));
+            }
         }
+        return new FailureLook(true, findings);
     }
 
-    private async Task FileAsync(FailureSite site, long runId, string? runUrl, string[] jobs, Found failure, CancellationToken cancellationToken)
+    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, string[] jobs, Found failure, CancellationToken cancellationToken)
     {
         var existing = ledger.InvestigationOf(site.Name, failure.Signature);
         var run = runId > 0 ? $"run {runId}{(runUrl is { Length: > 0 } ? $" ({runUrl})" : "")}" : "its leg check";
@@ -133,10 +167,10 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             catch (FlightException ex)
             {
                 await Error.WriteLineAsync($"failures: could not comment on {site.Name}#{existing.Issue}: {ex.Message}");
-                return;
+                return null;
             }
             Keep(site, runId, failure, existing.Investigation, existing.Issue);
-            return;
+            return (existing.Investigation, existing.Issue);
         }
         var title = failure.Test.Length > 0
             ? $"{FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test))} fails intermittently, cause unknown"
@@ -149,7 +183,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         catch (FlightException ex)
         {
             await Error.WriteLineAsync($"failures: could not file the investigation of {title}: {ex.Message}");
-            return;
+            return null;
         }
         var notes = new List<string>();
         try
@@ -194,6 +228,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\nTest: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));
+        return (code, issue.Number);
     }
 
     private static string Body(FailureSite site, string run, string[] jobs, Found failure) =>

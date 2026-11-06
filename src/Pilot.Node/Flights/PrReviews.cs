@@ -55,6 +55,9 @@ public sealed partial class PrReviews(
     /// <summary>The failures looked into: a failing test the PR does not touch is filed as an investigation. Null for one built without.</summary>
     public FailureInvestigations? Investigations { get; set; }
 
+    /// <summary>What a failure under investigation does to a hand PR: a first one is run again once, a repeat names the PR on the tower's alert. Null for one built without.</summary>
+    public FailureAlerts? Alerts { get; set; }
+
     // The failed heads already looked into: once a head, not every sweep.
     private readonly HashSet<string> _investigated = new(StringComparer.Ordinal);
 

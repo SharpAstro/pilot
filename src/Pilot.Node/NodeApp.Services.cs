@@ -243,6 +243,13 @@ public static partial class NodeApp
             Error = logWriter,
             CreateFlight = (command, token) => services.GetRequiredService<FlightCommander>().RunAsync(command, token),
         });
+        // What a failure under investigation does to its PR: retried once, then the tower on alert and the flights held. Its alerts are kept
+        // in the data folder too, so a restart keeps the holds.
+        builder.Services.AddSingleton(services => new FailureAlerts(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
+            services.GetRequiredService<FailureInvestigations>(), services.GetRequiredService<TimeProvider>(), FailureAlerts.FileIn(options.DataFolder))
+        {
+            Error = logWriter,
+        });
     }
 
     /// <summary>The leg commander.</summary>
@@ -263,6 +270,9 @@ public static partial class NodeApp
             legs.ReplyDeadline = () => services.GetRequiredService<NodeCommands>().ReplyDeadline;
             legs.Error = services.GetRequiredService<LogWriter>();
             legs.Investigations = services.GetRequiredService<FailureInvestigations>();
+            // The alerts run a held leg check through the commander, which refuses the go-around of a held flight: set here, as it needs both.
+            legs.Alerts = services.GetRequiredService<FailureAlerts>();
+            legs.Alerts.Legs = legs;
             // A flight another node hands over goes on by the normal advance, as the sweep takes every flying flight's.
             services.GetRequiredService<FlightCommander>().Advance = legs.AdvanceFlightAsync;
             // A flight made here is planned at once: the create starts its planner, so no further plan-flight is needed.
@@ -282,6 +292,7 @@ public static partial class NodeApp
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
             reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
+            reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
@@ -501,6 +512,7 @@ public static partial class NodeApp
             checks.WatchtowerLive = () => services.GetRequiredService<Watchtower>().IsLive();
             checks.Recheck = services.GetRequiredService<PrRecheck>();
             checks.Investigations = services.GetRequiredService<FailureInvestigations>();
+            checks.Alerts = services.GetRequiredService<FailureAlerts>();
             checks.Error = logWriter;
             return checks;
         });
