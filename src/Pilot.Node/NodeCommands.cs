@@ -679,7 +679,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
 
     // A card closed already: the same choice a moment ago is that answer's repeat (ok, saying who answered and when, like a join of an
     // answer underway), anything else is refused as before.
-    private CommandResult ClosedAlready(CommandRequest command, CardRow card, string[] args) =>
+    internal CommandResult ClosedAlready(CommandRequest command, CardRow card, string[] args) =>
         command.Verb == Verbs.Answer && ChoiceOf(card, args) is { } same && string.Equals(card.Outcome, same.Label, StringComparison.Ordinal)
             && card.ClosedBy is { } by && card.ClosedAt is { } at && Get<TimeProvider>().GetUtcNow() - at <= RepeatAnswerWindow
             ? state.Complete(command, null, made: $"already answered by {by} at {LocalTime(at)}")

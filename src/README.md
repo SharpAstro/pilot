@@ -1598,6 +1598,19 @@ command, and closes the card (opening it again if the command is refused). `dism
 nothing done. The GUI shows open cards down the right, with their buttons, when there are any; `pilot cards`,
 `pilot answer` and `pilot dismiss` do the same from a terminal.
 
+**An answer underway is on the card** (#792). A choice that takes time (a merge or a re-run of checks, a go-around, a move again, the
+conflict card's Resolve the conflict) is taken before it runs: the card stays open and carries `CardRow.Answering`, the choice's label,
+who pressed it, when, and what it waits on (`TIA1 is being sent round`, when the flight has a call out, else none). It is one
+`cardChanged` event, so every client can show "pressed by cli at 20:35, waiting on ..." where the buttons were. A second press of the
+same choice while it is underway joins it: the answer is ok and says `already on its way, started by <who> at <HH:mm>`, and nothing
+runs twice. Another choice on the card is refused naming the answer underway, and a dismiss waits for it. The mark ends with the
+answer: the card closes with the choice as its outcome, or, when the choice is refused or cut off (the node stopping mid-merge), the mark
+is cleared and the buttons are back; a card whose merge is armed or queued stays open with its own status and no mark. An answer
+underway for longer than the leg commander's stuck limit (10 minutes) no longer shields the card, so a hung one rings as before, and a
+node that restarts does not bring a mark back. A choice that closes its card first (a landing) answers a repeat of itself in the
+next few minutes with ok and `already answered by <who> at <HH:mm>`, not "closed already"; any other choice on a closed card is
+refused as before. The field is optional, so it does not raise `NodeWire.Version`: an older client ignores it and keeps its buttons.
+
 ## Hooks
 
 Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
