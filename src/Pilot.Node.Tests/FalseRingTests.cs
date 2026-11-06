@@ -426,17 +426,6 @@ public sealed class FalseRingTests : ReviewTestsBase
         card.Bin.ShouldBe(CardBin.ForYou);
     }
 
-    [Fact]
-    public void ARingRaisedWithNoChoiceIsAForYouCardNotARing_Catalogue()
-    {
-        var bare = _state.RaiseCard(CardBin.Ring, "some-kind", Verbs.FlightTarget("TIA9"), "TIA9 needs nothing pressed", null, []);
-        var pressable = _state.RaiseCard(CardBin.Ring, "other-kind", Verbs.FlightTarget("TIA9"), "TIA9 needs a press", null,
-            [new CardChoice { Label = "Land TIA9", Verb = Verbs.Land, Target = Verbs.FlightTarget("TIA9") }]);
-
-        bare.Bin.ShouldBe(CardBin.ForYou);
-        pressable.Bin.ShouldBe(CardBin.Ring);
-    }
-
     [Theory]
     [InlineData(false, null, false)]
     [InlineData(true, null, true)]

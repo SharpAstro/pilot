@@ -127,7 +127,7 @@ internal static class CardKindCatalog
         new("queue-dropped", "ForYou|Handled", [Checks], "ReviewTests.APrThatLeftTheMergeQueueUnmergedIsACardSayingWhyWithMergeAgain"),
         new("checks-rerun", "Handled", [Checks], "ReviewTests.OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound"),
         new("merge-dropped", "ForYou", [Checks], "LegTests.AWaitingMergeWhoseChecksFailIsDroppedOnACardThatOffersItAgain"),
-        new("autopilot-merge-refused", "Ring", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver", "the PR's state on GitHub is still open (not merged) when the autopilot's merge was refused", [nameof(Verbs.Merge)]),
+        new("autopilot-merge-refused", "Ring|ForYou", [Checks], "ReviewTests.AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver", "the PR's state on GitHub is still open (not merged) when the autopilot's merge was refused", [nameof(Verbs.Merge)]),
         new("pr-marks-refused", "ForYou", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "ForYou|Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
         new("design-mirror-failed", "ForYou", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
