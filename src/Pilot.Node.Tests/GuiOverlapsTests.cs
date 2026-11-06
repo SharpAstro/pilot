@@ -342,12 +342,13 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
         private string Describe()
         {
             var faults = FaultOn(Page, Width, Height)
-                ? $$"""[{"kind":"overlap","line":"1","text":"Alpha heading","bounds":{"x":10,"y":20,"w":100,"h":16},"other":"Beta caption","otherBounds":{"x":60,"y":24,"w":90,"h":14}}]"""
+                ? """[{"kind":"overlap","line":"1","text":"Alpha heading","bounds":{"x":10,"y":20,"w":100,"h":16},"other":"Beta caption","otherBounds":{"x":60,"y":24,"w":90,"h":14}}]"""
                 : "[]";
             var count = faults == "[]" ? 0 : 1;
-            return $$"""
-                {"regions":[],"appState":{"page":{{JsonSerializer.Serialize(Page)}},"pages":{{JsonSerializer.Serialize(string.Join(", ", Pages))}},"window":"{{Width}}x{{Height}}","maximized":{{(Maximized ? "true" : "false")}},"pageSize":"{{Width - 300}}x{{Height}}","dpi":1,"faultCount":{{count}},"faults":{{JsonSerializer.Serialize(faults)}}}}
+            var state = $$"""
+                "page":{{JsonSerializer.Serialize(Page)}},"pages":{{JsonSerializer.Serialize(string.Join(", ", Pages))}},"window":"{{Width}}x{{Height}}","maximized":{{(Maximized ? "true" : "false")}},"pageSize":"{{Width - 300}}x{{Height}}","dpi":1,"faultCount":{{count}},"faults":{{JsonSerializer.Serialize(faults)}}
                 """;
+            return "{\"regions\":[],\"appState\":{" + state + "}}";
         }
 
         private static string Screenshot()
@@ -363,9 +364,9 @@ public sealed class GuiOverlapsTests : IAsyncDisposable
             return $$"""{"width":{{w}},"height":{{h}},"format":"rgba+gzip","base64":"{{Convert.ToBase64String(packed.ToArray())}}"}""";
         }
 
-        private static string Result(string json) => $$"""{"id":1,"result":{{json}}}""";
+        private static string Result(string json) => "{\"id\":1,\"result\":" + json + "}";
 
-        private static string Error(string said) => $$"""{"id":1,"error":{{JsonSerializer.Serialize(said)}}}""";
+        private static string Error(string said) => "{\"id\":1,\"error\":" + JsonSerializer.Serialize(said) + "}";
 
         public async ValueTask DisposeAsync()
         {
