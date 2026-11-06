@@ -1,3 +1,5 @@
+using Pilot.Contracts;
+
 namespace Pilot.Node.Tests;
 
 /// <summary>
