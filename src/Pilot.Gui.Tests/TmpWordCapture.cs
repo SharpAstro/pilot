@@ -24,7 +24,7 @@ public sealed class TmpWordCapture
             "Body with a word " + word + " and then a long sentence that wraps over several lines in the narrow pane.\n\n- item " + word)).ToList();
         foreach (var w in new[] { 420, 1300 })
         {
-            using var renderer = new RgbaImageRenderer(w, 900);
+            using var renderer = new RgbaImageRenderer((uint)w, 900);
             var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
             chrome.Show(PilotPage.Ideas);
             var screen = new IdeasScreen([.. ideas], [], ["pilot"], "live", Live.At);
