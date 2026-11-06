@@ -11,8 +11,9 @@ public class StalenessTests
     private static readonly DateTimeOffset Now = new(2026, 11, 5, 20, 0, 0, TimeSpan.Zero);
     private static readonly StaleBounds Bounds = new();
 
-    private static FlightRow Flight(string code = "DIR178", TimeSpan? age = null, FlightState state = FlightState.Flying, int? pr = null, FlightHolding? holding = null, ReviewRow? review = null, string[]? connections = null) => new()
+    private static FlightRow Flight(string code = "DIR178", TimeSpan? age = null, FlightState state = FlightState.Flying, int? pr = null, FlightHolding? holding = null, ReviewRow? review = null, string[]? connections = null, PeerConnection[]? peers = null) => new()
     {
+        PeerConnections = peers ?? [],
         Code = code, Repo = "dir", RepoPath = "C:/r/dir", Issue = 178, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = $"C:/r/dir/.claude/worktrees/{code}",
         Base = "origin/main", State = state, CreatedAt = Now - (age ?? TimeSpan.FromHours(1)), PullRequest = pr, Holding = holding, Review = review, Connections = connections ?? [],
     };
@@ -137,6 +138,32 @@ public class StalenessTests
         twice.Stale.ShouldContain(i => i.Kind == StaleKind.Hold);
     }
 
+    private static PeerConnection Peer(TimeSpan? unreachableFor) => new()
+    {
+        Code = "PIL735", Node = "SE1", Since = Now - TimeSpan.FromHours(5), UnreachableSince = unreachableFor is { } f ? Now - f : null,
+    };
+
+    [Fact]
+    public void AHoldOnAnUnreachableNodePastAnHourIsStaleNamingTheNode_753()
+    {
+        var reading = Read([Flight(state: FlightState.Held, peers: [Peer(TimeSpan.FromMinutes(90))])]);
+        var item = reading.Stale.ShouldHaveSingleItem();
+        item.Kind.ShouldBe(StaleKind.Unreachable);
+        item.Cause.ShouldContain("SE1");
+        item.WaitsOn.ShouldContain("PIL735 on SE1");
+        item.AgeText.ShouldBe("1 h");
+        item.Action.ShouldContain("pilot flight disconnect DIR178 PIL735");
+    }
+
+    [Fact]
+    public void AHoldOnAnUnreachableNodeUnderAnHourOrOnAReachableOneIsNotStale_753()
+    {
+        Read([Flight(state: FlightState.Held, peers: [Peer(TimeSpan.FromMinutes(20))])]).Stale.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+        Read([Flight(state: FlightState.Held, peers: [Peer(null)])]).Stale.ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+        Read([Flight(state: FlightState.Held, peers: [Peer(TimeSpan.FromMinutes(90))])], bounds: new StaleBounds { UnreachableHours = 2 }).Stale
+            .ShouldNotContain(i => i.Kind == StaleKind.Unreachable);
+    }
+
     [Fact]
     public void AHoldThatEndedIsNoLongerStaleHoweverOftenItTimedOut()
     {
@@ -159,7 +186,8 @@ public class StalenessTests
     public void TheBoundsComeFromTheSettings()
     {
         Read([Flight(age: TimeSpan.FromHours(7))], [Leg("DIR178")], bounds: new StaleBounds { FlightHours = 6 }).Stale.ShouldHaveSingleItem();
-        NodeSettings.StaleKeys.Count.ShouldBe(5);
+        NodeSettings.StaleKeys.Count.ShouldBe(6);
+        new StaleBounds().Value(NodeSettings.StaleUnreachableHoursKey).ShouldBe(1);
         NodeSettings.StaleKeys.ShouldAllBe(k => NodeSettings.Keys.Contains(k));
         new StaleBounds().Value(NodeSettings.StaleFlightHoursKey).ShouldBe(12);
         new StaleBounds().Value(NodeSettings.StaleHoldsKey).ShouldBe(2);

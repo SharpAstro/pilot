@@ -101,7 +101,12 @@ public static partial class NodeApp
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PackageWatch>());
         // A flight connected to a flight another node flies is held until that node says it landed.
-        builder.Services.AddHostedService(services => new PeerConnectionWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
+        builder.Services.AddHostedService(services =>
+        {
+            var commander = services.GetRequiredService<FlightCommander>();
+            commander.Error = logWriter;
+            return new PeerConnectionWatch(commander, services.GetRequiredService<TimeProvider>()) { Error = logWriter };
+        });
     }
 
     /// <summary>The flight commander, with what it reaches: the trackers, the fleet, the ledger.</summary>
