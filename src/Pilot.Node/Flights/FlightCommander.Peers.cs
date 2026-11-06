@@ -196,6 +196,12 @@ public sealed partial class FlightCommander
     /// <summary>The wait as the peers' answers leave it (null once it is over), and whether it is over.</summary>
     private async Task<(PeerConnection? Wait, bool Over)> AnswerAsync(FlightRow flight, PeerConnection wait, IReadOnlyList<PeerRead> reads, CancellationToken cancellationToken)
     {
+        // A wait recorded before a fold followed its survivor carries the folded flight's branch, PR and issue: those are not read for
+        // this code, so they are dropped and the branch is the code's own, until a look at the node says them again.
+        if (wait.Branch is not null && !string.Equals(wait.Branch, Planes.BranchOf(wait.Code), StringComparison.OrdinalIgnoreCase))
+        {
+            wait = wait with { Branch = null, PullRequest = null, Issue = null };
+        }
         var read = reads.FirstOrDefault(r => r.Flights is not null && string.Equals(r.Node, wait.Node, StringComparison.OrdinalIgnoreCase));
         if (read is null)
         {
@@ -238,9 +244,17 @@ public sealed partial class FlightCommander
                 return (wait with { Node = movedTo.To, Note = null }, false);
             }
             // Folded into another flight: its work is that one's now, so the wait is for that one.
-            return row.FoldedInto is { } into
-                ? (wait with { Code = into, Note = null }, false)
-                : (null, true);
+            if (row.FoldedInto is not { } into)
+            {
+                return (null, true);
+            }
+            // The wait now points at the survivor, so what GitHub is asked about is the survivor's branch, PR and issue, never the folded one's.
+            var survivor = read.Flights.FirstOrDefault(f => string.Equals(f.Code, into, StringComparison.OrdinalIgnoreCase));
+            return (wait with
+            {
+                Code = into, Note = null,
+                Branch = survivor?.Branch ?? Planes.BranchOf(into), PullRequest = survivor?.PullRequest, Issue = survivor?.Issue,
+            }, false);
         }
         if (row.PullRequest is not null && github is not null && await MergedOnGitHubAsync(flight, row, cancellationToken))
         {

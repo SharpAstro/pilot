@@ -246,6 +246,86 @@ public sealed class ConnectTests : OverlapTestsBase
         held.PeerConnections.ShouldHaveSingleItem().Code.ShouldBe("PIL300");
     }
 
+    private static PullRequest Pr(int number, string state) => new(number, state, "head", $"https://github.com/x/tianwen/pull/{number}");
+
+    private async Task<(FlightCommander Flights, FakeGitHub GitHub, FakePeer Peer)> WaitingOnAFoldedFlight(bool survivorHasPr)
+    {
+        var (flights, github, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294) with { PullRequest = 77 }, null);
+        github.PrOf["flight/pil294"] = Pr(77, "OPEN");
+        github.PrOf["flight/pil300"] = Pr(88, "OPEN");
+        peer.Flights =
+        [
+            Theirs("PIL294", 294, FlightState.Landed) with { FoldedInto = "PIL300", PullRequest = 77 },
+            Theirs("PIL300", 300) with { PullRequest = survivorHasPr ? 88 : null },
+        ];
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        peer.Unreachable = true;
+        return (flights, github, peer);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFoldedFlightsMergedPrDoesNotReleaseTheWaitUntilTheSurvivorsPrMerges()
+    {
+        var (flights, github, _) = await WaitingOnAFoldedFlight(survivorHasPr: true);
+        github.PrOf["flight/pil294"] = Pr(77, "MERGED");
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        F("TIA2").State.ShouldBe(FlightState.Held);
+        F("TIA2").PeerConnections.ShouldHaveSingleItem().Code.ShouldBe("PIL300");
+
+        github.PrOf["flight/pil300"] = Pr(88, "MERGED");
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+        F("TIA2").PeerConnections.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFoldedFlightsClosedIssueDoesNotReleaseTheWaitUntilTheSurvivorsIssueCloses()
+    {
+        var (flights, github, _) = await WaitingOnAFoldedFlight(survivorHasPr: false);
+        github.IssuesClosedOnGitHub.Add(294);
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        F("TIA2").State.ShouldBe(FlightState.Held);
+
+        github.IssuesClosedOnGitHub.Add(300);
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(1);
+        F("TIA2").State.ShouldBe(FlightState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFoldedWaitCarriesTheSurvivorsBranchPrAndIssueAfterOneLook()
+    {
+        await TwoFlights();
+        var peer = Peer("DE1", Theirs("PIL294", 294) with { PullRequest = 77 }, Theirs("PIL300", 300));
+        (await Connect("TIA2", "PIL294")).Ok.ShouldBeTrue();
+
+        peer.Flights = [Theirs("PIL294", 294, FlightState.Landed) with { FoldedInto = "PIL300", PullRequest = 77 }, Theirs("PIL300", 300) with { PullRequest = 88 }];
+        await _flights.LookAtPeerConnectionsAsync(Ct);
+
+        var wait = F("TIA2").PeerConnections.ShouldHaveSingleItem();
+        (wait.Code, wait.Branch, wait.PullRequest, wait.Issue).ShouldBe(("PIL300", "flight/pil300", 88, 300));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWaitStoredWithAFoldedFlightsFactsIsNotReleasedByThem()
+    {
+        var (flights, github, peer) = await WaitingOnPeerWithGitHub(Theirs("PIL294", 294), null);
+        peer.Unreachable = true;
+        github.PrOf["flight/pil294"] = Pr(77, "MERGED");
+        github.IssuesClosedOnGitHub.Add(294);
+        // As stored before the fix: re-keyed to PIL300 but still with PIL294's branch, PR and issue.
+        var held = F("TIA2");
+        _state.PutFlight(held with { PeerConnections = [held.PeerConnections[0] with { Code = "PIL300", Branch = "flight/pil294", PullRequest = 77, Issue = 294 }] });
+
+        (await flights.LookAtPeerConnectionsAsync(Ct)).ShouldBe(0);
+        F("TIA2").State.ShouldBe(FlightState.Held);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFlightThatMovedToAnotherNodeIsWaitedForThereAndOneThatMovedHereAsAFlightOfThisNode()
