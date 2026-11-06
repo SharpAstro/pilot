@@ -120,7 +120,7 @@ public static class Staleness
             }
         }
 
-        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null }))
+        foreach (var flight in flights.Where(InAir))
         {
             var mine = legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
             var flightCards = cards.Where(c => c.Subject == Verbs.FlightTarget(flight.Code) || c.Subject.StartsWith(Verbs.FlightTarget(flight.Code) + "/", StringComparison.Ordinal)).ToList();
@@ -275,6 +275,9 @@ public static class Staleness
 
     private sealed record Event(DateTimeOffset At, string Text);
 
+    /// <summary>A flight that has not landed, folded into another or moved to another node: the only kind staleness and last moves read.</summary>
+    public static bool InAir(FlightRow flight) => flight is { State: not FlightState.Landed, FoldedInto: null, MovedTo: null };
+
     /// <summary>
     /// A flight's last real activity: when it happened and its words (<c>review passed</c>, <c>leg parser finished</c>). It is the same last
     /// move the stale items measure from, so a row and a stale line never disagree. Null for a flight that landed, folded or moved.
@@ -282,7 +285,7 @@ public static class Staleness
     public static (DateTimeOffset At, string Text)? LastMove(
         FlightRow flight, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, PullRequestsRow? pullRequests, TimeZoneInfo? zone = null)
     {
-        if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
+        if (!InAir(flight))
         {
             return null;
         }

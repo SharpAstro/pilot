@@ -312,6 +312,77 @@ public sealed class StaleWatchTests
     }
 
     [Fact]
+    public async Task BetweenTicksTheLoopOnlyRefreshesLastMovesAndAWholeTickComesEveryFiveMinutes()
+    {
+        Fly(TimeSpan.FromHours(19));
+
+        // The first wake starts the clock for the tick; it only refreshes: the last move is there, no raise was made.
+        await _watch.StepAsync(Ct);
+        Row().LastMovedAt.ShouldBe(Start - TimeSpan.FromHours(19));
+        _tracker.Sets.ShouldBeEmpty();
+        Row().StaleSummary.ShouldBeNull();
+
+        // Twenty seconds on a leg finishes: the row follows at the next wake, still with no tick (no raise, no summary).
+        _clock.Now += TimeSpan.FromSeconds(20);
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        await _watch.StepAsync(Ct);
+        Row().LastMovedAt.ShouldBe(_clock.Now);
+        Row().LastMove.ShouldBe("leg main done");
+        _tracker.Sets.ShouldBeEmpty();
+
+        // Five minutes after the first wake the whole tick runs.
+        _clock.Now = Start + TimeSpan.FromMinutes(5);
+        await _watch.StepAsync(Ct);
+        Row().StaleSummary.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ATickThatThrowsIsTriedAgainAfterAWholeIntervalNotAtTheNextRefresh()
+    {
+        Fly(TimeSpan.FromHours(1));
+        var reads = 0;
+        var fail = true;
+        _watch.Bounds = () =>
+        {
+            reads++;
+            return fail ? throw new InvalidOperationException("boom") : new StaleBounds();
+        };
+        await _watch.StepAsync(Ct);
+
+        _clock.Now = Start + TimeSpan.FromMinutes(5);
+        await Should.ThrowAsync<InvalidOperationException>(() => _watch.StepAsync(Ct));
+        reads.ShouldBe(1);
+
+        // The wakes in between only refresh (the failing tick is not run again); the row still follows.
+        _state.PutLeg(new LegRow { Flight = "DIR178", Name = "main", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, FinishedAt = _clock.Now });
+        for (var i = 0; i < 14; i++)
+        {
+            _clock.Now += TimeSpan.FromSeconds(20);
+            await _watch.StepAsync(Ct);
+        }
+        reads.ShouldBe(1);
+        Row().LastMove.ShouldBe("leg main done");
+
+        // A whole interval after the failed tick it runs again, and goes through once it can.
+        fail = false;
+        _clock.Now = Start + TimeSpan.FromMinutes(10);
+        await _watch.StepAsync(Ct);
+        reads.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheRefreshReadsOnlyInAirFlights()
+    {
+        Fly(TimeSpan.FromHours(2));
+        _state.PutFlight(Row() with { Code = "DIR179", Branch = "flight/dir179", State = FlightState.Landed });
+        _state.PutFlight(Row() with { Code = "DIR180", Branch = "flight/dir180", FoldedInto = "DIR178" });
+
+        _watch.RefreshLastMoves();
+
+        _state.Flights().Where(f => f.LastMovedAt is not null).Select(f => f.Code).ShouldBe(["DIR178"]);
+    }
+
+    [Fact]
     public async Task TheDigestLineSaysTheRaise()
     {
         Fly(TimeSpan.FromHours(19));

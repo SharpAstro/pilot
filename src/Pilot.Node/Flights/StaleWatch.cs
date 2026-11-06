@@ -52,23 +52,17 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
     /// </summary>
     public TimeSpan MovesEvery { get; init; } = TimeSpan.FromSeconds(20);
 
+    // When the next whole tick is due; unset until the first wake, which starts the clock for it.
+    private DateTimeOffset? _nextTick;
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
-        var nextTick = time.GetUtcNow() + Every;
         while (!stopping.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(MovesEvery < Every ? MovesEvery : Every, time, stopping);
-                if (time.GetUtcNow() >= nextTick)
-                {
-                    await TickAsync(stopping);
-                    nextTick = time.GetUtcNow() + Every;
-                }
-                else
-                {
-                    RefreshLastMoves();
-                }
+                await StepAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -78,6 +72,26 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
             {
                 Error?.WriteLine($"stale watch: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// One wake of the loop: a whole tick once <see cref="Every"/> has passed since the last one began, otherwise only a refresh of the
+    /// last moves. The next tick is set before this one runs, so a tick that throws is tried again after <see cref="Every"/> and not on
+    /// the very next wake, which would repeat a failing tick (and its tracker calls) every <see cref="MovesEvery"/>.
+    /// </summary>
+    public async Task StepAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        var due = _nextTick ??= now + Every;
+        if (now >= due)
+        {
+            _nextTick = now + Every;
+            await TickAsync(cancellationToken);
+        }
+        else
+        {
+            RefreshLastMoves();
         }
     }
 
@@ -97,7 +111,7 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         var pullRequests = state.PullRequests();
         foreach (var flight in state.Flights())
         {
-            if (flight is not { State: not FlightState.Landed, FoldedInto: null, MovedTo: null })
+            if (!Staleness.InAir(flight))
             {
                 // A flight that landed, folded or moved is done here: it keeps no stale summary.
                 Attach(flight.Code, null, now);
@@ -120,7 +134,7 @@ public sealed class StaleWatch(NodeState state, TimeProvider time) : BackgroundS
         var legs = state.Legs();
         var cards = state.Cards();
         var pullRequests = state.PullRequests();
-        foreach (var flight in state.Flights())
+        foreach (var flight in state.Flights().Where(Staleness.InAir))
         {
             RecordLastMove(flight, Staleness.LastMove(flight, legs, cards, pullRequests, time.LocalTimeZone));
         }
