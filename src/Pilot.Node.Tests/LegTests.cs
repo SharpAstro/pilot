@@ -465,6 +465,11 @@ internal sealed class FakeGitHub : IGitHub
 
     public Recorded<(int Number, string Head, string Method)> Merged { get; } = [];
 
+    /// <summary>Issue numbers GitHub says are closed (#753).</summary>
+    public HashSet<int> IssuesClosedOnGitHub { get; } = [];
+
+    public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
+
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
     public string? PrFails { get; set; }
 
