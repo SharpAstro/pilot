@@ -1638,6 +1638,13 @@ public sealed class LegCommanderTests1 : LegCommanderTestsBase
         (await Leg(Verbs.StartLeg, "flight/TIA1/render")).Error.ShouldNotBeNull().ShouldContain("parser comes first");
         (await Leg(Verbs.StartLeg, "flight/TIA1/parser")).Ok.ShouldBeTrue();
 
+        // The worker is launched after the command answers; a loaded machine does not do that within it.
+        var clock = Stopwatch.StartNew();
+        while (_legs.Starting("TIA1") && clock.Elapsed < TimeSpan.FromSeconds(20))
+        {
+            await Task.Delay(10, Ct);
+        }
+
         var start = _workers.Started.ShouldHaveSingleItem();
         start.Name.ShouldBe("du1-tia1-parser");
         Path.GetFullPath(start.RepoPath).ShouldBe(Path.GetFullPath(Repo));
