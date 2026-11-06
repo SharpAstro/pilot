@@ -87,6 +87,25 @@ public abstract class JobTestsBase : IDisposable
         return reader.ReadToEnd();
     }
 
+    /// <summary>PIL784: the trimmed text of <paramref name="path"/> once it exists and is not empty, waited for under <see cref="WaitCeiling"/>; fails naming the file.</summary>
+    private protected async Task<string> TextOf(string path)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < WaitCeiling)
+        {
+            if (File.Exists(path) && ReadLog(path).Trim() is { Length: > 0 } text)
+            {
+                return text;
+            }
+            await Task.Delay(50, Ct);
+        }
+        throw new TimeoutException($"{path} did not hold any text within {WaitCeiling}");
+    }
+
+    /// <summary>The pid a job's child wrote to <paramref name="path"/>.</summary>
+    private protected async Task<int> PidIn(string path) =>
+        int.Parse(await TextOf(path), System.Globalization.CultureInfo.InvariantCulture);
+
     private protected CommandResult Run(string command, string target = "session/a1b2c3d4", long timeoutSeconds = 0, string? cwd = null) =>
         _jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = target, Args = [cwd ?? _root, timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), command], Who = "se1-tia1-parser" });
 
@@ -457,15 +476,31 @@ public sealed class JobTests1 : JobTestsBase
     {
         // SE1's j122: the tests passed in 6 minutes, a process they started kept the job's output open, and the job read as
         // running for four and a half hours with six jobs queued behind it.
+        // PIL784: the left-behind process sleeps far past any ceiling and its pid is written to a file, so the job ending while it
+        // is still alive proves it ended on its own process's exit, not on the output closing; no wall-clock bound is asserted.
+        var pidFile = Path.Combine(_root, "left.pid");
         var leftBehind = OperatingSystem.IsWindows()
-            ? "Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20' -NoNewWindow; echo 'started'"
-            : "(sleep 20 &); echo 'started'";
-        var started = DateTimeOffset.UtcNow;
+            ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 600' -NoNewWindow -PassThru; Set-Content '{pidFile}' $p.Id; echo 'started'"
+            : $"sleep 600 & echo $! > '{pidFile}'; echo 'started'";
+        int? pid = null;
+        try
+        {
+            var id = Run(leftBehind).Made!;
+            pid = await PidIn(pidFile);
 
-        var job = await Ended(Run(leftBehind).Made!);
+            var job = await Ended(id);
 
-        job.State.ShouldBe(JobState.Succeeded);
-        (DateTimeOffset.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(15));
+            job.State.ShouldBe(JobState.Succeeded);
+            IsAlive(pid.Value).ShouldBeTrue();
+        }
+        finally
+        {
+            if (pid is { } left && IsAlive(left))
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(left);
+                process.Kill(entireProcessTree: true);
+            }
+        }
     }
 
     [Fact]
@@ -579,11 +614,7 @@ public sealed class JobTests1 : JobTestsBase
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = await PidIn(pidFile);
         IsAlive(childPid).ShouldBeTrue();
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" }).Ok.ShouldBeTrue();
@@ -610,11 +641,7 @@ public sealed class JobTests1 : JobTestsBase
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = await PidIn(pidFile);
         IsAlive(childPid).ShouldBeTrue();
 
         // The tree under the wrapper, as the log read gives it, once the child is in it: it is remembered from here on.
@@ -672,11 +699,7 @@ public sealed class JobTests1 : JobTestsBase
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command).Made!;
         await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = await PidIn(pidFile);
 
         _jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Args = [Verbs.ForceArg], Who = "controller" }).Ok.ShouldBeTrue();
         var job = await Ended(id);
@@ -715,11 +738,7 @@ public sealed class JobTests1 : JobTestsBase
             : $"sleep 60 & echo $! > '{pidFile}'; wait";
         var id = Run(command, timeoutSeconds: 20).Made!;
         var running = await Until(id, j => j.State == JobState.Running);
-        for (var i = 0; i < 1200 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = await PidIn(pidFile);
 
         var job = await Ended(id);
 
@@ -1546,11 +1565,7 @@ public sealed class JobTests3 : JobTestsBase
         var first = await Node.StartAsync(_root);
         var id = first.Run(_root, command).Made!;
         await first.UntilAsync(id, j => j.State == JobState.Running, Ct);
-        for (var i = 0; i < 300 && !(File.Exists(pidFile) && ReadLog(pidFile).Trim().Length > 0); i++)
-        {
-            await Task.Delay(50, Ct);
-        }
-        var childPid = int.Parse(ReadLog(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        var childPid = await PidIn(pidFile);
         await first.StopAsync();
         IsAlive(childPid).ShouldBeTrue();
 
@@ -1797,15 +1812,18 @@ public sealed class JobTests3 : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task AResumedJobStillTimesOutOnceItHasRunItsTimeout()
     {
-        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 20).Made!;
+        // PIL784: the time before the pause counts against the timeout, so it is generous (45 s) and a slow start cannot make the
+        // Pause refuse because the timeout already ran out.
+        var id = Run(Busy(Path.Combine(_root, "never")), timeoutSeconds: 45).Made!;
         await Running(id);
-        _jobs.Pause(Verb(Verbs.PauseJob, id)).Ok.ShouldBeTrue();
+        var paused = _jobs.Pause(Verb(Verbs.PauseJob, id));
+        paused.Ok.ShouldBeTrue(paused.Error);
         await Task.Delay(500, Ct);
         _jobs.Resume(Verb(Verbs.ResumeJob, id)).Ok.ShouldBeTrue();
 
         var job = await Ended(id);
 
-        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 20s"));
+        (job.State, job.Error).ShouldBe((JobState.Failed, "stopped after its timeout of 45s"));
     }
 
     [Fact]
@@ -1865,9 +1883,14 @@ public sealed class JobTests3 : JobTestsBase
 
     private async Task<int> GrandchildPid(string marker, Task run)
     {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         while (!File.Exists(marker) || ReadLog(marker).Trim().Length == 0)
         {
             run.IsCompleted.ShouldBeFalse();
+            if (clock.Elapsed > WaitCeiling)
+            {
+                throw new TimeoutException($"{marker} did not hold any text within {WaitCeiling}");
+            }
             await Task.Delay(100, Ct);
         }
         return int.Parse(ReadLog(marker).Trim());
