@@ -62,6 +62,7 @@ public sealed class PlannedLegCapTests : LegCommanderTestsBase
         // The leg is planned all the same.
         _state.Legs("TIA1").Select(l => l.Name).ShouldBe(["parser", "render", "extra", "another"]);
         var card = CapCards().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(LegCommander.LegCapKind);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1"));
         card.Title.ShouldBe("TIA1: 4 legs, 2 planned (2 extra)");
         var remove = card.Choices.ShouldHaveSingleItem();
