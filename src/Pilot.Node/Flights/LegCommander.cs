@@ -411,6 +411,13 @@ public sealed partial class LegCommander(
             }
         }
 
+        // A merge refused for a head that moved past the reviewed one drops its row saying what comes next, and starts the review of the
+        // new head as the sweep does, with the lock let go, so a passed flight is never left with an unread head and no reviewer.
+        if (error is not null && command.Verb == Verbs.Merge && HeadMoved(error) is { } movedHead)
+        {
+            error = await HeadMovedAsync(command, error, movedHead, cancellationToken);
+        }
+
         // A merge lands its flight through the flight verbs' own lock, after this one's is let go. One that only joined a
         // merge queue, or waits for its checks, is no merge yet: the flight flies on, and lands once GitHub says merged.
         if (error is null && command.Verb == Verbs.Merge && merged)

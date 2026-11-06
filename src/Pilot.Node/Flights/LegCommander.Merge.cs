@@ -87,7 +87,8 @@ public sealed partial class LegCommander
         catch (FlightException ex)
         {
             // Not mergeable as it is (conflicting, behind its base) is the update's: the entry stays while the node brings it up to date.
-            if (!Conflicts(ex.Message) && !Behind(ex.Message))
+            // A head that moved is dropped by the command's end, which says what comes next (HeadMovedAsync) once git has looked.
+            if (!Conflicts(ex.Message) && !Behind(ex.Message) && HeadMoved(ex.Message) is null)
             {
                 DropMerge(asked.Code, ex.Message);
             }
@@ -366,7 +367,7 @@ public sealed partial class LegCommander
         }
         if (!pr.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
-            throw new FlightException($"#{pr.Number}'s head is {pr.Head[..Math.Min(8, pr.Head.Length)]}, not the {head} you reviewed: look again before it lands");
+            throw new FlightException(HeadMovedText(pr.Number, pr.Head, head));
         }
         // A commit made in the plane after the PR's last push would be left behind by the merge, and the landing would
         // then take the plane with it (TIA1658's plan read, 2026-10-23, landed by hand afterwards).
@@ -401,6 +402,44 @@ public sealed partial class LegCommander
             }
         }
         return pr;
+    }
+
+    private const string HeadMovedMarker = " you reviewed: look again before it lands";
+
+    private static string HeadMovedText(int number, string prHead, string reviewed) =>
+        $"#{number}'s head is {prHead[..Math.Min(8, prHead.Length)]}, not the {reviewed} you reviewed: look again before it lands";
+
+    /// <summary>The PR's head and the reviewed head out of a head-moved refusal (<see cref="HeadMovedText"/>); null for any other error.</summary>
+    private static (string PrHead, string Reviewed)? HeadMoved(string error)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(error, @"head is (\w+), not the (\w+) you reviewed: look again before it lands");
+        return m.Success && error.Contains(HeadMovedMarker, StringComparison.Ordinal) ? (m.Groups[1].Value, m.Groups[2].Value) : null;
+    }
+
+    /// <summary>
+    /// A merge refused because the PR's head moved past the reviewed head: when the head has commits of its own past it (not only
+    /// the base), the merge row is dropped saying a review of the new head starts and the merge is offered again once it passes, and
+    /// that review is started the way the sweep starts an unread-head review. Returns the error the command answers. Outside the lock.
+    /// </summary>
+    private async Task<string> HeadMovedAsync(CommandRequest command, string error, (string PrHead, string Reviewed) moved, CancellationToken cancellationToken)
+    {
+        var flight = FlightOf(command.Target);
+        var own = true;
+        if (Directory.Exists(flight.Worktree))
+        {
+            await git.RunAsync(["fetch", "--quiet", "origin"], flight.Worktree, cancellationToken);
+            var count = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{moved.Reviewed}..{moved.PrHead}"], flight.Worktree, cancellationToken);
+            own = !(count.Ok && count.Output.Trim() == "0");
+        }
+        if (!own)
+        {
+            DropMerge(flight.Code, error);
+            return error;
+        }
+        var reason = $"the head moved to {moved.PrHead} past the reviewed {moved.Reviewed}: a review of it starts, and the merge is offered again once it passes";
+        DropMerge(flight.Code, reason);
+        var started = await RunAsync(new CommandRequest { Verb = Verbs.StartReview, Target = Verbs.FlightTarget(flight.Code), Args = [UnreadHeadArg], Who = "node" }, cancellationToken);
+        return started.Ok ? $"{error}; {reason}" : $"{error}; {reason}, but the review did not start: {started.Error ?? "no reason given"}";
     }
 
     private static string BehindText(int number) => $"#{number} is behind its base";

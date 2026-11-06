@@ -394,6 +394,62 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AMergeOnAHeadThatMovedPastTheReviewedOneDropsItsRowStartsTheReviewAndOffersTheMergeAgainOnceItPasses()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("25", "Checked, nothing to add.");
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        CommitFix(flight);
+        Git(flight.Worktree, "push", "-q", "origin", $"flight/{flight.Code.ToLowerInvariant()}");
+        var moved = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _github.Pr = _github.Pr! with { Head = moved };
+
+        var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "me", reviewed[..8]);
+
+        refused.Error.ShouldNotBeNull().ShouldContain("you reviewed");
+        var row = _state.Merges().Single(m => m.Flight == flight.Code);
+        row.State.ShouldBe(MergeEntryState.Dropped);
+        row.Why.ShouldNotBeNull().ShouldContain($"the head moved to {moved[..8]} past the reviewed {reviewed[..8]}");
+        row.Why.ShouldContain("a review of it starts, and the merge is offered again once it passes");
+        var now = F(flight.Code);
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        now.Review.ReviewedHead.ShouldBe(moved);
+
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Error.ShouldBeNull();
+        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        ready.Choices.Single(c => c.Verb == Verbs.Merge).Args.ShouldContain(a => moved.StartsWith(a, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheTimeoutCardsMergeOnAHoldingFlightWhoseHeadMovedStartsTheReviewOfTheNewHead()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("26", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: false);
+        await checks.LookAsync(Ct);
+        var card = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        var reviewed = F(flight.Code).Review!.ReviewedHead!;
+        CommitFix(flight);
+        Git(flight.Worktree, "push", "-q", "origin", $"flight/{flight.Code.ToLowerInvariant()}");
+        var moved = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _github.Pr = _github.Pr! with { Head = moved };
+
+        var merge = card.Choices[0];
+        var refused = await Run(merge.Verb, merge.Target, "me", [.. merge.Args]);
+
+        refused.Error.ShouldNotBeNull().ShouldContain("you reviewed");
+        _github.Merged.ShouldBeEmpty();
+        _state.Merges().Single(m => m.Flight == flight.Code).Why.ShouldNotBeNull().ShouldContain("a review of it starts");
+        var now = F(flight.Code);
+        now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        now.Review.ReviewedHead.ShouldBe(moved);
+        moved.ShouldNotBe(reviewed);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePrReadyAndTimeoutCardsSayWhatTheHoldWaitsOn()
     {
         var flight = await Reviewed("24", Notes);
