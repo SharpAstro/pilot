@@ -100,6 +100,9 @@ public sealed class CheckRunnerTests
         var marker = Path.Combine(Path.GetTempPath(), $"check-child-{Guid.NewGuid():N}.pid");
         // Written under another name and renamed into place, so the marker exists only once it is whole and closed: polled
         // while Set-Content still held it, the read and then the cleanup's delete failed on the lock (#532's CI, 2026-10-31).
+        // The rename is not the end of it: Defender or the indexer scanning the new file, or Move-Item's own handle, can hold the
+        // marker for a moment after it exists, so it is read with sharing allowed and an IOException retried for a few seconds,
+        // and the cleanup's delete retries the same way (#807, merge-queue run 42228164252).
         var command = OperatingSystem.IsWindows()
             ? $"$p = Start-Process pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -PassThru -NoNewWindow; Set-Content -Path '{marker}.tmp' -Value $p.Id; Move-Item '{marker}.tmp' '{marker}'; Start-Sleep 120"
             : $"sleep 120 & echo $! > '{marker}.tmp' && mv '{marker}.tmp' '{marker}'; wait";
@@ -112,7 +115,7 @@ public sealed class CheckRunnerTests
                 run.IsCompleted.ShouldBeFalse();
                 await Task.Delay(100, Ct);
             }
-            var child = int.Parse(File.ReadAllText(marker).Trim());
+            var child = int.Parse((await ReadSharedAsync(marker, Ct)).Trim());
 
             await cancel.CancelAsync();
             await Should.ThrowAsync<OperationCanceledException>(run);
@@ -125,16 +128,59 @@ public sealed class CheckRunnerTests
         }
         finally
         {
-            // Best effort: a failed cleanup must not hide how the test itself ended.
+            // Best effort: a failed cleanup must not hide how the test itself ended. A lock still held is retried briefly first.
             foreach (var file in new[] { marker, marker + ".tmp" })
             {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch (IOException)
-                {
-                }
+                await DeleteQuietlyAsync(file);
+            }
+        }
+    }
+
+    /// <summary>How long a file another process may still hold is waited out, and how often it is tried again.</summary>
+    private static readonly TimeSpan HeldFileDeadline = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan HeldFileRetry = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// Reads <paramref name="path"/> while another process may still hold it (Defender or the indexer scanning a file that was
+    /// just created, a Move-Item handle not yet closed): opened with sharing allowed, and an <see cref="IOException"/> retried every
+    /// <see cref="HeldFileRetry"/> until <see cref="HeldFileDeadline"/>, then rethrown.
+    /// </summary>
+    private static async Task<string> ReadSharedAsync(string path, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + HeldFileDeadline;
+        while (true)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                return await reader.ReadToEndAsync(cancellationToken);
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(HeldFileRetry, cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>Deletes <paramref name="path"/>, retrying an <see cref="IOException"/> until <see cref="HeldFileDeadline"/>; a lock still held then is let go.</summary>
+    private static async Task DeleteQuietlyAsync(string path)
+    {
+        var deadline = DateTime.UtcNow + HeldFileDeadline;
+        while (true)
+        {
+            try
+            {
+                File.Delete(path);
+                return;
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(HeldFileRetry);
+            }
+            catch (IOException)
+            {
+                return;
             }
         }
     }

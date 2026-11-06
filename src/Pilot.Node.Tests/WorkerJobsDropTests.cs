@@ -62,7 +62,10 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
     {
         var flight = await NewFlight(issue, "parser");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
-        var worker = _state.Legs(flight.Code).Single().WorkerJob!;
+        // A start answers "started" once its plane takes longer than StartReadyWithin, which a loaded machine's git does, and the
+        // worker is on the leg only once the launch is recorded: wait for that, as open-pr's callers do for the reviewer.
+        await Started(_legs, flight.Code);
+        var worker = _state.Legs(flight.Code).Single().WorkerJob.ShouldNotBeNull();
         SessionFor(worker, flight.Code, "parser");
         var holder = Queue(jobs, Verbs.NodeTarget, "sleep 60; echo slept");
         await Until(holder, j => j.State == JobState.Running);
@@ -103,7 +106,8 @@ public sealed class WorkerJobsDropTests : ReviewTestsBase
         await ShouldBeDropped(first, "its worker went around");
         await ShouldBeDropped(second, "its worker went around");
         _said.ShouldBeEmpty();
-        var replacement = _state.Legs(flight.Code).Single().WorkerJob!;
+        await Started(_legs, flight.Code);
+        var replacement = _state.Legs(flight.Code).Single().WorkerJob.ShouldNotBeNull();
         replacement.ShouldNotBe(worker);
         SessionFor(replacement, flight.Code, "parser");
         var next = Queue(jobs, Verbs.SessionTarget(replacement), "echo three");

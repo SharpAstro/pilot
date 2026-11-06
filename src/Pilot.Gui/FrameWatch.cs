@@ -86,7 +86,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         (glyph, said) = PilotChrome<DIR.Lib.RgbaImage>.IdeasGlyph(pages.Ideas);
         Add(glyph);
         Add(said);
-        Panel(ref hash, pages.Cards, pages.PullRequests?.Row, pages.Ideas);
+        Panel(ref hash, pages.Cards, pages.PullRequests?.Row, pages.Ideas, now);
         if (page != PilotPage.Home)
         {
             hash.Add(version);
@@ -178,7 +178,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
 
     // The cards panel as CardsView draws it: the watchtower's line, the summary, each card's words and buttons (a PR's title
     // opens its row only while the node lists the PR) and the ideas it names, a node out of reach, and the handled lines.
-    private static void Panel(ref HashCode hash, CardsScreen cards, PullRequestsRow? pullRequests, IdeasScreen? ideas)
+    private static void Panel(ref HashCode hash, CardsScreen cards, PullRequestsRow? pullRequests, IdeasScreen? ideas, DateTimeOffset now)
     {
         if (cards.Watchtower is { } tower)
         {
@@ -201,6 +201,8 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
             hash.Add(card.Summary, StringComparer.Ordinal);
             hash.Add(card.Detail, StringComparer.Ordinal);
             hash.Add(card.Link, StringComparer.Ordinal);
+            // The row's "stale 5 h" (#736) is counted from the clock, so it moves the fingerprint as the hour turns.
+            hash.Add(CardsView<DIR.Lib.RgbaImage>.StaleMark(card, now, CardsView<DIR.Lib.RgbaImage>.DefaultStaleCardAfter), StringComparer.Ordinal);
             foreach (var choice in card.Choices)
             {
                 hash.Add(choice.Label, StringComparer.Ordinal);

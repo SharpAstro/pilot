@@ -45,7 +45,7 @@ public sealed class DesignDecisionMirror(NodeState state, IGitHub github)
         {
             var subject = Verbs.PrTarget(pr.Repo, pr.Number);
             var why = string.Join("; ", failures);
-            state.RaiseCard(CardBin.Ring, FailedKind, subject, $"{pr}: the design decision was recorded but not posted ({why})",
+            state.RaiseCard(CardBin.ForYou, FailedKind, subject, $"{pr}: the design decision was recorded but not posted ({why})",
                 $"The decision stays in the black box (pilot decisions --kind design). Not posted: {why}.");
         }
     }

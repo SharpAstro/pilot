@@ -179,7 +179,14 @@ public sealed class NodeMirror
                 _sessions.Remove(removed.Id);
                 break;
             case NoteAddedEvent note:
-                _notes.Add(note.Note);
+                if (note.Note.Id is { Length: > 0 } orderId && _notes.FindIndex(n => n.Id == orderId) is >= 0 and var at)
+                {
+                    _notes[at] = note.Note;
+                }
+                else
+                {
+                    _notes.Add(note.Note);
+                }
                 break;
             case FlightAddedEvent added:
                 _flights[added.Flight.Code] = added.Flight;

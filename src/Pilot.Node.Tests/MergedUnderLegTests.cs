@@ -118,7 +118,7 @@ public sealed class MergedUnderLegTests : IDisposable
         flight.PullRequest.ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ready.Id).State.ShouldBe(CardState.Closed);
         var ring = node.State.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.MergedUnderLegKind);
-        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Bin.ShouldBe(CardBin.ForYou);
         ring.Detail.ShouldNotBeNull().ShouldContain("new PR");
         node.GitHub.Merged.ShouldBeEmpty();
     }
