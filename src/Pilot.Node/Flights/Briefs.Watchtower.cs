@@ -6,6 +6,10 @@ namespace Pilot.Node.Flights;
 
 public static partial class Briefs
 {
+    private const int MaxOrderText = 500;
+    private const int MaxOrdersListed = 20;
+    private const int MaxOrdersTotal = 4000;
+
     /// <summary>
     /// What the watchtower is told when it starts: its job, what it may and may not do, the commands it does it with,
     /// and where every flight and open card stands now. Briefed from the node's state, never an earlier watchtower's
@@ -24,9 +28,21 @@ public static partial class Briefs
         {
             text.AppendLine("None stand now.");
         }
+        // Capped: the brief is a first prompt on a command line, and a pasted paragraph kept as an order must not fail every later start.
+        var listed = 0;
+        var count = 0;
         foreach (var order in standing)
         {
-            text.AppendLine($"- {order.Id}: {order.Text.ReplaceLineEndings(" ")}");
+            var line = order.Text.ReplaceLineEndings(" ");
+            line = line.Length > MaxOrderText ? line[..MaxOrderText] + "..." : line;
+            if (count >= MaxOrdersListed || listed + line.Length > MaxOrdersTotal)
+            {
+                text.AppendLine($"(more orders stand than fit here: `{pilot} orders` lists them all)");
+                break;
+            }
+            count++;
+            listed += line.Length;
+            text.AppendLine($"- {order.Id} (from {order.Who}): {line}");
         }
         text.AppendLine($"When the controller gives you an order that should outlast your session (a hold on a flight or repo, a scope rule), record it with `{pilot} order \"<their words>\"`;");
         text.AppendLine($"`{pilot} orders` lists them, and `{pilot} order done <id>` retires one when they lift it. Never retire one on your own say-so.");

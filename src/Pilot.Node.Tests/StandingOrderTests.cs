@@ -58,6 +58,38 @@ public sealed class StandingOrderTests : IDisposable
     }
 
     [Fact]
+    public void AFlightSessionMayNotGiveOrRetireTheControllersOrders()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var order = Command(Verbs.Order, "du1-tia9-parser", "Hold TIA2000");
+        var done = Command(Verbs.OrderDone, "du1-tia9-parser", "o1");
+        var session = new Standing(StandingKind.FlightSession, "TIA9");
+
+        session.Refusal(order, state).ShouldNotBeNull();
+        session.Refusal(done, state).ShouldNotBeNull();
+        Standing.Person.Refusal(order, state).ShouldBeNull();
+        Standing.Person.Refusal(done, state).ShouldBeNull();
+        new Standing(StandingKind.Lookout).Refusal(order, state).ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheBriefCapsOneOrderAndTheTotalListedAndNamesWhoGaveIt()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.Execute(Command(Verbs.Order, "gui", new string('x', 5000)));
+        for (var i = 0; i < 30; i++)
+        {
+            state.Execute(Command(Verbs.Order, "gui", "Hold " + i));
+        }
+
+        var brief = Pilot.Node.Flights.Briefs.Watchtower("wt", [], [], [], "pilot", orders: state.StandingOrders());
+
+        brief.ShouldContain("o1 (from gui): " + new string('x', 500) + "...");
+        brief.ShouldNotContain(new string('x', 501));
+        brief.ShouldContain("more orders stand than fit here");
+    }
+
+    [Fact]
     public async Task TheLookoutAndThePersonMayBothGiveAndRetireOrders()
     {
         await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);

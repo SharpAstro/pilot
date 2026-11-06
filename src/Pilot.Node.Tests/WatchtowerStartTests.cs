@@ -103,6 +103,18 @@ public sealed class WatchtowerStartTests : IDisposable
     }
 
     [Fact]
+    public async Task AStartRecordedAheadOfTheClockIsNotAStartInFlight()
+    {
+        // A peer whose clock is ahead (or a clock stepped back) left a start dated in the future: it must not hold every start of this node.
+        Directory.CreateDirectory(_data);
+        File.WriteAllLines(_tower.SessionsFile, [string.Join('\t', "ahead0001", "", Start.AddHours(3).ToString("O", System.Globalization.CultureInfo.InvariantCulture), "first start")]);
+
+        await _tower.LookAsync(Ct);
+
+        _workers.Started.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task AnOverlappingNodeThatLooksAfterTheFirstStartedJoinsItInsteadOfDoublingIt()
     {
         await _tower.LookAsync(Ct);

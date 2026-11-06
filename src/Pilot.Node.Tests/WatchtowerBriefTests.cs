@@ -25,7 +25,7 @@ public class WatchtowerBriefTests
         var heading = brief.IndexOf("## Standing orders", StringComparison.Ordinal);
         heading.ShouldBeGreaterThanOrEqualTo(0);
         heading.ShouldBeLessThan(brief.IndexOf("## Where things stand", StringComparison.Ordinal));
-        brief.IndexOf("- o1: Hold TIA2000", StringComparison.Ordinal).ShouldBeGreaterThan(heading);
+        brief.IndexOf("- o1 (from gui): Hold TIA2000", StringComparison.Ordinal).ShouldBeGreaterThan(heading);
         brief.ShouldNotContain("Gone already");
         brief.ShouldContain("`pilot order \"<their words>\"`");
         brief.ShouldContain("`pilot order done <id>`");

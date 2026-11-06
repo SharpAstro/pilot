@@ -940,7 +940,7 @@ public sealed class Watchtower(
     /// A second start in that window is the doubled watchtower of #782.
     /// </summary>
     private bool StartInFlight() =>
-        _startedAt is { } started && _job is { } job && time.GetUtcNow() - started < ShowUpGrace && state.Sessions().All(s => s.Id != job);
+        _startedAt is { } started && _job is { } job && time.GetUtcNow() - started is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && state.Sessions().All(s => s.Id != job);
 
     /// <summary>
     /// Re-reads the generations file under the start lock: a start another process recorded inside <see cref="ShowUpGrace"/>, not yet
@@ -960,7 +960,7 @@ public sealed class Watchtower(
             // Any start inside the grace that is not this node's own current one, nor one it replaced, and has not ended: a start
             // another process made (its record may have been read in by an earlier look, so not only the ones added just now).
             // Only starts a node recorded (they carry a reason), not a row seen by name.
-            var recent = _generations.Where(g => g.Why is not null && now - g.StartedAt < ShowUpGrace && g.Job != _job && g.Job != replacing?.Id && !_replaced.Contains(g.Job) && g.EndedAt is null
+            var recent = _generations.Where(g => g.Why is not null && now - g.StartedAt is { } age && age >= TimeSpan.Zero && age < ShowUpGrace && g.Job != _job && g.Job != replacing?.Id && !_replaced.Contains(g.Job) && g.EndedAt is null
                 && (state.Sessions().FirstOrDefault(s => s.Id == g.Job) is not { } row || Live(row))).OrderByDescending(g => g.StartedAt).FirstOrDefault();
             if (recent is null)
             {
