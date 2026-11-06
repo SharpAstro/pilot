@@ -488,11 +488,15 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
         F(flight.Code).Holding!.Reason.ShouldBe($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
 
-        // The node starts the leg as its sweep does; its worker finds nothing to change and ends: the hold is nobody's now.
-        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "node")).Error.ShouldBeNull();
+        // The leg is started (as the node's sweep would); its worker finds nothing to change and ends: the hold is nobody's now.
+        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "controller", "anyway")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
-        var worker = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).Worker!;
-        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "1")).Ok.ShouldBeTrue();
+        var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+        var worker = leg.Worker.ShouldNotBeNull();
+        for (var step = 1; step <= leg.Checklist.Length; step++)
+        {
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, $"{step}")).Ok.ShouldBeTrue();
+        }
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "nothing to change")).Error.ShouldBeNull();
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe("node");
 
