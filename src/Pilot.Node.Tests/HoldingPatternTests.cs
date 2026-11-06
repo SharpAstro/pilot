@@ -488,8 +488,12 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
         F(flight.Code).Holding!.Reason.ShouldBe($"the {LegCommander.ReviewNotesLeg} leg is making the review's fixes");
 
-        // The leg is started by the node's own sweep (no controller command); its worker finds nothing to change and ends: the hold is nobody's now.
+        // The leg is started by the node's own sweep, not a controller command: the sweep starts its validator first (the flight has an
+        // earlier leg), whose go starts the worker, as on a real node. The worker finds nothing to change and ends: the hold is nobody's now.
         await _legs.AdvanceFlightAsync(flight.Code, Ct);
+        await Started(_legs, flight.Code);
+        var validator = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).Validator.ShouldNotBeNull();
+        (await Run(Verbs.ValidateLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), validator, "go")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         var worker = leg.Worker.ShouldNotBeNull();
