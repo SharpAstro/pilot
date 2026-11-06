@@ -156,17 +156,18 @@ public sealed partial class LegCommander
                 {
                     throw new FlightException($"{stale.Text}\nThen finish again; if it still fails, report it again and the node will take it as a failure.");
                 }
+                // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it. This is
+                // decided on the plane as the worker left it: the early push below would put every plane at origin/<branch> first.
+                var (selfFinished, notWhy) = await TrySelfFinishAsync(flight, leg, report, cancellationToken);
+                if (selfFinished)
+                {
+                    break;
+                }
                 // The work reaches the PR early: a failed finish pushes the plane's commits too (#752). Its outcome is no change.
                 var failedPushNote = await PushEarlyAsync(flight, cancellationToken);
                 if (failedPushNote.Length > 0)
                 {
                     report = report.Length > 0 ? report + failedPushNote : failedPushNote.Trim();
-                }
-                // A worker that fails a leg whose work is done and pushed has only lost its way at the end: the node finishes it.
-                var (selfFinished, notWhy) = await TrySelfFinishAsync(flight, leg, report, cancellationToken);
-                if (selfFinished)
-                {
-                    break;
                 }
                 // The attempt may have recorded on the leg (a corrected check): the failure keeps that.
                 leg = state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) ?? leg;
@@ -231,7 +232,7 @@ public sealed partial class LegCommander
     {
         try
         {
-            await OffLockAsync(flight, () => PushAsync(flight, cancellationToken, brought: true));
+            await OffLockAsync(flight, () => PushAsync(flight, cancellationToken, brought: true, early: true));
             return "";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

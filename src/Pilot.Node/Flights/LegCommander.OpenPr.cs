@@ -204,8 +204,9 @@ public sealed partial class LegCommander
     /// was lost to a force push on 2026-10-27. A head that still lacks its base, or whose pushed history is not an ancestor of it, is
     /// refused, and git itself refuses a push that is no fast-forward.
     /// </summary>
+    /// <param name="early">A failed finish's push of the plane's commits: the base is not required, the disarm and the never-overwrite check stay.</param>
     /// <param name="brought">The plane was fetched and has its base merged in already (a leg's finish did it before its check ran): not done again.</param>
-    internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false)
+    internal async Task PushAsync(FlightRow flight, CancellationToken cancellationToken, bool brought = false, bool early = false)
     {
         await EnsureNotArmedAsync(flight, cancellationToken);
         // A push after the leg is recorded done sends what the check ran on: a second update here could fail with the leg already done.
@@ -213,8 +214,9 @@ public sealed partial class LegCommander
         {
             await FetchAndMergeBaseAsync(flight, cancellationToken);
         }
-        // The node's push refuses a branch still lacking its base, however it came to be so.
-        if (!(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
+        // The node's push refuses a branch still lacking its base, however it came to be so. An early push (#752) does not:
+        // origin/<base> moves on any fetch, so a branch behind it is the usual state, and the work should reach the PR all the same.
+        if (!early && !brought && !(await git.RunAsync(["merge-base", "--is-ancestor", flight.Base, "HEAD"], flight.Worktree, cancellationToken)).Ok)
         {
             throw new FlightException($"{flight.Branch} is not pushed: it is still behind {flight.Base}, which is not an ancestor of its head");
         }
