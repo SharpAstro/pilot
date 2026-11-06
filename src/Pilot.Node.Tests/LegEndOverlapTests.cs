@@ -432,7 +432,8 @@ public sealed class LegEndOverlapTests : LegCommanderTestsBase
 
         await _legs.CheckOverlapAsync("TIA1", "render", Ct);
 
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
+        // The earlier ring for TIA2 was answered; the new overlap with TIA3 raises none.
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.OverlapKind);
         var note = _state.Cards().Single(c => c.Kind == LegCommander.OverlapConnectedKind);
         note.Title.ShouldContain("TIA3");
         note.Title.ShouldNotContain("shared.cs");
