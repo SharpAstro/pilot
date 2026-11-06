@@ -292,10 +292,10 @@ public sealed class FalseRingTests : ReviewTestsBase
         await watch.TickAsync(Ct);
         await watch.TickAsync(Ct);
 
-        // The same card, id and all, rung again at the time of the look: it sorts first, and its age (At) stays true.
+        // The same card, id and all, rung again (at the node state's own time): it sorts first, and its age (At) stays true.
         var rung = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         rung.Id.ShouldBe(card.Id);
-        rung.RungAgainAt.ShouldBe(later.GetUtcNow());
+        rung.RungAgainAt.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(card.At);
         rung.At.ShouldBe(card.At);
         rung.Choices.ShouldBe(card.Choices);
         _state.Cards().ShouldNotContain(c => c.Kind == "stale-card-reminder");

@@ -9,8 +9,9 @@ namespace Pilot.Node.Tests;
 /// <c>CardKindTests.SourcePinned</c>. A kind raised into the Ring bin also names the <c>Fact</c> it is checked against before it rings (what the
 /// node read, from GitHub, a row, the session or the plane, that says the person must act) and the <c>Choices</c>: the <c>Verbs</c> its card offers,
 /// each one the node accepts in the state the card is raised in (#799 rule 5: a ring is for what only the person can settle, with something to press).
+/// A kind whose choices are handed to the raiser by its callers (a start that failed offers the start again) lists those files as <c>ChoiceFiles</c>.
 /// </summary>
-internal sealed record CardKindEntry(string Kind, string Bins, string[] Files, string Pin, string? Fact = null, string[]? Choices = null);
+internal sealed record CardKindEntry(string Kind, string Bins, string[] Files, string Pin, string? Fact = null, string[]? Choices = null, string[]? ChoiceFiles = null);
 
 /// <summary>
 /// Every kind of card the node raises (PIL474). <c>CardKindTests</c> reads the <c>RaiseCard</c> calls under Pilot.Node and fails when one
@@ -83,7 +84,7 @@ internal static class CardKindCatalog
         new("leg-validating", "Handled", [LegStart], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
         new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
-        new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard", "the start the node tried was refused or never answered, and nothing retries it by itself", [nameof(Verbs.StartLeg)]),
+        new("start-failed", "Ring", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard", "the start the node tried was refused or never answered, and nothing retries it by itself", [nameof(Verbs.StartLeg), nameof(Verbs.GoAround), nameof(Verbs.PlanFlight)], ChoiceFiles: [LegStart, "Flights/LegCommander.GoAround.cs", LegPlanners, LegReview]),
         new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, FlightCommanderCreate], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive", "the node's own next step after a receive was refused, on a flight that has not landed", [nameof(Verbs.GoAround)]),
         new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
         new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
@@ -96,7 +97,7 @@ internal static class CardKindCatalog
         new("stopped-uncommitted", "Ring", ["Flights/StopGate.cs"], "StopGateTests.TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough", "git status of the plane lists files not committed after the worker was told once", [nameof(Verbs.Say)]),
         new("package-late", "Ring", ["Flights/PackageWatch.cs"], "PackageWaitTests.APublishRunThatFailedRaisesTheCardAtOnce", "the package version the flight waits for is not on nuget.org and the producing run failed or is past its bound", [nameof(Verbs.FlyAnyway)]),
         new("admission-cycle", "Handled", ["Flights/AdmissionGate.cs"], "LegAdmissionTests.AFlightAdmittedToBreakACycleRaisesOneCardNamingBothFlights"),
-        new("spend-alert", "Ring", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound", "the leg's weighted spend in its session row is past the alert share of its budget", [nameof(Verbs.ExtendBudget)]),
+        new("spend-alert", "ForYou", [LegStart], "SpendAlertTests.ALegPastTheAlertShareRingsWithItsTokensAndShareBeforeItsNextRoundOncePerRound"),
         new("go-around-cap", "Ring", ["Flights/LegCommander.GoAround.cs"], "GoAroundCapTests.TheSixthGoAroundOfALegIsRefusedAndRaisesTheCardWithEveryRoundsReason", "the leg's go-around count on its row has reached the cap", [nameof(Verbs.FinishLeg)]),
         new("review-kept", "Handled", [LegReview], "ReReviewTests.AHeadThatOnlyMergedTheBaseKeepsThePassWithNoReviewerStarted"),
         new("review-notes", "ForYou", [LegReview], "ReviewModelTests.APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound"),

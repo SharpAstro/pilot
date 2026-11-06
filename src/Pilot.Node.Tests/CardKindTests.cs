@@ -209,7 +209,7 @@ public sealed class CardKindTests
                 {
                     problems.Add($"{entry.Kind}: its choice '{choice}' is no Verbs constant, so the node would refuse it");
                 }
-                else if (!entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{choice}", StringComparison.Ordinal)))
+                else if (!entry.Files.Concat(entry.ChoiceFiles ?? []).Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{choice}", StringComparison.Ordinal)))
                 {
                     problems.Add($"{entry.Kind}: its choice '{choice}' is not offered by {string.Join(", ", entry.Files)}");
                 }
