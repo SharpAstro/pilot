@@ -1318,6 +1318,7 @@ internal sealed class FakeRepoGit : IGit
         var all = false;
         var allowEmpty = false;
         var amend = false;
+        var quiet = false;
         for (var i = 0; i < a.Count; i++)
         {
             var x = a[i];
@@ -1340,6 +1341,7 @@ internal sealed class FakeRepoGit : IGit
             else if (x.StartsWith('-') && !x.StartsWith("--", StringComparison.Ordinal) && x[1..].All(c => c is 'q' or 'a' or 'm'))
             {
                 all |= x.Contains('a');
+                quiet |= x.Contains('q');
                 if (x.Contains('m'))
                 {
                     message = a[++i];
@@ -1347,6 +1349,7 @@ internal sealed class FakeRepoGit : IGit
             }
             else if (x is "--quiet" or "--no-edit")
             {
+                quiet |= x == "--quiet";
             }
             else
             {
@@ -1399,7 +1402,7 @@ internal sealed class FakeRepoGit : IGit
         var commit = MakeCommit(parents, wt.Index, message);
         SetHead(wt, commit.Id);
         wt.Merging = null;
-        return Ok($"[{wt.Branch ?? "detached HEAD"} {Short(commit.Id)}] {FirstLine(message)}\n");
+        return Ok(quiet ? "" : $"[{wt.Branch ?? "detached HEAD"} {Short(commit.Id)}] {FirstLine(message)}\n");
     }
 
     private void SetHead(Worktree wt, string id)
