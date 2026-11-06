@@ -100,6 +100,30 @@ public sealed class JobsTests
     }
 
     [Fact]
+    public void ARunningJobWithAFailureSaysSoInRedAndNothingOverlaps()
+    {
+        var failing = Job("j14", JobState.Running, Live.At.AddMinutes(-11), step: "Passed Parser.NestedGroups") with { TestsFailed = 1, FirstTestFailed = "BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit" };
+        var line = JobLine.From(failing, Live.At);
+        const string Said = "running · 1 failed so far (BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit)";
+
+        line.Failing.ShouldBe("1 failed so far (BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit)");
+        line.ToDumpLine().ShouldContain(Said);
+        JobLine.From(failing with { State = JobState.Failed, EndedAt = Live.At }, Live.At).Failing.ShouldBeNull();
+        Pilot.Commands.PilotCommand.JobLine(failing).ShouldContain("· 1 failed so far (BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit)");
+
+        foreach (var width in new[] { 1280u, 700u })
+        {
+            using var renderer = new RgbaImageRenderer(width, 800);
+            var (_, jobs) = Chrome(renderer);
+            var arranged = Layout.Engine.Arrange(jobs.Tree(new JobsScreen([line], "live", Live.At)), new Rect<float>(0, 0, width, 800), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            var text = arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+            text.Where(t => t.Value == Said).ShouldAllBe(t => t.Color.Equals(Palette.Current.Failed));
+            text.ShouldContain(t => t.Value == Said);
+            TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
     public void ALegsCheckReadsAsTheLegsCheckAndWakesNobody()
     {
         var check = Job("j20", JobState.Running, Live.At.AddMinutes(-2), owner: null) with { Kind = JobKind.Check, Flight = "ORB204", Leg = "parser" };

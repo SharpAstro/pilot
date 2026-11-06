@@ -140,6 +140,7 @@ public static partial class Briefs
             + " a quick build of one project) you run yourself, as usual."); 
         text.AppendLine("  A test suite or any other long run goes through `" + run + " run --`, and you read what the node says when it ends (the failures and the totals),"
             + " never the full log, so a suite's output cannot fill your context.");
+        text.AppendLine("  A run goes on to its end unless you hand it over as `" + run + " run --fail-fast -- <command>`, which the node ends at its first failed test; use it when the first failure is all you need.");
         text.AppendLine(WaitRule(run));
         text.AppendLine(ReportRule(run));
         // Claude Code isolates a -w session in its worktree and refuses a command it cannot prove stays inside: a git in a
