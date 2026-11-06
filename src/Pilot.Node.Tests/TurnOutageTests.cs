@@ -44,10 +44,11 @@ public sealed class TurnOutageTests
         }
     }
 
-    private void Session(string id, string leg, long context = 0, DateTimeOffset? response = null, DateTimeOffset? started = null) => _state.PutSession(new SessionRow
+    private void Session(string id, string leg, long context = 0, DateTimeOffset? response = null, DateTimeOffset? started = null, bool gone = false) => _state.PutSession(new SessionRow
     {
         Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "du1-tia1-" + leg, Kind = SessionKind.Background, Cwd = "/work/tia1",
-        Role = SessionRole.Worker, Flight = "TIA1", Leg = leg, ContextTokens = context, ContextWindow = 200_000, State = SessionState.Working,
+        Role = SessionRole.Worker, Flight = "TIA1", Leg = leg, ContextTokens = context, ContextWindow = 200_000,
+        State = gone ? SessionState.Idle : SessionState.Working, Gone = gone,
         SpendWeighted = 0, LastResponseAt = response, StartedAt = started ?? Start,
     });
 
@@ -243,10 +244,12 @@ public sealed class TurnOutageTests
         _state.Cards().Where(c => c.Bin == CardBin.Handled && c.Kind == LegWatch.PlanStalled).ShouldHaveSingleItem()
             .Title.ShouldBe("TIA2's planner (job c3c3c3c3) was started again after sessions stopped taking turns");
 
-        // The node's fresh starts replace the old ones (the planner's already on its first turn): another look redoes nothing again.
+        // The node's fresh starts replace the old ones (the old worker's process is stopped by the restart; the planner's already on its
+        // first turn): another look redoes nothing again.
         _time.Advance(TimeSpan.FromMinutes(1));
         var fresh = _time.GetUtcNow();
         _state.PutLeg(Leg("parser") with { WorkerJob = "f0f0f0f0", StartedAt = fresh });
+        Session("a1b2c3d4", "parser", started: inside, gone: true);
         Session("f0f0f0f0", "parser", started: fresh);
         Planner("b2b2b2b2", fresh, context: 5_000);
         await _watch.LookAsync(Ct);
