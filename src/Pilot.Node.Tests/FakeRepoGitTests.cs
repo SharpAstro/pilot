@@ -77,7 +77,8 @@ public sealed class FakeRepoGitTests : IDisposable
         Run(Plane, "add", ".");
         Run(Plane, "status", "--porcelain").ShouldBe("A  a.txt");
         File.WriteAllText(Path.Combine(Plane, "README.md"), "changed\n");
-        Run(Plane, "status", "--porcelain").ShouldBe(" M README.md\nA  a.txt");
+        // Untrimmed: the leading space of " M" is the column of the worktree's change.
+        _git.Run(["status", "--porcelain"], Plane).Output.ShouldBe(" M README.md\nA  a.txt\n");
     }
 
     [Fact]
