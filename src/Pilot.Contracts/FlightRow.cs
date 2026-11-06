@@ -281,6 +281,18 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? StaleSince { get; init; }
 
+    /// <summary>
+    /// When the flight last really moved (a leg started or finished, a card answered, the PR opened, a review verdict), kept current on every
+    /// stale watch tick. Unlike <see cref="StaleSince"/>, which is when the node first read the flight as stale, this is the flight's own last
+    /// activity, so a row says how long it has been still whether or not it is stale. Null before the first tick.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastMovedAt { get; init; }
+
+    /// <summary>The words of the event at <see cref="LastMovedAt"/> (<c>review passed</c>, <c>leg parser finished</c>); null with it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastMove { get; init; }
+
     /// <summary>The priority raises the node made (or could not make) for stale bounds, oldest first; one per bound. Null before the first.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FlightStaleRaise[]? StaleRaises { get; init; }

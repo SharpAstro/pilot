@@ -190,6 +190,8 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     // Cancels that reached the dispatcher before their job did (Run puts the row, then hands the job over, and a cancel
     // can land between the two): the job is cancelled before its turn when it arrives. The dispatcher's alone.
     private readonly Dictionary<string, (string Who, string? Dropped)> _withdrawnEarly = new(StringComparer.Ordinal);
+    // Adoptions that reached the dispatcher before their job did (the same race as a cancel): applied when the job arrives.
+    private readonly Dictionary<string, Adopted> _adoptedEarly = new(StringComparer.Ordinal);
     // Read-modify-write of a running job's row (pause, resume, the step): one at a time, so none loses another's change.
     private readonly object _rowLock = new();
     // The checks a caller awaits (RunCheckAsync), by job id: completed when the job ends however it ends.
@@ -215,6 +217,12 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     internal sealed record HandedOver(JobRow Job) : Signal;
 
     internal sealed record Withdrawn(string Id, string Who, string? Dropped = null) : Signal;
+
+    /// <summary>A job re-owned by its owner's replacement (#777): the dispatcher's own copy takes the new owner, so its next write keeps it.</summary>
+    internal sealed record Adopted(string Id, string? Owner, string? OwnerName, string? Flight, string? Leg) : Signal
+    {
+        public JobRow Apply(JobRow job) => job with { Owner = Owner, OwnerName = OwnerName, Flight = Flight, Leg = Leg };
+    }
 
     internal sealed record LookAgain : Signal
     {
@@ -594,6 +602,34 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             return state.Complete(command, $"run takes a session to wake ({Verbs.SessionTargetPrefix}<id>) or the node, not {command.Target}");
         }
 
+        // A session that replaced another of its name and role takes up the predecessor's queued job of the same command in the
+        // same folder, rather than queueing the same work twice (its end already goes to the replacement, #601). A running one only
+        // for a reviewer, which reads the head it was started on: a replacement worker edits the plane, so a run started before
+        // its edits would hand it a stale result.
+        if (owner is not null && !alone)
+        {
+            var sessions = state.Sessions();
+            var inherited = state.Jobs().FirstOrDefault(j => (j.State == JobState.Queued || (j.State == JobState.Running && owner.Role == SessionRole.Reviewer)) && j.Kind == JobKind.Run && j.Owner is { Length: > 0 } && j.Owner != owner.Id
+                && j.Command == line && string.Equals(j.Cwd, cwd, StringComparison.OrdinalIgnoreCase)
+                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions, state.CurrentWatchtower)?.Id == owner.Id);
+            if (inherited is not null)
+            {
+                // Handed to the dispatcher, which alone writes a queued row: its copy of a waiting job is what its next pass and the start
+                // put, so a row put here would go back to the predecessor at once (or bring back a job it had just cancelled). A running
+                // row is read afresh by every later write, so it takes the new owner now as well.
+                var adopted = new Adopted(inherited.Id, owner.Id, owner.Name, owner.Flight, owner.Leg);
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == inherited.Id) is { State: JobState.Running } current)
+                    {
+                        state.PutJob(adopted.Apply(current));
+                    }
+                }
+                _signals.Writer.TryWrite(adopted);
+                return state.Complete(command, null, way: $"adopted job {inherited.Id}, which your predecessor queued with the same command in the same folder", made: inherited.Id);
+            }
+        }
+
         var jobId = state.NextJobId();
         var folder = Path.Combine(options.DataFolder, "jobs");
         Directory.CreateDirectory(folder);
@@ -874,6 +910,10 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
     /// </summary>
     internal void Dispatch(Signal signal)
     {
+        if (signal is HandedOver early && _adoptedEarly.Remove(early.Job.Id, out var adoptedFirst))
+        {
+            signal = early with { Job = adoptedFirst.Apply(early.Job) };
+        }
         switch (signal)
         {
             case HandedOver handed when _withdrawnEarly.Remove(handed.Job.Id, out var by):
@@ -902,6 +942,24 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             case Withdrawn withdrawn when state.Jobs().FirstOrDefault(j => j.Id == withdrawn.Id) is { State: JobState.Queued }:
                 // Its hand-over is still behind this in the channel: cancel it when it comes.
                 _withdrawnEarly[withdrawn.Id] = (withdrawn.Who, withdrawn.Dropped);
+                break;
+            case Adopted adopted when _queue.FindIndex(j => j.Id == adopted.Id) is var waits and >= 0:
+                // The waiting copy takes its new owner; the pass below puts it, and the start puts it from this copy.
+                _queue[waits] = adopted.Apply(_queue[waits]);
+                break;
+            case Adopted adopted when _running.ContainsKey(adopted.Id):
+                // It started from the copy that still had the predecessor: put the new owner again on the fresh row.
+                lock (_rowLock)
+                {
+                    if (state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Running } row)
+                    {
+                        state.PutJob(adopted.Apply(row));
+                    }
+                }
+                break;
+            case Adopted adopted when state.Jobs().FirstOrDefault(j => j.Id == adopted.Id) is { State: JobState.Queued }:
+                // Its hand-over is still behind this in the channel: apply it when it comes.
+                _adoptedEarly[adopted.Id] = adopted;
                 break;
         }
 
