@@ -611,7 +611,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var sessions = state.Sessions();
             var inherited = state.Jobs().FirstOrDefault(j => (j.State == JobState.Queued || (j.State == JobState.Running && owner.Role == SessionRole.Reviewer)) && j.Kind == JobKind.Run && j.Owner is { Length: > 0 } && j.Owner != owner.Id
                 && j.Command == line && string.Equals(j.Cwd, cwd, StringComparison.OrdinalIgnoreCase)
-                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions)?.Id == owner.Id);
+                && sessions.FirstOrDefault(s => s.Id == j.Owner) is { } previous && Sessions.SessionMessenger.ReplacedBy(previous, sessions, state.CurrentWatchtower)?.Id == owner.Id);
             if (inherited is not null)
             {
                 // Handed to the dispatcher, which alone writes a queued row: its copy of a waiting job is what its next pass and the start
@@ -2120,7 +2120,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
                 var candidates = ownerRow.Role == SessionRole.Worker
                     ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                     : sessions;
-                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+                if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
                 {
                     target = replacement.Id;
                     handed = $"Your predecessor {ownerRow.Name} ({ownerRow.Id}), the session you replaced, started this job; what it shows so far is passed on to you.\n";
@@ -2220,7 +2220,7 @@ public sealed class JobRunner(NodeState state, NodeOptions options, TimeProvider
             var candidates = ownerRow.Role == SessionRole.Worker
                 ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray()
                 : sessions;
-            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates) is { } replacement)
+            if (Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates, state.CurrentWatchtower) is { } replacement)
             {
                 target = replacement.Id;
                 replacedTo = replacement.Id;

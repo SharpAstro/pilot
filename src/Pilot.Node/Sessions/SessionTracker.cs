@@ -778,7 +778,8 @@ public sealed class SessionTracker : BackgroundService
                 _justEnded.Remove(id);
                 // A reviewer the commander is replacing is not ended for good: its replacement row is not there yet, and its queued jobs
                 // are the replacement's to adopt (the commander drops them itself when the head moved).
-                if (SessionMessenger.ReplacedBy(row, all) is null && IsBeingReplaced?.Invoke(row.Id) != true && IsBeingReplaced?.Invoke(row.SessionId) != true)
+                if (SessionMessenger.ReplacedBy(row, all, _state.CurrentWatchtower) is null
+                    && IsBeingReplaced?.Invoke(row.Id) != true && IsBeingReplaced?.Invoke(row.SessionId) != true)
                 {
                     _confirmedEnded[id] = 0;
                     DropJobs?.Invoke([row.Id, row.SessionId, .. row.EarlierSessionIds ?? []], "its worker ended");

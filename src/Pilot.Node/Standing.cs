@@ -80,7 +80,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
+        Verbs.Order, Verbs.OrderDone, Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
     };
 
     /// <summary>
