@@ -1230,30 +1230,32 @@ internal sealed class FakeRepoGit : IGit
     {
         var head = HeadId(wt) is { } id ? _commits[id].Tree : new Dictionary<string, string>();
         var disk = Snapshot(wt.Path);
-        var lines = new List<string>();
+        // As git lists them: what is tracked and changed (an unmerged path as UU), by path, then what is untracked, by path.
+        var tracked = new List<(string Path, string Line)>();
+        var untracked = new List<string>();
         foreach (var path in head.Keys.Union(wt.Index.Keys).Union(disk.Keys).Order(StringComparer.Ordinal))
         {
             var inHead = head.TryGetValue(path, out var h);
             var inIndex = wt.Index.TryGetValue(path, out var i);
             var onDisk = disk.TryGetValue(path, out var d);
+            if (wt.Merging is { } merging && merging.Paths.Contains(path))
+            {
+                tracked.Add((path, $"UU {path}"));
+                continue;
+            }
             if (!inIndex && onDisk && !inHead)
             {
-                lines.Add($"?? {path}");
+                untracked.Add($"?? {path}");
                 continue;
             }
             var x = inHead == inIndex && h == i ? ' ' : !inHead ? 'A' : !inIndex ? 'D' : 'M';
             var y = inIndex == onDisk && i == d ? ' ' : !onDisk ? 'D' : 'M';
             if (x != ' ' || y != ' ')
             {
-                lines.Add($"{x}{y} {path}");
+                tracked.Add((path, $"{x}{y} {path}"));
             }
         }
-        if (wt.Merging is { } merging)
-        {
-            lines.RemoveAll(l => merging.Paths.Any(p => l.EndsWith(" " + p, StringComparison.Ordinal)));
-            lines.AddRange(merging.Paths.Select(p => $"UU {p}"));
-        }
-        return lines;
+        return [.. tracked.Select(t => t.Line), .. untracked];
     }
 
     private static Dictionary<string, string> Snapshot(string folder)

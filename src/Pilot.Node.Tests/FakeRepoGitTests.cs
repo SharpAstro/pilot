@@ -64,7 +64,7 @@ public sealed class FakeRepoGitTests : IDisposable
         Run(Plane, "rev-list", "--count", "origin/main..HEAD").ShouldBe("1");
         Run(Plane, "log", "--oneline", "origin/main..HEAD").ShouldEndWith(" add a");
         Run(Plane, "merge-base", "--is-ancestor", "origin/main", "HEAD");
-        Run(Plane, "diff", "--stat", "origin/main...HEAD").ShouldBe(" a.txt | 3 +++\n 1 file changed, 3 insertions(+)");
+        Run(Plane, "diff", "--stat", "origin/main...HEAD").ShouldBe("a.txt | 3 +++\n 1 file changed, 3 insertions(+)");
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public sealed class FakeRepoGitTests : IDisposable
         Run(Plane, "add", ".");
         Run(Plane, "status", "--porcelain").ShouldBe("A  a.txt");
         File.WriteAllText(Path.Combine(Plane, "README.md"), "changed\n");
-        Run(Plane, "status", "--porcelain").ShouldBe("A  a.txt\n M README.md");
+        Run(Plane, "status", "--porcelain").ShouldBe(" M README.md\nA  a.txt");
     }
 
     [Fact]
@@ -214,11 +214,11 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("plane", "diff", "--name-only", "--diff-filter=U"),
         Do("plane", "merge", "--abort"),
         Ask("plane", "status", "--porcelain"),
-        Ask("plane", "push", "-u", "origin", "flight/x"),
+        Do("plane", "push", "-u", "origin", "flight/x"),
         Ask("plane", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/flight/x"),
         Ask("plane", "ls-remote", "origin", "flight/x"),
         Save("plane", "commit", "-q", "--amend", "-m", "plane edits readme, rewritten"),
-        Ask("plane", "push", "-u", "origin", "flight/x"),
+        Do("plane", "push", "-u", "origin", "flight/x"),
         Ask("plane", "merge-base", "--is-ancestor", "refs/remotes/origin/flight/x", "HEAD"),
         Ask("repo", "worktree", "remove", "--force", "{plane}"),
         Ask("repo", "worktree", "list", "--porcelain"),

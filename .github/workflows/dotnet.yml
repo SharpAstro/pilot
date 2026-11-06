@@ -59,6 +59,11 @@ jobs:
     # Both: the node, CLI and GUI run on Windows (the controller's win-arm64 machine) as much as on Linux, and much of
     # what can break is Windows-only: the socket's owner-only lock, case-insensitive paths, worktree locks, .exe names.
     # x64 Windows, not Arm: hosted Arm runners are limited on private repos, and the platform code is the same.
+    #
+    # The Windows job is meant to take under 12 minutes (#813). It took 26 once, when the git-backed tests ran real git at 100 to 400 ms
+    # a process (Windows' process start and the scanner); those tests now run on an in-memory git (FakeRepoGit) unless a test checks git
+    # itself. A job that hangs is stopped here, with its hang dump, rather than by the merge queue's 20 minutes without a name.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -74,10 +79,27 @@ jobs:
         # Git Bash on Windows, so the version step's shell script runs on both.
         shell: bash
     steps:
+    - name: Turn off Defender's real-time scanning
+      # Windows only: what tests there are that still run git start a process each, and the scanner looks at every one of them and at every
+      # file written. Best effort (tamper protection can refuse it), so a refusal costs nothing. Before the checkout, so the workspace is
+      # never scanned; the repo root, since src is not there before it.
+      if: runner.os == 'Windows'
+      shell: pwsh
+      working-directory: .
+      continue-on-error: true
+      run: Set-MpPreference -DisableRealtimeMonitoring $true
     - uses: actions/checkout@v7
     - uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
+    - name: Cache NuGet packages
+      # Keyed on what decides the packages: the central versions and each project's own references. A change to either gets a fresh
+      # cache, seeded from the nearest older one by the restore key, so restore fetches only what changed.
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('src/Directory.Packages.props', 'src/**/*.csproj') }}
+        restore-keys: nuget-${{ runner.os }}-
     - name: Resolve version prefix
       # Read the major.minor back from the one place it is written instead of restating it here. -getProperty only
       # EVALUATES the file, so this can run before restore. The value is CAPTURED, so nothing else may print to
