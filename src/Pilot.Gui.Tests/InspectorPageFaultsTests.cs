@@ -114,14 +114,14 @@ public sealed class InspectorPageFaultsTests
     }
 
     [Theory]
-    [InlineData("Settings", PilotPage.Settings)]
-    [InlineData("pull-requests", PilotPage.PullRequests)]
-    [InlineData("pull_requests", PilotPage.PullRequests)]
-    [InlineData(" Pull Requests ", PilotPage.PullRequests)]
-    public void ANameIsReadWithoutRegardToCaseAndWithAHyphenForTheSpace(string name, PilotPage expected)
+    [InlineData("Settings", "settings")]
+    [InlineData("pull-requests", "pull requests")]
+    [InlineData("pull_requests", "pull requests")]
+    [InlineData(" Pull Requests ", "pull requests")]
+    public void ANameIsReadWithoutRegardToCaseAndWithAHyphenForTheSpace(string name, string expected)
     {
         PilotPageNames.TryParse(name, out var page).ShouldBeTrue();
-        page.ShouldBe(expected);
+        PilotPageNames.Of(page).ShouldBe(expected);
     }
 
     [Fact]
