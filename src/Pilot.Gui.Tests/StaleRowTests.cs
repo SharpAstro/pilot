@@ -120,7 +120,7 @@ public sealed class StaleRowTests
 
         first.Idle.ShouldBe(TimeSpan.FromHours(10));
         later.Idle.ShouldBe(TimeSpan.FromHours(12.5));
-        later.Idle.ShouldBeGreaterThan(first.Idle);
+        later.Idle!.Value.ShouldBeGreaterThan(first.Idle!.Value);
         later.StaleWorkMark.ShouldBe("stale · no progress for 12 h · raised to high");
     }
 
