@@ -86,7 +86,7 @@ public sealed class CardScreenshotTests
 
         var sent = await RaiseAsync(node, "flight/TIA1", attachment, "ring", "overlap");
 
-        sent.Response.ShouldNotBeNull().Error.ShouldContain(said);
+        sent.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain(said);
         node.State.Cards().ShouldBeEmpty();
     }
 
