@@ -20,14 +20,16 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected const string Moved = "beef1111beef1111";
 
     private protected readonly string _root = Path.Combine(Path.GetTempPath(), "p2m-" + Guid.NewGuid().ToString("N")[..8]);
-    private protected readonly NodeState _state = new(new InMemoryJournal(), TimeProvider.System);
+    private protected readonly NodeState _state;
     private protected readonly FakeWorkers _workers = new();
     private protected readonly FakeGitHub _github = new();
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
-    protected PrMarksTestsBase()
+    /// <param name="journal">Where the node writes; a test that reads the black box gives a file journal.</param>
+    protected PrMarksTestsBase(INodeJournal? journal = null)
     {
+        _state = new NodeState(journal ?? new InMemoryJournal(), TimeProvider.System);
         // A repo with a bare origin, so a flight's push is a real one: the seed, built once a run and copied.
         SeedRepo.Make(_root);
         var git = new GitCli();
@@ -41,7 +43,7 @@ public abstract class PrMarksTestsBase : IDisposable
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         try
         {

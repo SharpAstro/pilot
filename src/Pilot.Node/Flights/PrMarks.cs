@@ -191,7 +191,20 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
         var disagrees = new List<string>();
         if (pr.Labels is not null && now is { Label: { } set, MarksWhy: null } && label != set)
         {
-            disagrees.Add(label is null ? $"{set} was removed on GitHub" : $"{set} is {label} on GitHub");
+            // ApplyOneAsync writes the label only when the row's Label differs from the intended one, so a label changed on GitHub
+            // afterwards (a pass with notes left at pilot: changes, PIL795) would stand for good: it is set again here, and said.
+            var said = label is null ? $"{set} was removed on GitHub" : $"{set} is {label} on GitHub";
+            Update(code, r => r with { Label = null });
+            await ApplyOneAsync(code, cancellationToken);
+            if (Of(code)?.Review is { Label: { } mended, MarksWhy: null } && mended == set)
+            {
+                LogCorrection(code, $"{said}; set again");
+                label = set;
+            }
+            else
+            {
+                disagrees.Add(said);
+            }
         }
         if (now.ReviewedHead is { } read && pr.Head.Length > 0 && pr.Head != read)
         {
@@ -205,6 +218,13 @@ internal sealed class PrMarks(NodeState state, IGitHub github, NodeOptions optio
             state.UpdateFlight(code, f => f with { GitHubHead = head, GitHubLabel = seen, GitHubDisagrees = why, GitHubDraft = pr.Draft });
         }
     }
+
+    /// <summary>The verb of the black-box line that records a label the node set back after GitHub showed another.</summary>
+    public const string LabelCorrectedVerb = "label-corrected";
+
+    // The black box is the node's record of who did what: the node's own correction goes in it as a command result, whose why says what was found.
+    private void LogCorrection(string code, string why) =>
+        state.Complete(new CommandRequest { Verb = LabelCorrectedVerb, Target = Verbs.FlightTarget(code), Who = "node", Why = why }, error: null);
 
     /// <summary>Sets what a refused write left, for every flying flight whose row says it is still to do.</summary>
     public async Task RetryAsync(CancellationToken cancellationToken)
