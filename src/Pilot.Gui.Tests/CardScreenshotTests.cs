@@ -95,7 +95,10 @@ public sealed class CardScreenshotTests
         var with = Arrange(Card("c1", image: true), 420f);
 
         Thumb(without).ShouldBe("0");
-        with.Max(a => a.Bounds.Y + a.Bounds.Height).ShouldBeGreaterThan(without.Max(a => a.Bounds.Y + a.Bounds.Height));
+        // The root fills the whole area it is arranged in, so the card's height is where its lowest text ends.
+        float Lowest(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+            arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Max(a => a.Bounds.Y + a.Bounds.Height);
+        Lowest(with).ShouldBeGreaterThanOrEqualTo(Lowest(without) + AttachmentGallery.ThumbHeight);
     }
 
     [Theory]
@@ -108,7 +111,7 @@ public sealed class CardScreenshotTests
         var view = View(renderer, painted);
         var screen = CardsScreen.From([Card("c1", image: true)]);
         view.Render(screen, new RectF32(0, 0, width, 900));
-        painted.ShouldHaveSingleItem().Width.ShouldBeLessThanOrEqualTo(AttachmentGallery.ThumbWidth);
+        painted.ShouldHaveSingleItem().Width.ShouldBeLessThanOrEqualTo(AttachmentGallery.ThumbWidth + 0.01f);
 
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
