@@ -50,6 +50,29 @@ is neither built nor tested by CI.
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
 
+## Stored records
+
+The node's store (`snapshot.json`, `journal.jsonl`, `decisions.jsonl`, `store.json`) outlives the build that wrote it: an update
+starts on what the last release stored. The JSON reader sets every init property from the file, a missing one to null whatever
+its initialiser says, and writing that row back is refused (`RespectNullableAnnotations`). That stopped every node that
+updated onto beta 1718 (`AdmissionRow.WaitingOnPerson`, added by #808, null in a journal written before it).
+
+- **A member added to a stored record** (the snapshot, the journal's events, settings, job and session rows, anything under
+  `NodeEvent`) is nullable (`string?`), or has a default the reader honours: `init => field = value ?? []` for an array,
+  `value ?? ""` for a string. A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
+- **The store fixture** is a folder per release under `src/Pilot.Node.Tests/Fixtures/Store/<version>/`, a store written by that
+  release's own code. `StoreCompatibilityTests` loads each, replays it into `NodeState`, writes a fresh snapshot, starts a
+  second time, and fails naming `Type.Member` for any member null where its type forbids it. It fails too when
+  `FileJournal.StoreContract` is above the newest fixture's, so a contract bump needs a new fixture.
+- **Refreshing it:** `release.yml` runs the writer (`StoreFixtureWriterTests`, skipped unless `PILOT_WRITE_STORE_FIXTURE` names a
+  folder) with each release's code and attaches `store-fixture-<version>.zip` to the GitHub release. The PR that adds or changes a
+  stored member downloads the latest release's zip (`gh release download v<version> --pattern "store-fixture-*.zip"`) and unzips
+  it into `Fixtures/Store/`, so the test reads what the old code stored, never what the PR's own branch writes. Older folders
+  stay while a node may still hold such a store.
+- **By hand** (a release before the zip existed, or a beta): a detached worktree of that release's commit, the writer
+  (`StoreFixtureWriter.cs`) copied in if it predates it, then `PILOT_WRITE_STORE_FIXTURE=<folder> PILOT_STORE_FIXTURE_VERSION=<version>`
+  with `dotnet test src/Pilot.Node.Tests -c Release --filter FullyQualifiedName~StoreFixtureWriterTests`. `2.1.1-beta.1711` was written so.
+
 ## Build and check
 
 Always `-c Release`, as CI does; a Debug build of a consumer of a Release package can fail with a misleading

@@ -50,4 +50,10 @@
     <None Include="Fixtures\gh\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Stores written by the code of an older release, one folder per version (store.json, snapshot.json, journal.jsonl, decisions.jsonl):
+       StoreCompatibilityTests starts a node on each. See PILOT.md for how a fixture is made and refreshed at each release. -->
+  <ItemGroup>
+    <None Include="Fixtures\Store\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

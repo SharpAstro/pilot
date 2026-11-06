@@ -6,7 +6,8 @@ name: v2 release
 # pilot update). <major>.<minor> must be src/Directory.Build.props' VersionMajorMinor; a -suffix makes a prerelease,
 # which no node takes as the latest. Run by hand (workflow_dispatch, any branch), it only tries the publish: the zips
 # are left as the run's artifacts and nothing is released. Main's pushes publish only the beta channel's prerelease
-# (dotnet.yml says how); a release clears the Actions artifacts earlier runs left, which only cost storage.
+# (dotnet.yml says how); a release clears the Actions artifacts earlier runs left, which only cost storage. A release also
+# carries store-fixture-<version>.zip: the store its own code writes, for the next PR that changes a stored record (PILOT.md).
 on:
   push:
     tags: ['v*']
@@ -100,8 +101,48 @@ jobs:
           name: pilot-${{ matrix.rid }}
           path: dist/
 
+  store-fixture:
+    # The store this release's own code writes: a snapshot holding every kind of stored record, a journal with a delta of each, a
+    # decision and store.json (StoreFixtureWriter, run as the test StoreFixtureWriterTests, which a run without the folder variable
+    # skips). Zipped as <version>/..., so the PR that next changes a stored record unzips it into
+    # src/Pilot.Node.Tests/Fixtures/Store/ and StoreCompatibilityTests starts a node on what this release stored. It is a job of its
+    # own, not a step of the publish matrix, for one store per release; the release needs it, so a release never goes out without one.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Write the store with this release's code
+        working-directory: src
+        env:
+          PILOT_WRITE_STORE_FIXTURE: ${{ runner.temp }}/store/${{ needs.check.outputs.version }}
+          PILOT_STORE_FIXTURE_VERSION: ${{ needs.check.outputs.version }}
+        run: dotnet test Pilot.Node.Tests -c Release --filter "FullyQualifiedName~StoreFixtureWriterTests"
+      - name: Check what it wrote, then zip it
+        # A test that was skipped (the folder variable lost on its way) passes, so the files are looked for here: the zip is
+        # of a store with a snapshot, a journal and a store.json that names this version, or the job fails.
+        run: |
+          store="$RUNNER_TEMP/store/$VERSION"
+          for file in store.json snapshot.json journal.jsonl; do
+            test -s "$store/$file" || { echo "::error::the fixture writer wrote no $file in $store"; exit 1; }
+          done
+          grep -q "\"version\": \"$VERSION\"" "$store/store.json" || { echo "::error::$store/store.json does not name $VERSION"; cat "$store/store.json"; exit 1; }
+          mkdir dist
+          (cd "$RUNNER_TEMP/store" && python -m zipfile -c "$GITHUB_WORKSPACE/dist/store-fixture-$VERSION.zip" "$VERSION")
+          python -m zipfile -l "dist/store-fixture-$VERSION.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          # pilot-*, so the release job's download of the zips takes it, and gh release create attaches it with them.
+          name: pilot-store-fixture
+          path: dist/
+
   release:
-    needs: [check, publish]
+    needs: [check, publish, store-fixture]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
