@@ -76,20 +76,23 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// Closes the open cards of <paramref name="review"/> when the PR's head is past the commit it read, saying which: a review of a
-    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it.
+    /// head that is gone asks nothing of anyone. False when nothing was open or the head is where the review read it. A review of the
+    /// new head that follows (<paramref name="newerReviewFollows"/>, a recheck's) leaves the design card for it: that review settles the
+    /// question or rings for it again once it is posted, which a card closed here for the head could not say.
     /// </summary>
-    public bool CloseCardsPastHead(PrReviewRow review, string head)
+    public bool CloseCardsPastHead(PrReviewRow review, string head, bool newerReviewFollows = false)
     {
         if (head.Length == 0 || string.Equals(head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
         var subject = Verbs.PrTarget(review.Repo, review.Number);
-        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+        string[] kinds = newerReviewFollows ? [.. ReviewCardKinds.Where(k => k != DesignKind)] : ReviewCardKinds;
+        if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && kinds.Contains(c.Kind)))
         {
             return false;
         }
-        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", ReviewCardKinds);
+        state.CloseCardsAbout(subject, $"the head moved past {CommitRefs.Short(review.Head)} to {CommitRefs.Short(head)}", kinds);
         return true;
     }
 

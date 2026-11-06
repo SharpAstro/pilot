@@ -112,8 +112,10 @@ public sealed partial class PrReviews
             Slots.End("review-pr:" + reviewer, counting);
         }
         state.PutPrReview(row with { ReviewerJob = job });
-        // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in.
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {CommitRefs.Short(read.Head)}", [.. ReviewCardKinds, PushedUnreviewedKind]);
+        // The earlier review's cards are its own: a newer review of the PR overtakes them, whatever state that review ended in. Its design
+        // card is the exception: that question is settled or replaced by what the newer review says of it once it is posted (FixAfterPostAsync),
+        // so it keeps ringing until then, not closed here as if nothing were known.
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), $"a newer review started at {CommitRefs.Short(read.Head)}", [.. ReviewCardKinds.Where(k => k != DesignKind), PushedUnreviewedKind]);
         state.RaiseCard(CardBin.Handled, StartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {reviewer} on {pr} at {CommitRefs.Short(read.Head)}", $"in {worktree}");
         await SetStatusAsync(row, "pending", "reviewing", read.Url, cancellationToken);

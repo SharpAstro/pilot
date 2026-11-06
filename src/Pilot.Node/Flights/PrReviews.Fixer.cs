@@ -14,6 +14,9 @@ public sealed partial class PrReviews
     /// A question of design whose every question has exactly one option that reaches the criteria (the reviewer's <c>misses: none</c>) does
     /// not ring: the node takes that option, as <see cref="DecideDesignAsync"/> says. It rings only when no option reaches them, two or more
     /// do, or the reviewer did not say what the options miss.
+    /// An earlier review's design card still ringing is cleared by this review, which a newer review does not close at its start: it is
+    /// settled when this review decides an option itself (the notice names the option and the reason), settled when this review no longer
+    /// asks a question of design, and closed for this review's own ring when it asks one that still has no reaching option, so a question rings once.
     /// </remarks>
     private async Task FixAfterPostAsync(PrRef pr, CancellationToken cancellationToken)
     {
@@ -26,15 +29,31 @@ public sealed partial class PrReviews
         var flight = FlightOf(pr);
         var subject = Verbs.PrTarget(pr.Repo, pr.Number);
         var asksDesign = review.Findings.Any(IsDesign);
+        if (!asksDesign)
+        {
+            // No design finding raised a card from this review, so one still open is an earlier review's: the question is not asked again.
+            SettleDesign(pr.Repo, pr.Number, $"a later review no longer asks it ({CommitRefs.Short(review.Head)})", review.Url,
+                closing: $"The card stopped ringing: the later review of {pr} at {CommitRefs.Short(review.Head)} asks no question of design, so nothing is left to answer.");
+        }
         if (flight is not null && !asksDesign || review.Verdict != "changes" && !asksDesign)
         {
             return;
         }
         var questions = asksDesign ? review.Findings.Select(DesignQuestion.Parse).OfType<DesignQuestion>().ToList() : [];
         var decided = DesignQuestion.Decide(questions);
+        if (asksDesign && decided is null && !review.Raised.Contains(DesignKind))
+        {
+            // Still no option that reaches the criteria: this review rings for it (a design card, or the ring that says why no fixer
+            // starts), so the earlier review's card closes for it. One ring per open question, never two.
+            state.CloseCardsAbout(subject, $"a newer review asks it again at {CommitRefs.Short(review.Head)}", DesignKind);
+        }
         if (flight is null && TrackedClone(pr) is null)
         {
             // Nobody can fix it here, and the post's Handled line says only that it went out: the owner is rung with the findings.
+            if (decided is not null)
+            {
+                SettleDecided(pr, review, decided, "no fixer starts in a repo the node does not track; the ring for that says the decided answer");
+            }
             RaiseNoFixer(pr, review, subject, $"{pr.Repo} is not a repo the node tracks, so it makes no changes there"
                 + (decided is null ? "" : $". The only option of its design question that reaches the criteria is: {decided.Answer}"));
             return;
@@ -108,12 +127,14 @@ public sealed partial class PrReviews
             var rounds = review.FixRound ?? 0;
             if (rounds >= MaxFixRounds)
             {
+                SettleDecided(pr, review, decided, "no fixer starts, as the rounds of fixes are used up; the ring for that says the decided answer");
                 RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {rounds} rounds of fixes",
                     $"{rounds} fixers have pushed and the review still asks for changes, so no fourth starts: this is yours.\n{said}\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}");
                 return;
             }
             if (rounds == 0 && !Own(review, await github.LoginAsync(cancellationToken)))
             {
+                SettleDecided(pr, review, decided, "it is someone else's PR, so the Fix it card carries the decided answer");
                 // The answer is the choice's own words, as a design option's button carries its: Fix it posts it and starts the fixer.
                 RaiseOnce(pr, review, CardBin.ForYou, FixOfferKind, subject, $"{pr}: the review asked for changes, and it is {review.Author ?? "someone else"}'s PR",
                     $"{said}\n{(review.Report ?? "").Trim()}\nFix it starts a session on the PR's branch that makes them, with that answer.",
@@ -128,11 +149,21 @@ public sealed partial class PrReviews
         catch (FlightException ex)
         {
             // The answer stays stored (DesignAnswer): the choice starts the fixer or sends the leg round with it, without asking again.
+            SettleDecided(pr, review, decided, "the start did not go, and the card for that starts it again with the decided answer");
             var what = flight is null ? $"the fixer could not start on {pr}" : $"{flight.Code}'s last leg could not be sent round for {pr}";
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: {what}: {LegCommander.OneLine(ex.Message)}", $"{said}\n{ex.Message}",
                 [new CardChoice { Label = flight is null ? $"Start the fixer on {pr} again" : $"Send {flight.Code}'s last leg round on {pr} again", Verb = Verbs.FixPr, Target = subject }]);
         }
     }
+
+    /// <summary>
+    /// The node decided a design question a ring of an earlier review still holds, but no fix starts for it here (a PR that is not the
+    /// owner's, the cap on rounds, a repo the node does not track, a start that failed): the earlier card is settled, naming the
+    /// option the node took and why, and the card that says what is left rings in its place. False when no design card is open.
+    /// </summary>
+    private bool SettleDecided(PrRef pr, PrReviewRow review, DesignDecided decided, string next) =>
+        SettleDesign(pr.Repo, pr.Number, $"a later review decided it with {Clean(decided.Answer, 80)}", review.Url,
+            chose: new DesignChoice(decided.Answer, decided.Reason, NodeDecides), closing: $"The card stopped ringing: {next}.");
 
     /// <summary>Why a design question rings in words, one line each for the questions whose options the reviewer judged against the criteria; empty when none did.</summary>
     private static string DesignRings(IReadOnlyList<DesignQuestion> questions)
@@ -247,6 +278,8 @@ public sealed partial class PrReviews
         review = review with { DesignAnswer = given };
         // Stored as soon as it is known: a fixer held for an Opus slot starts later from the stored row, and must find it.
         state.PutPrReview(review);
+        // What the settled notice names, whichever way the answer came: the choice and why (the node's reason, or who answered and how).
+        var chose = new DesignChoice(given, AnswerReason(decision, who, autopilot), who);
         var answer = $"Answer to the review's question of design (given by {who}):\n\n{postWords}";
         if (FlightOf(pr) is { } flight)
         {
@@ -273,7 +306,7 @@ public sealed partial class PrReviews
             {
                 await RecordDesignAsync(pr, flight, review, given, who, DecisionByKinds.Node, decision.Reason, cancellationToken);
             }
-            SettleDesign(pr.Repo, pr.Number, $"answered by {who}: {flight.Code}'s last leg went round with it", review.Url, $"{flight.Code}'s last leg was sent round with the answer");
+            SettleDesign(pr.Repo, pr.Number, AnsweredCause(chose, $"{flight.Code}'s last leg went round with it"), review.Url, $"{flight.Code}'s last leg was sent round with the answer", chose);
             return $"sent {flight.Code}'s last leg round with the answer to {pr}'s question of design";
         }
         if (autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
@@ -292,7 +325,7 @@ public sealed partial class PrReviews
         string fixerStart;
         try
         {
-            fixerStart = await StartFixerAsync(pr, review, cancellationToken);
+            fixerStart = await StartFixerAsync(pr, review, cancellationToken, chose);
         }
         catch (FlightException ex) when (command is not null)
         {
@@ -374,9 +407,10 @@ public sealed partial class PrReviews
     /// <summary>
     /// Starts the one fixer of a PR: its branch fetched, a worktree <c>&lt;clone&gt;/.claude/worktrees/fix-&lt;repo&gt;-&lt;n&gt;</c> on it,
     /// a session briefed with the review. Refused for a repo the node does not track, a PR a flight owns, one that is not
-    /// open, and one that has a fixer already.
+    /// open, and one that has a fixer already. The design question it answers is settled with <paramref name="chose"/> (the choice and why),
+    /// or with the stored answer as its recorded decision has it when the start was held for a slot and comes later.
     /// </summary>
-    private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken, DesignChoice? chose = null)
     {
         if (review.Fixer is { } on)
         {
@@ -472,7 +506,8 @@ public sealed partial class PrReviews
             Slots.End("fix-pr:" + fixer, counting);
         }
         state.PutPrReview(fixing with { FixerJob = job });
-        SettleDesign(pr.Repo, pr.Number, "answered: the fixer started on it", review.Url, $"{fixer} is making the changes the answer calls for");
+        var answered = chose ?? StoredChoice(review);
+        SettleDesign(pr.Repo, pr.Number, AnsweredCause(answered, "the fixer started on it"), review.Url, $"{fixer} is making the changes the answer calls for", answered);
         state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch {branch}, to make the changes the review asked for", $"in {worktree}", link: review.Url);
