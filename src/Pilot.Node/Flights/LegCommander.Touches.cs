@@ -16,7 +16,7 @@ public sealed partial class LegCommander
 
     /// <summary>One other flight or PR the files are compared with: whom it is and what it changes, or why that is not known.</summary>
     private sealed record Touched(string Label, string[]? Files, string? Unknown, string? FlightCode, bool OnPeer, string? Node = null, int? PrNumber = null,
-        IReadOnlyDictionary<string, int>? Lines = null);
+        IReadOnlyDictionary<string, int>? Lines = null, DateTimeOffset? LastMovedAt = null);
 
     /// <summary>
     /// <c>touches flight/&lt;code&gt; &lt;file…&gt;</c>: a line per flight and PR, the matches first (fold, connect), then those not known,
@@ -96,7 +96,8 @@ public sealed partial class LegCommander
         foreach (var other in state.Flights().Where(f => f.Code != flight.Code && f.State != FlightState.Landed && FlightCommander.SamePath(f.RepoPath, flight.RepoPath)))
         {
             listed.Add(other.Branch);
-            others.Add(await ChangedByAsync($"{other.Code} ({options.Machine})", other, local: true, onPeer: false, flight.RepoPath, cancellationToken));
+            // How long the other has been still comes from this node's row of it (the leg-end check decides on it whether to connect).
+            others.Add((await ChangedByAsync($"{other.Code} ({options.Machine})", other, local: true, onPeer: false, flight.RepoPath, cancellationToken)) with { LastMovedAt = other.LastMovedAt });
         }
 
         var (peerFlights, peerNotes) = await PeerFlightsAsync(flight, cancellationToken);
@@ -356,7 +357,8 @@ public sealed partial class LegCommander
             var info = await peer.NodeAsync(budget);
             var node = info.MachinePrefix.Length > 0 ? info.MachinePrefix : peer.Endpoint;
             var touched = await Task.WhenAll(theirs.Select(f => ChangedByPeerAsync(peer, node, f, mine.RepoPath, budget, caller)));
-            return ([.. theirs.Zip(touched)], null);
+            // The peer's own row says how long its flight has been still.
+            return ([.. theirs.Zip(touched, (f, t) => (f, t with { LastMovedAt = f.LastMovedAt }))], null);
         }
         catch (Exception ex) when (DidNotAnswer(ex, caller))
         {

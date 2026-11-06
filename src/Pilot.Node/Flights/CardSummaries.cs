@@ -60,6 +60,7 @@ public static partial class CardSummaries
             LegCommander.StartFailedKind => $"A session of {what} did not start and the node does not retry it by itself. Start it again from the card.",
             LegCommander.OverlapKind => $"{what} overlaps another flight's files. Fold it in, connect it, or plan both in parallel.",
             LegCommander.OverlapParallelKind => $"{what} shares files with an open PR no flight owns, with a flight that held a card on it too, or with another flight in a small one-way overlap, so the node planned in parallel by itself. Nothing to do; the second to land resolves the conflicts.",
+            LegCommander.OverlapConnectedKind => $"{what} shares files with a flight in the air that its plan did not foresee, and that flight is moving, so the node connected it to the other itself: its next leg waits until the other lands. Nothing to do; disconnect it with --anyway to fly both in parallel instead.",
             StopGate.Kind => $"A session of {what} was told once to commit its files and stopped again with them still there. It can be told once more; the files stay in the plane until they are committed.",
             LegCommander.PlannedKind => choices.Count == 0
                 ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
