@@ -249,9 +249,13 @@ public sealed class LegTickingPassTests : LegCommanderTestsBase
         WorkerEnded();
         // Left failing throughout: the ticker is asked for once and never again, so the start is never retried.
         _workers.Fail = new InvalidOperationException("claude refused to start");
+        var log = new StringWriter();
+        _legs.Error = TextWriter.Synchronized(log);
 
         await _watch.LookAsync(Ct);
-        await Task.Delay(100, Ct);
+        // The failed start says its cause to the node's log (nothing else hears it), which is also what the test waits for.
+        await Until(() => log.ToString().Contains("claude refused to start", StringComparison.Ordinal));
+        log.ToString().ShouldContain("the ticker du1-tia1-parser-ticker of TIA1/parser did not start");
 
         // Past the show-up grace the ordinary ladder takes the leg back: two nudges, then its one worker-idle ring. The watch's start
         // has no command waiting on it, so no start-failed card is raised on top of it.

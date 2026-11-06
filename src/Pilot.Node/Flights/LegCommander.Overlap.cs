@@ -342,16 +342,19 @@ public sealed partial class LegCommander
         }
         // A ticker of the ticking pass (PIL804) must not outlive the worker it was started for: it could tick or finish the new worker's leg.
         // TickerJob is cleared as it is stopped, so a restart whose start fails does not leave the leg pointing at it.
-        leg = await StopTickerAsync(leg, "its worker was restarted", cancellationToken);
+        // The watch calls this off the lock, so the clearing of the stored row takes the lock itself.
+        leg = await StopTickerAsync(leg, "its worker was restarted", cancellationToken, locked: false);
         StartWorker(flight, leg, state.Legs(flight.Code));
     }
 
     /// <summary>
     /// Stops the leg's ticker of the ticking pass (PIL804), if it has one, and clears <see cref="LegRow.TickerJob"/> on the stored row
     /// at once; returns the leg as it is now. Left set, a replacement worker whose start fails would leave the leg looking as if the
-    /// ticker we just stopped still worked, and the watch would ring for it ending.
+    /// ticker we just stopped still worked, and the watch would ring for it ending. <paramref name="locked"/> says the caller holds
+    /// the commander's lock (a go-around does); one that does not (the watch's restart) has the row written under it here, so a
+    /// finish or a tick meanwhile is not overwritten by a stale copy.
     /// </summary>
-    private async Task<LegRow> StopTickerAsync(LegRow leg, string why, CancellationToken cancellationToken)
+    private async Task<LegRow> StopTickerAsync(LegRow leg, string why, CancellationToken cancellationToken, bool locked = true)
     {
         if (leg.TickerJob is not { } tickerJob)
         {
@@ -359,9 +362,24 @@ public sealed partial class LegCommander
         }
         DropQueuedJobsOf(tickerJob, why);
         await StopQuietly(tickerJob, cancellationToken);
-        if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is { } stored)
+        if (!locked)
         {
-            state.PutLeg(stored with { TickerJob = null });
+            await _one.WaitAsync(cancellationToken);
+        }
+        try
+        {
+            // Read fresh, and only this ticker cleared: a row that moved on while it was stopped keeps what it has.
+            if (state.Legs(leg.Flight).FirstOrDefault(l => l.Name == leg.Name) is { } stored && string.Equals(stored.TickerJob, tickerJob, StringComparison.Ordinal))
+            {
+                state.PutLeg(stored with { TickerJob = null });
+            }
+        }
+        finally
+        {
+            if (!locked)
+            {
+                _one.Release();
+            }
         }
         return leg with { TickerJob = null };
     }

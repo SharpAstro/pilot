@@ -151,6 +151,9 @@ public sealed partial class LegCommander
                     "The node starts the ticking pass instead of sending the leg round: it ticks each step a commit covers and finishes the leg, which reruns the check.");
                 return null;
             },
+            // The watch's start has no command waiting on it, so Launching would say a failure to nobody: the cause goes to the node's log,
+            // and the ladder's worker-idle ring is the one ring the person gets.
+            quietFailure: why => Error.WriteLineAsync($"leg watch: the ticker {ticker} of {flight.Code}/{leg.Name} did not start: {why}"),
             model: model);
     }
 
